@@ -10,12 +10,14 @@ Include the following snippet early on in the process.
 
 ```php
 if (
-  \Kanopi\Firewall\Firewall::firewall(
+  php_sapi_name() !== 'cli' &&
+  class_exists('Kanopi\Firewall\Firewall') &&
+  \Kanopi\Firewall\Firewall::create(
     __DIR__ . '/files/private/blocked_urls.txt',
     __DIR__ . '/files/private/blocked_ips.txt'
   )->check()
 ) {
-  header('HTTP/1.0 403 Forbidden');
+  header('HTTP/1.0 403 IP Address Blocked');
   exit;
 }
 ```
