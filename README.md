@@ -6,20 +6,11 @@ causing more overhead.
 
 ## Setup
 
-If composer is used to include the package ignore the next step.
-
-```php
-require_once 'firewall/load.php';
-```
-
-Alter the location to reflect where the package has been downloaded to.
-
-Next as part of the main `index.php` or a settings/configuration file include
-the following snippet.
+Include the following snippet early on in the process.
 
 ```php
 if (
-  \Kanopi\Firewall\Firewall::evaluate(
+  \Kanopi\Firewall\Firewall::firewall(
     __DIR__ . '/files/private/blocked_urls.txt',
     __DIR__ . '/files/private/blocked_ips.txt'
   )->check()
@@ -29,6 +20,8 @@ if (
 }
 ```
 
+Alter the following file locations to reflect the location of the site's url and
+ip address list.
 
 ### Blocked URLs
 
