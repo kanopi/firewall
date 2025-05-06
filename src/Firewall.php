@@ -34,7 +34,7 @@ final class Firewall {
   /**
    * Create a new Instance.
    */
-  public static function evaluate(string $urls, string $ips): self {
+  public static function create(string $urls, string $ips): self {
     return new static($urls, $ips);
   }
 
