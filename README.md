@@ -58,3 +58,4 @@ The following are start examples that have been included. To use these copy the
 file and reference as part of the setup.
 
  - [Drupal](starters/drupal.txt)
+ - [WordPress](starters/wordpress.txt)
