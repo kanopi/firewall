@@ -80,11 +80,15 @@ final class Firewall {
    *   Return TRUE if the request should be denied.
    */
   public function check(
-    string $ip,
-    string $url,
-    string $method,
-    bool $autoBlock = false
+    ?string $ip = null,
+    ?string $url = null,
+    ?string $method = null,
+    bool $autoBlock = TRUE
   ): bool {
+    $ip = $ip ?? $_SERVER['REMOTE_ADDR'];
+    $url = $url ?? $_SERVER['REQUEST_URI'];
+    $method = $method ?? $_SERVER['REQUEST_METHOD'];
+
     if ($this->denyRequest($url, $method) || $this->denyIp($ip)) {
       if ($autoBlock && !in_array($ip, $this->ips)) {
         $this->ips[] = $ip;

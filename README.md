@@ -1,10 +1,67 @@
 # Simple Firewall
 
-The following library is a simple setup that evaluates the request.
+The following library is a simple setup that evaluates the request. The idea of
+this library is that the database doesn't need to bootstrap for the CMS therefore
+causing more overhead.
 
 ## Setup
 
+If composer is used to include the package ignore the next step.
+
+```php
+require_once 'firewall/load.php';
+```
+
+Alter the location to reflect where the package has been downloaded to.
+
+Next as part of the main `index.php` or a settings/configuration file include
+the following snippet.
+
+```php
+if (
+  \Kanopi\Firewall\Firewall::evaluate(
+    __DIR__ . '/files/private/blocked_urls.txt',
+    __DIR__ . '/files/private/blocked_ips.txt'
+  )->check()
+) {
+  header('HTTP/1.0 403 Forbidden');
+  exit;
+}
+```
+
+
 ### Blocked URLs
+
+The blocked URLs are urls that are a text file of URLs where each URL is on
+it's own line. An example of that might be the following:
+
+```text
+/example-url
+/test.php
+/home/example.php
+```
+
+Regex can also be included as part of the URLs.
+
+```text
+^/wp-admin(.*)$
+```
 
 ### Blocked IPs
 
+IP addresses are in both IPV4 and IPV6. The CIDR can be included as part of the
+line.
+
+Examples of this look like:
+
+```text
+1.1.1.1
+2.2.2.2/32
+```
+
+## Starters
+
+The following are start examples that have been included. To use these copy the
+file and reference as part of the setup.
+
+ - [Drupal](starters/drupal.txt)
