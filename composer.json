@@ -12,6 +12,7 @@
             "homepage": "https://kanopi.com/about-us/"
         }
     ],
+    "license": "MIT",
     "autoload": {
         "psr-4": {
             "Kanopi\\Firewall\\": "src/"
