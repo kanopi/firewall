@@ -1,0 +1,1 @@
+# Simple Firewall&#10&#10The following library is a simple setup that evaluates the request.&#10&#10## Setup&#10&#10### Blocked URLs&#10&#10### Blocked IPs&#10

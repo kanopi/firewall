@@ -1,0 +1,21 @@
+{
+    "name": "kanopi/firewall",
+    "description": "Evaluate the url and see if it is part of a block list.",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Sean Dietrich",
+            "email": "sean@kanopi.com"
+        },
+        {
+            "name": "Kanopi Studios Engineers",
+            "homepage": "https://kanopi.com/about-us/"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Kanopi\\Firewall\\": "src/"
+        }
+    }
+}
+
