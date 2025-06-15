@@ -1,0 +1,45 @@
+version: 2.1
+
+orbs:
+  ci-tools: kanopi/ci-tools@2
+
+workflows:
+  test:
+    jobs:
+#      - phpunit:
+#          context: kanopi-code
+#          filters:
+#            tags:
+#              ignore: /.*/
+#            branches:
+#              only: /.*/
+      - ci-tools/composer:
+          tag: '8.2'
+          name: 'phpstan'
+          context: kanopi-code
+          command: 'check:security'
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
+      - ci-tools/composer:
+          tag: '8.2'
+          name: 'rector'
+          context: kanopi-code
+          command: 'check:rector'
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
+      - ci-tools/composer:
+          tag: '8.2'
+          name: 'lint'
+          context: kanopi-code
+          command: 'check:code'
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
