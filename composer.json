@@ -50,6 +50,7 @@
             "Composer\\Config::disableProcessTimeout",
             "cd example; php -S localhost:8888 .ht.router.php"
         ],
+        "check:code:circleci": "vendor/bin/phpcs --standard=phpcs_ruleset.xml --report=checkstyle --report-file=phpcs-report.xml src",
         "check:code": "vendor/bin/phpcs --standard=phpcs_ruleset.xml src",
         "fix:code": "vendor/bin/phpcbf --standard=phpcs_ruleset.xml src",
         "phpunit": [
@@ -60,7 +61,9 @@
         "phpunit:integration": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --testsuite integration --do-not-cache-result --verbose --no-coverage",
         "fix:php": "find config src tests -name '*.php' -exec php -l {} \\;",
         "check:security": "vendor/bin/phpstan analyse src --level max --memory-limit=-1",
+        "check:security:circleci": "vendor/bin/phpstan analyse src --level max --memory-limit=-1 --error-format=checkstyle --no-progress > phpstan-report.xml",
         "check:rector": "vendor/bin/rector process src/ --dry-run",
+        "check:rector:circleci": "vendor/bin/rector process src/ --dry-run --output-format=junit > rector-report.xml",
         "fix:rector": "vendor/bin/rector process src/",
         "check": [
             "@check:code",
