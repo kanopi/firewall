@@ -37,12 +37,15 @@ class PluginManager
             if (!($pluginConfig['enable'] ?? false)) {
                 continue;
             }
+
             if (!class_exists($plugin)) {
                 continue;
             }
+
             if (!class_implements($plugin, PluginInterface::class)) {
                 continue;
             }
+
             $priority = ($pluginConfig['priority'] ?? 0);
             $priority = is_int($priority) ? $priority : 0;
             $lazyObjectRegistry->add(

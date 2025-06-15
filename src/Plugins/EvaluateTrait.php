@@ -88,6 +88,7 @@ trait EvaluateTrait
 
             return true;
         }
+
         if ($type === 'OR') {
             foreach ($rule['rules'] as $subRule) {
                 if ($this->evaluateRule($request, $subRule)) {
