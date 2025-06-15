@@ -5,3 +5,6 @@ example
 reports
 .phpunit.result.cache
 .phpunit.cache
+phpcs-report.xml
+phpstan-report.xml
+rector-report.xml
