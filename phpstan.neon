@@ -9,3 +9,4 @@ parameters:
         - identifier: argument.type
         - identifier: missingType.iterableValue
         - identifier: foreach.nonIterable
+        - identifier: cast.string
