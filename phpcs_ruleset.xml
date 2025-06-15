@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<ruleset name="Firewall">
+    <description>Firewall Coding Standards</description>
+    <rule ref="Generic.Files.LineLength">
+        <properties>
+            <property name="ignoreComments" value="true"/>
+        </properties>
+    </rule>
+
+    <rule ref="PSR1" />
+    <rule ref="PSR2" />
+    <rule ref="PSR12" />
+    <!-- Run against the PHPCompatibility ruleset -->
+    <rule ref="PHPCompatibility"/>
+
+    <!-- Exclude vendor directory -->
+    <exclude-pattern>/vendor/*</exclude-pattern>
+
+    <!-- Ignore warnings -->
+    <arg name="warning-severity" value="0"/>
+
+    <!-- Check for cross-version support for PHP 8.2 and higher. -->
+    <config name="testVersion" value="8.2-"/>
+</ruleset>

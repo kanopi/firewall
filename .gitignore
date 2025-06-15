@@ -1,0 +1,7 @@
+vendor
+.idea
+composer.lock
+example
+reports
+.phpunit.result.cache
+.phpunit.cache
