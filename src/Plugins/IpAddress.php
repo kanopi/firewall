@@ -49,19 +49,20 @@ class IpAddress extends AbstractPluginBase
         if (!$in_list = in_array($ip, $ips)) {
             // Check if this IP is in CIDR list.
             foreach ($ips as $_cidr) {
-                if (str_contains($_cidr, '/') !== false) {
+                if (str_contains((string) $_cidr, '/')) {
                     $_ip = ip2long($ip);
-                    [$_net, $_mask] = explode('/', $_cidr, 2);
+                    [$_net, $_mask] = explode('/', (string) $_cidr, 2);
                     $_ip_net = ip2long($_net);
                     /** @phpstan-ignore-next-line  */
                     $_ip_mask = ~((1 << (32 - $_mask)) - 1);
 
-                    if ($in_list = ($_ip & $_ip_mask) == ($_ip_net & $_ip_mask)) {
+                    if ($in_list = ($_ip & $_ip_mask) === ($_ip_net & $_ip_mask)) {
                         break;
                     }
                 }
             }
         }
+
         return $in_list;
     }
 }

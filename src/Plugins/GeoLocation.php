@@ -48,6 +48,7 @@ class GeoLocation extends AbstractPluginBase
         if ($this->reader === null) {
             return false;
         }
+
         return $this->evaluateRequest($request, $this->config);
     }
 
@@ -79,7 +80,7 @@ class GeoLocation extends AbstractPluginBase
 
         try {
             $record = $this->reader->city($request->getClientIp());
-        } catch (\Exception $e) {
+        } catch (\Exception) {
             return null;
         }
 

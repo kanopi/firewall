@@ -13,8 +13,6 @@ class RateLimit extends AbstractPluginBase
 {
     /**
      * Rate Limit Storage.
-     *
-     * @var RateLimitStorageInterface|null
      */
     protected ?RateLimitStorageInterface $storage = null;
 
@@ -104,8 +102,8 @@ class RateLimit extends AbstractPluginBase
         foreach ($this->config as $rule) {
             $pattern = $this->wildcardToRegex($rule['path']);
             if (preg_match($pattern, $path)) {
-                $rule['rate'] = $rule['rate'] ?? $this->metadata['default_rate'];
-                $rule['sample'] = $rule['sample'] ?? $this->metadata['default_sample'];
+                $rule['rate'] ??= $this->metadata['default_rate'];
+                $rule['sample'] ??= $this->metadata['default_sample'];
                 return (array)$rule;
             }
         }

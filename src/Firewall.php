@@ -18,7 +18,7 @@ use Symfony\Component\Yaml\Yaml;
 /**
  * Firewall class that creates and evaluates requests.
  */
-final class Firewall
+final readonly class Firewall
 {
     /**
      * Create a new Firewall Object.
@@ -30,7 +30,7 @@ final class Firewall
      * @param PluginManager $bypassPluginManager
      *   Plugin manager for Bypass Plugins.
      */
-    protected function __construct(protected StorageInterface $storage, protected PluginManager $blockingPluginManager, protected PluginManager $bypassPluginManager)
+    protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager)
     {
     }
 
@@ -76,8 +76,9 @@ final class Firewall
         foreach ($configs as $config) {
             if (is_string($config)) {
                 if (!file_exists($config)) {
-                    throw new \Exception("Config file does not exist: $config");
+                    throw new \Exception('Config file does not exist: ' . $config);
                 }
+
                 $config = (array)Yaml::parse((string)@file_get_contents($config));
             } elseif (!is_array($config)) {
                 $config = [];
@@ -94,7 +95,7 @@ final class Firewall
         foreach ($overrides as $key => $value) {
             try {
                 $propertyAccessor->setValue($merged, $key, $value);
-            } catch (\Exception $e) {
+            } catch (\Exception) {
             }
         }
 
@@ -124,7 +125,7 @@ final class Firewall
     public function evaluate(?Request $request = null): bool
     {
         // If PHP is running on cli mode.
-        if (php_sapi_name() === 'cli') {
+        if (PHP_SAPI === 'cli') {
             return true;
         }
 
@@ -140,13 +141,14 @@ final class Firewall
 
         if (($blocked = $this->isBlocked($request->getClientIp() ?? '')) !== false) {
             $plugin = '';
-            if (is_array($blocked) && key_exists('plugin', $blocked)) {
+            if (is_array($blocked) && array_key_exists('plugin', $blocked)) {
                 $plugin = $blocked['plugin'];
             }
+
             $this->sendBlockingResponse($request, $plugin);
         }
 
-        $this->blockingPluginManager->evaluate($request, true, function ($block, $request, $plugin) {
+        $this->blockingPluginManager->evaluate($request, true, function ($block, $request, $plugin): void {
             /** @var bool $block */
             /** @var Request $request */
             /** @var PluginInterface $plugin */
@@ -168,7 +170,7 @@ final class Firewall
      * @return string
      *   Return the ID associated with the request.
      */
-    protected function generateId(Request $request): string
+    private function generateId(Request $request): string
     {
         return strtoupper(md5($request->getClientIp() . time()));
     }
@@ -182,7 +184,7 @@ final class Firewall
      * @return mixed
      *   Return array of items if found, False if issues.
      */
-    protected function isBlocked(string $ip): mixed
+    private function isBlocked(string $ip): mixed
     {
         return $this->storage->get($ip, false);
     }
@@ -198,7 +200,7 @@ final class Firewall
      * @return bool
      *   Return TRUE if successful, FALSE if issue.
      */
-    protected function blockIp(Request $request, string $plugin): bool
+    private function blockIp(Request $request, string $plugin): bool
     {
         return $this->storage->set(
             $request->getClientIp(),
@@ -220,7 +222,7 @@ final class Firewall
      * @return array
      *   Return the structured data.
      */
-    protected function serializeRequest(Request $request): array
+    private function serializeRequest(Request $request): array
     {
         return [
             'method' => $request->getMethod(),
@@ -245,7 +247,7 @@ final class Firewall
      * @return array
      *   Files structured.
      */
-    protected function formatUploadedFiles(array $files): array
+    private function formatUploadedFiles(array $files): array
     {
         $normalized = [];
 
@@ -270,39 +272,6 @@ final class Firewall
     }
 
     /**
-     * Check to see if the provided IP Address can bypass the checks.
-     *
-     * @param Request $request
-     *   The request to evaluate.
-     * @param array $allPlugins
-     *   List of all plugins to evaluate.
-     * @param bool $block
-     *   Block the request.
-     *
-     * @return bool
-     *   Return TRUE if allowed, FALSE if not.
-     */
-    protected function evaluatePlugins(Request $request, array $allPlugins = [], bool $block = false): bool
-    {
-        foreach ($allPlugins as $plugins) {
-            /** @var PluginInterface $plugin */
-            foreach ($plugins as $plugin) {
-                $status = $plugin->evaluate($request);
-
-                if ($status) {
-                    if ($block) {
-                        $this->blockIp($request, $plugin->getName());
-                        $this->sendBlockingResponse($request, $plugin->getName());
-                    }
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * Block the request and status code.
      *
      * @param Request $request
@@ -310,9 +279,9 @@ final class Firewall
      * @param string $plugin
      *   Plugin name that is doing the blocking.
      */
-    protected function sendBlockingResponse(Request $request, string $plugin): void
+    private function sendBlockingResponse(Request $request, string $plugin): never
     {
         http_response_code(406);
-        exit(sprintf('%s %s %s', $request->attributes->get('x-request-id'), 'Banned', "by $plugin"));
+        exit(sprintf('%s %s %s', $request->attributes->get('x-request-id'), 'Banned', 'by ' . $plugin));
     }
 }

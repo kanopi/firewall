@@ -11,15 +11,11 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
 {
     /**
      * Redis Connection class.
-     *
-     * @var Redis
      */
     protected Redis $redis;
 
     /**
      * Redis Prefix.
-     *
-     * @var string
      */
     protected string $redisPrefix;
 
@@ -59,7 +55,6 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
     public function countRequests(string $key, int $start, int $end): int
     {
         $redisKey = $this->redisPrefix . $key;
-        $count = $this->redis->zCount($redisKey, $start, $end);
-        return $count;
+        return $this->redis->zCount($redisKey, $start, $end);
     }
 }

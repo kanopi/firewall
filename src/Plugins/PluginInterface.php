@@ -12,15 +12,11 @@ interface PluginInterface
 {
     /**
      * Return the name of the plugin.
-     *
-     * @return string
      */
     public function getName(): string;
 
     /**
      * Return the plugin's description and what it is used for.
-     *
-     * @return string
      */
     public function getDescription(): string;
 

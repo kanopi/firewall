@@ -31,23 +31,28 @@ class PluginManager
      */
     public static function create(array $config = []): self
     {
-        $registry = new LazyObjectRegistry();
+        $lazyObjectRegistry = new LazyObjectRegistry();
 
         foreach ($config as $plugin => $pluginConfig) {
-            if (!($pluginConfig['enable'] ?? false) || !class_exists($plugin) || !class_implements($plugin, PluginInterface::class)) {
+            if (!($pluginConfig['enable'] ?? false)) {
                 continue;
             }
-
+            if (!class_exists($plugin)) {
+                continue;
+            }
+            if (!class_implements($plugin, PluginInterface::class)) {
+                continue;
+            }
             $priority = ($pluginConfig['priority'] ?? 0);
-            $priority = !is_int($priority) ? 0 : $priority;
-            $registry->add(
+            $priority = is_int($priority) ? $priority : 0;
+            $lazyObjectRegistry->add(
                 $plugin,
-                fn() => new $plugin($pluginConfig['metadata'] ?? [], $pluginConfig['config'] ?? []),
+                fn(): object => new $plugin($pluginConfig['metadata'] ?? [], $pluginConfig['config'] ?? []),
                 $priority
             );
         }
 
-        return new self($registry);
+        return new self($lazyObjectRegistry);
     }
 
     /**

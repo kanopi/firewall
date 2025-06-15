@@ -9,8 +9,6 @@ class FileRateLimitStorage extends InMemoryRateLimitStorage
 {
     /**
      * Location where file is stored.
-     *
-     * @var string
      */
     protected string $filePath;
 

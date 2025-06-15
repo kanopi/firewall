@@ -70,9 +70,11 @@ class Url extends AbstractPluginBase
                 if ($request->query->has($variable)) {
                     return $request->query->get($variable);
                 }
+
                 if ($request->request->has($variable)) {
                     return $request->request->get($variable);
                 }
+
                 return '';
         }
     }

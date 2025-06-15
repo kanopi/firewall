@@ -78,6 +78,7 @@ class NestedArray
                 return $null;
             }
         }
+
         $key_exists = true;
         return $ref;
     }
@@ -155,10 +156,13 @@ class NestedArray
                 if (!$force) {
                     throw new \LogicException('Cannot create key "' . $parent . '" on non-array value.');
                 }
+
                 $ref = [];
             }
+
             $ref =& $ref[$parent];
         }
+
         $ref = $value;
     }
 
@@ -348,6 +352,7 @@ class NestedArray
                 }
             }
         }
+
         return $result;
     }
 
@@ -370,6 +375,7 @@ class NestedArray
                 $element = static::filter($element, $callable);
             }
         }
+
         return $array;
     }
 }

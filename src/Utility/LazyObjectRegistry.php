@@ -32,7 +32,7 @@ class LazyObjectRegistry
             'factory' => $factory,
         ];
 
-        usort($this->entries, fn($a, $b) =>
+        usort($this->entries, fn($a, $b): int =>
             $a['priority'] <=> $b['priority']);
     }
 

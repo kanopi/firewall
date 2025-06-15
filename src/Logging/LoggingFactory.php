@@ -26,8 +26,6 @@ class LoggingFactory
      *   Configuration for the Logging Element.
      * @param string $channel
      *   Channel name to use for the logger.
-     *
-     * @return Logger
      */
     public static function create(array $config = [], string $channel = 'firewall'): Logger
     {
@@ -41,13 +39,14 @@ class LoggingFactory
             $handlerArgs = $handlerConfig['args'] ?? [];
 
             // Convert Monolog level string to constant (e.g., "Monolog\Level::Debug")
-            foreach ($handlerArgs as &$arg) {
-                if (is_string($arg) && str_starts_with($arg, 'Monolog\\Level::')) {
-                    $levelName = strtoupper(substr($arg, strlen('Monolog\\Level::')));
+            foreach ($handlerArgs as &$handlerArg) {
+                if (is_string($handlerArg) && str_starts_with($handlerArg, \Monolog\Level::class . '::')) {
+                    $levelName = strtoupper(substr($handlerArg, strlen(\Monolog\Level::class . '::')));
                     if (!in_array($levelName, $validLevels, true)) {
                         $levelName = 'INFO';
                     }
-                    $arg = Level::fromName($levelName);
+
+                    $handlerArg = Level::fromName($levelName);
                 }
             }
 
@@ -73,16 +72,15 @@ class LoggingFactory
 
     /**
      * Return a newly created logger.
-     *
-     * @return Logger
      */
     public static function logger(): Logger
     {
-        if (static::$logger === null) {
+        if (!static::$logger instanceof \Monolog\Logger) {
             throw new \Exception(
-                '\Kanopi\Firewall\Logging\LoggingFactory::$logger is not initialized yet. \Kanopi\Firewall\Logging\LoggingFactory::setLogger() must be called.'
+                \Kanopi\Firewall\Logging\LoggingFactory::class . '::$logger is not initialized yet. ' . \Kanopi\Firewall\Logging\LoggingFactory::class . '::setLogger() must be called.'
             );
         }
+
         return static::$logger;
     }
 

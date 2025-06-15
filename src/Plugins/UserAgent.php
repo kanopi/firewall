@@ -18,8 +18,6 @@ class UserAgent extends AbstractPluginBase
 
     /**
      * Device Detector for the current request.
-     *
-     * @var DeviceDetector
      */
     protected DeviceDetector $deviceDetector;
 
@@ -62,9 +60,9 @@ class UserAgent extends AbstractPluginBase
         AbstractDeviceParser::setVersionTruncation(AbstractDeviceParser::VERSION_TRUNCATION_NONE);
         $clientHints = ClientHints::factory($_SERVER);
 
-        $dd = new DeviceDetector($userAgent, $clientHints);
-        $dd->parse();
-        return $dd;
+        $deviceDetector = new DeviceDetector($userAgent, $clientHints);
+        $deviceDetector->parse();
+        return $deviceDetector;
     }
 
     /**
@@ -92,7 +90,7 @@ class UserAgent extends AbstractPluginBase
         $segments = explode('.', trim($variable));
 
         /** @phpstan-ignore-next-line  */
-        if (count($segments) === 0) {
+        if ($segments === []) {
             return null;
         }
 
@@ -121,6 +119,7 @@ class UserAgent extends AbstractPluginBase
             if (!is_array($data) || !array_key_exists($segment, $data)) {
                 return null;
             }
+
             $data = $data[$segment];
         }
 

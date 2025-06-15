@@ -12,8 +12,6 @@ class FileStorage extends InMemoryStorage
 {
     /**
      * Path of the file to save/load.
-     *
-     * @var string
      */
     protected string $filePath;
 
@@ -36,14 +34,12 @@ class FileStorage extends InMemoryStorage
 
         $this->filePath = $config['file'];
 
-        if (!file_exists($this->filePath)) {
-            if (!@touch($this->filePath)) {
-                throw new RuntimeException("Unable to create file at '{$this->filePath}'");
-            }
+        if (!file_exists($this->filePath) && !@touch($this->filePath)) {
+            throw new RuntimeException(sprintf("Unable to create file at '%s'", $this->filePath));
         }
 
         if (!is_readable($this->filePath) || !is_writable($this->filePath)) {
-            throw new RuntimeException("File '{$this->filePath}' must be readable and writable.");
+            throw new RuntimeException(sprintf("File '%s' must be readable and writable.", $this->filePath));
         }
 
         $this->loadFromFile();
@@ -75,7 +71,7 @@ class FileStorage extends InMemoryStorage
     {
         $serialized = serialize($this->store);
         if (@file_put_contents($this->filePath, $serialized) === false) {
-            $this->getLogger()->error("Failed to write to file '{$this->filePath}'");
+            $this->getLogger()->error(sprintf("Failed to write to file '%s'", $this->filePath));
         }
     }
 
@@ -112,6 +108,7 @@ class FileStorage extends InMemoryStorage
         if ($result) {
             $this->persistToFile();
         }
+
         return $result;
     }
 

@@ -13,8 +13,6 @@ trait GeoLocationTrait
 {
     /**
      * Max Mind Database Reader.
-     *
-     * @var Reader|Client|null
      */
     protected Reader|Client|null $reader = null;
 
@@ -60,7 +58,7 @@ trait GeoLocationTrait
 
         try {
             return new Reader($fileLocation);
-        } catch (InvalidDatabaseException $e) {
+        } catch (InvalidDatabaseException) {
         }
 
         return null;

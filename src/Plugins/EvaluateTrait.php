@@ -27,6 +27,7 @@ trait EvaluateTrait
                 return true;
             }
         }
+
         return false;
     }
 
@@ -77,22 +78,26 @@ trait EvaluateTrait
      */
     protected function evaluateGroup(Request $request, mixed $rule): bool
     {
-        $type = strtoupper($rule['type']);
+        $type = strtoupper((string) $rule['type']);
         if ($type === 'AND') {
             foreach ($rule['rules'] as $subRule) {
                 if (!$this->evaluateRule($request, $subRule)) {
                     return false;
                 }
             }
+
             return true;
-        } elseif ($type === 'OR') {
+        }
+        if ($type === 'OR') {
             foreach ($rule['rules'] as $subRule) {
                 if ($this->evaluateRule($request, $subRule)) {
                     return true;
                 }
             }
+
             return false;
         }
+
         return false;
     }
 
@@ -114,6 +119,7 @@ trait EvaluateTrait
             // Invalid format; return false to not block.
             return false;
         }
+
         $rule = $this->parseSimpleStringRule($rule);
         return $this->evaluateStructuredRule($request, $rule);
     }
@@ -236,7 +242,7 @@ trait EvaluateTrait
     {
         if (!$caseSensitive) {
             if (is_string($value)) {
-                $requestValue = strtolower($requestValue);
+                $requestValue = strtolower((string) $requestValue);
                 $value = strtolower($value);
             } elseif (is_array($value)) {
                 $value = array_map('strtolower', $value);
@@ -245,9 +251,9 @@ trait EvaluateTrait
 
         return match ($operator) {
             'equals' => $requestValue === $value,
-            'starts_with' => str_starts_with($requestValue, $value),
-            'contains' => str_contains($requestValue, $value),
-            'regex' => preg_match($value, $requestValue) === 1,
+            'starts_with' => str_starts_with((string) $requestValue, (string) $value),
+            'contains' => str_contains((string) $requestValue, (string) $value),
+            'regex' => preg_match($value, (string) $requestValue) === 1,
             default => false,
         };
     }
@@ -269,7 +275,7 @@ trait EvaluateTrait
      * @return string
      *   The value of the variable or empty string if not found.
      */
-    protected function getRequestValue(Request $request, string $variable)
+    protected function getRequestValue(Request $request, string $variable): string
     {
         return '';
     }

@@ -29,6 +29,7 @@ class InMemoryStorage extends AbstractStorageBase
         if (isset($this->store[$key])) {
             return false;
         }
+
         $this->store[$key] = $value;
         return true;
     }
@@ -48,6 +49,7 @@ class InMemoryStorage extends AbstractStorageBase
             unset($this->store[$key]);
             return true;
         }
+
         return false;
     }
 

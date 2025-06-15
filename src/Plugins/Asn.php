@@ -79,7 +79,7 @@ class Asn extends AbstractPluginBase
 
         try {
             $record = $this->reader->asn($request->getClientIp());
-        } catch (\Exception $e) {
+        } catch (\Exception) {
             return null;
         }
 
