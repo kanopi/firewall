@@ -60,6 +60,145 @@ Available Options:
 | \Kanopi\Firewall\Plugins\Asn         | Review the requests ASN (Automous System Network)                               |
 | \Kanopi\Firewall\Plugins\RateLimit   | Rate limit the request to stop bot traffic from abusing the site                |
 
+**\Kanopi\Firewall\Plugins\IpAddress**
+
+Configuration for the following can either be a single IP or a CIDR block.
+
+To set the list of IP addresses
+
+```yaml
+  Kanopi\Firewall\Plugins\IpAddress:
+    config:
+      - 127.0.0.1
+      - ::1
+      - 10.0.0.0/24
+      - 2001:0db8:85a3::/64
+```
+
+**\Kanopi\Firewall\Plugins\GeoLocation**
+
+Configuration for the following uses the [MaxMind GeoLite database](https://dev.maxmind.com/geoip/docs/databases/city-and-country/#binary-databases).
+
+To reference the location of the database set the metadata 
+
+```yaml
+  Kanopi\Firewall\Plugins\GeoLocation:
+    metadata:
+      reader:
+        db: /tmp/GeoLite2-City.mmdb
+```
+
+Once referenced set the configuration settings.
+
+```yaml
+  Kanopi\Firewall\Plugins\GeoLocation:
+    config:
+      - 'country:CN'
+```
+
+Available options:
+
+- country
+- continent
+- city
+- location
+- postal
+
+For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
+
+**\Kanopi\Firewall\Plugins\Url**
+
+Available options:
+
+- method
+- host
+- path
+- query
+
+For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
+
+**\Kanopi\Firewall\Plugins\UserAgent**
+
+Available options:
+
+- bot
+- device
+- client
+- os
+- brand
+- model
+
+For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
+
+**\Kanopi\Firewall\Plugins\Asn**
+
+Available options:
+
+- asn
+- asn_org
+
+For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
+
+**\Kanopi\Firewall\Plugins\RateLimit**
+
+Changing the default rate and sample size can be done by setting the `default_rate` and `default_sample` metadata variables.
+
+```yaml
+  Kanopi\Firewall\Plugins\RateLimit:
+    metadata:
+      default_rate: 500
+      default_sample: 10
+```
+
+`default_rate` refers to the number of requests that are made.
+`default_sample` refers to the sample size to count for the requsts.
+
+These variables are globally used.
+
+In the event there is a need to configure rate limiting per URL these can be set as part of the configuration.
+
+```yaml
+  Kanopi\Firewall\Plugins\RateLimit:
+    config:
+      - path: '/example/*'
+      - path: '/example'
+        rate: 100
+        sample: 10
+```
+
+##### Forming Conditional Statements
+
+**Simple**
+
+Simple conditionals refer to making it a single string.
+
+```yaml
+  - "variable:value"                 # (defaults to 'equals')
+  - "variable@operator:value"
+  - "!variable:value"                # (negated equals)
+  - "!variable@operator:value"       # (negated custom operator)
+```
+
+**Expanded**
+
+Expanded conditionals are formatted within an array.
+
+```yaml
+-
+  variable: method. # Variable name to reference based on the plugin.
+  operator: equal   # Possible values [equals, starts_with, contains, regex, in, matches_any]
+  value: GET        # Values to check against. If using the operator in or matches_any use an array.
+  negate: true      # Set to true if should be negate or remove if not.
+-
+  
+```
+
+##### Custom Plugins
+
+Creating custom plugins are possible by implementing the `\Kanopi\Firewall\Plugins\PluginInterface` interface.
+
+Once created referencing the full namespace can allow for it to be used.
+
 #### Logger
 
 Loggers are used as a method for outputting logging data. Classes are provided from the [Monolog Library](https://seldaek.github.io/monolog/).
@@ -112,3 +251,7 @@ DESCRIBE HOW TO ADD TO WORDPRESS
 #### Other
 
 DESCRIBE HOW TO ADD TO OTHER PROJECTS
+
+## Testing
+
+TBD
