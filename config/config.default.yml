@@ -1,0 +1,60 @@
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+bypass:
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: 0
+    enable: true
+    config: ~
+
+block:
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: 0
+    enable: true
+    config: ~
+  Kanopi\Firewall\Plugins\GeoLocation:
+    priority: 0
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: ~
+    config: ~
+  Kanopi\Firewall\Plugins\Url:
+    priority: 0
+    enable: true
+    config: ~
+  Kanopi\Firewall\Plugins\UserAgent:
+    priority: 0
+    enable: true
+    config: ~
+  Kanopi\Firewall\Plugins\Asn:
+    priority: 0
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: ~
+    config: ~
+  Kanopi\Firewall\Plugins\RateLimit:
+    priority: 0
+    enable: true
+    metadata:
+      default_rate: 500
+      default_sample: 10
+      storage:
+        type: Kanopi\Firewall\Plugins\RateLimitStorage\InMemoryRateLimitStorage
+        config: ~
+    config: ~
+
+logger:
+  -
+    class: Monolog\Handler\StreamHandler
+    args:
+      - /tmp/data.log
+      - Monolog\Level::Debug
+    formatter:
+      class: Monolog\Formatter\LineFormatter
+      args:
+        - "[%datetime%] [%context.plugin%] %message% %context%\n"
+        - "Y-m-d\\TH:i:sP"

@@ -1,0 +1,12 @@
+parameters:
+    level: max
+    paths:
+        - src
+    tips:
+        treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        - identifier: offsetAccess.nonOffsetAccessible
+        - identifier: argument.type
+        - identifier: missingType.iterableValue
+        - identifier: foreach.nonIterable
+        - identifier: cast.string

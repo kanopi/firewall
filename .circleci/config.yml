@@ -1,0 +1,65 @@
+version: 2.1
+
+orbs:
+  ci-tools: kanopi/ci-tools@2
+
+PHP_VERSION: &PHP_VERSION "8.2"
+
+workflows:
+  test:
+    jobs:
+#      - phpunit:
+#          context: kanopi-code
+#          filters:
+#            tags:
+#              ignore: /.*/
+#            branches:
+#              only: /.*/
+      - ci-tools/composer:
+          tag: *PHP_VERSION
+          name: 'phpstan'
+          context: kanopi-code
+          command: 'check:security:circleci'
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
+          post-steps:
+            - store_test_results:
+                path: phpstan-report.xml
+            - store_artifacts:
+                path: phpstan-report.xml
+                destination: phpstan
+      - ci-tools/composer:
+          tag: *PHP_VERSION
+          name: 'rector'
+          context: kanopi-code
+          command: 'check:rector:circleci'
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
+          post-steps:
+            - store_test_results:
+                path: rector-report.xml
+            - store_artifacts:
+                path: rector-report.xml
+                destination: rector
+      - ci-tools/composer:
+          tag: *PHP_VERSION
+          name: 'quality'
+          context: kanopi-code
+          command: 'check:code:circleci'
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
+          post-steps:
+            - store_test_results:
+                path: phpcs-report.xml
+            - store_artifacts:
+                path: phpcs-report.xml
+                destination: phpcs

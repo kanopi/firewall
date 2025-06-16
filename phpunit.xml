@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd" backupGlobals="false" failOnRisky="false" failOnWarning="false" bootstrap="tests/bootstrap.php" colors="true" cacheDirectory=".phpunit.cache">
+  <testsuites>
+    <testsuite name="integration">
+      <directory suffix="Test.php">tests/Integration</directory>
+    </testsuite>
+    <testsuite name="unit">
+      <directory suffix="Test.php">tests/Unit</directory>
+    </testsuite>
+  </testsuites>
+  <coverage>
+    <report>
+      <html outputDirectory="reports"/>
+      <text outputFile="reports/coverage.txt" showUncoveredFiles="false" showOnlySummary="true"/>
+      <xml outputDirectory="reports/xml"/>
+    </report>
+  </coverage>
+  <logging/>
+  <source>
+    <include>
+      <directory suffix=".php">src/</directory>
+    </include>
+  </source>
+</phpunit>
