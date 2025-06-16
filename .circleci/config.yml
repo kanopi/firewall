@@ -4,6 +4,32 @@ orbs:
   ci-tools: kanopi/ci-tools@2
 
 PHP_VERSION: &PHP_VERSION "8.2"
+PHP_IMAGE: &PHP_IMAGE "cimg/php:8.2"
+
+jobs:
+  build:
+    docker:
+      - image: *PHP_IMAGE
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+    resource_class: small
+    steps:
+      - ci-tools/install-github-cli
+      - run:
+          name: Generate Version File
+          command: |
+            echo "${CIRCLE_TAG}" > VERSION
+      - run:
+          name: Build
+          command: |
+            bash .circleci/scripts/build.sh
+      - store_artifacts:
+          path: /tmp/firewall.zip
+      - run:
+          name: Post Artifact
+          command: |
+            gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall.zip --clobber
 
 workflows:
   test:
@@ -63,3 +89,11 @@ workflows:
             - store_artifacts:
                 path: phpcs-report.xml
                 destination: phpcs
+      - build:
+          name: "build"
+          context: kanopi-code
+          filters:
+            tags:
+              only: /.*/
+            branches:
+              ignore: /.*/

@@ -1,0 +1,15 @@
+.circleci
+.claude
+.idea
+.git
+.phpunit.cache
+example
+firewall.zip
+reports
+tests
+vendor
+.gitignore
+phpcs_ruleset.xml
+phpstan.neon
+phpunit.xml
+rector.php
