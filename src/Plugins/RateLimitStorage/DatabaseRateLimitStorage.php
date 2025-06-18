@@ -63,7 +63,7 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
     public function countRequests(string $key, int $start, int $end): int
     {
         try {
-            return $this
+            return (int) $this
                 ->connection
                 ->createQueryBuilder()
                 ->select('*')

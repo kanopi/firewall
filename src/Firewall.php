@@ -276,8 +276,6 @@ final readonly class Firewall
      *
      * @param Request $request
      *   Request to evaluate.
-     * @param string $plugin
-     *   Plugin name that is doing the blocking.
      * @param int $statusCode
      *   Status code to return for the request.
      */

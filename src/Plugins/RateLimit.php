@@ -84,7 +84,7 @@ class RateLimit extends AbstractPluginBase
             return true;
         }
 
-        $this->storage?->recordRequest($key, $now, []);
+        $this->storage?->recordRequest($key, $now);
         return false;
     }
 

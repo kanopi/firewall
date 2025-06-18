@@ -92,8 +92,8 @@ class IpAddress extends AbstractPluginBase
             return false;
         }
 
-        $bytes = (int) floor($prefixLength / 8);          // Fully matched bytes
-        $bits  = (int) ($prefixLength % 8);                // Remaining bits to match
+        $bytes = (int) floor((int) $prefixLength / 8);          // Fully matched bytes
+        $bits  = (int) ((int) $prefixLength % 8);                // Remaining bits to match
 
         // Compare full bytes
         if (strncmp($ipPacked, $subnetPacked, $bytes) !== 0) {

@@ -150,7 +150,7 @@ trait EvaluateTrait
      *     operator: string,
      *     value: string|array,
      *     negate: bool,
-     *     matches?: string
+     *     matches?: string|null
      * }
      *   The normalized rule array.
      */
@@ -252,8 +252,11 @@ trait EvaluateTrait
         $variable = $rule['variable'];
         $operator = $rule['operator'];
         $value = $rule['value'];
-        $negate = !empty($rule['negate']) && $rule['negate'];
+        /** @phpstan-ignore-next-line */
+        $negate = !empty($rule['negate']) && (bool) $rule['negate'];
+        /** @phpstan-ignore-next-line */
         $matches = $rule['matches'] ?? false;
+        /** @phpstan-ignore-next-line */
         $caseSensitive = !empty($rule['case_sensitive']) && $rule['case_sensitive'];
 
         $requestValue = $this->getRequestValue($request, $variable);

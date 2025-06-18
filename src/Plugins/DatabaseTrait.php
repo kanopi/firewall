@@ -15,6 +15,7 @@ trait DatabaseTrait
 {
     protected Connection $connection;
 
+    /** @phpstan-ignore-next-line */
     protected AbstractSchemaManager $schemaManager;
 
     /**
@@ -43,6 +44,7 @@ trait DatabaseTrait
      */
     protected function createTable(): void
     {
+        /** @phpstan-ignore-next-line */
         if (method_exists($this, 'getStorageTable')) {
             if (!$this->schemaManager->tableExists($this->config['storage_table'])) {
                 /** @var Table $table */

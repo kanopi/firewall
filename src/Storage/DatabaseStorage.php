@@ -170,6 +170,7 @@ class DatabaseStorage extends AbstractStorageBase
     {
         try {
             $this->connection->createQueryBuilder()
+                /** @phpstan-ignore-next-line  */
                 ->update($this->config['storage_table'] . ' u')
                 ->set('u.expire', 'u.expire + :expire')
                 ->where('remote_address = :remote_address')

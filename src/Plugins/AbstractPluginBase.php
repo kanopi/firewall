@@ -28,7 +28,7 @@ abstract class AbstractPluginBase implements PluginInterface
      */
     public function getStatusCode(): int
     {
-        return (int) $this->metadata['status_code'] ?? 400;
+        return intval($this->metadata['status_code'] ?? 400);
     }
 
     /**
@@ -36,6 +36,6 @@ abstract class AbstractPluginBase implements PluginInterface
      */
     public function getExpirationTime(): int
     {
-        return (int) $this->metadata['default_expiration_time'] ?? 0;
+        return intval($this->metadata['default_expiration_time'] ?? 0);
     }
 }
