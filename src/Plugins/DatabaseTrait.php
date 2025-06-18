@@ -13,7 +13,6 @@ use Doctrine\DBAL\Tools\DsnParser;
  */
 trait DatabaseTrait
 {
-
     protected Connection $connection;
 
     protected AbstractSchemaManager $schemaManager;
@@ -32,7 +31,8 @@ trait DatabaseTrait
             $this->connection = DriverManager::getConnection($connectionParams);
             $this->schemaManager = $this->connection->createSchemaManager();
             $this->createTable();
-        } catch (\Exception) {}
+        } catch (\Exception) {
+        }
     }
 
     /**
@@ -49,9 +49,9 @@ trait DatabaseTrait
                 $table = $this->getStorageTable();
                 try {
                     $this->schemaManager->createTable($table);
-                } catch (\Exception) {}
+                } catch (\Exception) {
+                }
             }
         }
     }
-
 }

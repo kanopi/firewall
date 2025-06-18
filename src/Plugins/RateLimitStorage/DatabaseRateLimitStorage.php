@@ -13,7 +13,6 @@ use Kanopi\Firewall\Plugins\DatabaseTrait;
  */
 class DatabaseRateLimitStorage extends AbstractRateLimitStorage
 {
-
     use DatabaseTrait;
 
     /**
@@ -54,7 +53,8 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
                 'rule' => $key,
                 'timestamp' => $timestamp,
             ]);
-        } catch (\Exception) {}
+        } catch (\Exception) {
+        }
     }
 
     /**

@@ -49,11 +49,10 @@ class IpAddress extends AbstractPluginBase
         if (!$in_list = in_array($ip, $ips)) {
             foreach ($ips as $ip_set) {
                 if (str_contains((string) $ip_set, '-')) {
-                    if ($this->inRange($ip,  $ip_set)) {
+                    if ($this->inRange($ip, $ip_set)) {
                         return true;
                     }
-                }
-                elseif (str_contains((string) $ip_set, '/')) {
+                } elseif (str_contains((string) $ip_set, '/')) {
                     if ($this->isInBlock($ip, (string) $ip_set)) {
                         return true;
                     }

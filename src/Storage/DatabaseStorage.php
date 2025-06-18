@@ -64,11 +64,13 @@ class DatabaseStorage extends AbstractStorageBase
                 ]
             );
             if ($this->exists($key)) {
-                $this->connection->update($this->config['storage_table'],
+                $this->connection->update(
+                    $this->config['storage_table'],
                     $data,
                     [
                         'remote_address' => $key,
-                    ]);
+                    ]
+                );
             } else {
                 $this->connection->insert($this->config['storage_table'], $data);
             }
@@ -108,7 +110,8 @@ class DatabaseStorage extends AbstractStorageBase
                     ->executeQuery();
                 return $count->fetchAssociative();
             }
-        } catch (\Exception) {}
+        } catch (\Exception) {
+        }
         return $default;
     }
 
@@ -120,7 +123,8 @@ class DatabaseStorage extends AbstractStorageBase
         try {
             $this->connection->delete($this->config['storage_table']);
             return true;
-        } catch(\Exception) {}
+        } catch (\Exception) {
+        }
         return false;
     }
 

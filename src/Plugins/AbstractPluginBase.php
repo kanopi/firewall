@@ -38,5 +38,4 @@ abstract class AbstractPluginBase implements PluginInterface
     {
         return (int) $this->metadata['default_expiration_time'] ?? 0;
     }
-
 }
