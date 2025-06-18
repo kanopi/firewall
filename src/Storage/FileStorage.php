@@ -76,31 +76,17 @@ class FileStorage extends InMemoryStorage
     }
 
     /**
-     * Store a value by key and persist to file.
-     *
-     * @param string $key
-     *   Key to store the value under.
-     * @param mixed $value
-     *   Value to store.
-     *
-     * @return bool
-     *   True on success.
+     * {@inheritdoc}
      */
-    public function set(string $key, mixed $value): bool
+    public function set(string $key, mixed $value, int $expire = 0): bool
     {
-        $result = parent::set($key, $value);
+        $result = parent::set($key, $value, $expire);
         $this->persistToFile();
         return $result;
     }
 
     /**
-     * Delete a key and persist the updated data to file.
-     *
-     * @param string $key
-     *   Key to delete.
-     *
-     * @return bool
-     *   True if key was deleted, false otherwise.
+     * {@inheritdoc}
      */
     public function delete(string $key): bool
     {
@@ -113,15 +99,24 @@ class FileStorage extends InMemoryStorage
     }
 
     /**
-     * Clear all keys and persist the empty store to file.
-     *
-     * @return bool
-     *   True on success.
+     * {@inheritdoc}
      */
     public function reset(): bool
     {
         $result = parent::reset();
         $this->persistToFile();
         return $result;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function addToExpire(string $key, int $amount): bool
+    {
+        $return = parent::addToExpire($key, $amount);
+        if ($return) {
+            $this->persistToFile();
+        }
+        return $return;
     }
 }

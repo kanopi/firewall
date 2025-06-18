@@ -126,19 +126,33 @@ trait EvaluateTrait
     }
 
     /**
-     * Parse a simple string rule into a structured array.
+     * Parse a simple string rule into a structured associative array.
      *
-     * Supports the syntax:
-     *   "variable:value"                  (defaults to 'equals')
-     *   "variable@operator:value"
-     *   "!variable:value"                (negated equals)
-     *   "!variable@operator:value"       (negated custom operator)
+     * Supported syntaxes:
+     *   - "variable:value"                         → defaults to 'equals'
+     *   - "variable@operator:value"                → uses the given operator
+     *   - "!variable:value"                        → negated equals
+     *   - "!variable@operator:value"               → negated with operator
+     *   - "variable > value" / "variable <= value" → shorthand numeric comparison
+     *   - (optional) Append "#matches" for array matching behavior:
+     *       - "#any", "#all", "#none", "#some"
+     *         e.g., "tags@contains:eco,green#all"
+     *
+     * Operators supported include: equals, not_equals, contains, starts_with,
+     * ends_with, regex, in, greater_than, less_than, greater_than_or_equal,
+     * less_than_or_equal, etc.
      *
      * @param string $rule
-     *   A simple string rule.
+     *   A string rule in shorthand notation.
      *
-     * @return array
-     *   The normalized rule array
+     * @return array{
+     *     variable: string,
+     *     operator: string,
+     *     value: string|array,
+     *     negate: bool,
+     *     matches?: string
+     * }
+     *   The normalized rule array.
      */
     protected function parseSimpleStringRule(string $rule): array
     {
@@ -150,18 +164,46 @@ trait EvaluateTrait
             $rule = substr($rule, 1);
         }
 
-        // Determine operator
+        $operator = 'equals'; // default
+        $variable = '';
+        $value = null;
+        $matches = null;
+
+        // Extract optional #matches mode from the end (e.g., #any, #all)
+        if (str_contains($rule, '#')) {
+            [$rule, $matches] = explode('#', $rule, 2);
+            $matches = trim(strtolower($matches));
+            if (!in_array($matches, ['any', 'all', 'none', 'some'], true)) {
+                $matches = null; // fallback if invalid
+            }
+        }
+
+        // Operator map for shorthand comparisons
+        $operatorMap = [
+            '>=' => 'greater_than_or_equal',
+            '<=' => 'less_than_or_equal',
+            '>'  => 'greater_than',
+            '<'  => 'less_than',
+        ];
+
+        // Check for explicit @operator syntax
         if (str_contains($rule, '@')) {
             [$variable, $rest] = explode('@', $rule, 2);
             [$operator, $value] = explode(':', $rest, 2);
+        } elseif (preg_match('/^([^><:]+)\s*(>=|<=|>|<)\s*([^><]+)$/', $rule, $matchesMatch)) {
+            // Shorthand comparison like "score>=42"
+            [, $variable, $symbol, $value] = $matchesMatch;
+            $operator = $operatorMap[$symbol];
         } else {
+            // Default fallback to equals
             [$variable, $value] = explode(':', $rule, 2);
             $operator = 'equals';
         }
 
-        // Handle comma-separated values for multi-value operators
-        $multiValueOps = ['in', 'matches_any'];
-        if (in_array($operator, $multiValueOps)) {
+        // Handle multi-value splitting
+        $multiValueOps = ['in', 'matches_any', 'equals', 'contains', 'starts_with', 'ends_with', 'regex'];
+        $value = trim($value);
+        if (str_contains($value, ',') && in_array($operator, $multiValueOps, true)) {
             $value = array_map('trim', explode(',', $value));
         }
 
@@ -170,16 +212,32 @@ trait EvaluateTrait
             'operator' => trim($operator),
             'value' => $value,
             'negate' => $negate,
+            'matches' => $matches,
         ];
     }
 
     /**
-     * Evaluate a structured rule with keys:
-     * - variable: request field to check (e.g., method, host, path, or parameter name)
-     * - operator: comparison operator (equals, starts_with, contains, regex)
-     * - value: value to compare against
-     * - negate: optional boolean to invert result (default false)
-     * - matches_any: optional boolean indicating $value is an array to check if any match
+     * Evaluate a structured rule definition against the request.
+     *
+     * Each rule should be an associative array with the following keys:
+     * - variable: string
+     *     The request field or input to evaluate (e.g., method, host, query param).
+     * - operator: string
+     *     Comparison logic, such as:
+     *       equals, not_equals, contains, starts_with, ends_with, regex, in,
+     *       greater_than, less_than, greater_than_or_equal, less_than_or_equal
+     * - value: string|array
+     *     The value(s) to compare against.
+     * - negate: bool (optional)
+     *     Whether to negate the final result. Defaults to false.
+     * - matches: string (optional)
+     *     If 'value' is an array, defines how to evaluate:
+     *       - "any" → pass if at least one match
+     *       - "all" → pass only if all match
+     *       - "none" → pass if none match
+     *       - "some" → pass if some but not all match
+     * - case_sensitive: bool (optional)
+     *     Whether the comparison should be case-sensitive. Defaults to false.
      *
      * @param Request $request
      *   Symfony HTTP request object.
@@ -187,29 +245,38 @@ trait EvaluateTrait
      *   Structured rule definition.
      *
      * @return bool
-     *   Result of evaluation, negated if specified.
+     *   True if the rule passes; false otherwise (with optional negation applied).
      */
     protected function evaluateStructuredRule(Request $request, array $rule): bool
     {
         $variable = $rule['variable'];
         $operator = $rule['operator'];
         $value = $rule['value'];
-        $negate = !empty($rule['negate']);
-        $matchesAny = !empty($rule['matches_any']);
+        $negate = !empty($rule['negate']) && $rule['negate'];
+        $matches = $rule['matches'] ?? false;
+        $caseSensitive = !empty($rule['case_sensitive']) && $rule['case_sensitive'];
 
         $requestValue = $this->getRequestValue($request, $variable);
 
         $result = false;
 
-        if ($matchesAny && is_array($value)) {
-            foreach ($value as $val) {
-                if ($this->evaluateComparison($requestValue, $operator, $val, false)) {
-                    $result = true;
-                    break;
-                }
-            }
+        if (is_array($value) && in_array($matches, ['any', 'all', 'none', 'some'], true)) {
+            $evaluations = array_map(
+                fn($val) => $this->evaluateComparison($requestValue, $operator, $val, $caseSensitive),
+                $value
+            );
+
+            $total = count($evaluations);
+            $passed = count(array_filter($evaluations));
+
+            $result = match ($matches) {
+                'any'   => $passed > 0,
+                'all'   => $passed === $total,
+                'none'  => $passed === 0,
+                'some'  => $passed > 0 && $passed < $total,
+            };
         } else {
-            $result = $this->evaluateComparison($requestValue, $operator, $value, false);
+            $result = $this->evaluateComparison($requestValue, $operator, $value, $caseSensitive);
         }
 
         return $negate ? !$result : $result;
@@ -241,20 +308,27 @@ trait EvaluateTrait
      */
     protected function evaluateComparison(mixed $requestValue, string $operator, mixed $value, bool $caseSensitive = false): bool
     {
-        if (!$caseSensitive) {
-            if (is_string($value)) {
-                $requestValue = strtolower((string) $requestValue);
-                $value = strtolower($value);
-            } elseif (is_array($value)) {
-                $value = array_map('strtolower', $value);
-            }
+        if (!$caseSensitive && is_string($requestValue)) {
+            $requestValue = strtolower($requestValue);
+        }
+
+        if (!$caseSensitive && is_string($value)) {
+            $value = strtolower($value);
+        } elseif (!$caseSensitive && is_array($value)) {
+            $value = array_map('strtolower', $value);
         }
 
         return match ($operator) {
             'equals' => $requestValue === $value,
             'starts_with' => str_starts_with((string) $requestValue, (string) $value),
+            'ends_with' => str_ends_with((string) $requestValue, (string) $value),
             'contains' => str_contains((string) $requestValue, (string) $value),
-            'regex' => preg_match($value, (string) $requestValue) === 1,
+            'regex' => @preg_match($value, (string) $requestValue) === 1,
+            'in' => is_array($value) && in_array($requestValue, $value, true),
+            'greater_than' => is_numeric($requestValue) && is_numeric($value) && $requestValue > $value,
+            'less_than' => is_numeric($requestValue) && is_numeric($value) && $requestValue < $value,
+            'greater_than_or_equal' => is_numeric($requestValue) && is_numeric($value) && $requestValue >= $value,
+            'less_than_or_equal' => is_numeric($requestValue) && is_numeric($value) && $requestValue <= $value,
             default => false,
         };
     }

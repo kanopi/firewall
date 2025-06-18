@@ -14,11 +14,13 @@ interface StorageInterface
      *   Key value of the storage item.
      * @param mixed $value
      *   Value to set for the key element.
+     * @param int $expire
+     *   Timestamp when the key should be expired.
      *
      * @return bool
      *   True if successful, False if not.
      */
-    public function set(string $key, mixed $value): bool;
+    public function set(string $key, mixed $value, int $expire = 0): bool;
 
     /**
      * Delete the provided key.
@@ -37,7 +39,7 @@ interface StorageInterface
      * @param string $key
      *   Key to search for.
      * @param mixed $default
-     *   If key isn't found what is the default provided.
+     *   If the key isn't found, return the default value.
      *
      * @return mixed
      *   Return the value for the provided key.
@@ -62,4 +64,25 @@ interface StorageInterface
      *   Return TRUE if found, FALSE if not.
      */
     public function exists(string $key): bool;
+
+    /**
+     * Clear out all the expired items.
+     *
+     * @return bool
+     *   Return TRUE if successful, FALSE if issues.
+     */
+    public function clearExpire(): bool;
+
+    /**
+     * Example the expiration time by a specific amount.
+     *
+     * @param string $key
+     *   The key to check for.
+     * @param int $amount
+     *   Amount of time to expand the expiration time for.
+     *
+     * @return bool
+     *   Return TRUE if successful, FALSE if issues.
+     */
+    public function addToExpire(string $key, int $amount): bool;
 }

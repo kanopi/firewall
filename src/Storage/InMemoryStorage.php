@@ -14,34 +14,19 @@ class InMemoryStorage extends AbstractStorageBase
     protected array $store = [];
 
     /**
-     * Store a value by key.
-     *
-     * @param string $key
-     *   Key to store the value under.
-     * @param mixed $value
-     *   Value to store.
-     *
-     * @return bool
-     *   Always returns true.
+     * {@inheritdoc}
      */
-    public function set(string $key, mixed $value): bool
+    public function set(string $key, mixed $value, int $expire = 0): bool
     {
-        if (isset($this->store[$key])) {
-            return false;
-        }
-
-        $this->store[$key] = $value;
+        $this->store[$key] = [
+            "value" => $value,
+            "expire" => $expire > 0 ? time() + $expire : 0,
+        ];
         return true;
     }
 
     /**
-     * Delete a stored key.
-     *
-     * @param string $key
-     *   Key to delete.
-     *
-     * @return bool
-     *   True if key was deleted, false if key didn't exist.
+     * {@inheritdoc}
      */
     public function delete(string $key): bool
     {
@@ -54,26 +39,20 @@ class InMemoryStorage extends AbstractStorageBase
     }
 
     /**
-     * Retrieve a value by key.
-     *
-     * @param string $key
-     *   Key to retrieve.
-     * @param mixed $default
-     *   Default value if key is not found.
-     *
-     * @return mixed
-     *   Value if found, otherwise $default.
+     * {@inheritdoc}
      */
     public function get(string $key, mixed $default = null): mixed
     {
-        return $this->store[$key] ?? $default;
+        $value = $this->store[$key] ?? null;
+        if ($value === null || $value['expire'] < time()) {
+            $this->delete($key);
+            return $default;
+        }
+        return $value['value'];
     }
 
     /**
-     * Clear all stored values.
-     *
-     * @return bool
-     *   Always returns true.
+     * {@inheritdoc}
      */
     public function reset(): bool
     {
@@ -82,16 +61,35 @@ class InMemoryStorage extends AbstractStorageBase
     }
 
     /**
-     * Check if a key exists in storage.
-     *
-     * @param string $key
-     *   Key to check.
-     *
-     * @return bool
-     *   True if key exists, false otherwise.
+     * {@inheritdoc}
      */
     public function exists(string $key): bool
     {
         return array_key_exists($key, $this->store);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function clearExpire(): bool
+    {
+        foreach ($this->store as $key => $value) {
+            if ($value['expire'] < time()) {
+                $this->delete($key);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function addToExpire(string $key, int $amount): bool
+    {
+        if ($this->exists($key) && intval($this->store[$key]['expire']) > 0) {
+            $this->store[$key]['expire'] = intval($this->store[$key]['expire']) + $amount;
+            return true;
+        }
+        return false;
     }
 }

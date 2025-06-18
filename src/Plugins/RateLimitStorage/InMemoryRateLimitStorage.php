@@ -2,8 +2,6 @@
 
 namespace Kanopi\Firewall\Plugins\RateLimitStorage;
 
-use DateTime;
-
 /**
  * In-memory rate limit storage.
  */
@@ -29,8 +27,6 @@ class InMemoryRateLimitStorage extends AbstractRateLimitStorage
         }
 
         // Filter timestamps within range.
-        $count = count(array_filter($this->requests[$key], fn($t): bool => $t >= $start && $t <= $end));
-
-        return $count;
+        return count(array_filter($this->requests[$key], fn($t): bool => $t >= $start && $t <= $end));
     }
 }

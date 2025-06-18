@@ -84,7 +84,7 @@ class RateLimit extends AbstractPluginBase
             return true;
         }
 
-        $this->storage?->recordRequest($key, $now);
+        $this->storage?->recordRequest($key, $now, []);
         return false;
     }
 
@@ -137,5 +137,13 @@ class RateLimit extends AbstractPluginBase
         $regex = str_replace('\*', '.*', $escaped);
 
         return '/^' . $regex . '$/';
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getStatusCode(): int
+    {
+        return 429;
     }
 }
