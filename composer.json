@@ -26,6 +26,7 @@
     "require": {
         "php": ">=8.2",
         "amphp/dns": "^2.4",
+        "doctrine/dbal": "^4.2",
         "geoip2/geoip2": "^3.2",
         "guzzlehttp/guzzle": "^7.9",
         "matomo/device-detector": "^6.4",
