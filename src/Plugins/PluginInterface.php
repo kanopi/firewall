@@ -11,7 +11,6 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
-use Kanopi\Firewall\Logging\LoggableInterface;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
