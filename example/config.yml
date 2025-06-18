@@ -4,9 +4,6 @@ REDIS_CONNECTION: &REDIS_CONNECTION
     host: redis
 
 storage:
-#  type: Kanopi\Firewall\Storage\FileStorage
-#  config:
-#    file: /tmp/firewall.data
   type: Kanopi\Firewall\Storage\DatabaseStorage
   config:
     connection:
@@ -16,14 +13,17 @@ block:
   Kanopi\Firewall\Plugins\IpAddress:
     priority: -100
     enable: true
-    config:
-      - ::1
-      #- 108.195.124.110
+    metadata:
+      config:
+        - "config.ip.yml"
+    config: ~
+
   Kanopi\Firewall\Plugins\Url:
     priority: -10
     enable: true
     config:
       - 'method:GET'
+
   Kanopi\Firewall\Plugins\RateLimit:
     enable: true
     metadata:
@@ -31,18 +31,18 @@ block:
       default_sample: 20
       default_expiration_time: 300
       storage:
-        type: Kanopi\Firewall\Plugins\RateLimitStorage\FileRateLimitStorage
+        #        type: Kanopi\Firewall\Plugins\RateLimitStorage\FileRateLimitStorage
+        #        config:
+        #          file: /tmp/firewall.rate.data
+
+        #        type: Kanopi\Firewall\Plugins\RateLimitStorage\DatabaseRateLimitStorage
+        #        config:
+        #          connection:
+        #            dsn: *DB_DSN
+
+        type: Kanopi\Firewall\Plugins\RateLimitStorage\RedisRateLimitStorage
         config:
-          file: /tmp/firewall.rate.data
-
-#        type: Kanopi\Firewall\Plugins\RateLimitStorage\DatabaseRateLimitStorage
-#        config:
-#          connection:
-#            dsn: *DB_DSN
-
-#        type: Kanopi\Firewall\Plugins\RateLimitStorage\RedisRateLimitStorage
-#        config:
-#          <<: *REDIS_CONNECTION
+          <<: *REDIS_CONNECTION
 
     config: ~
 
