@@ -45,14 +45,12 @@ trait DatabaseTrait
     protected function createTable(): void
     {
         /** @phpstan-ignore-next-line */
-        if (method_exists($this, 'getStorageTable')) {
-            if (!$this->schemaManager->tableExists($this->config['storage_table'])) {
-                /** @var Table $table */
-                $table = $this->getStorageTable();
-                try {
-                    $this->schemaManager->createTable($table);
-                } catch (\Exception) {
-                }
+        if (method_exists($this, 'getStorageTable') && !$this->schemaManager->tableExists($this->config['storage_table'])) {
+            /** @var Table $table */
+            $table = $this->getStorageTable();
+            try {
+                $this->schemaManager->createTable($table);
+            } catch (\Exception) {
             }
         }
     }

@@ -93,7 +93,7 @@ class IpAddress extends AbstractPluginBase
         }
 
         $bytes = (int) floor((int) $prefixLength / 8);          // Fully matched bytes
-        $bits  = (int) ((int) $prefixLength % 8);                // Remaining bits to match
+        $bits  = (int) $prefixLength % 8;                // Remaining bits to match
 
         // Compare full bytes
         if (strncmp($ipPacked, $subnetPacked, $bytes) !== 0) {
@@ -127,7 +127,7 @@ class IpAddress extends AbstractPluginBase
         [$startIp, $endIp] = explode('-', $range);
         $startIp = trim($startIp);
         $endIp = trim($endIp);
-        if (empty($startIp) || empty($endIp)) {
+        if ($startIp === '' || $startIp === '0' || ($endIp === '' || $endIp === '0')) {
             return false;
         }
 

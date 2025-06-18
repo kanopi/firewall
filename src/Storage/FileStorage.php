@@ -117,6 +117,7 @@ class FileStorage extends InMemoryStorage
         if ($return) {
             $this->persistToFile();
         }
+
         return $return;
     }
 }

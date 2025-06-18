@@ -55,7 +55,7 @@ class DatabaseStorage extends AbstractStorageBase
     {
         try {
             $value['request'] = @serialize($value['request']);
-            $value['blocked'] = strtotime($value['blocked']);
+            $value['blocked'] = strtotime((string) $value['blocked']);
             $data = array_merge(
                 is_array($value) ? $value : ['value' => $value],
                 [
@@ -77,6 +77,7 @@ class DatabaseStorage extends AbstractStorageBase
         } catch (\Exception) {
             return false;
         }
+
         return true;
     }
 
@@ -92,6 +93,7 @@ class DatabaseStorage extends AbstractStorageBase
         } catch (\Exception) {
             return false;
         }
+
         return true;
     }
 
@@ -112,6 +114,7 @@ class DatabaseStorage extends AbstractStorageBase
             }
         } catch (\Exception) {
         }
+
         return $default;
     }
 
@@ -125,6 +128,7 @@ class DatabaseStorage extends AbstractStorageBase
             return true;
         } catch (\Exception) {
         }
+
         return false;
     }
 
@@ -143,6 +147,7 @@ class DatabaseStorage extends AbstractStorageBase
         } catch (\Exception) {
             return false;
         }
+
         return $count->rowCount() > 0;
     }
 
@@ -160,6 +165,7 @@ class DatabaseStorage extends AbstractStorageBase
         } catch (\Exception) {
             return false;
         }
+
         return true;
     }
 
@@ -181,6 +187,7 @@ class DatabaseStorage extends AbstractStorageBase
         } catch (\Exception) {
             return false;
         }
+
         return true;
     }
 }

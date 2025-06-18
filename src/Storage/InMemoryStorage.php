@@ -48,6 +48,7 @@ class InMemoryStorage extends AbstractStorageBase
             $this->delete($key);
             return $default;
         }
+
         return $value['value'];
     }
 
@@ -78,6 +79,7 @@ class InMemoryStorage extends AbstractStorageBase
                 $this->delete($key);
             }
         }
+
         return true;
     }
 
@@ -90,6 +92,7 @@ class InMemoryStorage extends AbstractStorageBase
             $this->store[$key]['expire'] = intval($this->store[$key]['expire']) + $amount;
             return true;
         }
+
         return false;
     }
 }
