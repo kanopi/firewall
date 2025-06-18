@@ -16,11 +16,8 @@ use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
-use Kanopi\Firewall\Utility\NestedArray;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\PropertyAccess\PropertyAccess;
-use Symfony\Component\Yaml\Yaml;
 
 /**
  * Firewall class that creates and evaluates requests.
@@ -69,55 +66,20 @@ final readonly class Firewall
     public static function create(array $configs = [], array $overrides = []): self
     {
         // Load default config first
-
-        $default = Yaml::parse((string)@file_get_contents(__DIR__ . '/../config/config.yml'));
-
-        $merged = $default;
-
-        if (!is_array($merged)) {
-            $merged = [];
-        }
-
-        /**
-         * @param array<int, string|array<string, mixed>|null> $configs
-         */
-        foreach ($configs as $config) {
-            if (is_string($config)) {
-                if (!file_exists($config)) {
-                    throw new \Exception('Config file does not exist: ' . $config);
-                }
-
-                $config = (array)Yaml::parse((string)@file_get_contents($config));
-            } elseif (!is_array($config)) {
-                $config = [];
-            }
-
-            // Merge current config into merged config
-            /** @var array<string, mixed> $config */
-            $merged = NestedArray::mergeDeepArray([$merged, $config]);
-        }
-
-        $propertyAccessor = PropertyAccess::createPropertyAccessorBuilder()
-            ->getPropertyAccessor();
-
-        foreach ($overrides as $key => $value) {
-            try {
-                $propertyAccessor->setValue($merged, $key, $value);
-            } catch (\Exception) {
-            }
-        }
+        $configs = Config::merge(__DIR__ . '/../config/config.yml', $configs);
+        $config = Config::load($configs, $overrides);
 
         // Set the default values.
-        $merged['logger'] = isset($merged['logger']) && is_array($merged['logger']) ? array_filter($merged['logger']) : [];
-        $merged['storage'] = isset($merged['storage']) && is_array($merged['storage']) ? array_filter($merged['storage']) : [];
-        $merged['block'] = isset($merged['block']) && is_array($merged['block']) ? array_filter($merged['block']) : [];
-        $merged['bypass'] = isset($merged['bypass']) && is_array($merged['bypass']) ? array_filter($merged['bypass']) : [];
+        $config['logger'] = isset($config['logger']) && is_array($config['logger']) ? array_filter($config['logger']) : [];
+        $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
+        $config['block'] = isset($config['block']) && is_array($config['block']) ? array_filter($config['block']) : [];
+        $config['bypass'] = isset($config['bypass']) && is_array($config['bypass']) ? array_filter($config['bypass']) : [];
 
-        LoggingFactory::setLogger(LoggingFactory::create($merged['logger']));
+        LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
         return new self(
-            StorageFactory::create($merged['storage']),
-            PluginManager::create($merged['block']),
-            PluginManager::create($merged['bypass'])
+            StorageFactory::create($config['storage']),
+            PluginManager::create($config['block']),
+            PluginManager::create($config['bypass'])
         );
     }
 

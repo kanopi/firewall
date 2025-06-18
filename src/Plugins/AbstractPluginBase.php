@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\Config;
 use Kanopi\Firewall\Logging\LoggingTrait;
 
 /**
@@ -30,6 +31,15 @@ abstract class AbstractPluginBase implements PluginInterface
      */
     public function __construct(protected array $metadata = [], protected array $config = [])
     {
+        // Load the extra config files for each plugin.
+        if (isset($metadata['config'])) {
+            $files = $metadata['config'];
+            if (!is_array($files)) {
+                $files = [$files];
+            }
+            $files[] = $config;
+            $this->config = Config::load($files);
+        }
     }
 
     /**
