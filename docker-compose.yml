@@ -16,6 +16,7 @@ services:
       - db
     volumes:
       - .:/var/www/html
+      - ./.docker/php/xdebug.ini:/usr/local/etc/php/conf.d/xdebug.ini
 
   db:
     image: mariadb:10.6
@@ -27,3 +28,11 @@ services:
       MYSQL_DATABASE: default
       MYSQL_USER: user
       MYSQL_PASSWORD: user
+
+  redis:
+    image: redis:6
+
+#  vector:
+#    image: timberio/vector:latest-alpine
+#    volumes:
+#      - ./.docker/vector/vector.toml:/etc/vector/vector.toml
