@@ -46,6 +46,6 @@ class FileRateLimitStorage extends InMemoryRateLimitStorage
      */
     protected function saveToFile(): void
     {
-        file_put_contents($this->filePath, json_encode($this->requests, JSON_PRETTY_PRINT));
+        file_put_contents($this->filePath, json_encode($this->requests));
     }
 }

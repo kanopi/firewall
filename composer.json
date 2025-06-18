@@ -26,6 +26,7 @@
     "require": {
         "php": ">=8.2",
         "amphp/dns": "^2.4",
+        "doctrine/dbal": "^4.2",
         "geoip2/geoip2": "^3.2",
         "guzzlehttp/guzzle": "^7.9",
         "matomo/device-detector": "^6.4",
@@ -48,7 +49,15 @@
     "scripts": {
         "server:start": [
             "Composer\\Config::disableProcessTimeout",
-            "cd example; php -S localhost:8888 .ht.router.php"
+            "docker compose up -d --build"
+        ],
+        "server:stop": [
+            "Composer\\Config::disableProcessTimeout",
+            "docker compose stop"
+        ],
+        "server:destroy": [
+            "Composer\\Config::disableProcessTimeout",
+            "docker compose down --volumes"
         ],
         "check:code:circleci": "vendor/bin/phpcs --standard=phpcs_ruleset.xml --report=checkstyle --report-file=phpcs-report.xml src",
         "check:code": "vendor/bin/phpcs --standard=phpcs_ruleset.xml src",

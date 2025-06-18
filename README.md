@@ -1,257 +1,425 @@
 # Simple Firewall
 
-The following library allows for Requests to be evaluated and if a set of predefined configurations have been matched
-the request and the IP address is blocked.
+**Simple Firewall** is an extensible request-evaluation library for PHP-based systems. It analyzes HTTP requests and applies rules to either allow or block access based on IPs, geolocation, user agents, URLs, ASN, and rate limits. It's designed for use with frameworks like Drupal, WordPress, or standalone PHP applications.
 
-## Setup
+---
 
-When using the following library add it within the `settings.php` (Drupal) or the `wp-config.php` (WordPress).
+## 🛠️ Installation & Setup
 
-### Configuration
+### Add to Your Application
+
+Place the following in your application's entry point:
 
 ```php
-use Kanopi\Firewall\Storage\FileStorage;
-
 if (class_exists('\Kanopi\Firewall\Firewall')) {
     \Kanopi\Firewall\Firewall::create([ __DIR__ . '/config.yml' ])->evaluate();
 }
 ```
 
-A basic configuration file has been included as part of the project in [config/config.default.yml](config/config.default.yml).
+This initializes the firewall using your YAML configuration.
 
-### Configuration
+---
 
-Configuring the firewall can either reference the location of the configuration file, or an array of configuration settings.
+## ⚙️ Configuration Overview
 
-There are four configuration elements.
+The firewall accepts:
 
-| Key     | Description                                                                                   |
-|---------|-----------------------------------------------------------------------------------------------|
-| storage | Location where the automatically blocked IPs are located.                                     |
-| bypass  | List of plugins enabled that should be allowed for bypass or added to the allowed list.       |
-| block   | List of plugins enabled that should be evaluated to check if a request to shouold be blocked. |
-| logger  | List of logging elements.                                                                     |
+- A **YAML file** path.
+- An **array of configuration data**.
 
-#### Storage
+It includes four core sections:
 
-Storage plugins are how data is stored within the system. This is used to store the IP addresses that are marked for
-blocking.
+| Key       | Purpose                                                                  |
+|------------|--------------------------------------------------------------------------|
+| `storage`  | Defines where blocked IP addresses are stored.                           |
+| `bypass`   | Plugins to allow trusted traffic.                                        |
+| `block`    | Plugins to deny harmful or suspicious traffic.                           |
+| `logger`   | Log handlers using Monolog.                                              |
 
-Available Options:
+---
 
-| Class                                    | Description                   |
-|------------------------------------------|-------------------------------|
-| \Kanopi\Firewall\Storage\InMemoryStorage | Stores the items in memory    |
-| \Kanopi\Firewall\Storage\FileStorage     | Stores the contents in a file |
+## 🧱 Storage Configuration
 
-#### Plugins
+Storage defines how blocked IPs are persisted.
 
-Plugins are used to evaluate a set of requests. They can either be used within the `bypass` or the `block` section to
-allow or deny a request.
+### Available Storage Classes
 
-Available Options:
+| Class                                     | Description                     |
+|-------------------------------------------|---------------------------------|
+| `\Kanopi\Firewall\Storage\InMemoryStorage` | Non-persistent, resets per request |
+| `\Kanopi\Firewall\Storage\FileStorage`     | Saves IPs to disk              |
+| `\Kanopi\Firewall\Storage\DatabaseStorage` | Persists data in SQL databases |
 
-| Class                                | Description                                                                     |
-|--------------------------------------|---------------------------------------------------------------------------------|
-| \Kanopi\Firewall\Plugins\IpAddress   | Evaluate specific IP addresses and/or CIDR blocks                               |
-| \Kanopi\Firewall\Plugins\GeoLocation | Evaluate Geographic elements based on the IP address and the MaxMind GeoLite DB |
-| \Kanopi\Firewall\Plugins\Url         | Evaluate requests based on Host, URL, Method, and Parameters                    |
-| \Kanopi\Firewall\Plugins\UserAgent   | Evaluate the requests User Agent                                                |
-| \Kanopi\Firewall\Plugins\Asn         | Review the requests ASN (Automous System Network)                               |
-| \Kanopi\Firewall\Plugins\RateLimit   | Rate limit the request to stop bot traffic from abusing the site                |
-
-**\Kanopi\Firewall\Plugins\IpAddress**
-
-Configuration for the following can either be a single IP or a CIDR block.
-
-To set the list of IP addresses
+### File Example
 
 ```yaml
-  Kanopi\Firewall\Plugins\IpAddress:
-    config:
-      - 127.0.0.1
-      - ::1
-      - 10.0.0.0/24
-      - 2001:0db8:85a3::/64
+storage:
+  type: \Kanopi\Firewall\Storage\FileStorage
+  config:
+    file: /tmp/firewall.data
 ```
 
-**\Kanopi\Firewall\Plugins\GeoLocation**
-
-Configuration for the following uses the [MaxMind GeoLite database](https://dev.maxmind.com/geoip/docs/databases/city-and-country/#binary-databases).
-
-To reference the location of the database set the metadata 
+### Database Example
 
 ```yaml
-  Kanopi\Firewall\Plugins\GeoLocation:
-    metadata:
-      reader:
-        db: /tmp/GeoLite2-City.mmdb
+storage:
+  type: \Kanopi\Firewall\Storage\DatabaseStorage
+  config:
+    storage-table: firewall-storage
+    connection:
+      dsn: "pdo-mysql://user:user@127.0.0.1:33066/default?serverVersion=10.6"
 ```
 
-Once referenced set the configuration settings.
+---
+
+## 🔌 Plugin Architecture (bypass / block)
+
+Plugins are modular evaluators. They can be enabled for:
+
+- `bypass`: allow specific requests.
+- `block`: reject specific requests.
+
+### Common Plugin Properties
+
+Each plugin accepts:
 
 ```yaml
-  Kanopi\Firewall\Plugins\GeoLocation:
-    config:
-      - 'country:CN'
+PluginNamespace:
+  priority: 0
+  enable: true
+  metadata: { ... }
+  config: { ... }
 ```
 
-Available options:
+- `priority`: execution order (-100 is higher priority than 100).
+- `enable`: whether the plugin is active.
 
-- country
-- continent
-- city
-- location
-- postal
+### Supported Plugins
 
-For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
+| Plugin | Description |
+|--------|-------------|
+| `IpAddress` | Match IPv4/IPv6, CIDR, and IP ranges |
+| `GeoLocation` | Match by country, continent, city (via MaxMind) |
+| `Url` | Match method, path, host, query, post vars |
+| `UserAgent` | Analyze client/bot/device info |
+| `Asn` | Match ASN number or org |
+| `RateLimit` | Limit traffic rate per path or globally |
 
-**\Kanopi\Firewall\Plugins\Url**
+---
 
-Available options:
+## ⏱️ Rate Limit Plugin
 
-- method
-- host
-- path
-- query
+Use `RateLimit` to restrict traffic bursts or bot attacks.
 
-For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
-
-**\Kanopi\Firewall\Plugins\UserAgent**
-
-Available options:
-
-- bot
-- device
-- client
-- os
-- brand
-- model
-
-For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
-
-**\Kanopi\Firewall\Plugins\Asn**
-
-Available options:
-
-- asn
-- asn_org
-
-For more details on how to form a conditional see the [Forming Conditional Statements](#forming-conditional-statements) section.
-
-**\Kanopi\Firewall\Plugins\RateLimit**
-
-Changing the default rate and sample size can be done by setting the `default_rate` and `default_sample` metadata variables.
+### Metadata Options
 
 ```yaml
-  Kanopi\Firewall\Plugins\RateLimit:
-    metadata:
-      default_rate: 500
-      default_sample: 10
+metadata:
+  default_rate: 10
+  default_sample: 10
+  default_expiration_time: 300
 ```
 
-`default_rate` refers to the number of requests that are made.
-`default_sample` refers to the sample size to count for the requsts.
+### Storage Backends
 
-These variables are globally used.
+| Class | Description |
+|-------|-------------|
+| `InMemoryRateLimitStorage` | Non-persistent memory storage |
+| `RedisRateLimitStorage` | Uses Redis |
+| `FileRateLimitStorage` | File-based tracking |
+| `DatabaseRateLimitStorage` | SQL-based tracking |
 
-In the event there is a need to configure rate limiting per URL these can be set as part of the configuration.
+### Example
 
 ```yaml
-  Kanopi\Firewall\Plugins\RateLimit:
-    config:
-      - path: '/example/*'
-      - path: '/example'
-        rate: 100
-        sample: 10
+\Kanopi\Firewall\Plugins\RateLimit:
+  enable: true
+  metadata:
+    default_rate: 5
+    storage:
+      type: \Kanopi\Firewall\Plugins\RateLimitStorage\RedisRateLimitStorage
+      config:
+        redis:
+          host: 127.0.0.1
+          port: 6379
+          auth: ['username', 'password']
+  config:
+    - path: "/"
+      rate: 1
+      sample: 10
 ```
 
-##### Forming Conditional Statements
+---
 
-**Simple**
+## 🧠 Conditional Formatting
 
-Simple conditionals refer to making it a single string.
+Detailed logic to evaluate request values. Three formats:
+
+### Simple
 
 ```yaml
-  - "variable:value"                 # (defaults to 'equals')
-  - "variable@operator:value"
-  - "!variable:value"                # (negated equals)
-  - "!variable@operator:value"       # (negated custom operator)
+- "method:POST"
+- "host@starts_with:api."
+- "!path@contains:/admin"
+- "rate > 100"
 ```
 
-**Expanded**
-
-Expanded conditionals are formatted within an array.
+### Complex
 
 ```yaml
--
-  variable: method. # Variable name to reference based on the plugin.
-  operator: equal   # Possible values [equals, starts_with, contains, regex, in, matches_any]
-  value: GET        # Values to check against. If using the operator in or matches_any use an array.
-  negate: true      # Set to true if should be negate or remove if not.
--
-  
+- variable: method
+  operator: in
+  value: [GET, POST]
+  negate: false
+  case_sensitive: false
 ```
 
-##### Custom Plugins
+### Grouped
 
-Creating custom plugins are possible by implementing the `\Kanopi\Firewall\Plugins\PluginInterface` interface.
+```yaml
+- type: AND
+  rules:
+    - variable: host
+      operator: regex
+      value: ".*\.example\.com"
+    - "method:POST"
+```
 
-Once created referencing the full namespace can allow for it to be used.
+---
 
-#### Logger
+## 📝 Logger
 
-Loggers are used as a method for outputting logging data. Classes are provided from the [Monolog Library](https://seldaek.github.io/monolog/).
+Uses [Monolog](https://seldaek.github.io/monolog/). Logs request actions, blocked entries, etc.
 
-Available Options:
+```yaml
+logger:
+  -
+    class: Monolog\Handler\StreamHandler
+    args:
+      - /tmp/firewall.log
+      - Monolog\Level::Debug
+    formatter:
+      class: Monolog\Formatter\LineFormatter
+      args:
+        - "[%datetime%] [%context.plugin%] %message% %context%\n"
+        - "Y-m-d\TH:i:sP"
+```
 
-| Class                          | Description          |
-|--------------------------------|----------------------|
-| \Monolog\Handler\StreamHandler | Write logs to a file |
+---
 
-### Override Values
+## 🔄 Overrides
 
-There are times where the underlying environment is dynamic and requires variables to change based on the hosting.
-In that instance the override variables are the second parameter to be passed in. The syntax follows the [Symfony Property Access](https://symfony.com/doc/current/components/property_access.html#writing-to-arrays).
-
-An example of that is the following:
+Dynamic environments (Docker, multi-site, etc.) can override YAML with array-based syntax.
 
 ```php
 [
-    '[logger][0][args][0]' => __DIR__ . '/data/firewall.log',
-    '[block][Kanopi\Firewall\Plugins\GeoLocation][metadata][reader][db]' => __DIR__ . '/GeoLite2-City.mmdb',
-    '[block][Kanopi\Firewall\Plugins\Asn][metadata][reader][db]' => __DIR__ . '/GeoLite2-ASN.mmdb',
+  '[logger][0][args][0]' => __DIR__ . '/data/firewall.log',
+  '[block][\Kanopi\Firewall\Plugins\GeoLocation][metadata][reader][db]' => __DIR__ . '/GeoLite2-City.mmdb',
 ]
 ```
 
-### Usage
+Uses Symfony's PropertyAccess syntax.
 
-Setting up the library for use requires minimal setup process.  
+---
 
-#### Drupal
+## 🌐 Platform Integration
 
-When adding to Drupal 10+ add the following to the `settings.php` file towards the top of the file before the following
-snippet.
+### Drupal
+
+In `settings.php`, before `$settings['container_yamls'][]`:
+
+```php
+\Kanopi\Firewall\Firewall::create([ __DIR__ . '/config.yml' ])->evaluate();
+```
+
+### WordPress
+
+In `wp-config.php`, early in the file:
+
+```php
+if ( class_exists('\Kanopi\Firewall\Firewall') ) {
+    \Kanopi\Firewall\Firewall::create([ __DIR__ . '/firewall/config.yml' ])->evaluate();
+}
+```
+
+### Standalone PHP
+
+```php
+require_once __DIR__ . '/vendor/autoload.php';
+\Kanopi\Firewall\Firewall::create([ __DIR__ . '/config.yml' ])->evaluate();
+```
+
+---
+
+## 🧪 Testing
+
+_TBD_: PHPUnit-based validation and plugin mocking coming soon.
+
+
+---
+
+## 🧰 Extended Code Samples
+
+### Initialize with Array Configuration
+
+```php
+use \Kanopi\Firewall\Firewall;
+
+$config = [
+  'storage' => [
+    'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
+  ],
+  'block' => [
+    'Kanopi\Firewall\Plugins\IpAddress' => [
+      'enable' => true,
+      'priority' => 0,
+      'config' => ['127.0.0.1']
+    ]
+  ]
+];
+
+Firewall::create([$config])->evaluate();
+```
+
+### Custom Plugin Implementation
+
+```php
+namespace Custom\Firewall\Plugins;
+
+use Kanopi\Firewall\Plugins\PluginInterface;
+
+class MyCustomPlugin implements PluginInterface {
+    public function process($request, $context): bool {
+        // Custom logic
+        return false;
+    }
+}
+```
+
+Add it in config:
+
+```yaml
+block:
+  Custom\Firewall\Plugins\MyCustomPlugin:
+    enable: true
+    config: []
+```
+
+---
+
+## 🗺️ Architecture Diagram
+
+```text
++--------------------+
+|  HTTP Request      |
++--------------------+
+          |
+          v
++------------------------+
+| Firewall::evaluate()   |
++------------------------+
+          |
+          v
++---------------------------+
+| Apply Bypass Plugins      | --(if matched)--> Allow Request
++---------------------------+
+          |
+          v
++---------------------------+
+| Apply Block Plugins       | --(if matched)--> Block Request
++---------------------------+
+          |
+          v
++---------------------------+
+| Log (via Monolog)         |
++---------------------------+
+          |
+          v
++------------------------+
+| Return Request Outcome |
++------------------------+
+```
+
+---
+
+## ✅ Testing Guide (Coming Soon)
+
+In future releases:
+
+- PHPUnit test suite for plugin behavior
+- Mock request objects
+- Integration test using sample configuration
+- CI-ready test harness
+
+Example test outline:
+
+```php
+public function testFirewallBlocksIp() {
+    $firewall = Firewall::create([ __DIR__ . '/fixtures/block_ip_config.yml' ]);
+    $request = new MockRequest('127.0.0.1');
+
+    $this->assertTrue($firewall->evaluate($request));
+}
+```
+
+---
+
+## 📎 Related Resources
+
+- [Symfony PropertyAccess](https://symfony.com/doc/current/components/property_access.html)
+- [MaxMind GeoIP2 PHP](https://github.com/maxmind/GeoIP2-php)
+- [Monolog Logging](https://seldaek.github.io/monolog/)
+
+
+---
+
+## 🧱 Custom Plugin Scaffolding
+
+To build your own plugin, implement the `\Kanopi\Firewall\Plugins\PluginInterface`.
+
+### Example Custom Plugin
 
 ```php
 <?php
 
-/** Insert snippet here */
+namespace Custom\Firewall\Plugins;
 
-/**
- * Load services definition file.
- */
-$settings['container_yamls'][] = __DIR__ . '/services.yml';
+use Kanopi\Firewall\Plugins\PluginInterface;
+use Symfony\Component\HttpFoundation\Request;
+use Kanopi\Firewall\Exception\BlockAccessException;
+
+class MyCustomPlugin implements PluginInterface {
+    public function getName(): string {
+        return 'MyCustomPlugin';
+    }
+
+    public function getDescription(): string {
+        return 'Blocks all requests from a hardcoded header value.';
+    }
+
+    public function evaluate(Request $request): bool {
+        if ($request->headers->get('X-Block-Me') === 'true') {
+            throw new BlockAccessException('Blocked by MyCustomPlugin.');
+        }
+
+        return true;
+    }
+
+    public function getStatusCode(): int {
+        return 403;
+    }
+
+    public function getExpirationTime(): int {
+        return 3600;
+    }
+}
 ```
 
-#### WordPress
+Once created, register it in your `config.yml`:
 
-DESCRIBE HOW TO ADD TO WORDPRESS
-
-#### Other
-
-DESCRIBE HOW TO ADD TO OTHER PROJECTS
-
-## Testing
-
-TBD
+```yaml
+block:
+  \Custom\Firewall\Plugins\MyCustomPlugin:
+    enable: true
+    config: []
+```

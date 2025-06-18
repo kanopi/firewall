@@ -3,7 +3,6 @@
 namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Logging\LoggingTrait;
-use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Abstract Plugin used for creating a plugin.
@@ -27,15 +26,16 @@ abstract class AbstractPluginBase implements PluginInterface
     /**
      * {@inheritdoc}
      */
-    abstract public function getName(): string;
+    public function getStatusCode(): int
+    {
+        return intval($this->metadata['status_code'] ?? 400);
+    }
 
     /**
      * {@inheritdoc}
      */
-    abstract public function getDescription(): string;
-
-    /**
-     * {@inheritdoc}
-     */
-    abstract public function evaluate(Request $request): bool;
+    public function getExpirationTime(): int
+    {
+        return intval($this->metadata['default_expiration_time'] ?? 0);
+    }
 }

@@ -138,4 +138,12 @@ class RateLimit extends AbstractPluginBase
 
         return '/^' . $regex . '$/';
     }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getStatusCode(): int
+    {
+        return 429;
+    }
 }

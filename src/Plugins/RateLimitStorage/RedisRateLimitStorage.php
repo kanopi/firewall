@@ -33,7 +33,7 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
         );
 
         if (!empty($config['redis']['auth'])) {
-            $this->redis->auth(strval($config['redis']['auth']));
+            $this->redis->auth($config['redis']['auth']);
         }
 
         $this->redisPrefix = strval($config['redis']['prefix'] ?? 'ratelimit:');

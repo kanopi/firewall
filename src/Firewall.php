@@ -32,6 +32,7 @@ final readonly class Firewall
      */
     protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager)
     {
+        $this->storage->clearExpire();
     }
 
     /**
@@ -43,7 +44,7 @@ final readonly class Firewall
      * - Null, which will be treated as an empty configuration.
      *
      * All configurations are merged in the order they are passed, layered on top of
-     * the default configuration loaded from `config.default.yml`.
+     * the default configuration loaded from `config.yml`.
      *
      * @param array<int, string|array<string, mixed>|null> $configs
      *   Zero or more configurations to merge.
@@ -62,7 +63,7 @@ final readonly class Firewall
     {
         // Load default config first
 
-        $default = Yaml::parse((string)@file_get_contents(__DIR__ . '/../config/config.default.yml'));
+        $default = Yaml::parse((string)@file_get_contents(__DIR__ . '/../config/config.yml'));
 
         $merged = $default;
 
@@ -100,10 +101,10 @@ final readonly class Firewall
         }
 
         // Set the default values.
-        $merged['logger'] = isset($merged['logger']) && is_array($merged['logger']) ? $merged['logger'] : [];
-        $merged['storage'] = isset($merged['storage']) && is_array($merged['storage']) ? $merged['storage'] : [];
-        $merged['block'] = isset($merged['block']) && is_array($merged['block']) ? $merged['block'] : [];
-        $merged['bypass'] = isset($merged['bypass']) && is_array($merged['bypass']) ? $merged['bypass'] : [];
+        $merged['logger'] = isset($merged['logger']) && is_array($merged['logger']) ? array_filter($merged['logger']) : [];
+        $merged['storage'] = isset($merged['storage']) && is_array($merged['storage']) ? array_filter($merged['storage']) : [];
+        $merged['block'] = isset($merged['block']) && is_array($merged['block']) ? array_filter($merged['block']) : [];
+        $merged['bypass'] = isset($merged['bypass']) && is_array($merged['bypass']) ? array_filter($merged['bypass']) : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($merged['logger']));
         return new self(
@@ -140,12 +141,9 @@ final readonly class Firewall
         }
 
         if (($blocked = $this->isBlocked($request->getClientIp() ?? '')) !== false) {
-            $plugin = '';
-            if (is_array($blocked) && array_key_exists('plugin', $blocked)) {
-                $plugin = $blocked['plugin'];
-            }
-
-            $this->sendBlockingResponse($request, $plugin);
+            $request->attributes->set('x-request-id', $blocked['event_id'] ?? '');
+            $this->storage->addToExpire($request->getClientIp(), 300);
+            $this->sendBlockingResponse($request);
         }
 
         $this->blockingPluginManager->evaluate($request, true, function ($block, $request, $plugin): void {
@@ -153,8 +151,8 @@ final readonly class Firewall
             /** @var Request $request */
             /** @var PluginInterface $plugin */
             if ($block) {
-                $this->blockIp($request, $plugin->getName());
-                $this->sendBlockingResponse($request, $plugin->getName());
+                $this->blockIp($request, $plugin);
+                $this->sendBlockingResponse($request, $plugin->getStatusCode());
             }
         });
 
@@ -194,22 +192,23 @@ final readonly class Firewall
      *
      * @param Request $request
      *   Request information.
-     * @param string $plugin
+     * @param PluginInterface $plugin
      *   Plugin that is blocking the IP Address.
      *
      * @return bool
      *   Return TRUE if successful, FALSE if issue.
      */
-    private function blockIp(Request $request, string $plugin): bool
+    private function blockIp(Request $request, PluginInterface $plugin): bool
     {
         return $this->storage->set(
             $request->getClientIp(),
             [
-                'plugin' => $plugin,
+                'plugin' => $plugin->getName(),
                 'event_id' => $request->attributes->get('x-request-id'),
                 'blocked' => date('c'),
                 'request' => $this->serializeRequest($request),
-            ]
+            ],
+            $plugin->getExpirationTime()
         );
     }
 
@@ -233,8 +232,9 @@ final readonly class Firewall
             'headers' => $request->headers->all(),
             'cookies' => $request->cookies->all(),
             'files' => $this->formatUploadedFiles($request->files->all()),
-            'server' => $request->server->all(),
-            'content' => $request->getContent(),
+            // @todo evaluate as possible debug parameters.
+            // 'server' => $request->server->all(),
+            // 'content' => $request->getContent(),
         ];
     }
 
@@ -276,12 +276,12 @@ final readonly class Firewall
      *
      * @param Request $request
      *   Request to evaluate.
-     * @param string $plugin
-     *   Plugin name that is doing the blocking.
+     * @param int $statusCode
+     *   Status code to return for the request.
      */
-    private function sendBlockingResponse(Request $request, string $plugin): never
+    private function sendBlockingResponse(Request $request, int $statusCode = 400): never
     {
-        http_response_code(406);
-        exit(sprintf('%s %s %s', $request->attributes->get('x-request-id'), 'Banned', 'by ' . $plugin));
+        http_response_code($statusCode);
+        exit(sprintf('%s %s', $request->attributes->get('x-request-id'), 'Request Banned'));
     }
 }

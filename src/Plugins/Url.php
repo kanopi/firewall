@@ -56,7 +56,15 @@ class Url extends AbstractPluginBase
      */
     protected function getRequestValue(Request $request, string $variable): bool|float|int|string|null
     {
-        switch (strtolower($variable)) {
+        // @todo add in additional variables like headers, cookies, etc.
+        $segments = explode('.', trim($variable));
+
+        /** @phpstan-ignore-next-line  */
+        if ($segments === []) {
+            return null;
+        }
+
+        switch (strtolower($segments[0])) {
             case 'method':
                 return $request->getMethod();
 
@@ -66,16 +74,41 @@ class Url extends AbstractPluginBase
             case 'path':
                 return $request->getPathInfo();
 
+            case 'query':
+                $data = $request->query->all();
+                break;
+
+            case 'scheme':
+                return $request->getScheme();
+
+            case 'port':
+                return $request->getPort();
+
+            case 'post':
+                $data = $request->request->all();
+                break;
+
+            case 'header':
+                $data = $request->headers->all();
+                break;
+
+            case 'cookie':
+                $data = $request->cookies->all();
+                break;
+
             default:
-                if ($request->query->has($variable)) {
-                    return $request->query->get($variable);
-                }
-
-                if ($request->request->has($variable)) {
-                    return $request->request->get($variable);
-                }
-
-                return '';
+                return null;
         }
+
+        // Traverse nested keys
+        foreach (array_slice($segments, 1) as $segment) {
+            if (!is_array($data) || !array_key_exists($segment, $data)) {
+                return null;
+            }
+
+            $data = $data[$segment];
+        }
+
+        return is_string($data) ? $data : null;
     }
 }

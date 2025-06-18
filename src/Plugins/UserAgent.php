@@ -94,7 +94,7 @@ class UserAgent extends AbstractPluginBase
             return null;
         }
 
-        switch ($segments[0]) {
+        switch (strtolower($segments[0])) {
             case 'bot':
                 return $this->deviceDetector->isBot() ? 'true' : 'false';
             case 'device':

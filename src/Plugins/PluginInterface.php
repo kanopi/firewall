@@ -33,4 +33,20 @@ interface PluginInterface
      *   When found in the list.
      */
     public function evaluate(Request $request): bool;
+
+    /**
+     * Return the status code for the matching request.
+     *
+     * @return int
+     *   Status code to return.
+     */
+    public function getStatusCode(): int;
+
+    /**
+     * Number of seconds when an IP address should be expired from the list of blocked elements.
+     *
+     * @return int
+     *   Return the number of seconds.
+     */
+    public function getExpirationTime(): int;
 }
