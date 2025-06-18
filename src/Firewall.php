@@ -44,7 +44,7 @@ final readonly class Firewall
      * - Null, which will be treated as an empty configuration.
      *
      * All configurations are merged in the order they are passed, layered on top of
-     * the default configuration loaded from `config.default.yml`.
+     * the default configuration loaded from `config.yml`.
      *
      * @param array<int, string|array<string, mixed>|null> $configs
      *   Zero or more configurations to merge.
@@ -63,7 +63,7 @@ final readonly class Firewall
     {
         // Load default config first
 
-        $default = Yaml::parse((string)@file_get_contents(__DIR__ . '/../config/config.default.yml'));
+        $default = Yaml::parse((string)@file_get_contents(__DIR__ . '/../config/config.yml'));
 
         $merged = $default;
 
@@ -101,10 +101,10 @@ final readonly class Firewall
         }
 
         // Set the default values.
-        $merged['logger'] = isset($merged['logger']) && is_array($merged['logger']) ? $merged['logger'] : [];
-        $merged['storage'] = isset($merged['storage']) && is_array($merged['storage']) ? $merged['storage'] : [];
-        $merged['block'] = isset($merged['block']) && is_array($merged['block']) ? $merged['block'] : [];
-        $merged['bypass'] = isset($merged['bypass']) && is_array($merged['bypass']) ? $merged['bypass'] : [];
+        $merged['logger'] = isset($merged['logger']) && is_array($merged['logger']) ? array_filter($merged['logger']) : [];
+        $merged['storage'] = isset($merged['storage']) && is_array($merged['storage']) ? array_filter($merged['storage']) : [];
+        $merged['block'] = isset($merged['block']) && is_array($merged['block']) ? array_filter($merged['block']) : [];
+        $merged['bypass'] = isset($merged['bypass']) && is_array($merged['bypass']) ? array_filter($merged['bypass']) : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($merged['logger']));
         return new self(
