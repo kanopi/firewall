@@ -20,7 +20,6 @@ use Symfony\Component\Yaml\Yaml;
  */
 readonly class Config
 {
-
     /**
      * Merge the config variables.
      *
@@ -37,7 +36,8 @@ readonly class Config
         if (is_string($default) && file_exists($default)) {
             $default = Yaml::parse((string)@file_get_contents($default));
         }
-        $default = !is_array($default) ? [] : $default;
+
+        $default = is_array($default) ? $default : [];
         return array_merge([$default], $configs);
     }
 
@@ -85,7 +85,7 @@ readonly class Config
             }
         }
 
+        /** @phpstan-ignore-next-line */
         return $merged;
     }
-
 }

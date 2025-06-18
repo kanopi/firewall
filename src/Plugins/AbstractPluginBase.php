@@ -37,6 +37,7 @@ abstract class AbstractPluginBase implements PluginInterface
             if (!is_array($files)) {
                 $files = [$files];
             }
+
             $files[] = $config;
             $this->config = Config::load($files);
         }
