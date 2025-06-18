@@ -1,51 +1,11 @@
 storage:
-  type: Kanopi\Firewall\Storage\InMemoryStorage
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    file: /tmp/firewall.data
 
-bypass:
-  Kanopi\Firewall\Plugins\IpAddress:
-    priority: 0
-    enable: true
-    config: ~
+bypass: {}
 
-block:
-  Kanopi\Firewall\Plugins\IpAddress:
-    priority: 0
-    enable: true
-    config: ~
-  Kanopi\Firewall\Plugins\GeoLocation:
-    priority: 0
-    enable: true
-    metadata:
-      reader:
-        type: reader
-        db: ~
-    config: ~
-  Kanopi\Firewall\Plugins\Url:
-    priority: 0
-    enable: true
-    config: ~
-  Kanopi\Firewall\Plugins\UserAgent:
-    priority: 0
-    enable: true
-    config: ~
-  Kanopi\Firewall\Plugins\Asn:
-    priority: 0
-    enable: true
-    metadata:
-      reader:
-        type: reader
-        db: ~
-    config: ~
-  Kanopi\Firewall\Plugins\RateLimit:
-    priority: 0
-    enable: true
-    metadata:
-      default_rate: 500
-      default_sample: 10
-      storage:
-        type: Kanopi\Firewall\Plugins\RateLimitStorage\InMemoryRateLimitStorage
-        config: ~
-    config: ~
+block: {}
 
 logger:
   -
