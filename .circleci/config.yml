@@ -31,16 +31,92 @@ jobs:
           command: |
             gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall.zip --clobber
 
+  phpunit:
+    docker:
+      - image: *PHP_IMAGE
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+      - image: cimg/mariadb:10.6
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+        name: db
+        environment:
+          - MYSQL_ROOT_PASSWORD=root
+          - MYSQL_USER=user
+          - MYSQL_PASSWORD=user
+          - MYSQL_DATABASE=default
+          - MYSQL_INITDB_SKIP_TZINFO=1
+      - image: redis:6
+        name: redis
+    steps:
+      - checkout
+      - ci-tools/install-github-cli
+      - run:
+          name: Setup
+          command: |
+            # Install BC Tool
+            sudo apt update
+            sudo apt install mariadb-client
+            curl -o /tmp/bc.deb -fsSL http://archive.ubuntu.com/ubuntu/pool/main/b/bc/bc_1.07.1-3build1_amd64.deb
+            sudo dpkg -i /tmp/bc.deb 
+            # Set Hostname
+            echo "127.0.0.1 web" | sudo tee -a /etc/hosts
+            # Install XDebug
+            sudo pecl update-channels
+            sudo pecl install xdebug
+            #sudo cp .circleci/config/xdebug.ini /etc/php.d/xdebug.ini
+            # Install Xidel
+            curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
+            chmod +x /tmp/xidel && sudo mv /tmp/xidel /usr/sbin/
+      - restore_cache:
+          keys:
+            - composer-cache-{{ checksum "composer.lock" }}
+            - composer-cache-
+      - run:
+          name: build assets
+          command: composer install --optimize-autoloader
+      - save_cache:
+          key: composer-cache-{{ checksum "composer.lock" }}
+          paths:
+            - vendor
+      - run:
+          name: Run PHPUnit
+          command: composer -n phpunit
+#      - run:
+#          name: Check Overage
+#          command: |
+#            PERCENTAGE=$(xidel -s --xpath "string(//phpunit/project/directory/totals/lines/@percent)" reports/xml/index.xml)
+#            PASSING=85
+#            OUTCOME=$(echo "${PERCENTAGE} < ${PASSING}" | bc)
+#            echo "# PHPUnit Code Coverage" | tee -a /tmp/report.md
+#            echo "Percent: ${PERCENTAGE}" | tee -a /tmp/report.md
+#            echo "Passing: ${PASSING}" | tee -a /tmp/report.md
+#            echo "" | tee -a /tmp/report.md
+#            echo "[Report](https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/~/project/reports/index.html)" | tee -a /tmp/report.md
+#            if [[ "${OUTCOME}" == "1" ]]; then
+#              echo "Percentage does not pass threshold."
+#              exit 1
+#            fi
+      - ci-tools/post-to-github-commit:
+          body: '@/tmp/report.md'
+          when: always
+      - store_test_results:
+          path: reports/report.xml
+      - store_artifacts:
+          path: reports
+
 workflows:
   test:
     jobs:
-#      - phpunit:
-#          context: kanopi-code
-#          filters:
-#            tags:
-#              ignore: /.*/
-#            branches:
-#              only: /.*/
+      - phpunit:
+          context: kanopi-code
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
       - ci-tools/composer:
           tag: *PHP_VERSION
           name: 'phpstan'
