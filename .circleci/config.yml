@@ -84,17 +84,17 @@ jobs:
       - run:
           name: Run PHPUnit
           command: composer -n phpunit
-#      - run:
-#          name: Check Overage
-#          command: |
-#            PERCENTAGE=$(xidel -s --xpath "string(//phpunit/project/directory/totals/lines/@percent)" reports/xml/index.xml)
-#            PASSING=85
-#            OUTCOME=$(echo "${PERCENTAGE} < ${PASSING}" | bc)
-#            echo "# PHPUnit Code Coverage" | tee -a /tmp/report.md
-#            echo "Percent: ${PERCENTAGE}" | tee -a /tmp/report.md
-#            echo "Passing: ${PASSING}" | tee -a /tmp/report.md
-#            echo "" | tee -a /tmp/report.md
-#            echo "[Report](https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/~/project/reports/index.html)" | tee -a /tmp/report.md
+      - run:
+          name: Check Overage
+          command: |
+            PERCENTAGE=$(xidel -s --xpath "string(//phpunit/project/directory/totals/lines/@percent)" reports/xml/index.xml)
+            PASSING=85
+            OUTCOME=$(echo "${PERCENTAGE} < ${PASSING}" | bc)
+            echo "# PHPUnit Code Coverage" | tee -a /tmp/report.md
+            echo "Percent: ${PERCENTAGE}" | tee -a /tmp/report.md
+            echo "Passing: ${PASSING}" | tee -a /tmp/report.md
+            echo "" | tee -a /tmp/report.md
+            echo "[Report](https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/~/project/reports/index.html)" | tee -a /tmp/report.md
 #            if [[ "${OUTCOME}" == "1" ]]; then
 #              echo "Percentage does not pass threshold."
 #              exit 1
