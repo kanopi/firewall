@@ -386,7 +386,6 @@ namespace Custom\Firewall\Plugins;
 
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Symfony\Component\HttpFoundation\Request;
-use Kanopi\Firewall\Exception\BlockAccessException;
 
 class MyCustomPlugin implements PluginInterface {
     public function getName(): string {
@@ -399,7 +398,7 @@ class MyCustomPlugin implements PluginInterface {
 
     public function evaluate(Request $request): bool {
         if ($request->headers->get('X-Block-Me') === 'true') {
-            throw new BlockAccessException('Blocked by MyCustomPlugin.');
+            return false;
         }
 
         return true;
