@@ -77,17 +77,18 @@ readonly class Config
     {
         $config = [];
         if (file_exists($file) && is_file($file) && !is_dir($file) && is_readable($file)) {
-
             try {
                 // Load the file and parse as Yaml.
                 $config = Yaml::parseFile($file);
-            } catch (\Exception) {}
+            } catch (\Exception) {
+            }
 
             // If it isn't an array make empty array.
             if (!is_array($config)) {
                 $config = [];
             }
         }
+
         return $config;
     }
 }
