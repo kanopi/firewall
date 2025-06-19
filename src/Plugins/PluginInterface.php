@@ -36,9 +36,6 @@ interface PluginInterface
      *
      * @return bool
      *   Return TRUE if allowed to pass.
-     *
-     * @throws \Kanopi\Firewall\Exception\BlockAccessException
-     *   When found in the list.
      */
     public function evaluate(Request $request): bool;
 
