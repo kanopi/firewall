@@ -63,11 +63,10 @@
         "check:code": "vendor/bin/phpcs --standard=phpcs_ruleset.xml src",
         "fix:code": "vendor/bin/phpcbf --standard=phpcs_ruleset.xml src",
         "phpunit": [
-            "@phpunit:unit",
-            "@phpunit:integration"
+            "@phpunit:unit"
         ],
         "phpunit:unit": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --testsuite unit --do-not-cache-result",
-        "phpunit:integration": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --testsuite integration --do-not-cache-result --no-coverage",
+        "phpunit:integration": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --testsuite integration --do-not-cache-result",
         "fix:php": "find config src tests -name '*.php' -exec php -l {} \\;",
         "check:security": "vendor/bin/phpstan analyse src --level max --memory-limit=-1",
         "check:security:circleci": "vendor/bin/phpstan analyse src --level max --memory-limit=-1 --error-format=checkstyle --no-progress > phpstan-report.xml",
