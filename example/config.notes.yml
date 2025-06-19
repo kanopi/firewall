@@ -1,0 +1,364 @@
+#storage:
+#  type: Kanopi\Firewall\Storage\DatabaseStorage
+#  config:
+#    connection:
+#      dsn: "pdo-mysql://user:user@127.0.0.1:33066/default?serverVersion=10.6"
+#
+##bypass:
+##  Kanopi\Firewall\Plugins\IpAddress:
+##    config:
+##      - ::1
+#
+#block:
+#  Kanopi\Firewall\Plugins\Asn:
+#    enable: false
+##    config:
+##      - 'asn_org:ATT-INTERNET4'
+##  Kanopi\Firewall\Plugins\UserAgent:
+##    config:
+##      - "device.type:desktop"
+#  Kanopi\Firewall\Plugins\IpAddress:
+#    config:
+#      - 127.0.0.1
+#      - ::1
+#      - 108.195.124.110
+##  Kanopi\Firewall\Plugins\Url:
+##    config:
+##      - "method@starts_with:GET"
+#  Kanopi\Firewall\Plugins\RateLimit:
+#    enable: false
+##    config: ~
+
+# Configuration file in yaml format
+# Information provided here is where the blocked IP addresses are stored.
+storage:
+  # In Memory (Doesn't Save and Resets on every Request)
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+  # File Storage (writes to the file system)
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    # File where to store the data.
+    file: /tmp/firewall.data
+
+  # Uses a Database to store configuration
+  type: Kanopi\Firewall\Storage\DatabaseStorage
+  config:
+    # Table that is created in the system to store data
+    storage-table: firewall-storage
+
+    # Connection details
+    connection:
+      # connection using a url (follows https://www.doctrine-project.org/projects/doctrine-dbal/en/4.2/reference/configuration.html#connecting-using-a-url)
+      dsn: "pdo-mysql://user:user@127.0.0.1:33066/default?serverVersion=10.6"
+
+    # Connection details (follow https://www.doctrine-project.org/projects/doctrine-dbal/en/4.2/reference/configuration.html#connection-details)
+    # connection:
+    #   dbname: 'default'
+    #   user: 'user'
+    #   password: 'user'
+    #   host: '127.0.0.1'
+    #   port: 33066
+    #   driver: 'pdo_mysql'
+
+# All plugins under here allow for the request to be allowed without being questioned.
+bypass:
+  # Namespace of the Plugin
+  Kanopi\Firewall\Plugins\IpAddress:
+    # Priority of the plugin. Executed in order from lowest to highest.
+    # Example -100 is higher than 100.
+    priority: 0
+    # Enable the plugin.
+    enable: false
+    # Configuration for the plugin. This plugin takes a list of IP addresses in different formats.
+    # Accepts both IPv4 and IPv6 address.
+    config:
+      # Single IPv4
+      - 127.0.0.1
+      # Single IPv6
+      - ::1
+      # CIDR Block
+      - 10.0.0.1/24
+      # IP Range formatted as start-end
+      - 127.0.0.1-127.0.0.5
+
+# All plugins under here are evaluated and if they request passes the conditions the request is blocked.
+block:
+
+  # Evaluate IP Addresses.
+  Kanopi\Firewall\Plugins\IpAddress:
+    # Priority of the plugin. Executed in order from lowest to highest.
+    # Example -100 is higher than 100.
+    priority: 0
+    # Enable the plugin.
+    enable: false
+    # Configuration for the plugin. This plugin takes a list of IP addresses in different formats.
+    # Accepts both IPv4 and IPv6 address.
+    config:
+      # Single IPv4
+      - 127.0.0.1
+      # Single IPv6
+      - ::1
+      # CIDR Block
+      - 10.0.0.1/24
+      # IP Range formatted as start-end
+      - 127.0.0.1-127.0.0.5
+
+  # Using the MaxMind GeoIP service (either local database or service),
+  Kanopi\Firewall\Plugins\GeoLocation:
+    priority: 0
+    enable: false
+    # Information fed into the plugin.
+    metadata:
+      # IP Database reader details. More details on configuration https://maxmind.github.io/GeoIP2-php/.
+      reader:
+        # Create a reader or a client.
+        # For type: reader  - uses the local MaxMind GeoIP database
+        type: reader
+        # File location of the database on the file system. (Example: /tmp/GeoLite2-City.mmdb)
+        db: ~
+
+        # For type: client  - uses the MaxMind Web Service.
+        # type: client
+        # accountId: ~        # Account ID for MaxMind Service
+        # licenseKey: ~       # License Key for MaxMind Service
+        # language: ['en']    # Languages that should be supported
+        # options: []         # Additional Options that should be fed to the client.
+    # Reference the Condition section
+    # Possible variables:
+    # country     - Refers to the country and returns the isoCode
+    # country.X   - Refers to the country and the X is the part. Possible values are isoCode, name
+    # continent   - Refers to the continent and returns the code
+    # continent.X - Refers to the continent and the X is the part. Possible values are code, name, geonameId
+    # city        - Refers to the city and returns the name
+    # location.X  - Refers to the location and the X is the part. Possible values are latitude, longitude, timeZone
+    # postal      - Refers to the postal code and returns the code.
+    config: ~
+
+  # URLs to check against for possible spam related activity.
+  Kanopi\Firewall\Plugins\Url:
+    priority: 0
+    enable: false
+    # Reference the Condition section
+    # Possible variables:
+    # method   - Method of the request (Like GET, POST, PUT)
+    # host     - Hostname of the request
+    # path     - Path of the request (Like /admin)
+    # query.X  - The query parameter to check against. Example (query.foo will give you the value for the foo query parameter)
+    # scheme   - The scheme of the request (Like https)
+    # port     - Port number being requested
+    # post.X   - The post value to check against. Example (post.foo will give you the value for the variable)
+    # header.X - The header value for the request. Example (header.content-type will give you the content type)
+    # cookie.X - The cookie value provided.
+    config:
+      # Block all POST requests
+      - 'method:POST'
+      # Block everything that doesn't start with /admin
+      - '!path@starts_with:/admin'
+
+  # Details related to the User Agent that is being used.
+  # More information: https://devicedetector.lw1.at/
+  Kanopi\Firewall\Plugins\UserAgent:
+    priority: 0
+    enable: false
+    # Reference the Condition section
+    # Possible variables:
+    # bot             - Possible values are true or false
+    # device.type     - Type of the device being used. (Like Desktop)
+    # client.name     - Human Readable name of the client
+    # client.type     - The type of client (Like browser)
+    # client.version  - The version number of the client
+    # os.name         - The OS name to reference (Like Windows)
+    # os.short_name   - The short name for the OS (Like WIN)
+    # os.version      - The OS Version Number
+    # brand           - The brand of the device (Like Apple)
+    # model           - Information related to the model of the user agent.
+    config:
+      - 'bot:true'
+
+  # Use MaxMind's GeoIP database to get the ASN (Autonomous System Number).
+  # More Information: https://www.arin.net/resources/guide/asn/
+  Kanopi\Firewall\Plugins\Asn:
+    priority: 0
+    enable: false
+    metadata:
+      # Follows same information as the Kanopi\Firewall\Plugins\Geolocation Metadata
+      reader:
+        type: reader
+        db: ~
+    # Reference the Condition section
+    # Possible variables:
+    # asn     - the number to check against (Example: AS7018)
+    # asn_org - the organization name to check against (Example: ATT-INTERNET4)
+    config: ~
+
+  # Rate Limiting suggests that we limit how often a request can be made.
+  # The following is limited as it only takes into account the request as long as this file is located and processed.
+  # This plugin won't take into account files, assets (css, js, images), or any possible other requests where this isn't
+  # included as part of the bootstrapping process.
+  Kanopi\Firewall\Plugins\RateLimit:
+    priority: 0
+    enable: false
+    metadata:
+      # Default amount of requests that can be made in the following
+      default_rate: 10
+      # Default sample size in seconds.
+      default_sample: 10
+      # Amount of time before the IP address is removed off of the request
+      default_expiration_time: 300
+      # Where the information is stored for counting and referencing later
+      storage:
+
+        # Store items In Memory (Good for testing, resets after each request).
+        type: Kanopi\Firewall\Plugins\RateLimitStorage\InMemoryRateLimitStorage
+
+        # Store details within Redis Service
+        type: Kanopi\Firewall\Plugins\RateLimitStorage\RedisRateLimitStorage
+        config:
+          # Redis configuration settings.
+          redis:
+            # Host of the redis service
+            host: 127.0.0.1
+            # Port to use for connecting to redis service
+            port: 6379
+            # Types of Authentication
+            # auth: "password"
+            # auth: ["password"]
+            # auth: ["username", "password"]
+            auth: ['username', 'password']
+
+        # Store details within a File
+        type: Kanopi\Firewall\Plugins\RateLimitStorage\FileRateLimitStorage
+        config:
+          # File location where to store the data.
+          file: /tmp/test.data
+
+        # Store details within a Database
+        type: Kanopi\Firewall\Plugins\RateLimitStorage\DatabaseRateLimitStorage
+        config:
+          # Table that is created in the system to store data
+          storage-table: firewall-ratelimit-storage
+
+          # Connection details
+          connection:
+            # connection using a url (More information https://www.doctrine-project.org/projects/doctrine-dbal/en/4.2/reference/configuration.html#connecting-using-a-url)
+            dsn: "pdo-mysql://user:user@127.0.0.1:33066/default?serverVersion=10.6"
+
+          # Connection details bro (More information https://www.doctrine-project.org/projects/doctrine-dbal/en/4.2/reference/configuration.html#connection-details)
+          # connection:
+          #   dbname: 'default'
+          #   user: 'user'
+          #   password: 'user'
+          #   host: '127.0.0.1'
+          #   port: 33066
+          #   driver: 'pdo_mysql'
+
+    # Items are added in structured format in array like syntax.
+    # Each item should contain:
+    #   path: Location to check against. Can be exact format like /example, can show a wildcard /example/*, or can be regex (/\/example.*/)
+    #   rate: How many requests to this url in the sample size
+    #   sample: Number of seconds to count against in the sample for this specific size
+    config:
+      # For the path / there can only be 1 request per 10 seconds.
+      - path: '/'
+        rate: 1
+        sample: 10
+      # For the example path use the default rate and sample
+      - path: '/example'
+      # For the foo path use the default rate but set the sample amount
+      - path: '/foo'
+        sample: 30
+      # For all paths that begin with /admin use a different sample rate and size
+      - path: '/admin/*'
+        rate: 100
+        sample: 60
+
+# Loggers help log data in specific formats. Uses Monolog (https://seldaek.github.io/monolog/)
+# Multiple loggers can be added as the following are structured but added as arrays under the logger section.
+logger:
+  -
+    # Full Class Namespace of the logger service.
+    class: Monolog\Handler\StreamHandler
+    # Arguments that are fed to the logging service
+    args:
+      # For this service, the location of the logging file.
+      - /tmp/data.log
+      # The level of debugging to use.
+      - Monolog\Level::Debug
+    # If the logging service allows for it the Formatting of the data define those details.
+    formatter:
+      # Class Name of the Formatter to use
+      class: Monolog\Formatter\LineFormatter
+      # Arguments to pass to the Formatter.
+      args:
+        # Line formatted
+        - "[%datetime%] [%context.plugin%] %message% %context%\n"
+        # Date formatter
+        - "Y-m-d\\TH:i:sP"
+
+# Conditions
+#
+# Simple Format
+# Supported syntaxes:
+#   - "variable:value"                         → defaults to 'equals'
+#   - "variable@operator:value"                → uses the given operator
+#   - "!variable:value"                        → negated equals
+#   - "!variable@operator:value"               → negated with operator
+#   - "variable > value" / "variable <= value" → shorthand numeric comparison
+#   - (optional) Append "#matches" for array matching behavior:
+#       - "#any", "#all", "#none", "#some"
+#         e.g., "tags@contains:eco,green#all"
+#
+# Operators supported include: equals, not_equals, contains, starts_with,
+# ends_with, regex, in, greater_than, less_than, greater_than_or_equal,
+# less_than_or_equal, etc.
+#
+# Examples of Simple Format:
+# - "foo:bar"               - The variable foo is equal to bar.
+# - "foo@starts_with:bar"   - The variable foo starts with bar which means values like barnone and barracuda would be allowed.
+# - "foo@in:bar,grill,town" - The variable foo can be either bar, grill, town
+# - "!foo:bar"              - The variable foo cannot equal bar.
+# - "!foo@starts_with:bar"  - The variable foo cannot start with bar.
+#
+# Notes:
+# - All values are case insensitive
+#
+# Complex Format
+# Written in array formats.
+# Each rule should be an associative array with the following keys:
+# - variable: string
+#     The request field or input to evaluate (e.g., method, host, query param).
+# - operator: string
+#     Comparison logic, such as:
+#       equals, not_equals, contains, starts_with, ends_with, regex, in,
+#       greater_than, less_than, greater_than_or_equal, less_than_or_equal
+# - value: string|array
+#     The value(s) to compare against.
+# - negate: bool (optional)
+#     Whether to negate the final result. Defaults to false.
+# - matches: string (optional)
+#     If 'value' is an array, defines how to evaluate:
+#       - "any" → pass if at least one match
+#       - "all" → pass only if all match
+#       - "none" → pass if none match
+#       - "some" → pass if some but not all match
+# - case_sensitive: bool (optional)
+#     Whether the comparison should be case-sensitive. Defaults to false.
+#
+# Examples
+# - Show examples with the above complex format
+#
+# Grouping Format
+# Written in array formats.
+# Each rule should be an associative array with the following keys:
+#
+# - type: string
+#      The type of the group (e.g. AND, OR)
+# - rules: array
+#      An array of mixed with either simple or complex formatted elements
+#
+# Notes:
+#  - Conditions can be mixed between simple and complex
+#
+#
+# When referring to conditions they can be a mixture of Simple Format, Complex Format, or Grouping Format

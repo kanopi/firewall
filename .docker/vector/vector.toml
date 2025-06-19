@@ -1,0 +1,8 @@
+[sources.syslog]
+type = "syslog"
+address = "0.0.0.0:9000"
+
+[sinks.console]
+inputs = ["syslog"]
+type = "console"
+encoding.codec = "json"
