@@ -66,8 +66,7 @@ final readonly class Firewall
     public static function create(array $configs = [], array $overrides = []): self
     {
         // Load default config first
-        $configs = Config::merge(__DIR__ . '/../config/config.yml', $configs);
-        $config = Config::load($configs, $overrides);
+        $config = Config::load(array_merge([__DIR__ . '/../config/config.yml'], $configs), $overrides);
 
         // Set the default values.
         $config['logger'] = isset($config['logger']) && is_array($config['logger']) ? array_filter($config['logger']) : [];
@@ -94,7 +93,7 @@ final readonly class Firewall
      */
     public function evaluate(?Request $request = null): bool
     {
-        // If PHP is running on cli mode.
+        // If PHP is running on cli mode skip.
         if (PHP_SAPI === 'cli') {
             return true;
         }

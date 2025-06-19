@@ -21,27 +21,6 @@ use Symfony\Component\Yaml\Yaml;
 readonly class Config
 {
     /**
-     * Merge the config variables.
-     *
-     * @param string|array $default
-     *   String to file, or an array fo default variables to start from.
-     * @param array $configs
-     *   Config variables to merge items into.
-     *
-     * @return array
-     *   Return the merged variables.
-     */
-    public static function merge(string|array $default, array $configs = []): array
-    {
-        if (is_string($default) && file_exists($default)) {
-            $default = Yaml::parse((string)@file_get_contents($default));
-        }
-
-        $default = is_array($default) ? $default : [];
-        return array_merge([$default], $configs);
-    }
-
-    /**
      * Loader function used for producing the configuration files and merging.
      *
      * @param array $configs
@@ -61,11 +40,7 @@ readonly class Config
          */
         foreach ($configs as $config) {
             if (is_string($config)) {
-                if (!file_exists($config)) {
-                    throw new \Exception('Config file does not exist: ' . $config);
-                }
-
-                $config = (array)Yaml::parse((string)@file_get_contents($config));
+                $config = self::loadFile($config);
             } elseif (!is_array($config)) {
                 $config = [];
             }
@@ -87,5 +62,32 @@ readonly class Config
 
         /** @phpstan-ignore-next-line */
         return $merged;
+    }
+
+    /**
+     * Load the Configuration file.
+     *
+     * @param string $file
+     *   File to load.
+     *
+     * @return array
+     *   Return an array of config data.
+     */
+    public static function loadFile(string $file): array
+    {
+        $config = [];
+        if (file_exists($file) && is_file($file) && !is_dir($file) && is_readable($file)) {
+
+            try {
+                // Load the file and parse as Yaml.
+                $config = Yaml::parseFile($file);
+            } catch (\Exception) {}
+
+            // If it isn't an array make empty array.
+            if (!is_array($config)) {
+                $config = [];
+            }
+        }
+        return $config;
     }
 }
