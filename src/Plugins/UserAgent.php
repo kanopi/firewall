@@ -21,9 +21,7 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class UserAgent extends AbstractPluginBase
 {
-    use EvaluateTrait {
-        getRequestValue as _getRequestValue;
-    }
+    use EvaluateTrait;
 
     /**
      * Device Detector for the current request.
@@ -93,12 +91,11 @@ class UserAgent extends AbstractPluginBase
      * @return mixed
      *   The value of the variable or empty string if not found.
      */
-    protected function getRequestValue(Request $request, string $variable): mixed
+    protected function getValue(Request $request, string $variable): mixed
     {
-
         $segments = explode('.', trim($variable));
 
-        /** @phpstan-ignore-next-line  */
+        /** @phpstan-ignore-next-line */
         if ($segments === []) {
             return null;
         }
