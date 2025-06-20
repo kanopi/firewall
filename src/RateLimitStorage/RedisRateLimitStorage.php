@@ -13,8 +13,6 @@ namespace Kanopi\Firewall\RateLimitStorage;
 
 use Redis;
 
-use function PHPUnit\Framework\isInstanceOf;
-
 /**
  * Redis-based rate limit storage.
  */
