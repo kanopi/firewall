@@ -21,4 +21,11 @@
       <directory suffix=".php">src/</directory>
     </include>
   </source>
+  <extensions>
+      <bootstrap class="DG\BypassFinals\PHPUnitExtension"/>
+  </extensions>
+  <php>
+    <env name="FIREWALL_BYPASS_CLI" value="1" />
+    <env name="FIREWALL_TEST" value="1" />
+  </php>
 </phpunit>
