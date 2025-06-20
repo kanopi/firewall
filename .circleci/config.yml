@@ -65,7 +65,7 @@ jobs:
             echo "127.0.0.1 web" | sudo tee -a /etc/hosts
             # Install XDebug
             sudo pecl update-channels
-            sudo pecl install xdebug
+            sudo pecl install xdebug redis
             #sudo cp .circleci/config/xdebug.ini /etc/php.d/xdebug.ini
             # Install Xidel
             curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
