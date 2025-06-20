@@ -94,15 +94,20 @@ final readonly class Firewall
     public function evaluate(?Request $request = null): bool
     {
         // If PHP is running on cli mode skip.
-        if (PHP_SAPI === 'cli') {
+        // @codeCoverageIgnoreStart
+        if (PHP_SAPI === 'cli' && getenv('FIREWALL_BYPASS_CLI') !== '1') {
             return true;
         }
+
+        // @codeCoverageIgnoreEnd
 
         if (is_null($request)) {
             $request = Request::createFromGlobals();
         }
 
-        $request->attributes->set('x-request-id', $this->generateId($request));
+        if (!$request->attributes->has('x-request-id')) {
+            $request->attributes->set('x-request-id', $this->generateId($request));
+        }
 
         if ($this->bypassPluginManager->evaluate($request)) {
             return true;
@@ -110,7 +115,7 @@ final readonly class Firewall
 
         if (($blocked = $this->isBlocked($request->getClientIp() ?? '')) !== false) {
             $request->attributes->set('x-request-id', $blocked['event_id'] ?? '');
-            $this->storage->addToExpire($request->getClientIp(), 300);
+            $this->storage->addToExpire($request->getClientIp() ?? '', 300);
             $this->sendBlockingResponse($request);
         }
 
@@ -136,7 +141,7 @@ final readonly class Firewall
      * @return string
      *   Return the ID associated with the request.
      */
-    private function generateId(Request $request): string
+    protected function generateId(Request $request): string
     {
         return strtoupper(md5($request->getClientIp() . time()));
     }
@@ -150,7 +155,7 @@ final readonly class Firewall
      * @return mixed
      *   Return array of items if found, False if issues.
      */
-    private function isBlocked(string $ip): mixed
+    protected function isBlocked(string $ip): mixed
     {
         return $this->storage->get($ip, false);
     }
@@ -166,7 +171,7 @@ final readonly class Firewall
      * @return bool
      *   Return TRUE if successful, FALSE if issue.
      */
-    private function blockIp(Request $request, PluginInterface $plugin): bool
+    protected function blockIp(Request $request, PluginInterface $plugin): bool
     {
         return $this->storage->set(
             $request->getClientIp(),
@@ -189,7 +194,7 @@ final readonly class Firewall
      * @return array
      *   Return the structured data.
      */
-    private function serializeRequest(Request $request): array
+    protected function serializeRequest(Request $request): array
     {
         return [
             'method' => $request->getMethod(),
@@ -215,7 +220,7 @@ final readonly class Firewall
      * @return array
      *   Files structured.
      */
-    private function formatUploadedFiles(array $files): array
+    protected function formatUploadedFiles(array $files): array
     {
         $normalized = [];
 
@@ -247,9 +252,19 @@ final readonly class Firewall
      * @param int $statusCode
      *   Status code to return for the request.
      */
-    private function sendBlockingResponse(Request $request, int $statusCode = 400): never
+    protected function sendBlockingResponse(Request $request, int $statusCode = 400): void
     {
+        // Used for testing.
+        if (getenv('FIREWALL_TEST') === '1') {
+            throw new \Exception(
+                sprintf('%s %s', $request->attributes->get('x-request-id'), 'Request Banned'),
+                $statusCode
+            );
+        }
+
+        // @codeCoverageIgnoreStart
         http_response_code($statusCode);
         exit(sprintf('%s %s', $request->attributes->get('x-request-id'), 'Request Banned'));
+        // @codeCoverageIgnoreEnd
     }
 }
