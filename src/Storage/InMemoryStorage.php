@@ -53,7 +53,7 @@ class InMemoryStorage extends AbstractStorageBase
     public function get(string $key, mixed $default = null): mixed
     {
         $value = $this->store[$key] ?? null;
-        if ($value === null || $value['expire'] < time()) {
+        if ($value === null || ($value['expire'] > 0 && $value['expire'] < time())) {
             $this->delete($key);
             return $default;
         }
@@ -84,7 +84,7 @@ class InMemoryStorage extends AbstractStorageBase
     public function clearExpire(): bool
     {
         foreach ($this->store as $key => $value) {
-            if ($value['expire'] < time()) {
+            if ($value['expire'] > 0 && $value['expire'] < time()) {
                 $this->delete($key);
             }
         }
