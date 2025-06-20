@@ -11,8 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
-use Kanopi\Firewall\Plugins\RateLimitStorage\RateLimitStorageFactory;
-use Kanopi\Firewall\Plugins\RateLimitStorage\RateLimitStorageInterface;
+use Kanopi\Firewall\RateLimitStorage\RateLimitStorageFactory;
+use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
 use Symfony\Component\HttpFoundation\Request;
 
 /**

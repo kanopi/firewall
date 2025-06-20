@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins\RateLimitStorage;
+namespace Kanopi\Firewall\RateLimitStorage;
 
 use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Index;
@@ -72,7 +72,7 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
     public function countRequests(string $key, int $start, int $end): int
     {
         try {
-            return (int) $this
+            return count($this
                 ->connection
                 ->createQueryBuilder()
                 ->select('*')
@@ -84,7 +84,7 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
                 ->setParameter('start', $start)
                 ->setParameter('end', $end)
                 ->executeQuery()
-                ->rowCount();
+                ->fetchAllAssociative());
         } catch (\Exception) {
             return 0;
         }

@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins\RateLimitStorage;
+namespace Kanopi\Firewall\RateLimitStorage;
 
 /**
  * In charge of creating the Rate Limiting Storage objects.
@@ -30,7 +30,7 @@ class RateLimitStorageFactory
     public static function create(?string $type = null, array $config = []): RateLimitStorageInterface
     {
         // If the provided storage is not valid default to InMemoryStorage.
-        if (is_null($type) || !class_exists($type) || !class_implements($type, RateLimitStorageInterface::class)) {
+        if (is_null($type) || !class_exists($type) || !in_array(RateLimitStorageInterface::class, class_implements($type))) {
             $type = InMemoryRateLimitStorage::class;
         }
 
