@@ -75,7 +75,7 @@ class NestedArray
      * @see NestedArray::setValue()
      * @see NestedArray::unsetValue()
      */
-    public static function &getValue(array &$array, array $parents, bool &$key_exists = false): mixed
+    public static function &getValue(array &$array, array $parents, ?bool &$key_exists = false): mixed
     {
         $ref =& $array;
         foreach ($parents as $parent) {
@@ -227,14 +227,14 @@ class NestedArray
      * @param array $parents
      *   An array of parent keys, starting with the outermost key and including
      *   the key to be unset.
-     * @param bool $key_existed
+     * @param bool|null $key_existed
      *   (optional) If given, an already defined variable that is altered by
      *   reference.
      *
      * @see NestedArray::setValue()
      * @see NestedArray::getValue()
      */
-    public static function unsetValue(array &$array, array $parents, bool &$key_existed = false): void
+    public static function unsetValue(array &$array, array $parents, ?bool &$key_existed = false): void
     {
         $unset_key = array_pop($parents);
         $ref =& self::getValue($array, $parents, $key_existed);
@@ -278,8 +278,8 @@ class NestedArray
     {
         // Although this function is similar to PHP's array_key_exists(), its
         // arguments should be consistent with getValue().
-        $key_exists = null;
         self::getValue($array, $parents, $key_exists);
+        /** @phpstan-ignore-next-line */
         return $key_exists;
     }
 
