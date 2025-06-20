@@ -9,13 +9,23 @@ use Symfony\Component\Yaml\Yaml;
 class ConfigTest extends TestCase
 {
 
+    protected string $tempFile1;
+    protected string $tempFile2;
+    protected string $tempFile3;
+
+    /**
+     * {@inheritdoc}
+     */
     public function setUp(): void
     {
         parent::setUp();
 
         $data = ['example 1','example 2'];
-        @file_put_contents('/tmp/example1.yml', Yaml::dump($data));
-        @file_put_contents('/tmp/example2.yml', 'example');
+
+        $this->tempFile1 = tempnam(sys_get_temp_dir(), 'config_test_');
+        @file_put_contents($this->tempFile1, Yaml::dump($data));
+        $this->tempFile2 = tempnam(sys_get_temp_dir(), 'config_test_');
+        @file_put_contents($this->tempFile2, 'example');
 
         $invalidYaml = <<<YAML
         key1: value1
@@ -23,15 +33,19 @@ class ConfigTest extends TestCase
           - listItem1
           - listItem2
         YAML;
-        @file_put_contents('/tmp/example3.yml', $invalidYaml);
+        $this->tempFile3 = tempnam(sys_get_temp_dir(), 'config_test_');
+        @file_put_contents($this->tempFile3, $invalidYaml);
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function tearDown(): void
     {
         parent::tearDown();
-        @unlink('/tmp/example1.yml');
-        @unlink('/tmp/example2.yml');
-        @unlink('/tmp/example3.yml');
+        @unlink($this->tempFile1);
+        @unlink($this->tempFile2);
+        @unlink($this->tempFile3);
     }
 
     /**
@@ -77,7 +91,7 @@ class ConfigTest extends TestCase
      */
     public function testConfigLoadWithFileAndArray(): void
     {
-        $config = Config::load(['/tmp/example1.yml', ['example 3', 'example 4']]);
+        $config = Config::load([$this->tempFile1, ['example 3', 'example 4']]);
         $this->assertIsArray($config);
         $this->assertCount(4, $config);
         $this->assertTrue(in_array('example 1', $config));
@@ -113,7 +127,7 @@ class ConfigTest extends TestCase
      */
     public function testConfigLoadWithFileNotValidYamlArrayAndArrays(): void
     {
-        $config = Config::load(['/tmp/example2.yml',  ['example 3', 'example 4']]);
+        $config = Config::load([$this->tempFile2,  ['example 3', 'example 4']]);
         $this->assertIsArray($config);
         $this->assertCount(2, $config);
         $this->assertTrue(in_array('example 3', $config));
@@ -129,7 +143,7 @@ class ConfigTest extends TestCase
      */
     public function testConfigLoadWithFileNotValidYamlAndArrays(): void
     {
-        $config = Config::load(['/tmp/example3.yml',  ['example 3', 'example 4']]);
+        $config = Config::load([$this->tempFile3,  ['example 3', 'example 4']]);
         $this->assertIsArray($config);
         $this->assertCount(2, $config);
         $this->assertTrue(in_array('example 3', $config));
@@ -145,7 +159,7 @@ class ConfigTest extends TestCase
     public function testConfigLoadWithOverrides(): void
     {
         $config = Config::load(
-            ['/tmp/example1.yml',  ['example 3', 'example 4']],
+            [$this->tempFile1,  ['example 3', 'example 4']],
             [
                 '[0]' => 'example new'
             ]
@@ -167,7 +181,7 @@ class ConfigTest extends TestCase
     public function testConfigLoadWithOverridesAdded(): void
     {
         $config = Config::load(
-            ['/tmp/example1.yml',  ['example 3', 'example 4']],
+            [$this->tempFile1,  ['example 3', 'example 4']],
             [
                 '[a]' => 'example new'
             ]
@@ -189,7 +203,7 @@ class ConfigTest extends TestCase
     public function testConfigLoadWithOverridesNotValid(): void
     {
         $config = Config::load(
-            ['/tmp/example1.yml',  ['example 3', 'example 4']],
+            [$this->tempFile1,  ['example 3', 'example 4']],
             [
                 'a' => 'example new'
             ]

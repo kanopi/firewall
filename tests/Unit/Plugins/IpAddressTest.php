@@ -1,0 +1,327 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Kanopi\Firewall\Tests\Unit\Plugins;
+
+use Kanopi\Firewall\Plugins\IpAddress;
+use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpFoundation\Request;
+
+class IpAddressTest extends TestCase
+{
+    /**
+     * Tests getName() returns correct name.
+     */
+    public function testGetName(): void
+    {
+        $plugin = new IpAddress();
+        $this->assertEquals('IP Address', $plugin->getName());
+    }
+
+    /**
+     * Tests getDescription() returns expected text.
+     */
+    public function testGetDescription(): void
+    {
+        $plugin = new IpAddress();
+        $this->assertEquals('Evaluate IP Addresses and see in the provided list', $plugin->getDescription());
+    }
+
+    /**
+     * Tests evaluate() returns true when IP is directly listed.
+     */
+    public function testEvaluateWithDirectMatch(): void
+    {
+        $plugin = new IpAddress([], ['192.168.1.1']);
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '192.168.1.1']);
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests evaluate() returns true for CIDR match.
+     */
+    public function testEvaluateWithCidrMatch(): void
+    {
+        $plugin = new IpAddress([], ['192.168.1.0/24']);
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '192.168.1.55']);
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests evaluate() returns true for range match.
+     */
+    public function testEvaluateWithRangeMatch(): void
+    {
+        $plugin = new IpAddress([], ['192.168.1.10-192.168.1.20']);
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '192.168.1.15']);
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests evaluate() returns false when IP not in list.
+     */
+    public function testEvaluateReturnsFalseWhenNoMatch(): void
+    {
+        $plugin = new IpAddress([], ['192.168.1.10-192.168.1.20']);
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '10.0.0.1']);
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests evaluate() with invalid CIDR input.
+     */
+    public function testEvaluateWithInvalidCidr(): void
+    {
+        $plugin = new IpAddress([], ['invalid/abc']);
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests evaluate() with malformed IP range input.
+     */
+    public function testEvaluateWithInvalidRange(): void
+    {
+        $plugin = new IpAddress([], ['invalid-range']);
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests evaluate() handles IPv6 direct match.
+     */
+    public function testEvaluateWithIpv6(): void
+    {
+        $plugin = new IpAddress([], ['::1']);
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '::1']);
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests isInBlock() returns false for mismatched IP versions.
+     */
+    public function testIsInBlockWithMismatchedVersions(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertFalse($method->invoke($instance, '127.0.0.1', '::1/128'));
+    }
+
+    /**
+     * Tests inRange() handles out-of-range scenarios.
+     */
+    public function testInRangeOutOfRange(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('inRange');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertFalse($method->invoke($instance, '192.168.1.25', '192.168.1.10-192.168.1.20'));
+    }
+
+    /**
+     * Tests inRange() with invalid IPs.
+     */
+    public function testInRangeWithInvalidIps(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('inRange');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertFalse($method->invoke($instance, 'not.an.ip', 'abc-def'));
+    }
+
+    /**
+     * Tests isInBlock() with valid IPv4 CIDR block.
+     */
+    public function testIsInBlockWithValidIpv4(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertTrue($method->invoke($instance, '10.0.0.5', '10.0.0.0/24'));
+    }
+
+    /**
+     * Tests isInBlock() with invalid CIDR block.
+     */
+    public function testIsInBlockWithInvalidCidr(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertFalse($method->invoke($instance, '10.0.0.5', 'invalidcidr'));
+    }
+
+    /**
+     * Tests isInBlock fails when full byte segments differ.
+     */
+    public function testIsInBlockFailsOnFullByteMismatch(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        // 192.168.1.1 vs subnet 192.168.2.0/24
+        $this->assertFalse($method->invoke($instance, '192.168.1.1', '192.168.2.0/24'));
+    }
+
+    /**
+     * Tests isInBlock succeeds when remaining bits match.
+     */
+    public function testIsInBlockSucceedsOnPartialBitMatch(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        // 192.168.1.1 vs 192.168.1.0/31 => only one bit difference
+        $this->assertTrue($method->invoke($instance, '192.168.1.1', '192.168.1.0/31'));
+    }
+
+    /**
+     * Tests isInBlock fails when remaining bits differ.
+     */
+    public function testIsInBlockFailsOnPartialBitMismatch(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        // 192.168.1.3 vs 192.168.1.0/30 covers .0 to .3
+        // .4 is outside of this range
+        $this->assertFalse($method->invoke($instance, '192.168.1.4', '192.168.1.0/30'));
+    }
+
+    /**
+     * Tests isInBlock with no remaining bits (prefix length divisible by 8).
+     */
+    public function testIsInBlockSkipsPartialBitComparison(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertTrue($method->invoke($instance, '192.168.1.200', '192.168.1.0/24'));
+    }
+
+    /**
+     * Tests isInBlock with prefixLength = 0 (matches everything).
+     */
+    public function testIsInBlockAlwaysMatchesWithPrefixZero(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        // /0 matches all IPv4 addresses
+        $this->assertTrue($method->invoke($instance, '123.123.123.123', '0.0.0.0/0'));
+    }
+
+    /**
+     * Tests isInBlock fails if CIDR is malformed.
+     */
+    public function testIsInBlockWithMalformedCidrFails(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertFalse($method->invoke($instance, '10.0.0.1', 'invalid'));
+    }
+
+    /**
+     * Tests isInBlock handles IPv6 with partial match success.
+     */
+    public function testIsInBlockWithIpv6Match(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertTrue($method->invoke($instance, '2001:db8::1', '2001:db8::/64'));
+    }
+
+    /**
+     * Tests isInBlock with IPv6 mismatch in full byte.
+     */
+    public function testIsInBlockWithIpv6FullByteMismatch(): void
+    {
+        $ref = new \ReflectionClass(IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $instance = new IpAddress();
+
+        $this->assertFalse($method->invoke($instance, '2001:db9::1', '2001:db8::/64'));
+    }
+
+    /**
+     * Tests inRange returns false if start IP is an empty string.
+     */
+    public function testInRangeFailsWithEmptyStartIp(): void
+    {
+        $ref = new \ReflectionClass(\Kanopi\Firewall\Plugins\IpAddress::class);
+        $method = $ref->getMethod('inRange');
+        $method->setAccessible(true);
+        $plugin = new \Kanopi\Firewall\Plugins\IpAddress();
+
+        $this->assertFalse($method->invoke($plugin, '192.168.1.5', '-192.168.1.10'));
+    }
+
+    /**
+     * Tests inRange returns false if start IP is '0'.
+     */
+    public function testInRangeFailsWithStartIpZero(): void
+    {
+        $ref = new \ReflectionClass(\Kanopi\Firewall\Plugins\IpAddress::class);
+        $method = $ref->getMethod('inRange');
+        $method->setAccessible(true);
+        $plugin = new \Kanopi\Firewall\Plugins\IpAddress();
+
+        $this->assertFalse($method->invoke($plugin, '192.168.1.5', '0-192.168.1.10'));
+    }
+
+    /**
+     * Tests inRange returns false if end IP is an empty string.
+     */
+    public function testInRangeFailsWithEmptyEndIp(): void
+    {
+        $ref = new \ReflectionClass(\Kanopi\Firewall\Plugins\IpAddress::class);
+        $method = $ref->getMethod('inRange');
+        $method->setAccessible(true);
+        $plugin = new \Kanopi\Firewall\Plugins\IpAddress();
+
+        $this->assertFalse($method->invoke($plugin, '192.168.1.5', '192.168.1.1-'));
+    }
+
+    /**
+     * Tests inRange returns false if end IP is '0'.
+     */
+    public function testInRangeFailsWithEndIpZero(): void
+    {
+        $ref = new \ReflectionClass(\Kanopi\Firewall\Plugins\IpAddress::class);
+        $method = $ref->getMethod('inRange');
+        $method->setAccessible(true);
+        $plugin = new \Kanopi\Firewall\Plugins\IpAddress();
+
+        $this->assertFalse($method->invoke($plugin, '192.168.1.5', '192.168.1.1-0'));
+    }
+}
+
