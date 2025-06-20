@@ -137,7 +137,7 @@ metadata:
   metadata:
     default_rate: 5
     storage:
-      type: \Kanopi\Firewall\Plugins\RateLimitStorage\RedisRateLimitStorage
+      type: \Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
       config:
         redis:
           host: 127.0.0.1
