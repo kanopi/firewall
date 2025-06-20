@@ -47,8 +47,12 @@ class FileStorage extends InMemoryStorage
             throw new RuntimeException(sprintf("Unable to create file at '%s'", $this->filePath));
         }
 
-        if (!is_readable($this->filePath) || !is_writable($this->filePath)) {
-            throw new RuntimeException(sprintf("File '%s' must be readable and writable.", $this->filePath));
+        if (!is_readable($this->filePath)) {
+            throw new RuntimeException(sprintf("File '%s' must be readable.", $this->filePath));
+        }
+
+        if (!is_writable($this->filePath)) {
+            throw new RuntimeException(sprintf("File '%s' must be writeable.", $this->filePath));
         }
 
         $this->loadFromFile();
