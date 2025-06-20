@@ -54,14 +54,13 @@ class Url extends AbstractPluginBase
      */
     protected function getValue(Request $request, string $variable): mixed
     {
-        $segments = explode('.', trim($variable));
+        $segments = $this->splitQuery($variable);
 
-        /** @phpstan-ignore-next-line */
         if ($segments === []) {
             return null;
         }
 
-        switch (strtolower($segments[0])) {
+        switch (strtolower((string) $segments[0])) {
             case 'method':
                 return $request->getMethod();
 

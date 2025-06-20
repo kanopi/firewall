@@ -19,6 +19,22 @@ use Symfony\Component\HttpFoundation\Request;
 trait EvaluateTrait
 {
     /**
+     * Split the query by a delimiter and confirm that no empty strings are provided.
+     *
+     * @param string $query
+     *   Query string to split.
+     * @param string $delimiter
+     *   Delimiter value to split by.
+     *
+     * @return array
+     *   Return the query broken down into an array.
+     */
+    protected function splitQuery(string $query, string $delimiter = '.'): array
+    {
+        return array_filter(explode($delimiter, trim($query)), fn ($item): bool => $item !== '');
+    }
+
+    /**
      * Evaluate the request and check if passes conditions.
      *
      * @param Request $request

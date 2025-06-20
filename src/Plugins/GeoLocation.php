@@ -82,7 +82,11 @@ class GeoLocation extends AbstractPluginBase
             return false;
         }
 
-        $parts = explode('.', $variable);
+        $parts = $this->splitQuery($variable);
+
+        if ($parts === []) {
+            return null;
+        }
 
         try {
             $record = $this->reader->city($request->getClientIp());
