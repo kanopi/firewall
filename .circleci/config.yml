@@ -100,9 +100,9 @@ jobs:
 #              echo "Percentage does not pass threshold."
 #              exit 1
 #            fi
-#      - ci-tools/post-to-github-commit:
-#          body: '@/tmp/report.md'
-#          when: always
+      - ci-tools/post-to-github-commit:
+          body: '@/tmp/report.md'
+          when: always
       - run:
           name: "Comment on PR"
           when: always
