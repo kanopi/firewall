@@ -109,8 +109,8 @@ class DatabaseStorage extends AbstractStorageBase
      */
     public function get(string $key, mixed $default = null): mixed
     {
-        try {
-            if ($this->exists($key)) {
+        if ($this->exists($key)) {
+            try {
                 $count = $this->connection->createQueryBuilder()
                     ->select('*')
                     ->from($this->config['storage_table'])
@@ -118,8 +118,8 @@ class DatabaseStorage extends AbstractStorageBase
                     ->setParameter('remote_address', $key)
                     ->executeQuery();
                 return $count->fetchAssociative();
+            } catch (\Exception) {
             }
-        } catch (\Exception) {
         }
 
         return $default;

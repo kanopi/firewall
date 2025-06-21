@@ -66,6 +66,7 @@ jobs:
             # Install XDebug
             sudo pecl update-channels
             sudo pecl install xdebug
+            printf "no\nno\n" | sudo pecl install redis
             #sudo cp .circleci/config/xdebug.ini /etc/php.d/xdebug.ini
             # Install Xidel
             curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
@@ -102,6 +103,13 @@ jobs:
       - ci-tools/post-to-github-commit:
           body: '@/tmp/report.md'
           when: always
+      - run:
+          name: "Comment on PR"
+          when: always
+          command: |
+            if [[ "${CI_PULL_REQUEST}" != "" ]]; then
+              gh pr comment --body-file /tmp/report.md
+            fi
       - store_test_results:
           path: reports/report.xml
       - store_artifacts:

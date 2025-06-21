@@ -85,6 +85,10 @@ class IpAddress extends AbstractPluginBase
      */
     protected function isInBlock(string $ip, string $cidr): bool
     {
+        if (!str_contains($cidr, '/')) {
+            return false;
+        }
+
         // Split CIDR into base address and prefix length
         [$subnet, $prefixLength] = explode('/', $cidr, 2);
 

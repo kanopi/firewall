@@ -18,10 +18,7 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class Asn extends AbstractPluginBase
 {
-    use EvaluateTrait {
-        getRequestValue as _getRequestValue;
-    }
-
+    use EvaluateTrait;
     use GeoLocationTrait;
 
     /**
@@ -76,7 +73,7 @@ class Asn extends AbstractPluginBase
      * @return mixed
      *   The value of the variable or empty string if not found.
      */
-    protected function getRequestValue(Request $request, string $variable): mixed
+    protected function getValue(Request $request, string $variable): mixed
     {
         if ($this->reader === null) {
             return false;

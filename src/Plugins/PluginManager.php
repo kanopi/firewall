@@ -51,12 +51,13 @@ class PluginManager
                 continue;
             }
 
-            if (!class_implements($plugin, PluginInterface::class)) {
+            if (!in_array(PluginInterface::class, class_implements($plugin), true)) {
                 continue;
             }
 
             $priority = ($pluginConfig['priority'] ?? 0);
             $priority = is_int($priority) ? $priority : 0;
+
             $lazyObjectRegistry->add(
                 $plugin,
                 fn(): object => new $plugin($pluginConfig['metadata'] ?? [], $pluginConfig['config'] ?? []),

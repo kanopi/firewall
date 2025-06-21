@@ -19,6 +19,22 @@ use Symfony\Component\HttpFoundation\Request;
 trait EvaluateTrait
 {
     /**
+     * Split the query by a delimiter and confirm that no empty strings are provided.
+     *
+     * @param string $query
+     *   Query string to split.
+     * @param string $delimiter
+     *   Delimiter value to split by.
+     *
+     * @return array
+     *   Return the query broken down into an array.
+     */
+    protected function splitQuery(string $query, string $delimiter = '.'): array
+    {
+        return array_filter(explode($delimiter, trim($query)), fn ($item): bool => $item !== '');
+    }
+
+    /**
      * Evaluate the request and check if passes conditions.
      *
      * @param Request $request
@@ -104,8 +120,6 @@ trait EvaluateTrait
                     return true;
                 }
             }
-
-            return false;
         }
 
         return false;
@@ -348,22 +362,25 @@ trait EvaluateTrait
     /**
      * Extract the value for a given variable name from the Request object.
      *
-     * Supported variables:
-     * - method: HTTP method (GET, POST, etc.)
-     * - host: Hostname
-     * - path: URI path (e.g. /admin)
-     * - any other string: attempts to fetch from query parameters or POST data
-     *
      * @param Request $request
      *   Symfony HTTP request object.
      * @param string $variable
      *   Variable name to extract from the request.
      *
-     * @return string
+     * @return mixed
      *   The value of the variable or empty string if not found.
      */
-    protected function getRequestValue(Request $request, string $variable): string
+    protected function getRequestValue(Request $request, string $variable): mixed
     {
-        return '';
+        if (trim($variable) === '') {
+            return null;
+        }
+
+        /** @phpstan-ignore-next-line */
+        if (method_exists($this, 'getValue')) {
+            return $this->getValue($request, $variable);
+        }
+
+        return null;
     }
 }

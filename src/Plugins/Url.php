@@ -1,14 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
-/*
- * This file is part of the Firewall package.
- *
- * For the full copyright and license information, please view the LICENSE
- * file that was distributed with this source code.
- */
-
 namespace Kanopi\Firewall\Plugins;
 
 use Symfony\Component\HttpFoundation\Request;
@@ -18,9 +9,7 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class Url extends AbstractPluginBase
 {
-    use EvaluateTrait {
-        getRequestValue as _getRequestValue;
-    }
+    use EvaluateTrait;
 
     /**
      * {@inheritdoc}
@@ -60,20 +49,18 @@ class Url extends AbstractPluginBase
      * @param string $variable
      *   Variable name to extract from the request.
      *
-     * @return bool|float|int|string|null
+     * @return mixed
      *   The value of the variable or empty string if not found.
      */
-    protected function getRequestValue(Request $request, string $variable): bool|float|int|string|null
+    protected function getValue(Request $request, string $variable): mixed
     {
-        // @todo add in additional variables like headers, cookies, etc.
-        $segments = explode('.', trim($variable));
+        $segments = $this->splitQuery($variable);
 
-        /** @phpstan-ignore-next-line  */
         if ($segments === []) {
             return null;
         }
 
-        switch (strtolower($segments[0])) {
+        switch (strtolower((string) $segments[0])) {
             case 'method':
                 return $request->getMethod();
 

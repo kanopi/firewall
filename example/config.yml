@@ -31,16 +31,16 @@ block:
       default_sample: 20
       default_expiration_time: 300
       storage:
-        #        type: Kanopi\Firewall\Plugins\RateLimitStorage\FileRateLimitStorage
+        #        type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
         #        config:
         #          file: /tmp/firewall.rate.data
 
-        #        type: Kanopi\Firewall\Plugins\RateLimitStorage\DatabaseRateLimitStorage
+        #        type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
         #        config:
         #          connection:
         #            dsn: *DB_DSN
 
-        type: Kanopi\Firewall\Plugins\RateLimitStorage\RedisRateLimitStorage
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
         config:
           <<: *REDIS_CONNECTION
 

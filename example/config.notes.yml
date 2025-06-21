@@ -210,10 +210,10 @@ block:
       storage:
 
         # Store items In Memory (Good for testing, resets after each request).
-        type: Kanopi\Firewall\Plugins\RateLimitStorage\InMemoryRateLimitStorage
+        type: Kanopi\Firewall\RateLimitStorage\InMemoryRateLimitStorage
 
         # Store details within Redis Service
-        type: Kanopi\Firewall\Plugins\RateLimitStorage\RedisRateLimitStorage
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
         config:
           # Redis configuration settings.
           redis:
@@ -228,13 +228,13 @@ block:
             auth: ['username', 'password']
 
         # Store details within a File
-        type: Kanopi\Firewall\Plugins\RateLimitStorage\FileRateLimitStorage
+        type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
         config:
           # File location where to store the data.
           file: /tmp/test.data
 
         # Store details within a Database
-        type: Kanopi\Firewall\Plugins\RateLimitStorage\DatabaseRateLimitStorage
+        type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
         config:
           # Table that is created in the system to store data
           storage-table: firewall-ratelimit-storage

@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins\RateLimitStorage;
+namespace Kanopi\Firewall\RateLimitStorage;
 
 use Redis;
 
@@ -35,16 +35,7 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
     {
         parent::__construct($config);
 
-        $this->redis = new Redis();
-        $this->redis->connect(
-            strval($config['redis']['host'] ?? '127.0.0.1'),
-            intval($config['redis']['port'] ?? 6379)
-        );
-
-        if (!empty($config['redis']['auth'])) {
-            $this->redis->auth($config['redis']['auth']);
-        }
-
+        $this->redis = (($config['instance'] ?? null) instanceof Redis) ? $config['instance'] : new Redis($config['redis']);
         $this->redisPrefix = strval($config['redis']['prefix'] ?? 'ratelimit:');
     }
 
