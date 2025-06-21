@@ -180,4 +180,56 @@ class FirewallTest extends TestCase {
         $response = $firewall->evaluate();
         $this->assertTrue($response);
     }
+
+    /**
+     * Test formatUploadedFiles() handles flat, nested, and null structures.
+     */
+    public function testFormatUploadedFilesHandlesVariousStructures(): void {
+        $mockFile1 = $this->createMock(UploadedFile::class);
+        $mockFile1->method('getClientOriginalName')->willReturn('flat.jpg');
+        $mockFile1->method('getClientMimeType')->willReturn('image/jpeg');
+        $mockFile1->method('getSize')->willReturn(1111);
+        $mockFile1->method('getError')->willReturn(0);
+
+        $mockFile2 = $this->createMock(UploadedFile::class);
+        $mockFile2->method('getClientOriginalName')->willReturn('nested.png');
+        $mockFile2->method('getClientMimeType')->willReturn('image/png');
+        $mockFile2->method('getSize')->willReturn(2222);
+        $mockFile2->method('getError')->willReturn(0);
+
+        $input = [
+            'flat' => $mockFile1,
+            'nested' => [
+                'inner' => $mockFile2,
+                'empty' => null,
+            ],
+            'nullFile' => null,
+        ];
+
+        $firewall = $this->createFirewall();
+        $ref = new \ReflectionClass(Firewall::class);
+        $method = $ref->getMethod('formatUploadedFiles');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($firewall, $input);
+
+        $this->assertEquals([
+            'flat' => [
+                'originalName' => 'flat.jpg',
+                'mimeType' => 'image/jpeg',
+                'size' => 1111,
+                'error' => 0
+            ],
+            'nested' => [
+                'inner' => [
+                    'originalName' => 'nested.png',
+                    'mimeType' => 'image/png',
+                    'size' => 2222,
+                    'error' => 0
+                ],
+                'empty' => null
+            ],
+            'nullFile' => null
+        ], $result);
+    }
 }
