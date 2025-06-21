@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Kanopi\Firewall\Tests;
+namespace Kanopi\Firewall\Tests\Unit;
 
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Plugins\PluginInterface;

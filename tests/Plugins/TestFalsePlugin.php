@@ -1,6 +1,6 @@
 <?php
 
-namespace Kanopi\Firewall\Tests\Unit\Plugins;
+namespace Kanopi\Firewall\Tests\Plugins;
 
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Symfony\Component\HttpFoundation\Request;

@@ -2,11 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Kanopi\Tests\Firewall\RateLimitStorage;
+namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\InMemoryRateLimitStorage;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageFactory;
-use Kanopi\Framework\RateLimitStorage\RateLimitStorageInterface;
 use PHPUnit\Framework\TestCase;
 
 /**
