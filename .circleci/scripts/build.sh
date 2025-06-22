@@ -19,7 +19,7 @@ rsync -av \
   "$APP_ROOT/" "$BUILD_DIR/"
 
 # Include the load.php file as part of the build.
-rsync -av \
+cp -f \
   "$APP_ROOT/.circleci/assets/load.php" "$BUILD_DIR/"
 
 cd "$BUILD_DIR"
