@@ -1,6 +1,6 @@
 # Simple Firewall
 
-**Kanopi Firewall** is a powerful, extensible request-evaluation library for PHP-based systems. It provides comprehensive protection by analyzing HTTP requests and applying configurable rules to either allow or block access based on IP addresses, geolocation, user agents, URLs, ASN (Autonomous System Numbers), and rate limits. The library is designed to work seamlessly with popular frameworks like Drupal, WordPress, Symfony, or any standalone PHP application.
+**Simple Firewall** is a powerful, extensible request-evaluation library for PHP-based systems. It provides comprehensive protection by analyzing HTTP requests and applying configurable rules to either allow or block access based on IP addresses, geolocation, user agents, URLs, ASN (Autonomous System Numbers), and rate limits. The library is designed to work seamlessly with popular frameworks like Drupal, WordPress, Symfony, or any standalone PHP application.
 
 ## Table of Contents
 
