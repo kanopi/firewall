@@ -88,6 +88,31 @@ class EvaluateTraitTest extends TestCase {
         $this->assertSame('90', $rule['value']);
     }
 
+    /**
+     * Test the in operator to make sure it converts to a equal operator without matches.
+     */
+    public function testInOperator(): void {
+        $plugin = $this->getMockPlugin(['tag' => 'green']);
+        $request = Request::create('/');
+
+        $rule = [
+            'variable' => 'tag',
+            'operator' => 'in',
+            'value' => ['green', 'blue'],
+        ];
+        $this->assertTrue($this->invoke($plugin, 'evaluateStructuredRule', [$request, $rule]), "Failed for in operator");
+
+        $plugin = $this->getMockPlugin(['tag' => 'green']);
+        $request = Request::create('/');
+
+        $rule = [
+            'variable' => 'tag',
+            'operator' => 'in',
+            'value' => ['red'],
+        ];
+        $this->assertFalse($this->invoke($plugin, 'evaluateStructuredRule', [$request, $rule]), "Failed for red");
+    }
+
     /** Test all match modes for arrays */
     public function testMatchModes(): void {
         $plugin = $this->getMockPlugin(['tag' => 'green']);

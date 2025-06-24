@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Doctrine\DBAL\Schema\DefaultSchemaManagerFactory;
+use Doctrine\DBAL\Schema\MySQLSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
@@ -221,22 +224,14 @@ class DatabaseTraitTest extends TestCase
      */
     public function testEnforceTableDataException(): void
     {
-        $instance = new class {
+        $mockSchemaManager = $this->createMock(MySQLSchemaManager::class);
+        $mockSchemaManager->expects($this->any())->method('listTableColumns')->willThrowException(new \Exception('Exception Thrown From getColumnListing'));
+        $instance = new class($mockSchemaManager) {
             use \Kanopi\Firewall\Plugins\DatabaseTrait;
 
-            public array $config = ['storage_table' => 'broken_table'];
-
-            public function __construct()
+            public function __construct($schemaManager)
             {
-                $this->createConnection([
-                    'driver' => 'pdo_sqlite',
-                    'memory' => true,
-                ]);
-            }
-
-            protected function getStorageTable(): \Doctrine\DBAL\Schema\Table
-            {
-                return new Table('broken_table');
+                $this->schemaManager = $schemaManager;
             }
 
             public function enforceTableDataWrapper(string $table, array $data = []): array
