@@ -62,6 +62,11 @@ jobs:
       - checkout
       - ci-tools/install-github-cli
       - run:
+          name: Install GeoIP DBs
+          command: |
+            mkdir /tmp/geoip
+            bash bin/update_geoip.sh $GEOIP_LICENSE /tmp/geoip/
+      - run:
           name: Setup
           command: |
             # Install BC Tool
@@ -79,6 +84,7 @@ jobs:
             # Install Xidel
             curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
             chmod +x /tmp/xidel && sudo mv /tmp/xidel /usr/sbin/
+            cp .circleci/phpunit.env ./.env
       - restore_cache:
           keys:
             - composer-cache-{{ checksum "composer.lock" }}
