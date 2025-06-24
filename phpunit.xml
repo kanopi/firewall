@@ -15,7 +15,9 @@
       <xml outputDirectory="reports/xml"/>
     </report>
   </coverage>
-  <logging/>
+  <logging>
+      <junit outputFile="reports/junit.xml"/>
+  </logging>
   <source>
     <include>
       <directory suffix=".php">src/</directory>
