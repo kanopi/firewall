@@ -581,8 +581,8 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
         
         // Verify plugin priority (URL plugin blocked first)
         $storageData = unserialize(file_get_contents($this->tempDir . '/multi.data'));
-        $this->assertEquals('URL', $storageData['192.168.1.101']['plugin'] ?? null);
-        $this->assertEquals('User Agent', $storageData['192.168.1.102']['plugin'] ?? null);
+        $this->assertEquals('URL', $storageData['192.168.1.101']['value']['plugin'] ?? null);
+        $this->assertEquals('User Agent', $storageData['192.168.1.102']['value']['plugin'] ?? null);
     }
     
     /**
