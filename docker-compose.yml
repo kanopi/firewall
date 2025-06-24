@@ -31,8 +31,3 @@ services:
 
   redis:
     image: redis:6
-
-#  vector:
-#    image: timberio/vector:latest-alpine
-#    volumes:
-#      - ./.docker/vector/vector.toml:/etc/vector/vector.toml
