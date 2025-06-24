@@ -126,7 +126,7 @@ jobs:
               gh pr comment --body-file /tmp/report.md
             fi
       - store_test_results:
-          path: reports/report.xml
+          path: reports/junit.xml
       - store_artifacts:
           path: reports
 
