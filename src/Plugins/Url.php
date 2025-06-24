@@ -100,7 +100,7 @@ class Url extends AbstractPluginBase
         }
 
         if (count($segments) === 1) {
-            return join(' ', $data);
+            return http_build_query($data, '', ' ');
         }
 
         // Traverse nested keys
