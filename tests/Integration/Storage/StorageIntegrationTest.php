@@ -130,6 +130,7 @@ class StorageIntegrationTest extends IntegrationTestCase
         $storage->set('expire_later', ['data' => 'test3'], 5); // Expires in 1 hour
         
         // Initial file size
+        clearstatcache();
         $initialSize = filesize($storageFile);
         
         // Wait for short expiration
