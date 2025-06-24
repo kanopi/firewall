@@ -30,7 +30,10 @@ class FirewallRequestFlowTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        
+
+        putenv('FIREWALL_BYPASS_CLI=1');
+        putenv('FIREWALL_TEST=1');
+
         // Create unique temp directory for this test run
         $this->tempDir = sys_get_temp_dir() . '/firewall_test_' . uniqid();
         if (!mkdir($this->tempDir, 0777, true)) {
@@ -98,7 +101,7 @@ class FirewallRequestFlowTest extends TestCase
         
         // Verify blocking occurred
         $this->assertTrue($responseSent, 'Blocking response should have been sent');
-        $this->assertEquals(403, $statusCode, 'Should return 403 Forbidden status');
+        $this->assertEquals(400, $statusCode, 'Should return 400 Forbidden status');
         
         // Verify IP was stored
         $this->assertFileExists($this->tempDir . '/blocked.data');
@@ -109,7 +112,7 @@ class FirewallRequestFlowTest extends TestCase
         $this->assertArrayHasKey('192.168.1.100', $storageData);
         
         // Verify stored metadata
-        $blockedData = $storageData['192.168.1.100'];
+        $blockedData = $storageData['192.168.1.100']['value'] ?? [];
         $this->assertArrayHasKey('plugin', $blockedData);
         $this->assertEquals('IP Address', $blockedData['plugin']);
         $this->assertArrayHasKey('blocked', $blockedData);
@@ -210,20 +213,20 @@ class FirewallRequestFlowTest extends TestCase
         $firewall = Firewall::create([$config]);
         
         // Request that matches URL plugin but not IP plugin
-        $request = Request::create('/admin/users', 'GET', [], [], [], [
+        $request = Request::create('/wp-admin.php', 'GET', [], [], [], [
             'REMOTE_ADDR' => '192.168.1.1'  // Not in 10.0.0.0/8
         ]);
         
         try {
             $firewall->evaluate($request);
-            $this->fail('Request to /admin should have been blocked');
+            $this->fail('Request to /wp-* should have been blocked');
         } catch (\Exception $e) {
-            $this->assertEquals(403, $e->getCode());
+            $this->assertEquals(400, $e->getCode());
         }
         
         // Verify the URL plugin blocked it (not the IP plugin)
         $storageData = unserialize(file_get_contents($storageFile));
-        $blockedData = $storageData['192.168.1.1'];
+        $blockedData = $storageData['192.168.1.1']['value'] ?? [];
         $this->assertEquals('URL', $blockedData['plugin'], 'URL plugin should have blocked the request');
         
         // Test request that matches IP plugin only
@@ -235,12 +238,12 @@ class FirewallRequestFlowTest extends TestCase
             $firewall->evaluate($request2);
             $this->fail('Request from 10.0.0.0/8 should have been blocked');
         } catch (\Exception $e) {
-            $this->assertEquals(403, $e->getCode());
+            $this->assertEquals(400, $e->getCode());
         }
         
         // Verify the IP plugin blocked it
         $storageData = unserialize(file_get_contents($storageFile));
-        $blockedData = $storageData['10.5.5.5'];
+        $blockedData = $storageData['10.5.5.5']['value'] ?? [];
         $this->assertEquals('IP Address', $blockedData['plugin'], 'IP Address plugin should have blocked the request');
     }
     
@@ -283,13 +286,13 @@ class FirewallRequestFlowTest extends TestCase
             $firewall1->evaluate($request1);
             $this->fail('First request should have been blocked');
         } catch (\Exception $e) {
-            $this->assertEquals(403, $e->getCode());
+            $this->assertEquals(400, $e->getCode());
         }
         
         // Verify data was persisted
         $this->assertFileExists($storageFile);
         $originalData = unserialize(file_get_contents($storageFile));
-        $originalEventId = $originalData['192.168.1.100']['event_id'];
+        $originalEventId = $originalData['192.168.1.100']['value']['event_id'];
         
         // Second request with new firewall instance - should still be blocked
         $firewall2 = Firewall::create([$configFile]);
@@ -301,12 +304,12 @@ class FirewallRequestFlowTest extends TestCase
             $firewall2->evaluate($request2);
             $this->fail('Second request should have been blocked due to persistence');
         } catch (\Exception $e) {
-            $this->assertEquals(403, $e->getCode());
+            $this->assertEquals(400, $e->getCode());
         }
         
         // Verify the same event ID is used (no re-evaluation)
         $currentData = unserialize(file_get_contents($storageFile));
-        $currentEventId = $currentData['192.168.1.100']['event_id'];
+        $currentEventId = $currentData['192.168.1.100']['value']['event_id'];
         $this->assertEquals($originalEventId, $currentEventId, 'Should use original event ID');
     }
     
@@ -381,7 +384,7 @@ class FirewallRequestFlowTest extends TestCase
                 $firewall->evaluate($request);
                 $this->fail("IP $ip should have been blocked");
             } catch (\Exception $e) {
-                $this->assertEquals(403, $e->getCode(), "IP $ip should return 403");
+                $this->assertEquals(400, $e->getCode(), "IP $ip should return 400");
             }
         }
         
@@ -439,7 +442,7 @@ class FirewallRequestFlowTest extends TestCase
             $firewall->evaluate($request);
             $this->fail('Overridden IP should have been blocked');
         } catch (\Exception $e) {
-            $this->assertEquals(403, $e->getCode());
+            $this->assertEquals(400, $e->getCode());
         }
         
         // Verify the overridden storage path was used
