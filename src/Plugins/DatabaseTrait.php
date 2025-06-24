@@ -43,6 +43,7 @@ trait DatabaseTrait
 
                 $this->connection = DriverManager::getConnection($connectionParams);
             }
+
             $this->schemaManager = $this->connection->createSchemaManager();
             $this->createTable();
         } catch (\Exception) {
@@ -83,7 +84,7 @@ trait DatabaseTrait
     {
         try {
             $columns = $this->schemaManager->listTableColumns($table);
-            foreach ($data AS $key => $value) {
+            foreach (array_keys($data) as $key) {
                 if (!isset($columns[$key])) {
                     unset($data[$key]);
                 }

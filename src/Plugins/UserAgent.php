@@ -104,6 +104,7 @@ class UserAgent extends AbstractPluginBase
                 if (count($segments) === 1) {
                     return $this->deviceDetector->isBot() ? 'true' : 'false';
                 }
+
                 $data = $this->deviceDetector->isBot() ? $this->deviceDetector->getBot() : [];
                 break;
             case 'device':

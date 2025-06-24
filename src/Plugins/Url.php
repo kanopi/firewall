@@ -74,6 +74,7 @@ class Url extends AbstractPluginBase
                 if (count($segments) === 1) {
                     return $request->getQueryString();
                 }
+
                 $data = $request->query->all();
                 break;
 

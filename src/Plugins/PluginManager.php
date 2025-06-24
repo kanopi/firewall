@@ -87,9 +87,10 @@ class PluginManager
         foreach ($this->registry->getIterator() as $plugin) {
             $status = $plugin->evaluate($request);
             if ($status) {
-                if ($callback) {
+                if ($callback !== null) {
                     call_user_func($callback, $block, $request, $plugin);
                 }
+
                 return true;
             }
         }
