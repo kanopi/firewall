@@ -4,7 +4,7 @@ set -e
 
 # Config
 APP_ROOT=$(pwd)
-BUILD_DIR="/tmp/build"
+BUILD_DIR="/tmp/firewall"
 ZIP_FILE="/tmp/firewall.zip"
 
 # Step 1: Clean up previous builds
@@ -31,6 +31,7 @@ rm -rf composer.lock composer.json
 
 # Step 4: Zip the build directory
 echo "Creating zip archive..."
-zip -r "$ZIP_FILE" .
+cd ..
+zip -r "$ZIP_FILE" "firewall"
 
 echo "✅ Build complete: $ZIP_FILE"

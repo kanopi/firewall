@@ -1,8 +1,15 @@
 .circleci
 .claude
 .idea
+.docker
+.env
+.env.example
 .git
+.github
 .phpunit.cache
+bin
+CONTRIBUTING.md
+docker-compose.yml
 example
 firewall.zip
 reports
