@@ -71,7 +71,7 @@ class DatabaseStorage extends AbstractStorageBase
                     'expire' => $expire > 0 ? time() + $expire : $expire,
                 ]
             );
-            $data['metadata'] = $data;
+            $data['metadata'] = json_encode($data);
             $data = $this->enforceTableData($this->config['storage_table'], $data);
             if ($this->exists($key)) {
                 $this->connection->update(
