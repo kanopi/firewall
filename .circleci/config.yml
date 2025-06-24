@@ -71,7 +71,7 @@ jobs:
           command: |
             # Install BC Tool
             sudo apt update
-            sudo apt install mariadb-client
+            sudo apt install mariadb-client postgresql-client
             curl -o /tmp/bc.deb -fsSL http://archive.ubuntu.com/ubuntu/pool/main/b/bc/bc_1.07.1-3build1_amd64.deb
             sudo dpkg -i /tmp/bc.deb 
             # Set Hostname
