@@ -41,13 +41,21 @@ jobs:
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
-        name: db
+        name: mysql
         environment:
-          - MYSQL_ROOT_PASSWORD=root
+          - MYSQL_ROOT_PASSWORD=password
           - MYSQL_USER=user
           - MYSQL_PASSWORD=user
-          - MYSQL_DATABASE=default
-          - MYSQL_INITDB_SKIP_TZINFO=1
+          - MYSQL_DATABASE=firewall_test
+      - image: cimg/postgres:17.5
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+        name: postgres
+        environment:
+          - POSTGRES_DB=firewall_test
+          - POSTGRES_USER=postgres
+          - POSTGRES_PASSWORD=password
       - image: redis:6
         name: redis
     steps:
