@@ -6,9 +6,13 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Doctrine\DBAL\Schema\DefaultSchemaManagerFactory;
+use Doctrine\DBAL\Schema\MySQLSchemaManager;
 use Doctrine\DBAL\Schema\Table;
+use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
 use Kanopi\Firewall\Plugins\DatabaseTrait;
+use Kanopi\Firewall\Storage\DatabaseStorage;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -46,6 +50,24 @@ class DatabaseTraitTest extends TestCase
                 return $this->schemaManager->tablesExist([$this->config['storage_table']]);
             }
         };
+    }
+
+    /**
+     * Tests to confirm that can pass instance of connection.
+     */
+    public function testConstructWithInstance(): void
+    {
+        $connectionParams = (new DsnParser())->parse('sqlite3:///:memory:');
+        $connection = DriverManager::getConnection($connectionParams);
+        $tableName = 'firewall_test_' . uniqid();
+        $storage = new DatabaseStorage([
+            'connection' => $connection,
+            'storage_table' => $tableName
+        ]);
+
+        // Test table creation
+        $schemaManager = $connection->createSchemaManager();
+        $this->assertTrue($schemaManager->tablesExist([$tableName]), "Table $tableName should be created");
     }
 
     /**
@@ -195,5 +217,29 @@ class DatabaseTraitTest extends TestCase
         };
 
         $this->assertFalse($instance->tableExists(), 'Table should not exist');
+    }
+
+    /**
+     * Ensure enforceTableData returns back empty array on exception.
+     */
+    public function testEnforceTableDataException(): void
+    {
+        $mockSchemaManager = $this->createMock(MySQLSchemaManager::class);
+        $mockSchemaManager->expects($this->any())->method('listTableColumns')->willThrowException(new \Exception('Exception Thrown From getColumnListing'));
+        $instance = new class($mockSchemaManager) {
+            use \Kanopi\Firewall\Plugins\DatabaseTrait;
+
+            public function __construct($schemaManager)
+            {
+                $this->schemaManager = $schemaManager;
+            }
+
+            public function enforceTableDataWrapper(string $table, array $data = []): array
+            {
+                return $this->enforceTableData($table, $data);
+            }
+        };
+
+        $this->assertEmpty($instance->enforceTableDataWrapper('broken_table'), 'Confirm Enforce Data returns empty data');
     }
 }

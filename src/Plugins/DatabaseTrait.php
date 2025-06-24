@@ -30,15 +30,20 @@ trait DatabaseTrait
     /**
      * Create the Connection.
      */
-    protected function createConnection(array $connectionParams): void
+    protected function createConnection(array|Connection $connectionParams): void
     {
         try {
-            if (isset($connectionParams['dsn'])) {
-                $dsnParser = new DsnParser();
-                $connectionParams = $dsnParser->parse($connectionParams['dsn']);
+            if ($connectionParams instanceof Connection) {
+                $this->connection = $connectionParams;
+            } else {
+                if (isset($connectionParams['dsn'])) {
+                    $dsnParser = new DsnParser();
+                    $connectionParams = $dsnParser->parse($connectionParams['dsn']);
+                }
+
+                $this->connection = DriverManager::getConnection($connectionParams);
             }
 
-            $this->connection = DriverManager::getConnection($connectionParams);
             $this->schemaManager = $this->connection->createSchemaManager();
             $this->createTable();
         } catch (\Exception) {
@@ -62,5 +67,32 @@ trait DatabaseTrait
             } catch (\Exception) {
             }
         }
+    }
+
+    /**
+     * Enforce that the data being put into the database actually has columns for it.
+     *
+     * @param string $table
+     *   Table name to get columns for.
+     * @param array $data
+     *   Data going into the table.
+     *
+     * @return array
+     *   Data modified with values allowed in the table.
+     */
+    protected function enforceTableData(string $table, array $data = []): array
+    {
+        try {
+            $columns = $this->schemaManager->listTableColumns($table);
+            foreach (array_keys($data) as $key) {
+                if (!isset($columns[$key])) {
+                    unset($data[$key]);
+                }
+            }
+        } catch (\Exception) {
+            return [];
+        }
+
+        return $data;
     }
 }

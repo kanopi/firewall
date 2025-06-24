@@ -282,6 +282,12 @@ trait EvaluateTrait
         /** @phpstan-ignore-next-line */
         $caseSensitive = !empty($rule['case_sensitive']) && $rule['case_sensitive'];
 
+        // Operator adjusted to convert in operator to equals.
+        if ($operator === 'in') {
+            $operator = 'equals';
+            $matches = $matches === false ? 'any' : $matches;
+        }
+
         $requestValue = $this->getRequestValue($request, $variable);
 
         $result = false;

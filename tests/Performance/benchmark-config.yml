@@ -1,0 +1,262 @@
+# Firewall Performance Test Configuration
+# All parameters can be customized for different test scenarios
+
+test:
+  # Test duration in minutes (can extend to hours)
+  duration_minutes: 10
+  
+  # Gradual ramp-up time in seconds (0 for immediate)
+  ramp_up_seconds: 30
+  
+  # Number of concurrent connections/workers
+  concurrent_connections: 50
+  
+  # Total requests per second target (0 for maximum possible)
+  target_rps: 0
+  
+  # Enable memory profiling
+  memory_profiling: true
+  
+  # Test mode: 'development', 'staging', 'production'
+  mode: 'development'
+
+# Traffic distribution configuration
+traffic:
+  # Percentage of normal vs malicious traffic
+  distribution:
+    normal: 70
+    malicious: 30
+  
+  # Request method distribution (percentages must sum to 100)
+  methods:
+    GET: 60
+    POST: 30
+    PUT: 5
+    DELETE: 3
+    HEAD: 1
+    OPTIONS: 1
+  
+  # Sleep patterns between requests (in milliseconds)
+  sleep_patterns:
+    # Normal user behavior
+    normal:
+      min: 500
+      max: 5000
+      # Percentage of requests that should have sleep
+      percentage: 80
+    
+    # Bot/spam behavior (rapid requests)
+    malicious:
+      min: 0
+      max: 100
+      percentage: 20
+  
+  # URL patterns to test
+  urls:
+    # Valid application URLs
+    valid:
+      - "/"
+      - "/api/v1/users"
+      - "/api/v1/posts"
+      - "/admin/dashboard"
+      - "/user/profile"
+      - "/search"
+      - "/contact"
+      - "/about"
+      - "/products"
+      - "/blog/[id]"  # [id] will be replaced with random number
+    
+    # 404/Invalid URLs for testing
+    invalid:
+      - "/wp-admin"
+      - "/wp-login.php"
+      - "/.env"
+      - "/.git/config"
+      - "/phpmyadmin"
+      - "/admin/config.php"
+      - "/backup.sql"
+      - "/test.php"
+      - "/.htaccess"
+      - "/config.yml"
+    
+    # Malicious patterns (SQL injection, XSS attempts)
+    malicious:
+      - "/search?q='; DROP TABLE users--"
+      - "/api/users?id=1 OR 1=1"
+      - "/page?content=<script>alert('xss')</script>"
+      - "/admin' UNION SELECT * FROM passwords--"
+      - "/../../etc/passwd"
+      - "/admin.php?cmd=ls -la"
+
+# Geographic distribution of IPs
+geographic:
+  # Distribution percentages by country (must sum to 100)
+  distribution:
+    US: 40        # United States
+    CN: 15        # China
+    RU: 10        # Russia
+    BR: 8         # Brazil
+    IN: 5         # India
+    GB: 5         # United Kingdom
+    DE: 3         # Germany
+    FR: 3         # France
+    JP: 3         # Japan
+    KR: 2         # South Korea
+    VN: 2         # Vietnam
+    NG: 2         # Nigeria
+    OTHER: 2      # Random other countries
+  
+  # ASN (Autonomous System) patterns
+  asn_patterns:
+    # Percentage from each type
+    residential: 40
+    datacenter: 30
+    cloud: 20      # AWS, GCP, Azure
+    vpn: 10        # Known VPN providers
+
+# User Agent patterns
+user_agents:
+  # Distribution of user agent types
+  distribution:
+    normal_browsers: 60
+    outdated_browsers: 10
+    bots: 15
+    scrapers: 10
+    malicious: 5
+  
+  # Specific patterns
+  patterns:
+    normal_browsers:
+      - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0.4472.124"
+      - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15"
+      - "Mozilla/5.0 (X11; Linux x86_64) Firefox/89.0"
+    
+    outdated_browsers:
+      - "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)"
+      - "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0)"
+    
+    bots:
+      - "Googlebot/2.1 (+http://www.google.com/bot.html)"
+      - "Mozilla/5.0 (compatible; bingbot/2.0)"
+      - "facebookexternalhit/1.1"
+    
+    scrapers:
+      - "Python-urllib/3.8"
+      - "curl/7.68.0"
+      - "Wget/1.20.3"
+    
+    malicious:
+      - "sqlmap/1.4.7"
+      - "Nikto/2.1.5"
+      - "masscan/1.0"
+
+# Firewall configuration for testing
+firewall:
+  # Storage backend to test
+  storage:
+    type: "redis"  # Options: redis, database, file, memory
+    redis:
+      host: "localhost"
+      port: 6379
+    database:
+      dsn: "mysql://user:password@localhost:3306/firewall_test"
+    file:
+      path: "/tmp/firewall_test.data"
+  
+  # Rate limiting configuration
+  rate_limits:
+    # Default rate limits
+    default:
+      rate: 60
+      sample: 60
+      expiration: 300
+    
+    # Path-specific limits
+    paths:
+      "/api/*":
+        rate: 100
+        sample: 60
+      "/admin/*":
+        rate: 20
+        sample: 60
+      "/login":
+        rate: 5
+        sample: 300
+  
+  # Blocking rules
+  blocking_rules:
+    # Countries to block
+    blocked_countries:
+      - CN
+      - RU
+      - KP
+    
+    # IP ranges to block
+    blocked_ips:
+      - "192.168.1.100"
+      - "10.0.0.0/8"
+    
+    # ASNs to block
+    blocked_asns:
+      - 13335  # Cloudflare (example)
+      - 16509  # Amazon AWS
+    
+    # User agent patterns to block
+    blocked_user_agents:
+      - "sqlmap"
+      - "nikto"
+      - "masscan"
+      - "bot"
+
+# Success criteria
+success_criteria:
+  # Minimum percentage of malicious traffic that should be blocked
+  malicious_block_rate: 95
+  
+  # Maximum acceptable false positive rate (legitimate traffic blocked)
+  max_false_positive_rate: 1
+  
+  # Maximum latency added by firewall (in milliseconds)
+  max_added_latency_ms: 50
+  
+  # Maximum memory usage (in MB)
+  max_memory_usage_mb: 512
+  
+  # Minimum requests per second the system should handle
+  min_requests_per_second: 1000
+
+# Reporting configuration
+reporting:
+  # Output formats
+  formats:
+    - html
+    - json
+  
+  # Output directory
+  output_dir: "./reports/performance"
+  
+  # Metrics to collect
+  metrics:
+    - total_requests
+    - blocked_requests
+    - allowed_requests
+    - requests_by_country
+    - requests_by_plugin
+    - response_times
+    - memory_usage
+    - cpu_usage
+    - error_rates
+    - rate_limit_hits
+    - false_positives
+    - true_positives
+    - latency_percentiles  # p50, p95, p99
+  
+  # Report sections
+  sections:
+    - summary
+    - traffic_analysis
+    - geographic_distribution
+    - plugin_performance
+    - rate_limiting_analysis
+    - memory_profiling
+    - recommendations

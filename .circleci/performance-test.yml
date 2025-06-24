@@ -1,0 +1,222 @@
+# CircleCI configuration for firewall performance testing
+version: 2.1
+
+executors:
+  performance-executor:
+    docker:
+      - image: cimg/php:8.2
+      - image: cimg/redis:7.0
+      - image: cimg/mysql:8.0
+        environment:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: firewall_test
+          MYSQL_USER: firewall
+          MYSQL_PASSWORD: firewall_pass
+    resource_class: xlarge  # Use larger instance for performance testing
+    working_directory: ~/firewall
+
+jobs:
+  performance-test:
+    executor: performance-executor
+    steps:
+      - checkout
+      
+      # Install system dependencies
+      - run:
+          name: Install system packages
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y nginx siege apache2-utils htop sysstat
+            
+      # Install PHP extensions
+      - run:
+          name: Install PHP extensions
+          command: |
+            sudo apt-get install -y php8.2-fpm php8.2-mysql php8.2-redis php8.2-curl php8.2-xml php8.2-mbstring
+            sudo docker-php-ext-install opcache
+            
+      # Configure nginx
+      - run:
+          name: Configure nginx
+          command: |
+            # Create nginx config for firewall testing
+            sudo tee /etc/nginx/sites-available/firewall-test << 'EOF'
+            upstream php-fpm {
+                server unix:/var/run/php/php8.2-fpm.sock;
+                keepalive 32;
+            }
+            
+            server {
+                listen 8080;
+                server_name localhost;
+                root /home/circleci/firewall/public;
+                
+                # Increase buffer sizes for performance
+                client_body_buffer_size 128k;
+                client_max_body_size 10m;
+                client_header_buffer_size 1k;
+                large_client_header_buffers 4 16k;
+                
+                # Performance optimizations
+                sendfile on;
+                tcp_nopush on;
+                tcp_nodelay on;
+                keepalive_timeout 65;
+                
+                location / {
+                    try_files $uri /index.php$is_args$args;
+                }
+                
+                location ~ ^/index\.php(/|$) {
+                    fastcgi_pass php-fpm;
+                    fastcgi_split_path_info ^(.+\.php)(/.*)$;
+                    include fastcgi_params;
+                    fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+                    fastcgi_param DOCUMENT_ROOT $realpath_root;
+                    
+                    # Performance tuning
+                    fastcgi_buffer_size 128k;
+                    fastcgi_buffers 256 16k;
+                    fastcgi_busy_buffers_size 256k;
+                    fastcgi_temp_file_write_size 256k;
+                    fastcgi_read_timeout 600;
+                    
+                    # Connection reuse
+                    fastcgi_keep_conn on;
+                }
+                
+                location ~ \.php$ {
+                    return 404;
+                }
+            }
+            EOF
+            
+            # Enable the site
+            sudo ln -sf /etc/nginx/sites-available/firewall-test /etc/nginx/sites-enabled/
+            sudo rm -f /etc/nginx/sites-enabled/default
+            
+            # Configure PHP-FPM for performance
+            sudo tee /etc/php/8.2/fpm/pool.d/performance.conf << 'EOF'
+            [www]
+            pm = dynamic
+            pm.max_children = 50
+            pm.start_servers = 10
+            pm.min_spare_servers = 5
+            pm.max_spare_servers = 20
+            pm.max_requests = 500
+            
+            ; Performance tuning
+            request_terminate_timeout = 600
+            request_slowlog_timeout = 5s
+            slowlog = /var/log/php-fpm/slow.log
+            EOF
+            
+            # Start services
+            sudo service php8.2-fpm start
+            sudo service nginx start
+            
+      # Install Composer dependencies
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "composer.json" }}
+            - v1-dependencies-
+            
+      - run:
+          name: Install dependencies
+          command: |
+            composer install --no-interaction --prefer-dist --optimize-autoloader
+            
+      - save_cache:
+          key: v1-dependencies-{{ checksum "composer.json" }}
+          paths:
+            - vendor
+            
+      # Download GeoIP databases
+      - run:
+          name: Download GeoIP databases
+          command: |
+            mkdir -p /tmp/geoip
+            # Download MaxMind GeoLite2 databases (you'll need to add your license key)
+            # wget -O /tmp/geoip/GeoLite2-City.mmdb "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=${MAXMIND_LICENSE_KEY}&suffix=tar.gz"
+            # wget -O /tmp/geoip/GeoLite2-Country.mmdb "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${MAXMIND_LICENSE_KEY}&suffix=tar.gz"
+            # wget -O /tmp/geoip/GeoLite2-ASN.mmdb "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=${MAXMIND_LICENSE_KEY}&suffix=tar.gz"
+            
+            # For testing, copy from example directory if available
+            cp example/GeoLite2-*.mmdb /tmp/geoip/ || true
+            
+      # Create test application
+      - run:
+          name: Create test application
+          command: |
+            mkdir -p public
+            cp tests/Performance/test-app.php public/index.php
+            
+      # Wait for services
+      - run:
+          name: Wait for services
+          command: |
+            dockerize -wait tcp://localhost:3306 -timeout 1m
+            dockerize -wait tcp://localhost:6379 -timeout 1m
+            
+      # Run performance tests
+      - run:
+          name: Run performance benchmark
+          command: |
+            # Set environment variables
+            export FIREWALL_TEST=1
+            export DB_HOST=127.0.0.1
+            export DB_USER=firewall
+            export DB_PASS=firewall_pass
+            export DB_NAME=firewall_test
+            export REDIS_HOST=127.0.0.1
+            export REDIS_PORT=6379
+            
+            # Create output directory
+            mkdir -p reports/performance
+            
+            # Start monitoring
+            nohup sar -o /tmp/system_stats 1 > /dev/null 2>&1 &
+            
+            # Run the performance test
+            php tests/Performance/benchmark.php --config=tests/Performance/benchmark-config.yml
+            
+            # Generate system report
+            sar -f /tmp/system_stats > reports/performance/system_stats.txt
+            
+      # Store test results
+      - store_artifacts:
+          path: reports/performance
+          destination: performance-reports
+          
+      - store_test_results:
+          path: reports/performance
+          
+      # Performance gate check
+      - run:
+          name: Check performance criteria
+          command: |
+            php tests/Performance/check-criteria.php reports/performance/results.json
+
+workflows:
+  version: 2
+  performance-testing:
+    jobs:
+      - performance-test:
+          filters:
+            branches:
+              only:
+                - main
+                - develop
+                - /^feature\/perf-.*/
+                
+  # Scheduled performance tests
+  nightly-performance:
+    triggers:
+      - schedule:
+          cron: "0 2 * * *"  # Run at 2 AM UTC daily
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - performance-test

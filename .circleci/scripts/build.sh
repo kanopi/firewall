@@ -18,6 +18,10 @@ rsync -av \
   --exclude-from=".circleci/exclude-build-files.txt" \
   "$APP_ROOT/" "$BUILD_DIR/"
 
+# Include the load.php file as part of the build.
+cp -f \
+  "$APP_ROOT/.circleci/assets/load.php" "$BUILD_DIR/"
+
 cd "$BUILD_DIR"
 
 # Step 3: Install dependencies without dev packages

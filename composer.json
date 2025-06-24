@@ -45,6 +45,7 @@
         "phpunit/phpunit": "^11.5",
         "rector/rector": "^2.0",
         "squizlabs/php_codesniffer": "^3.13",
+        "symfony/dotenv": "^7.3",
         "symfony/var-dumper": "^7.3"
     },
     "scripts": {
@@ -64,10 +65,11 @@
         "check:code": "vendor/bin/phpcs --standard=phpcs_ruleset.xml src",
         "fix:code": "vendor/bin/phpcbf --standard=phpcs_ruleset.xml src",
         "phpunit": [
-            "@phpunit:unit"
+            "@phpunit:unit",
+            "@phpunit:integration"
         ],
         "phpunit:unit": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --testsuite unit --do-not-cache-result",
-        "phpunit:integration": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --testsuite integration --do-not-cache-result",
+        "phpunit:integration": "vendor/bin/phpunit -c ./phpunit.xml --testsuite integration --do-not-cache-result --no-coverage",
         "fix:php": "find config src tests -name '*.php' -exec php -l {} \\;",
         "check:security": "vendor/bin/phpstan analyse src --level max --memory-limit=-1",
         "check:security:circleci": "vendor/bin/phpstan analyse src --level max --memory-limit=-1 --error-format=checkstyle --no-progress > phpstan-report.xml",
@@ -83,7 +85,15 @@
             "@fix:php",
             "@fix:code",
             "@fix:rector"
-        ]
+        ],
+        "test": [
+            "@phpunit:unit",
+            "@phpunit:integration"
+        ],
+        "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --coverage-html reports/ --coverage-text",
+        "cs": "@check:code",
+        "cs:fix": "@fix:code",
+        "stan": "@check:security"
     },
     "prefer-stable": true,
     "minimum-stability": "dev",

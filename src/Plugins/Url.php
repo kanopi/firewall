@@ -71,6 +71,10 @@ class Url extends AbstractPluginBase
                 return $request->getPathInfo();
 
             case 'query':
+                if (count($segments) === 1) {
+                    return $request->getQueryString();
+                }
+
                 $data = $request->query->all();
                 break;
 
@@ -94,6 +98,10 @@ class Url extends AbstractPluginBase
 
             default:
                 return null;
+        }
+
+        if (count($segments) === 1) {
+            return http_build_query($data, '', ' ');
         }
 
         // Traverse nested keys

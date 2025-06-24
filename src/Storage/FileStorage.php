@@ -93,6 +93,7 @@ class FileStorage extends InMemoryStorage
      */
     public function set(string $key, mixed $value, int $expire = 0): bool
     {
+        $this->loadFromFile();
         $result = parent::set($key, $value, $expire);
         $this->persistToFile();
         return $result;
@@ -103,6 +104,7 @@ class FileStorage extends InMemoryStorage
      */
     public function delete(string $key): bool
     {
+        $this->loadFromFile();
         $result = parent::delete($key);
         if ($result) {
             $this->persistToFile();
@@ -126,6 +128,7 @@ class FileStorage extends InMemoryStorage
      */
     public function addToExpire(string $key, int $amount): bool
     {
+        $this->loadFromFile();
         $return = parent::addToExpire($key, $amount);
         if ($return) {
             $this->persistToFile();

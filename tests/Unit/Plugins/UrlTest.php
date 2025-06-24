@@ -116,6 +116,7 @@ class UrlTest extends TestCase
         $request = Request::create('/?foo=bar&baz[qux]=val');
         $this->assertSame('bar', $plugin->getRequestValueWrapper($request, 'query.foo'));
         $this->assertSame('val', $plugin->getRequestValueWrapper($request, 'query.baz.qux'));
+        $this->assertSame('baz%5Bqux%5D=val&foo=bar', $plugin->getRequestValueWrapper($request, 'query'));
     }
 
     /**
@@ -124,8 +125,9 @@ class UrlTest extends TestCase
     public function testGetRequestValuePost(): void
     {
         $plugin = $this->createPlugin();
-        $request = Request::create('/submit', 'POST', ['user' => ['name' => 'Alice']]);
+        $request = Request::create('/submit', 'POST', ['user' => ['name' => 'Alice'], 'title' => 'Wonderland']);
         $this->assertSame('Alice', $plugin->getRequestValueWrapper($request, 'post.user.name'));
+        $this->assertSame('user%5Bname%5D=Alice title=Wonderland', $plugin->getRequestValueWrapper($request, 'post'));
     }
 
     /**

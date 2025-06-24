@@ -48,6 +48,7 @@ class DatabaseStorage extends AbstractStorageBase
                 new Column('blocked', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
                 new Column('request', Type::getType('text')),
                 new Column('expire', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
+                new Column('metadata', Type::getType('text'))
             ], // Columns.
             [
                 new Index('remote_address', ['remote_address'], true, true),
@@ -70,6 +71,8 @@ class DatabaseStorage extends AbstractStorageBase
                     'expire' => $expire > 0 ? time() + $expire : $expire,
                 ]
             );
+            $data['metadata'] = json_encode($data);
+            $data = $this->enforceTableData($this->config['storage_table'], $data);
             if ($this->exists($key)) {
                 $this->connection->update(
                     $this->config['storage_table'],

@@ -41,24 +41,37 @@ jobs:
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
-        name: db
+        name: mysql
         environment:
-          - MYSQL_ROOT_PASSWORD=root
+          - MYSQL_ROOT_PASSWORD=password
           - MYSQL_USER=user
           - MYSQL_PASSWORD=user
-          - MYSQL_DATABASE=default
-          - MYSQL_INITDB_SKIP_TZINFO=1
+          - MYSQL_DATABASE=firewall_test
+      - image: cimg/postgres:17.5
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+        name: postgres
+        environment:
+          - POSTGRES_DB=firewall_test
+          - POSTGRES_USER=postgres
+          - POSTGRES_PASSWORD=password
       - image: redis:6
         name: redis
     steps:
       - checkout
       - ci-tools/install-github-cli
       - run:
+          name: Install GeoIP DBs
+          command: |
+            mkdir /tmp/geoip
+            bash bin/update_geoip.sh $GEOIP_LICENSE /tmp/geoip/
+      - run:
           name: Setup
           command: |
             # Install BC Tool
             sudo apt update
-            sudo apt install mariadb-client
+            sudo apt install mariadb-client postgresql-client
             curl -o /tmp/bc.deb -fsSL http://archive.ubuntu.com/ubuntu/pool/main/b/bc/bc_1.07.1-3build1_amd64.deb
             sudo dpkg -i /tmp/bc.deb 
             # Set Hostname
@@ -67,19 +80,21 @@ jobs:
             sudo pecl update-channels
             sudo pecl install xdebug
             printf "no\nno\n" | sudo pecl install redis
+            sudo docker-php-ext-install pdo_mysql mysqli pdo_pgsql
             #sudo cp .circleci/config/xdebug.ini /etc/php.d/xdebug.ini
             # Install Xidel
             curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
             chmod +x /tmp/xidel && sudo mv /tmp/xidel /usr/sbin/
+            cp .circleci/phpunit.env ./.env
       - restore_cache:
           keys:
-            - composer-cache-{{ checksum "composer.lock" }}
+            - composer-cache-{{ checksum "composer.json" }}
             - composer-cache-
       - run:
           name: build assets
           command: composer install --optimize-autoloader
       - save_cache:
-          key: composer-cache-{{ checksum "composer.lock" }}
+          key: composer-cache-{{ checksum "composer.json" }}
           paths:
             - vendor
       - run:
@@ -111,9 +126,137 @@ jobs:
               gh pr comment --body-file /tmp/report.md
             fi
       - store_test_results:
-          path: reports/report.xml
+          path: reports/junit.xml
       - store_artifacts:
           path: reports
+
+  performance-test:
+    docker:
+      - image: *PHP_IMAGE
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+      - image: redis:7
+        name: redis
+      - image: cimg/mariadb:10.6
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+        name: db
+        environment:
+          - MYSQL_ROOT_PASSWORD=root
+          - MYSQL_USER=firewall
+          - MYSQL_PASSWORD=firewall_pass
+          - MYSQL_DATABASE=firewall_test
+    resource_class: xlarge
+    steps:
+      - checkout
+      - run:
+          name: Install system packages
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y nginx apache2-utils htop sysstat
+            sudo rm -f /etc/nginx/sites-enabled/default
+      - run:
+          name: Configure nginx
+          command: |
+            sudo tee /etc/nginx/sites-available/firewall-test << 'EOF'
+            server {
+                listen 8080;
+                server_name localhost;
+                root /home/circleci/project;
+                
+                location / {
+                    try_files $uri /tests/Performance/test-app.php$is_args$args;
+                }
+                
+                location ~ \.php$ {
+                    fastcgi_pass 127.0.0.1:9000;
+                    fastcgi_index index.php;
+                    include fastcgi_params;
+                    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                    fastcgi_buffer_size 128k;
+                    fastcgi_buffers 256 16k;
+                    fastcgi_busy_buffers_size 256k;
+                }
+            }
+            EOF
+            sudo ln -sf /etc/nginx/sites-available/firewall-test /etc/nginx/sites-enabled/
+      - run:
+          name: Start PHP-FPM
+          command: |
+            sudo mkdir -p /run/php
+            sudo php-fpm -D -c /etc/php/${PHP_VERSION}/cli/php.ini -y /dev/stdin <<EOF
+            [www]
+            user = circleci
+            group = circleci
+            listen = 127.0.0.1:9000
+            pm = dynamic
+            pm.max_children = 50
+            pm.start_servers = 10
+            pm.min_spare_servers = 5
+            pm.max_spare_servers = 20
+            EOF
+      - run:
+          name: Start nginx
+          command: sudo nginx
+      - restore_cache:
+          keys:
+            - composer-cache-{{ checksum "composer.lock" }}
+            - composer-cache-
+      - run:
+          name: Install dependencies
+          command: |
+            composer install --optimize-autoloader
+            composer require guzzlehttp/guzzle symfony/yaml
+      - save_cache:
+          key: composer-cache-{{ checksum "composer.lock" }}
+          paths:
+            - vendor
+      - run:
+          name: Download GeoIP databases
+          command: |
+            mkdir -p /tmp/geoip
+            if [[ -n "${MAXMIND_LICENSE_KEY}" ]]; then
+              echo "Downloading latest GeoIP databases..."
+              bash bin/update_geoip.sh "${MAXMIND_LICENSE_KEY}" /tmp/geoip
+            else
+              echo "No MaxMind license key found, copying from example directory..."
+              cp example/GeoLite2-*.mmdb /tmp/geoip/ || true
+            fi
+            export GEOIP_DB_PATH=/tmp/geoip/GeoLite2-City.mmdb
+            export ASN_DB_PATH=/tmp/geoip/GeoLite2-ASN.mmdb
+      - run:
+          name: Wait for services
+          command: |
+            dockerize -wait tcp://localhost:3306 -timeout 1m
+            dockerize -wait tcp://localhost:6379 -timeout 1m
+            dockerize -wait tcp://localhost:8080 -timeout 1m
+      - run:
+          name: Run performance benchmark
+          command: |
+            export FIREWALL_TEST=1
+            export FIREWALL_TEST_URL=http://localhost:8080
+            export DB_HOST=127.0.0.1
+            export DB_USER=firewall
+            export DB_PASS=firewall_pass
+            export DB_NAME=firewall_test
+            export REDIS_HOST=127.0.0.1
+            export REDIS_PORT=6379
+            export GEOIP_DB_PATH=/tmp/geoip/GeoLite2-City.mmdb
+            export ASN_DB_PATH=/tmp/geoip/GeoLite2-ASN.mmdb
+            export GEOIP_COUNTRY_DB_PATH=/tmp/geoip/GeoLite2-Country.mmdb
+            mkdir -p reports/performance
+            php tests/Performance/run-benchmark.php --config=tests/Performance/benchmark-config.yml
+      - run:
+          name: Check performance criteria
+          command: |
+            php tests/Performance/check-criteria.php reports/performance/results.json
+      - store_artifacts:
+          path: reports/performance
+          destination: performance-reports
+      - store_test_results:
+          path: reports/performance
 
 workflows:
   test:
@@ -181,3 +324,25 @@ workflows:
               only: /.*/
             branches:
               ignore: /.*/
+      # - performance-test:
+      #     name: "performance"
+      #     context: kanopi-code
+      #     filters:
+      #       branches:
+      #         only:
+      #           - main
+      #           - develop
+      #           - /^feature\/perf-.*/
+  
+  # Nightly performance tests
+  # nightly-performance:
+  #   triggers:
+  #     - schedule:
+  #         cron: "0 2 * * *"  # Run at 2 AM UTC daily
+  #         filters:
+  #           branches:
+  #             only:
+  #               - main
+  #   jobs:
+  #     - performance-test:
+  #         context: kanopi-code

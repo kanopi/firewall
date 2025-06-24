@@ -8,3 +8,6 @@ phpcs-report.xml
 phpstan-report.xml
 rector-report.xml
 firewall.zip
+.env
+.env.local
+.env.*.local

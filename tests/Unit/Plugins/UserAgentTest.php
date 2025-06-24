@@ -105,6 +105,7 @@ class UserAgentTest extends TestCase
     {
         $mock = $this->createMock(DeviceDetector::class);
         $mock->method('isBot')->willReturn(true);
+        $mock->method('getBot')->willReturn(['name' => 'Googlebot']);
 
         $plugin = $this->createPluginWithMockDetector($mock);
         $plugin->setMockedDetector($mock);
@@ -112,6 +113,7 @@ class UserAgentTest extends TestCase
         $request = Request::create('/');
         $plugin->evaluate($request);
         $this->assertSame('true', $plugin->getRequestValueWrapper($request, 'bot'));
+        $this->assertSame('Googlebot', $plugin->getRequestValueWrapper($request, 'bot.name'));
     }
 
     /**
