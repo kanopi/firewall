@@ -7,9 +7,6 @@ namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 use Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
- */
 class FileRateLimitStorageTest extends TestCase
 {
     protected string $tempFile;
