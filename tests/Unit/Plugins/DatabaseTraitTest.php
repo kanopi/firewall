@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Doctrine\DBAL\DriverManager;
-use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Table;
+use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
 use Kanopi\Firewall\Plugins\DatabaseTrait;
+use Kanopi\Firewall\Storage\DatabaseStorage;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -46,6 +47,24 @@ class DatabaseTraitTest extends TestCase
                 return $this->schemaManager->tablesExist([$this->config['storage_table']]);
             }
         };
+    }
+
+    /**
+     * Tests to confirm that can pass instance of connection.
+     */
+    public function testConstructWithInstance(): void
+    {
+        $connectionParams = (new DsnParser())->parse('sqlite3:///:memory:');
+        $connection = DriverManager::getConnection($connectionParams);
+        $tableName = 'firewall_test_' . uniqid();
+        $storage = new DatabaseStorage([
+            'connection' => $connection,
+            'storage_table' => $tableName
+        ]);
+
+        // Test table creation
+        $schemaManager = $connection->createSchemaManager();
+        $this->assertTrue($schemaManager->tablesExist([$tableName]), "Table $tableName should be created");
     }
 
     /**
@@ -195,5 +214,37 @@ class DatabaseTraitTest extends TestCase
         };
 
         $this->assertFalse($instance->tableExists(), 'Table should not exist');
+    }
+
+    /**
+     * Ensure enforceTableData returns back empty array on exception.
+     */
+    public function testEnforceTableDataException(): void
+    {
+        $instance = new class {
+            use \Kanopi\Firewall\Plugins\DatabaseTrait;
+
+            public array $config = ['storage_table' => 'broken_table'];
+
+            public function __construct()
+            {
+                $this->createConnection([
+                    'driver' => 'pdo_sqlite',
+                    'memory' => true,
+                ]);
+            }
+
+            protected function getStorageTable(): \Doctrine\DBAL\Schema\Table
+            {
+                return new Table('broken_table');
+            }
+
+            public function enforceTableDataWrapper(string $table, array $data = []): array
+            {
+                return $this->enforceTableData($table, $data);
+            }
+        };
+
+        $this->assertEmpty($instance->enforceTableDataWrapper('broken_table'), 'Confirm Enforce Data returns empty data');
     }
 }
