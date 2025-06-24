@@ -78,7 +78,7 @@ jobs:
             echo "127.0.0.1 web" | sudo tee -a /etc/hosts
             # Install XDebug
             sudo pecl update-channels
-            sudo pecl install xdebug
+            sudo pecl install pdo pdo_mysql mysqli
             printf "no\nno\n" | sudo pecl install redis
             #sudo cp .circleci/config/xdebug.ini /etc/php.d/xdebug.ini
             # Install Xidel
