@@ -125,7 +125,6 @@ abstract class IntegrationTestCase extends TestCase
         $config = [
             'host' => self::getEnv('REDIS_HOST', '127.0.0.1'),
             'port' => (int) self::getEnv('REDIS_PORT', 6379),
-            'database' => (int) self::getEnv('REDIS_DATABASE', 0),
         ];
         
         $password = self::getEnv('REDIS_PASSWORD');
