@@ -15,6 +15,7 @@ jobs:
           password: $DOCKERHUB_PASS
     resource_class: small
     steps:
+      - checkout
       - ci-tools/install-github-cli
       - run:
           name: Generate Version File
