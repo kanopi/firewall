@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall;
 
 use Kanopi\Firewall\Logging\LoggingFactory;
+use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Storage\StorageFactory;
@@ -24,6 +25,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final readonly class Firewall
 {
+    use LoggingTrait;
+
     /**
      * Create a new Firewall Object.
      *
@@ -36,6 +39,11 @@ final readonly class Firewall
      */
     protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager)
     {
+        $this->getLogger()->debug('Firewall instance created', [
+            'storage_type' => $storage::class,
+            'blocking_plugins_count' => count($blockingPluginManager->getPlugins()),
+            'bypass_plugins_count' => count($bypassPluginManager->getPlugins()),
+        ]);
         $this->storage->clearExpire();
     }
 
@@ -75,11 +83,21 @@ final readonly class Firewall
         $config['bypass'] = isset($config['bypass']) && is_array($config['bypass']) ? array_filter($config['bypass']) : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
-        return new self(
+
+        $firewall = new self(
             StorageFactory::create($config['storage']),
             PluginManager::create($config['block']),
             PluginManager::create($config['bypass'])
         );
+
+        $firewall->getLogger()->info('Firewall initialized', [
+            'logger_config' => $config['logger'],
+            'storage_config' => $config['storage'],
+            'block_plugins' => array_keys($config['block']),
+            'bypass_plugins' => array_keys($config['bypass']),
+        ]);
+
+        return $firewall;
     }
 
     /**
@@ -96,6 +114,7 @@ final readonly class Firewall
         // If PHP is running on cli mode skip.
         // @codeCoverageIgnoreStart
         if (PHP_SAPI === 'cli' && getenv('FIREWALL_BYPASS_CLI') !== '1') {
+            $this->getLogger()->debug('CLI mode detected, bypassing firewall');
             return true;
         }
 
@@ -106,15 +125,34 @@ final readonly class Firewall
         }
 
         if (!$request->attributes->has('x-request-id')) {
-            $request->attributes->set('x-request-id', $this->generateId($request));
+            $requestId = $this->generateId($request);
+            $request->attributes->set('x-request-id', $requestId);
+            $this->getLogger()->debug('Request evaluation started', [
+                'request_id' => $requestId,
+                'client_ip' => $request->getClientIp(),
+                'method' => $request->getMethod(),
+                'path' => $request->getPathInfo(),
+                'user_agent' => $request->headers->get('User-Agent'),
+            ]);
         }
 
         if ($this->bypassPluginManager->evaluate($request)) {
+            $this->getLogger()->info('Request bypassed', [
+                'request_id' => $request->attributes->get('x-request-id'),
+                'client_ip' => $request->getClientIp(),
+                'path' => $request->getPathInfo(),
+            ]);
             return true;
         }
 
         if (($blocked = $this->isBlocked($request->getClientIp() ?? '')) !== false) {
             $request->attributes->set('x-request-id', $blocked['event_id'] ?? '');
+            $this->getLogger()->warning('Request from blocked IP', [
+                'request_id' => $request->attributes->get('x-request-id'),
+                'client_ip' => $request->getClientIp(),
+                'original_plugin' => $blocked['plugin'] ?? 'unknown',
+                'blocked_since' => $blocked['blocked'] ?? 'unknown',
+            ]);
             $this->storage->addToExpire($request->getClientIp() ?? '', 300);
             $this->sendBlockingResponse($request);
         }
@@ -124,10 +162,23 @@ final readonly class Firewall
             /** @var Request $request */
             /** @var PluginInterface $plugin */
             if ($block) {
+                $this->getLogger()->warning('Request blocked by plugin', [
+                    'request_id' => $request->attributes->get('x-request-id'),
+                    'client_ip' => $request->getClientIp(),
+                    'plugin' => $plugin->getName(),
+                    'status_code' => $plugin->getStatusCode(),
+                    'path' => $request->getPathInfo(),
+                ]);
                 $this->blockIp($request, $plugin);
                 $this->sendBlockingResponse($request, $plugin->getStatusCode());
             }
         });
+
+        $this->getLogger()->debug('Request allowed', [
+            'request_id' => $request->attributes->get('x-request-id'),
+            'client_ip' => $request->getClientIp(),
+            'path' => $request->getPathInfo(),
+        ]);
 
         return true;
     }
@@ -173,7 +224,7 @@ final readonly class Firewall
      */
     protected function blockIp(Request $request, PluginInterface $plugin): bool
     {
-        return $this->storage->set(
+        $success = $this->storage->set(
             $request->getClientIp(),
             [
                 'plugin' => $plugin->getName(),
@@ -183,6 +234,23 @@ final readonly class Firewall
             ],
             $plugin->getExpirationTime()
         );
+
+        if ($success) {
+            $this->getLogger()->info('IP blocked successfully', [
+                'request_id' => $request->attributes->get('x-request-id'),
+                'client_ip' => $request->getClientIp(),
+                'plugin' => $plugin->getName(),
+                'expiration_time' => $plugin->getExpirationTime(),
+            ]);
+        } else {
+            $this->getLogger()->error('Failed to block IP', [
+                'request_id' => $request->attributes->get('x-request-id'),
+                'client_ip' => $request->getClientIp(),
+                'plugin' => $plugin->getName(),
+            ]);
+        }
+
+        return $success;
     }
 
     /**
@@ -254,6 +322,12 @@ final readonly class Firewall
      */
     protected function sendBlockingResponse(Request $request, int $statusCode = 400): void
     {
+        $this->getLogger()->notice('Sending blocking response', [
+            'request_id' => $request->attributes->get('x-request-id'),
+            'status_code' => $statusCode,
+            'client_ip' => $request->getClientIp(),
+        ]);
+
         // Used for testing.
         if (getenv('FIREWALL_TEST') === '1') {
             throw new \Exception(

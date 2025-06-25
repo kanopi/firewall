@@ -39,7 +39,18 @@ class IpAddress extends AbstractPluginBase
      */
     public function evaluate(Request $request): bool
     {
-        return $this->inList($request->getClientIp(), $this->config);
+        $clientIp = $request->getClientIp();
+        $result = $this->inList($clientIp, $this->config);
+
+        $this->getLogger()->debug('IP Address evaluation', [
+            'plugin' => $this->getName(),
+            'client_ip' => $clientIp,
+            'request_id' => $request->attributes->get('x-request-id'),
+            'result' => $result ? 'matched' : 'not_matched',
+            'checked_against' => count($this->config) . ' IP patterns',
+        ]);
+
+        return $result;
     }
 
     /**
@@ -59,14 +70,26 @@ class IpAddress extends AbstractPluginBase
             foreach ($ips as $ip_set) {
                 if (str_contains((string) $ip_set, '-')) {
                     if ($this->inRange($ip, $ip_set)) {
+                        $this->getLogger()->debug('IP matched range', [
+                            'ip' => $ip,
+                            'range' => $ip_set,
+                        ]);
                         return true;
                     }
                 } elseif (str_contains((string) $ip_set, '/')) {
                     if ($this->isInBlock($ip, (string) $ip_set)) {
+                        $this->getLogger()->debug('IP matched CIDR block', [
+                            'ip' => $ip,
+                            'cidr' => $ip_set,
+                        ]);
                         return true;
                     }
                 }
             }
+        } else {
+            $this->getLogger()->debug('IP matched exact', [
+                'ip' => $ip,
+            ]);
         }
 
         return $in_list;
@@ -86,6 +109,7 @@ class IpAddress extends AbstractPluginBase
     protected function isInBlock(string $ip, string $cidr): bool
     {
         if (!str_contains($cidr, '/')) {
+            $this->getLogger()->warning('Invalid CIDR format', ['cidr' => $cidr]);
             return false;
         }
 
@@ -97,11 +121,22 @@ class IpAddress extends AbstractPluginBase
 
         // Validate both IPs
         if ($ipPacked === false || $subnetPacked === false) {
+            $this->getLogger()->warning('Invalid IP format for CIDR check', [
+                'ip' => $ip,
+                'subnet' => $subnet,
+                'cidr' => $cidr,
+            ]);
             return false;
         }
 
         // Must be the same type (IPv4 = 4 bytes, IPv6 = 16 bytes)
         if (strlen($ipPacked) !== strlen($subnetPacked)) {
+            $this->getLogger()->warning('IP type mismatch in CIDR check', [
+                'ip' => $ip,
+                'cidr' => $cidr,
+                'ip_type' => strlen($ipPacked) === 4 ? 'IPv4' : 'IPv6',
+                'cidr_type' => strlen($subnetPacked) === 4 ? 'IPv4' : 'IPv6',
+            ]);
             return false;
         }
 
@@ -141,6 +176,7 @@ class IpAddress extends AbstractPluginBase
         $startIp = trim($startIp);
         $endIp = trim($endIp);
         if ($startIp === '' || $startIp === '0' || ($endIp === '' || $endIp === '0')) {
+            $this->getLogger()->warning('Invalid IP range format', ['range' => $range]);
             return false;
         }
 
@@ -151,6 +187,12 @@ class IpAddress extends AbstractPluginBase
 
         // Handle invalid IP addresses
         if ($ipLong === false || $startIpLong === false || $endIpLong === false) {
+            $this->getLogger()->warning('Invalid IP in range check', [
+                'ip' => $ip,
+                'range' => $range,
+                'start_ip' => $startIp,
+                'end_ip' => $endIp,
+            ]);
             return false;
         }
 

@@ -32,7 +32,26 @@ class Url extends AbstractPluginBase
      */
     public function evaluate(Request $request): bool
     {
-        return $this->evaluateRequest($request, $this->config);
+        $this->getLogger()->debug('URL evaluation started', [
+            'plugin' => $this->getName(),
+            'request_id' => $request->attributes->get('x-request-id'),
+            'method' => $request->getMethod(),
+            'host' => $request->getHost(),
+            'path' => $request->getPathInfo(),
+            'query' => $request->getQueryString(),
+        ]);
+
+        $result = $this->evaluateRequest($request, $this->config);
+
+        if ($result) {
+            $this->getLogger()->info('URL matched blocking rule', [
+                'plugin' => $this->getName(),
+                'request_id' => $request->attributes->get('x-request-id'),
+                'url' => $request->getUri(),
+            ]);
+        }
+
+        return $result;
     }
 
     /**
@@ -57,8 +76,16 @@ class Url extends AbstractPluginBase
         $segments = $this->splitQuery($variable);
 
         if ($segments === []) {
+            $this->getLogger()->warning('Empty variable provided for URL evaluation', [
+                'variable' => $variable,
+            ]);
             return null;
         }
+
+        $this->getLogger()->debug('Extracting URL variable', [
+            'variable' => $variable,
+            'segments' => $segments,
+        ]);
 
         switch (strtolower((string) $segments[0])) {
             case 'method':

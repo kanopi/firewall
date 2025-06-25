@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Utility;
 
+use Kanopi\Firewall\Logging\LoggingTrait;
+
 /**
  * LazyObjectRegistry used for loading items.
  *
@@ -18,6 +20,8 @@ namespace Kanopi\Firewall\Utility;
  */
 class LazyObjectRegistry
 {
+    use LoggingTrait;
+
     /**
      * @var array<int, array{name: string, priority: int, factory: callable, instance?: object}>
      */
@@ -43,6 +47,12 @@ class LazyObjectRegistry
 
         usort($this->entries, fn($a, $b): int =>
             $a['priority'] <=> $b['priority']);
+
+        $this->getLogger()->debug('Object registered in lazy registry', [
+            'name' => $name,
+            'priority' => $priority,
+            'total_entries' => count($this->entries),
+        ]);
     }
 
     /**
@@ -55,10 +65,38 @@ class LazyObjectRegistry
     {
         foreach ($this->entries as &$entry) {
             if (!isset($entry['instance'])) {
-                $entry['instance'] = ($entry['factory'])();
+                $this->getLogger()->debug('Lazy loading object', [
+                    'name' => $entry['name'],
+                    'priority' => $entry['priority'],
+                ]);
+
+                try {
+                    $entry['instance'] = ($entry['factory'])();
+
+                    $this->getLogger()->debug('Object loaded successfully', [
+                        'name' => $entry['name'],
+                        'class' => $entry['instance']::class,
+                    ]);
+                } catch (\Exception $e) {
+                    $this->getLogger()->error('Failed to load object', [
+                        'name' => $entry['name'],
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             }
 
             yield $entry['name'] => $entry['instance'];
         }
+    }
+
+    /**
+     * Return the count of entires.
+     *
+     * @return int
+     *   Total entries.
+     */
+    public function getCount(): int
+    {
+        return count($this->entries);
     }
 }

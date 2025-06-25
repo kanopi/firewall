@@ -44,17 +44,21 @@ class FileStorage extends InMemoryStorage
         $this->filePath = $config['file'];
 
         if (!file_exists($this->filePath) && !@touch($this->filePath)) {
+            $this->getLogger()->error('Unable to create storage file', ['file' => $this->filePath]);
             throw new RuntimeException(sprintf("Unable to create file at '%s'", $this->filePath));
         }
 
         if (!is_readable($this->filePath)) {
+            $this->getLogger()->error('Storage file not readable', ['file' => $this->filePath]);
             throw new RuntimeException(sprintf("File '%s' must be readable.", $this->filePath));
         }
 
         if (!is_writable($this->filePath)) {
+            $this->getLogger()->error('Storage file not writable', ['file' => $this->filePath]);
             throw new RuntimeException(sprintf("File '%s' must be writeable.", $this->filePath));
         }
 
+        $this->getLogger()->info('FileStorage initialized', ['file' => $this->filePath]);
         $this->loadFromFile();
     }
 
@@ -68,12 +72,27 @@ class FileStorage extends InMemoryStorage
             $data = @unserialize($contents);
             if (is_array($data)) {
                 $this->store = [];
+                $count = 0;
                 foreach ($data as $key => $value) {
                     if (is_string($key)) {
                         $this->store[$key] = $value;
+                        $count++;
                     }
                 }
+
+                $this->getLogger()->debug('Data loaded from file', [
+                    'file' => $this->filePath,
+                    'entries_loaded' => $count,
+                ]);
+            } else {
+                $this->getLogger()->warning('Failed to unserialize file data', [
+                    'file' => $this->filePath,
+                ]);
             }
+        } else {
+            $this->getLogger()->debug('No data to load from file', [
+                'file' => $this->filePath,
+            ]);
         }
     }
 
@@ -84,7 +103,16 @@ class FileStorage extends InMemoryStorage
     {
         $serialized = serialize($this->store);
         if (@file_put_contents($this->filePath, $serialized) === false) {
-            $this->getLogger()->error(sprintf("Failed to write to file '%s'", $this->filePath));
+            $this->getLogger()->error('Failed to write to storage file', [
+                'file' => $this->filePath,
+                'data_size' => strlen($serialized),
+            ]);
+        } else {
+            $this->getLogger()->debug('Data persisted to file', [
+                'file' => $this->filePath,
+                'entries' => count($this->store),
+                'size_bytes' => strlen($serialized),
+            ]);
         }
     }
 
@@ -95,7 +123,15 @@ class FileStorage extends InMemoryStorage
     {
         $this->loadFromFile();
         $result = parent::set($key, $value, $expire);
-        $this->persistToFile();
+        if ($result) {
+            $this->getLogger()->debug('Value set in file storage', [
+                'key' => $key,
+                'expire' => $expire,
+                'file' => $this->filePath,
+            ]);
+            $this->persistToFile();
+        }
+
         return $result;
     }
 
@@ -107,6 +143,10 @@ class FileStorage extends InMemoryStorage
         $this->loadFromFile();
         $result = parent::delete($key);
         if ($result) {
+            $this->getLogger()->debug('Key deleted from file storage', [
+                'key' => $key,
+                'file' => $this->filePath,
+            ]);
             $this->persistToFile();
         }
 
@@ -118,8 +158,16 @@ class FileStorage extends InMemoryStorage
      */
     public function reset(): bool
     {
+        $previousCount = count($this->store);
         $result = parent::reset();
-        $this->persistToFile();
+        if ($result) {
+            $this->getLogger()->info('File storage reset', [
+                'file' => $this->filePath,
+                'entries_cleared' => $previousCount,
+            ]);
+            $this->persistToFile();
+        }
+
         return $result;
     }
 

@@ -16,12 +16,15 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
+use Kanopi\Firewall\Logging\LoggingTrait;
 
 /**
  * Database Trait used for referencing database.
  */
 trait DatabaseTrait
 {
+    use LoggingTrait;
+
     protected Connection $connection;
 
     /** @phpstan-ignore-next-line */
@@ -35,18 +38,33 @@ trait DatabaseTrait
         try {
             if ($connectionParams instanceof Connection) {
                 $this->connection = $connectionParams;
+
+                $this->getLogger()->debug('Using existing database connection');
             } else {
                 if (isset($connectionParams['dsn'])) {
                     $dsnParser = new DsnParser();
-                    $connectionParams = $dsnParser->parse($connectionParams['dsn']);
+                    $parsedParams = $dsnParser->parse($connectionParams['dsn']);
+
+                    $this->getLogger()->debug('Parsed DSN for database connection', [
+                        'driver' => $parsedParams['driver'] ?? 'unknown',
+                    ]);
+
+                    $connectionParams = $parsedParams;
                 }
 
                 $this->connection = DriverManager::getConnection($connectionParams);
+
+                $this->getLogger()->debug('Database connection created', [
+                    'driver' => $connectionParams['driver'] ?? 'unknown',
+                ]);
             }
 
             $this->schemaManager = $this->connection->createSchemaManager();
             $this->createTable();
-        } catch (\Exception) {
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to create database connection', [
+                'error' => $exception->getMessage(),
+            ]);
         }
     }
 
@@ -64,8 +82,20 @@ trait DatabaseTrait
             $table = $this->getStorageTable();
             try {
                 $this->schemaManager->createTable($table);
-            } catch (\Exception) {
+
+                $this->getLogger()->info('Database table created', [
+                    'table' => $this->config['storage_table'],
+                ]);
+            } catch (\Exception $e) {
+                $this->getLogger()->error('Failed to create database table', [
+                    'table' => $this->config['storage_table'],
+                    'error' => $e->getMessage(),
+                ]);
             }
+        } else {
+            $this->getLogger()->debug('Database table already exists', [
+                'table' => $this->config['storage_table'],
+            ]);
         }
     }
 
@@ -84,12 +114,26 @@ trait DatabaseTrait
     {
         try {
             $columns = $this->schemaManager->listTableColumns($table);
+            $removedKeys = [];
+
             foreach (array_keys($data) as $key) {
                 if (!isset($columns[$key])) {
                     unset($data[$key]);
+                    $removedKeys[] = $key;
                 }
             }
-        } catch (\Exception) {
+
+            if ($removedKeys !== []) {
+                $this->getLogger()->debug('Removed non-existent columns from data', [
+                    'table' => $table,
+                    'removed_keys' => $removedKeys,
+                ]);
+            }
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to enforce table data', [
+                'table' => $table,
+                'error' => $exception->getMessage(),
+            ]);
             return [];
         }
 

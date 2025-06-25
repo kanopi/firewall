@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\Logging\LoggingTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -18,6 +19,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 trait EvaluateTrait
 {
+    use LoggingTrait;
+
     /**
      * Split the query by a delimiter and confirm that no empty strings are provided.
      *
@@ -47,11 +50,26 @@ trait EvaluateTrait
      */
     protected function evaluateRequest(Request $request, array $data = []): bool
     {
-        foreach ($data as $rule) {
+        $this->getLogger()->debug('Starting request evaluation', [
+            'plugin' => $this->getName(),
+            'rules_count' => count($data),
+        ]);
+
+        foreach ($data as $index => $rule) {
             if ($this->evaluateRule($request, $rule)) {
+                $this->getLogger()->debug('Rule matched', [
+                    'plugin' => $this->getName(),
+                    'rule_index' => $index,
+                    'rule' => is_string($rule) ? $rule : (is_array($rule) ? array_keys($rule) : 'complex'),
+                ]);
                 return true;
             }
         }
+
+        $this->getLogger()->debug('No rules matched', [
+            'plugin' => $this->getName(),
+            'rules_evaluated' => count($data),
+        ]);
 
         return false;
     }
@@ -104,9 +122,19 @@ trait EvaluateTrait
     protected function evaluateGroup(Request $request, mixed $rule): bool
     {
         $type = strtoupper((string) $rule['type']);
+        $rulesCount = is_array($rule['rules']) ? count($rule['rules']) : 0;
+
+        $this->getLogger()->debug('Evaluating rule group', [
+            'type' => $type,
+            'rules_count' => $rulesCount,
+        ]);
+
         if ($type === 'AND') {
-            foreach ($rule['rules'] as $subRule) {
+            foreach ($rule['rules'] as $index => $subRule) {
                 if (!$this->evaluateRule($request, $subRule)) {
+                    $this->getLogger()->debug('AND group failed at rule', [
+                        'rule_index' => $index,
+                    ]);
                     return false;
                 }
             }
@@ -115,8 +143,11 @@ trait EvaluateTrait
         }
 
         if ($type === 'OR') {
-            foreach ($rule['rules'] as $subRule) {
+            foreach ($rule['rules'] as $index => $subRule) {
                 if ($this->evaluateRule($request, $subRule)) {
+                    $this->getLogger()->debug('OR group succeeded at rule', [
+                        'rule_index' => $index,
+                    ]);
                     return true;
                 }
             }
@@ -350,7 +381,7 @@ trait EvaluateTrait
             $value = array_map('strtolower', $value);
         }
 
-        return match ($operator) {
+        $result = match ($operator) {
             'equals' => $requestValue === $value,
             'starts_with' => str_starts_with((string) $requestValue, (string) $value),
             'ends_with' => str_ends_with((string) $requestValue, (string) $value),
@@ -363,6 +394,14 @@ trait EvaluateTrait
             'less_than_or_equal' => is_numeric($requestValue) && is_numeric($value) && $requestValue <= $value,
             default => false,
         };
+
+        $this->getLogger()->debug('Comparison matched', [
+            'operator' => $operator,
+            'request_value_type' => gettype($requestValue),
+            'case_sensitive' => $caseSensitive,
+        ]);
+
+        return $result;
     }
 
     /**

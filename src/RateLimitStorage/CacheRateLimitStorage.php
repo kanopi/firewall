@@ -42,10 +42,15 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
         $cache = $config['adaptor'] ?? null;
         $args = $config['args'] ?? [];
 
+        // If there are no cache adaptors end this.
+        if ($cache === null) {
+            return;
+        }
+
         $instance = null;
         if (is_object($cache) && in_array(CacheItemPoolInterface::class, class_implements($cache), true)) {
             $instance = $cache;
-        } elseif (!is_null($cache) && class_exists($cache)) {
+        } elseif (class_exists($cache)) {
             /** @var CacheItemPoolInterface $instance */
             $instance = new $cache(...$args);
         }
@@ -53,6 +58,14 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
         if ($instance !== null) {
             /** @phpstan-ignore assign.propertyType */
             $this->cache = $instance;
+            $this->getLogger()->info('Cache rate limit storage initialized', [
+                'cache_type' => $instance::class,
+                'ttl' => intval($config['ttl'] ?? 3600),
+            ]);
+        } else {
+            $this->getLogger()->warning('Cache rate limit storage failed to initialize', [
+                'adaptor' => is_string($cache) ? $cache : $cache::class,
+            ]);
         }
 
         $this->ttl = intval($config['ttl'] ?? 3600); // Default TTL: 1 hour
@@ -64,9 +77,11 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
     public function recordRequest(string $key, int $timestamp): void
     {
         if (!$this->cache instanceof \Psr\Cache\CacheItemPoolInterface) {
+            $this->getLogger()->warning('Cannot record request - cache not available');
             return;
         }
 
+        $originalKey = $key;
         $key = $this->alterKey($key);
         $cacheItem = $this->cache->getItem($key);
 
@@ -74,7 +89,22 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
         $timestamps[] = $timestamp;
 
         $cacheItem->set($timestamps)->expiresAfter($this->ttl);
-        $this->cache->save($cacheItem);
+        $saved = $this->cache->save($cacheItem);
+
+        if ($saved) {
+            $this->getLogger()->debug('Cache rate limit request recorded', [
+                'key' => $originalKey,
+                'cache_key' => $key,
+                'timestamp' => $timestamp,
+                'total_requests' => count($timestamps),
+                'ttl' => $this->ttl,
+            ]);
+        } else {
+            $this->getLogger()->error('Failed to save rate limit request to cache', [
+                'key' => $originalKey,
+                'cache_key' => $key,
+            ]);
+        }
     }
 
     /**
@@ -83,9 +113,11 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
     public function countRequests(string $key, int $start, int $end): int
     {
         if (!$this->cache instanceof \Psr\Cache\CacheItemPoolInterface) {
+            $this->getLogger()->warning('Cannot count requests - cache not available');
             return 0;
         }
 
+        $originalKey = $key;
         $key = $this->alterKey($key);
         $cacheItem = $this->cache->getItem($key);
         $timestamps = $cacheItem->isHit() ? $cacheItem->get() : [];
@@ -95,7 +127,19 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
             fn(int $ts): bool => $ts >= $start && $ts <= $end
         );
 
-        return count($filtered);
+        $count = count($filtered);
+
+        $this->getLogger()->debug('Cache rate limit request count', [
+            'key' => $originalKey,
+            'cache_key' => $key,
+            'start' => $start,
+            'end' => $end,
+            'count' => $count,
+            'cache_hit' => $cacheItem->isHit(),
+            'total_timestamps' => count($timestamps),
+        ]);
+
+        return $count;
     }
 
     /**

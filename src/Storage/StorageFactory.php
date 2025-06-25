@@ -11,11 +11,16 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Storage;
 
+use Kanopi\Firewall\Logging\LoggingFactory;
+use Kanopi\Firewall\Logging\LoggingTrait;
+
 /**
  * In charge of creating the storage objects.
  */
 class StorageFactory
 {
+    use LoggingTrait;
+
     /**
      * Generate a new Storage element to get data from.
      *
@@ -27,15 +32,28 @@ class StorageFactory
      */
     public static function create(array $config = []): StorageInterface
     {
-        $type = $config['type'] ?? null;
-        $config = $config['config'] ?? [];
+        $requestedType = $config['type'] ?? null;
+        $storageConfig = $config['config'] ?? [];
+        $type = $requestedType;
+
         // If the provided storage is not valid default to InMemoryStorage.
         if (!is_string($type) || !class_exists($type) || !in_array(StorageInterface::class, class_implements($type), true)) {
             $type = InMemoryStorage::class;
+
+            LoggingFactory::logMessage('info', 'Storage type defaulted to InMemoryStorage', [
+                'requested_type' => $requestedType,
+                'reason' => is_string($requestedType) ? (!class_exists($requestedType) ? 'class_not_found' : 'invalid_interface') : ('not_string'),
+            ]);
         }
 
         /** @var StorageInterface $storage */
-        $storage = new $type($config);
+        $storage = new $type($storageConfig);
+
+        LoggingFactory::logMessage('debug', 'Storage created', [
+            'type' => $type,
+            'config_keys' => array_keys($storageConfig),
+        ]);
+
         return $storage;
     }
 }

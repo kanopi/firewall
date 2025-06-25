@@ -28,5 +28,9 @@ abstract class AbstractStorageBase implements StorageInterface
      */
     public function __construct(protected array $config = [])
     {
+        $this->getLogger()->debug('Storage initialized', [
+            'storage_type' => static::class,
+            'config' => array_keys($config),
+        ]);
     }
 }

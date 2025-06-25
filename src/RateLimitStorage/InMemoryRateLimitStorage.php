@@ -24,6 +24,12 @@ class InMemoryRateLimitStorage extends AbstractRateLimitStorage
     public function recordRequest(string $key, int $timestamp): void
     {
         $this->requests[$key][] = $timestamp;
+
+        $this->getLogger()->debug('In-memory rate limit request recorded', [
+            'key' => $key,
+            'timestamp' => $timestamp,
+            'total_requests_for_key' => count($this->requests[$key]),
+        ]);
     }
 
     /**
@@ -32,10 +38,23 @@ class InMemoryRateLimitStorage extends AbstractRateLimitStorage
     public function countRequests(string $key, int $start, int $end): int
     {
         if (!isset($this->requests[$key])) {
+            $this->getLogger()->debug('No requests found for key', [
+                'key' => $key,
+            ]);
             return 0;
         }
 
         // Filter timestamps within range.
-        return count(array_filter($this->requests[$key], fn($t): bool => $t >= $start && $t <= $end));
+        $count = count(array_filter($this->requests[$key], fn($t): bool => $t >= $start && $t <= $end));
+
+        $this->getLogger()->debug('In-memory rate limit request count', [
+            'key' => $key,
+            'start' => $start,
+            'end' => $end,
+            'count' => $count,
+            'window_seconds' => $end - $start,
+        ]);
+
+        return $count;
     }
 }

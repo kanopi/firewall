@@ -28,6 +28,16 @@ class Asn extends AbstractPluginBase
     {
         parent::__construct($metadata, $config);
         $this->reader = $this->createService($metadata['reader']['type'] ?? null, $metadata['reader'] ?? []);
+
+        if ($this->reader === null) {
+            $this->getLogger()->warning('ASN reader not configured or failed to initialize', [
+                'reader_type' => $metadata['reader']['type'] ?? 'none',
+            ]);
+        } else {
+            $this->getLogger()->debug('ASN reader initialized', [
+                'reader_type' => $metadata['reader']['type'] ?? 'default',
+            ]);
+        }
     }
 
     /**
@@ -52,10 +62,29 @@ class Asn extends AbstractPluginBase
     public function evaluate(Request $request): bool
     {
         if ($this->reader === null) {
+            $this->getLogger()->debug('ASN evaluation skipped - no reader available', [
+                'request_id' => $request->attributes->get('x-request-id'),
+            ]);
             return false;
         }
 
-        return $this->evaluateRequest($request, $this->config);
+        $this->getLogger()->debug('ASN evaluation started', [
+            'plugin' => $this->getName(),
+            'request_id' => $request->attributes->get('x-request-id'),
+            'client_ip' => $request->getClientIp(),
+        ]);
+
+        $result = $this->evaluateRequest($request, $this->config);
+
+        if ($result) {
+            $this->getLogger()->info('ASN matched blocking rule', [
+                'plugin' => $this->getName(),
+                'request_id' => $request->attributes->get('x-request-id'),
+                'client_ip' => $request->getClientIp(),
+            ]);
+        }
+
+        return $result;
     }
 
     /**
@@ -80,12 +109,30 @@ class Asn extends AbstractPluginBase
         }
 
         if (!method_exists($this->reader, 'asn')) {
+            $this->getLogger()->warning('ASN method not available on reader', [
+                'reader_class' => $this->reader::class,
+            ]);
             return false;
         }
 
         try {
-            $record = $this->reader->asn($request->getClientIp());
-        } catch (\Exception) {
+            $clientIp = $request->getClientIp();
+            $record = $this->reader->asn($clientIp);
+
+            $this->getLogger()->debug('ASN lookup successful', [
+                'client_ip' => $clientIp,
+                /** @phpstan-ignore-next-line  */
+                'asn' => $record->autonomousSystemNumber ?? 'unknown',
+                /** @phpstan-ignore-next-line  */
+                'asn_org' => $record->autonomousSystemOrganization ?? 'unknown',
+                'variable' => $variable,
+            ]);
+        } catch (\Exception $exception) {
+            $this->getLogger()->warning('ASN lookup failed', [
+                'client_ip' => $request->getClientIp(),
+                'variable' => $variable,
+                'error' => $exception->getMessage(),
+            ]);
             return null;
         }
 

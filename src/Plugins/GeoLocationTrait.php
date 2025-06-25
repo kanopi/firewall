@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Plugins;
 
 use GeoIp2\Database\Reader;
 use GeoIp2\WebService\Client;
+use Kanopi\Firewall\Logging\LoggingTrait;
 use MaxMind\Db\Reader\InvalidDatabaseException;
 
 /**
@@ -20,6 +21,8 @@ use MaxMind\Db\Reader\InvalidDatabaseException;
  */
 trait GeoLocationTrait
 {
+    use LoggingTrait;
+
     /**
      * Max Mind Database Reader.
      */
@@ -62,12 +65,26 @@ trait GeoLocationTrait
     protected function getReader(string $fileLocation): ?Reader
     {
         if (!file_exists($fileLocation)) {
+            $this->getLogger()->warning('GeoLocation database file not found', [
+                'file' => $fileLocation,
+            ]);
             return null;
         }
 
         try {
-            return new Reader($fileLocation);
-        } catch (InvalidDatabaseException) {
+            $reader = new Reader($fileLocation);
+
+            $this->getLogger()->debug('GeoLocation reader created', [
+                'file' => $fileLocation,
+                'file_size' => filesize($fileLocation),
+            ]);
+
+            return $reader;
+        } catch (InvalidDatabaseException $invalidDatabaseException) {
+            $this->getLogger()->error('Invalid GeoLocation database', [
+                'file' => $fileLocation,
+                'error' => $invalidDatabaseException->getMessage(),
+            ]);
         }
 
         return null;
@@ -90,6 +107,13 @@ trait GeoLocationTrait
      */
     protected function getClient(int $accountId, string $license, array $locales = ['en'], array $options = []): Client
     {
-        return new Client($accountId, $license, $locales, $options);
+        $client = new Client($accountId, $license, $locales, $options);
+
+        $this->getLogger()->debug('GeoLocation web service client created', [
+            'account_id' => $accountId,
+            'locales' => $locales,
+        ]);
+
+        return $client;
     }
 }

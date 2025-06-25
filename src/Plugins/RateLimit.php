@@ -34,8 +34,13 @@ class RateLimit extends AbstractPluginBase
 
         if (isset($this->metadata['storage'])) {
             $this->storage = RateLimitStorageFactory::create($this->metadata['storage']['type'], $this->metadata['storage']['config'] ?? []);
+            $this->getLogger()->debug('Rate limit storage configured', [
+                'storage_type' => $this->metadata['storage']['type'],
+                'storage_config' => $this->metadata['storage']['config'] ?? [],
+            ]);
         } else {
             $this->storage = RateLimitStorageFactory::create(null);
+            $this->getLogger()->debug('Rate limit using default storage');
         }
     }
 
@@ -89,7 +94,28 @@ class RateLimit extends AbstractPluginBase
 
         $count = $this->storage?->countRequests($key, $windowStart, $now) ?? 0;
 
+        $this->getLogger()->debug('Rate limit check', [
+            'plugin' => $this->getName(),
+            'request_id' => $request->attributes->get('x-request-id'),
+            'client_ip' => $request->getClientIp(),
+            'path' => $path,
+            'matched_rule' => $matchedRule['path'],
+            'rate_limit' => intval($matchedRule['rate']),
+            'window_seconds' => intval($matchedRule['sample']),
+            'current_count' => $count,
+            'key' => $key,
+        ]);
+
         if ($count >= intval($matchedRule['rate'])) {
+            $this->getLogger()->warning('Rate limit exceeded', [
+                'plugin' => $this->getName(),
+                'request_id' => $request->attributes->get('x-request-id'),
+                'client_ip' => $request->getClientIp(),
+                'path' => $path,
+                'rate_limit' => intval($matchedRule['rate']),
+                'window_seconds' => intval($matchedRule['sample']),
+                'request_count' => $count,
+            ]);
             return true;
         }
 
@@ -113,11 +139,25 @@ class RateLimit extends AbstractPluginBase
             if (preg_match($pattern, $path)) {
                 $rule['rate'] ??= $this->metadata['default_rate'];
                 $rule['sample'] ??= $this->metadata['default_sample'];
+
+                $this->getLogger()->debug('Rate limit rule matched', [
+                    'path' => $path,
+                    'rule_pattern' => $rule['path'],
+                    'rate' => $rule['rate'],
+                    'sample' => $rule['sample'],
+                ]);
+
                 return (array)$rule;
             }
         }
 
         // return the default record.
+        $this->getLogger()->debug('Using default rate limit rule', [
+            'path' => $path,
+            'rate' => $this->metadata['default_rate'],
+            'sample' => $this->metadata['default_sample'],
+        ]);
+
         return [
             'path' => '*',
             'rate' => $this->metadata['default_rate'],

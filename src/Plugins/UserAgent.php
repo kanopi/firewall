@@ -49,8 +49,31 @@ class UserAgent extends AbstractPluginBase
      */
     public function evaluate(Request $request): bool
     {
-        $this->deviceDetector = $this->detectDevice($request->headers->get('User-Agent', ''));
-        return $this->evaluateRequest($request, $this->config);
+        $userAgent = $request->headers->get('User-Agent', '');
+        $this->deviceDetector = $this->detectDevice($userAgent);
+
+        $this->getLogger()->debug('User Agent evaluation started', [
+            'plugin' => $this->getName(),
+            'request_id' => $request->attributes->get('x-request-id'),
+            'user_agent' => $userAgent,
+            'is_bot' => $this->deviceDetector->isBot(),
+            'device_type' => $this->deviceDetector->getDeviceName(),
+            'client' => $this->deviceDetector->getClient(),
+            'os' => $this->deviceDetector->getOs(),
+        ]);
+
+        $result = $this->evaluateRequest($request, $this->config);
+
+        if ($result) {
+            $this->getLogger()->info('User Agent matched blocking rule', [
+                'plugin' => $this->getName(),
+                'request_id' => $request->attributes->get('x-request-id'),
+                'user_agent' => $userAgent,
+                'is_bot' => $this->deviceDetector->isBot(),
+            ]);
+        }
+
+        return $result;
     }
 
     /**
@@ -96,8 +119,16 @@ class UserAgent extends AbstractPluginBase
         $segments = $this->splitQuery($variable);
 
         if ($segments === []) {
+            $this->getLogger()->warning('Empty variable provided for User Agent evaluation', [
+                'variable' => $variable,
+            ]);
             return null;
         }
+
+        $this->getLogger()->debug('Extracting User Agent variable', [
+            'variable' => $variable,
+            'segments' => $segments,
+        ]);
 
         switch (strtolower((string) $segments[0])) {
             case 'bot':

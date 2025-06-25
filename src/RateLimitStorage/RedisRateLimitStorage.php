@@ -35,8 +35,19 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
     {
         parent::__construct($config);
 
-        $this->redis = (($config['instance'] ?? null) instanceof Redis) ? $config['instance'] : new Redis($config['redis']);
-        $this->redisPrefix = strval($config['redis']['prefix'] ?? 'ratelimit:');
+        try {
+            $this->redis = (($config['instance'] ?? null) instanceof Redis) ? $config['instance'] : new Redis($config['redis']);
+            $this->redisPrefix = strval($config['redis']['prefix'] ?? 'ratelimit:');
+
+            $this->getLogger()->info('Redis rate limit storage initialized', [
+                'prefix' => $this->redisPrefix,
+                'ttl' => $config['ttl'] ?? 3600,
+            ]);
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to initialize Redis rate limit storage', [
+                'error' => $exception->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -45,8 +56,26 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
     public function recordRequest(string $key, int $timestamp): void
     {
         $redisKey = $this->redisPrefix . $key;
-        $this->redis->zAdd($redisKey, $timestamp, (string)$timestamp);
-        $this->redis->expire($redisKey, $this->config['ttl'] ?? 3600);
+        $ttl = $this->config['ttl'] ?? 3600;
+
+        try {
+            $added = $this->redis->zAdd($redisKey, $timestamp, (string)$timestamp);
+            $this->redis->expire($redisKey, $ttl);
+
+            $this->getLogger()->debug('Redis rate limit request recorded', [
+                'key' => $key,
+                'redis_key' => $redisKey,
+                'timestamp' => $timestamp,
+                'ttl' => $ttl,
+                'added' => $added,
+            ]);
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to record rate limit request in Redis', [
+                'key' => $key,
+                'redis_key' => $redisKey,
+                'error' => $exception->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -55,6 +84,27 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
     public function countRequests(string $key, int $start, int $end): int
     {
         $redisKey = $this->redisPrefix . $key;
-        return $this->redis->zCount($redisKey, $start, $end);
+
+        try {
+            $count = $this->redis->zCount($redisKey, (string)$start, (string)$end);
+
+            $this->getLogger()->debug('Redis rate limit request count', [
+                'key' => $key,
+                'redis_key' => $redisKey,
+                'start' => $start,
+                'end' => $end,
+                'count' => $count,
+                'window_seconds' => $end - $start,
+            ]);
+
+            return $count;
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to count rate limit requests in Redis', [
+                'key' => $key,
+                'redis_key' => $redisKey,
+                'error' => $exception->getMessage(),
+            ]);
+            return 0;
+        }
     }
 }

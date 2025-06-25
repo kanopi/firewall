@@ -31,7 +31,18 @@ class DatabaseStorage extends AbstractStorageBase
     {
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_storage';
-        $this->createConnection($config['connection'] ?? []);
+
+        try {
+            $this->createConnection($config['connection'] ?? []);
+            $this->getLogger()->info('Database storage initialized', [
+                'table' => $this->config['storage_table'],
+            ]);
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to initialize database storage', [
+                'error' => $exception->getMessage(),
+                'table' => $this->config['storage_table'],
+            ]);
+        }
     }
 
     /**
@@ -81,10 +92,25 @@ class DatabaseStorage extends AbstractStorageBase
                         'remote_address' => $key,
                     ]
                 );
+                $this->getLogger()->debug('Updated existing entry in database storage', [
+                    'key' => $key,
+                    'table' => $this->config['storage_table'],
+                    'expire' => $expire,
+                ]);
             } else {
                 $this->connection->insert($this->config['storage_table'], $data);
+                $this->getLogger()->debug('Inserted new entry in database storage', [
+                    'key' => $key,
+                    'table' => $this->config['storage_table'],
+                    'expire' => $expire,
+                ]);
             }
-        } catch (\Exception) {
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to set value in database storage', [
+                'key' => $key,
+                'table' => $this->config['storage_table'],
+                'error' => $exception->getMessage(),
+            ]);
             return false;
         }
 
@@ -97,10 +123,22 @@ class DatabaseStorage extends AbstractStorageBase
     public function delete(string $key): bool
     {
         try {
-            $this->connection->delete($this->config['storage_table'], [
+            $affected = $this->connection->delete($this->config['storage_table'], [
                 'remote_address' => $key,
             ]);
-        } catch (\Exception) {
+
+            if ($affected > 0) {
+                $this->getLogger()->debug('Deleted entry from database storage', [
+                    'key' => $key,
+                    'table' => $this->config['storage_table'],
+                ]);
+            }
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to delete from database storage', [
+                'key' => $key,
+                'table' => $this->config['storage_table'],
+                'error' => $exception->getMessage(),
+            ]);
             return false;
         }
 
@@ -134,9 +172,17 @@ class DatabaseStorage extends AbstractStorageBase
     public function reset(): bool
     {
         try {
-            $this->connection->delete($this->config['storage_table']);
+            $affected = $this->connection->delete($this->config['storage_table']);
+            $this->getLogger()->info('Database storage reset', [
+                'table' => $this->config['storage_table'],
+                'entries_cleared' => $affected,
+            ]);
             return true;
-        } catch (\Exception) {
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to reset database storage', [
+                'table' => $this->config['storage_table'],
+                'error' => $exception->getMessage(),
+            ]);
         }
 
         return false;
@@ -167,12 +213,24 @@ class DatabaseStorage extends AbstractStorageBase
     public function clearExpire(): bool
     {
         try {
-            $this->connection->createQueryBuilder()
+            $result = $this->connection->createQueryBuilder()
                 ->delete($this->config['storage_table'])
                 ->where('expire < :expire AND expire > 0')
                 ->setParameter('expire', time())
                 ->executeQuery();
-        } catch (\Exception) {
+
+            $affected = $result->rowCount();
+            if ($affected > 0) {
+                $this->getLogger()->debug('Cleared expired entries from database storage', [
+                    'table' => $this->config['storage_table'],
+                    'entries_cleared' => $affected,
+                ]);
+            }
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to clear expired entries', [
+                'table' => $this->config['storage_table'],
+                'error' => $exception->getMessage(),
+            ]);
             return false;
         }
 
@@ -185,7 +243,7 @@ class DatabaseStorage extends AbstractStorageBase
     public function addToExpire(string $key, int $amount): bool
     {
         try {
-            $this->connection->createQueryBuilder()
+            $result = $this->connection->createQueryBuilder()
                 /** @phpstan-ignore-next-line  */
                 ->update($this->config['storage_table'] . ' u')
                 ->set('u.expire', 'u.expire + :expire')
@@ -194,7 +252,20 @@ class DatabaseStorage extends AbstractStorageBase
                 ->setParameter('remote_address', $key)
                 ->setParameter('expire', $amount)
                 ->executeQuery();
-        } catch (\Exception) {
+
+            if ($result->rowCount() > 0) {
+                $this->getLogger()->debug('Extended expiration time', [
+                    'key' => $key,
+                    'table' => $this->config['storage_table'],
+                    'additional_seconds' => $amount,
+                ]);
+            }
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to extend expiration', [
+                'key' => $key,
+                'table' => $this->config['storage_table'],
+                'error' => $exception->getMessage(),
+            ]);
             return false;
         }
 
