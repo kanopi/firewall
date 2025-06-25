@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
+use GeoIp2\Database\Reader;
 use GeoIp2\WebService\Client;
 use Kanopi\Firewall\Plugins\GeoLocationTrait;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
@@ -65,6 +66,21 @@ class GeoLocationTraitTest extends AbstractTestCase
         $trait = $this->createTestInstance();
         $reader = $trait->getReader($tempFile);
         $this->assertNull($reader, 'Expected null when InvalidDatabaseException is thrown');
+
+        unlink($tempFile);
+    }
+
+    /**
+     * Tests getReader() returns valid reader.
+     */
+    public function testGetReaderReturnsValidDatabaseReader(): void
+    {
+        $tempFile = tempnam(sys_get_temp_dir(), 'geo');
+        file_put_contents($tempFile, file_get_contents('https://git.io/GeoLite2-ASN.mmdb'));
+
+        $trait = $this->createTestInstance();
+        $reader = $trait->getReader($tempFile);
+        $this->assertInstanceOf(Reader::class, $reader);
 
         unlink($tempFile);
     }

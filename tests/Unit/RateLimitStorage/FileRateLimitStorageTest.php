@@ -7,6 +7,8 @@ namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 use Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
+require_once __DIR__ . '/../../RateLimitStorage/NamespaceOverrides.php';
+
 class FileRateLimitStorageTest extends AbstractTestCase
 {
     protected string $tempFile;
@@ -40,6 +42,15 @@ class FileRateLimitStorageTest extends AbstractTestCase
 
         $this->assertArrayHasKey('user:123', $data);
         $this->assertContains($now, $data['user:123']);
+
+        file_put_contents($this->tempFile, '');
+        $GLOBALS['simulate_file_put_contents_failure'] = true;
+        $storage->recordRequest('user:123', $now);
+
+        clearstatcache();
+        $size = filesize($this->tempFile);
+        $GLOBALS['simulate_file_put_contents_failure'] = false;
+        $this->assertEquals(0, $size, 'File Size on failure');
     }
 
     /**

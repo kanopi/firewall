@@ -106,6 +106,9 @@ final class LoggingFactoryTest extends TestCase
      */
     public function testSetAndGetLogger(): void
     {
+        $logger = LoggingFactory::logger();
+        $this->assertInstanceOf(Logger::class, $logger);
+
         $logger = new Logger('injected');
         LoggingFactory::setLogger($logger);
 

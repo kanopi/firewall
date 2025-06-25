@@ -58,6 +58,18 @@ class UrlTest extends AbstractTestCase
     }
 
     /**
+     * Tests evaluate returns true with matching rules.
+     */
+    public function testEvaluateReturnsTrueWithMatchingRules(): void
+    {
+        $plugin = $this->createPlugin([
+            'method:GET'
+        ]);
+        $request = new Request();
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
      * Tests getRequestValue for HTTP method
      */
     public function testGetRequestValueMethod(): void

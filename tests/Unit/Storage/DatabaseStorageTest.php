@@ -243,6 +243,32 @@ class DatabaseStorageTest extends AbstractTestCase
     }
 
     /**
+     * Tests that set() returns true when an exception occurs.
+     */
+    public function testSetHandlesUpdate(): void
+    {
+        // Simulate that the key exists (so it takes the update path)
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('rowCount')->willReturn(1); // Simulate key exists
+
+        $this->mockConnection->method('update')->willReturn(1);
+
+        $result = $this->storage->set('1.2.3.4', [
+            'plugin' => 'TestPlugin',
+            'event_id' => 'TestEvent',
+            'request' => ['example' => 'data'],
+            'blocked' => 'now',
+        ]);
+
+        $this->assertTrue($result);
+    }
+
+    /**
      * Tests that delete() returns false when an exception is thrown.
      */
     public function testDeleteHandlesException(): void

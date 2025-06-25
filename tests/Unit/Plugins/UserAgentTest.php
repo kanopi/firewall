@@ -18,9 +18,9 @@ class UserAgentTest extends AbstractTestCase
     /**
      * Creates a testable UserAgent plugin with mocked DeviceDetector.
      */
-    protected function createPluginWithMockDetector(MockObject $mockDetector): UserAgent
+    protected function createPluginWithMockDetector(MockObject $mockDetector, array $metadata = [], array $configuration = []): UserAgent
     {
-        return new class([], []) extends UserAgent {
+        return new class($metadata, $configuration) extends UserAgent {
             public DeviceDetector $mockedDetector;
 
             public function setMockedDetector(DeviceDetector $mock): void
@@ -74,6 +74,21 @@ class UserAgentTest extends AbstractTestCase
         $plugin->setMockedDetector($mockDetector);
 
         $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * Tests that evaluate returns true with matching rules.
+     */
+    public function testEvaluateReturnsTrue(): void
+    {
+        $request = new Request([], [], [], [], [], ['HTTP_USER_AGENT' => 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)']);
+        $mockDetector = $this->createMock(DeviceDetector::class);
+        $mockDetector->method('isBot')->willReturn(true);
+        $mockDetector->method('getBot')->willReturn(['name' => 'Googlebot']);
+        $plugin = $this->createPluginWithMockDetector($mockDetector, [], ['bot.name:Googlebot']);
+        $plugin->setMockedDetector($mockDetector);
+
+        $this->assertTrue($plugin->evaluate($request));
     }
 
     /**

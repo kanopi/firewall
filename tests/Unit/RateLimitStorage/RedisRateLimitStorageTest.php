@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 use Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Redis;
+use RedisException;
 
 class RedisRateLimitStorageTest extends AbstractTestCase
 {
@@ -44,6 +45,42 @@ class RedisRateLimitStorageTest extends AbstractTestCase
         ]);
 
         $storage->recordRequest('test-key', 1234567890);
+    }
+
+    /**
+     * Test Redis Exceptions.
+     */
+    public function testRecordRequestException(): void
+    {
+        $mockRedis = $this->createMock(Redis::class);
+        $mockRedis->expects($this->any())
+            ->method('zAdd')
+            ->willThrowException(new RedisException());
+        $mockRedis->expects($this->any())
+            ->method('expire')
+            ->willThrowException(new RedisException());
+        $mockRedis->expects($this->any())
+            ->method('zCount')
+            ->willThrowException(new RedisException());
+
+        $storage = new RedisRateLimitStorage([
+            'instance' => $mockRedis,
+            'redis' => [],
+            'ttl' => 3600
+        ]);
+
+        $storage->recordRequest('test-key', 1234567890);
+        $count = $storage->countRequests('test-key', 0, 1);
+        $this->assertEquals(0, $count, 'Confirm no items recorded.');
+
+        $storage = new RedisRateLimitStorage([
+            'redis' => [],
+            'ttl' => 3600
+        ]);
+
+        $storage->recordRequest('test-key', 1234567890);
+        $count = $storage->countRequests('test-key', 0, 1);
+        $this->assertEquals(0, $count, 'Confirm no items recorded.');
     }
 
     /**

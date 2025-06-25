@@ -40,15 +40,15 @@ class LazyObjectRegistryTest extends AbstractTestCase
     {
         $called = false;
         $registry = new LazyObjectRegistry();
-        $registry->add('lazy', function () use (&$called) {
+        $registry->add('exception', function () use (&$called) {
             $called = true;
-            return new stdClass();
+            throw new \Exception();
         });
 
         $this->assertFalse($called, 'Factory should not be called before iteration');
 
         foreach ($registry->getIterator() as $object) {
-            break;
+            $this->assertNull($object);
         }
 
         $this->assertTrue($called, 'Factory should be called during iteration');

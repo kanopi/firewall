@@ -6,8 +6,8 @@ namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\CacheRateLimitStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Psr\Cache\CacheItemInterface;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
-use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 
 class CacheRateLimitStorageTest extends AbstractTestCase
 {
@@ -35,7 +35,26 @@ class CacheRateLimitStorageTest extends AbstractTestCase
         ]);
 
         $this->assertInstanceOf(CacheRateLimitStorage::class, $storage);
+        $storage->recordRequest('any', time());
         // Should not crash, but internal cache is null
+        $this->assertSame(0, $storage->countRequests('any', 0, time()));
+    }
+
+    /**
+     * Testing save error on Cache Rate Limit Storage test.
+     */
+    public function testSaveWithError(): void
+    {
+        $adaptor = new class() extends ArrayAdapter {
+            public function save(CacheItemInterface $item): bool {
+                return false;
+            }
+        };
+        $storage = new CacheRateLimitStorage([
+            'adaptor' => $adaptor,
+        ]);
+
+        $storage->recordRequest('any', time());
         $this->assertSame(0, $storage->countRequests('any', 0, time()));
     }
 

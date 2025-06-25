@@ -137,6 +137,26 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Ensure blockIp() stores all expected data and returns false.
+     */
+    public function testBlockIpReturnsFalse(): void {
+        $request = Request::create('/', 'GET', [], ['foo' => 'bar'], [], ['REMOTE_ADDR' => '1.1.1.1']);
+        $request->attributes->set('x-request-id', 'abc123');
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('TestPlugin');
+        $plugin->method('getExpirationTime')->willReturn(600);
+
+        $this->storage->expects($this->once())->method('set')->willReturn(false);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('blockIp');
+        $method->setAccessible(true);
+        $result = $method->invoke($firewall, $request, $plugin);
+        $this->assertFalse($result);
+    }
+
+
+    /**
      * Ensure uploaded files are normalized correctly into arrays.
      */
     public function testFormatUploadedFiles(): void {
