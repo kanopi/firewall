@@ -78,6 +78,7 @@ class LazyObjectRegistry
                         'class' => $entry['instance']::class,
                     ]);
                 } catch (\Exception $e) {
+                    $entry['instance'] = null;
                     $this->getLogger()->error('Failed to load object', [
                         'name' => $entry['name'],
                         'error' => $e->getMessage(),
