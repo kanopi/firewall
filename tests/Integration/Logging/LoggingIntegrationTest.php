@@ -24,12 +24,6 @@ use Symfony\Component\Yaml\Yaml;
  */
 class LoggingIntegrationTest extends IntegrationTestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->markTestSkipped('Skipping due to lack of logging at the moment.');
-    }
-
     /**
      * Tests basic logging functionality with file handler.
      * 
@@ -272,14 +266,14 @@ class LoggingIntegrationTest extends IntegrationTestCase
         $logEntries = array_map('json_decode', $logLines, array_fill(0, count($logLines), true));
         
         // Find entries by plugin
-        $ipEntry = $this->findLogEntry($logEntries, 'IP Address');
-        $urlEntry = $this->findLogEntry($logEntries, 'URL');
-        $uaEntry = $this->findLogEntry($logEntries, 'User Agent');
-        $rlEntry = $this->findLogEntry($logEntries, 'Rate Limit');
+        $ipEntry = $this->findLogEntry($logEntries, 'IP Address', 'Request blocked by plugin');
+        $urlEntry = $this->findLogEntry($logEntries, 'URL', 'Request blocked by plugin');
+        $uaEntry = $this->findLogEntry($logEntries, 'User Agent', 'Request blocked by plugin');
+        $rlEntry = $this->findLogEntry($logEntries, 'Rate Limit', 'Request blocked by plugin');
         
         // Verify IP Address context
         $this->assertNotNull($ipEntry, 'Should have IP Address log entry');
-        $this->assertEquals('192.168.1.100', $ipEntry['context']['ip'] ?? null);
+        $this->assertEquals('192.168.1.100', $ipEntry['context']['client_ip'] ?? null);
         
         // Verify URL context
         $this->assertNotNull($urlEntry, 'Should have URL log entry');
@@ -287,11 +281,11 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         // Verify User Agent context
         $this->assertNotNull($uaEntry, 'Should have User Agent log entry');
-        $this->assertStringContainsString('BadBot', $uaEntry['context']['user_agent'] ?? '');
+        $this->assertStringContainsString('BadBot/1.0', $uaEntry['context']['user_agent'] ?? '');
         
         // Verify Rate Limit context
         $this->assertNotNull($rlEntry, 'Should have Rate Limit log entry');
-        $this->assertEquals('192.168.1.103', $rlEntry['context']['ip'] ?? null);
+        $this->assertEquals('192.168.1.103', $rlEntry['context']['client_ip'] ?? null);
     }
     
     /**
@@ -345,7 +339,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         // Verify rotating file was created with date
         $today = date('Y-m-d');
-        $rotatedFile = $logFile . '-' . $today;
+        $rotatedFile = str_replace('custom.log', 'custom-' . $today . '.log', $logFile);
         $this->assertFileExists($rotatedFile, 'Rotating log file should exist with date');
         
         // Content should be logged
@@ -543,13 +537,20 @@ class LoggingIntegrationTest extends IntegrationTestCase
     /**
      * Helper: Find log entry by plugin name.
      */
-    protected function findLogEntry(array $entries, string $pluginName): ?array
+    protected function findLogEntry(array $entries, string $pluginName, string $message): ?array
     {
         foreach ($entries as $entry) {
-            if (($entry['context']['plugin'] ?? '') === $pluginName) {
+            if (($entry['context']['plugin'] ?? '') === $pluginName && ($entry['message'] ?? '') === $message) {
                 return $entry;
             }
         }
         return null;
+    }
+
+    protected function findLogEntries(array $entries, string $pluginName): array
+    {
+        return array_filter($entries, function ($entry) use ($pluginName) {
+            return ($entry['context']['plugin'] ?? '') === $pluginName;
+        });
     }
 }
