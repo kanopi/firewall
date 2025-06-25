@@ -16,6 +16,11 @@ jobs:
     resource_class: small
     steps:
       - checkout
+      - run:
+          name: Install Dependencies
+          command: |
+            apt update
+            apt install rsync
       - ci-tools/install-github-cli
       - run:
           name: Generate Version File
