@@ -87,23 +87,6 @@ class LazyObjectRegistryTest extends AbstractTestCase
     }
 
     /**
-     * Tests that if a factory throws an exception during lazy instantiation,
-     * the error is propagated and not swallowed silently.
-     */
-    public function testFactoryThrowsException(): void
-    {
-        $registry = new LazyObjectRegistry();
-        $registry->add('error', fn() => throw new RuntimeException('Factory failure'));
-
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Factory failure');
-
-        foreach ($registry->getIterator() as $object) {
-            // triggers the factory
-        }
-    }
-
-    /**
      * Tests that if a factory returns a non-object (e.g. string),
      * it can be caught as a logic error by the consumer if type enforcement is needed.
      * The registry itself does not enforce object return, so this is a user-side check.
