@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Storage;
 
 use Kanopi\Firewall\Storage\InMemoryStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
 /**
  * Unit tests for the InMemoryStorage class.
  */
-final class InMemoryStorageTest extends TestCase
+final class InMemoryStorageTest extends AbstractTestCase
 {
     /**
      * Tests that a value can be set and retrieved immediately.

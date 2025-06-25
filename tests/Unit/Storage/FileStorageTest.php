@@ -6,7 +6,7 @@ namespace Kanopi\Firewall\Tests\Unit\Storage;
 
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Storage\FileStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use RuntimeException;
 
 require_once __DIR__ . '/../../Storage/NamespaceOverrides.php';
@@ -14,12 +14,13 @@ require_once __DIR__ . '/../../Storage/NamespaceOverrides.php';
 /**
  * Unit tests for FileStorage class.
  */
-class FileStorageTest extends TestCase
+class FileStorageTest extends AbstractTestCase
 {
     private string $tempFile;
 
     protected function setUp(): void
     {
+        parent::setUp();
         // Create a temporary file to use for testing
         $this->tempFile = tempnam(sys_get_temp_dir(), 'filestorage_test_');
     }
@@ -173,7 +174,7 @@ class FileStorageTest extends TestCase
 
         // ✅ Assert that an error log was generated
         $this->assertTrue(
-            LoggingFactory::logger()->getHandlers()[0]->hasErrorContaining('Failed to write to file'),
+            LoggingFactory::logger()->getHandlers()[0]->hasErrorContaining('Failed to write to storage'),
             'Expected error message was not logged'
         );
     }

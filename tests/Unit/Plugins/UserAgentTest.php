@@ -6,14 +6,14 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use DeviceDetector\DeviceDetector;
 use Kanopi\Firewall\Plugins\UserAgent;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Tests the UserAgent plugin class.
  */
-class UserAgentTest extends TestCase
+class UserAgentTest extends AbstractTestCase
 {
     /**
      * Creates a testable UserAgent plugin with mocked DeviceDetector.

@@ -9,12 +9,12 @@ use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Kanopi\Firewall\Storage\DatabaseStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
 /**
  * Unit tests for DatabaseStorage.
  */
-class DatabaseStorageTest extends TestCase
+class DatabaseStorageTest extends AbstractTestCase
 {
     private Connection $mockConnection;
     private AbstractSchemaManager $mockSchema;
@@ -35,6 +35,7 @@ class DatabaseStorageTest extends TestCase
      */
     protected function setUp(): void
     {
+        parent::setUp();
         // Mocks
         $this->mockConnection = $this->createMock(Connection::class);
         $this->mockSchema = $this->createMock(AbstractSchemaManager::class);
@@ -194,7 +195,9 @@ class DatabaseStorageTest extends TestCase
      */
     public function testGetStorageTableStructure(): void
     {
-        $storage = new \Kanopi\Firewall\Storage\DatabaseStorage(['connection' => [], 'storage_table' => 'firewall_storage']);
+        $storage = new \Kanopi\Firewall\Storage\DatabaseStorage(['connection' => [
+            'dsn' => 'sqlite3:///:memory:'
+        ], 'storage_table' => 'firewall_storage']);
         $table = (new \ReflectionClass($storage))
             ->getMethod('getStorageTable');
         $table->setAccessible(true);

@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\InMemoryRateLimitStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
-class InMemoryRateLimitStorageTest extends TestCase
+class InMemoryRateLimitStorageTest extends AbstractTestCase
 {
     /**
      * Test recording a single request and retrieving it within the same range.

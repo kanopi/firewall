@@ -4,16 +4,13 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
-use Doctrine\DBAL\Connection;
 use Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage;
-use Doctrine\DBAL\DriverManager;
-use PHPUnit\Framework\TestCase;
-use PDO;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
 /**
  * Full integration test for DatabaseRateLimitStorage using shared in-memory SQLite.
  */
-class DatabaseRateLimitStorageTest extends TestCase
+class DatabaseRateLimitStorageTest extends AbstractTestCase
 {
     /**
      * Create a new instance of DatabaseRateLimitStorage with a shared SQLite memory connection.

@@ -9,11 +9,11 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageInterface;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 
-class FirewallTest extends TestCase {
+class FirewallTest extends AbstractTestCase
+{
     private StorageInterface&MockObject $storage;
     private PluginManager&MockObject $blockManager;
     private PluginManager&MockObject $bypassManager;

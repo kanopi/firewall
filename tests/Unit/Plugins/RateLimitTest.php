@@ -6,13 +6,13 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Plugins\RateLimit;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Test the RateLimit plugin behavior.
  */
-class RateLimitTest extends TestCase
+class RateLimitTest extends AbstractTestCase
 {
     /**
      * Creates a mock storage that tracks calls and returns a configured count.

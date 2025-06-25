@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Plugins\Url;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Unit tests for the Url plugin.
  */
-class UrlTest extends TestCase
+class UrlTest extends AbstractTestCase
 {
     /**
      * Create a Url plugin instance with config.

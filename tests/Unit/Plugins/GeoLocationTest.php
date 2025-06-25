@@ -6,10 +6,10 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use GeoIp2\Model\City;
 use Kanopi\Firewall\Plugins\GeoLocation;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 
-class GeoLocationTest extends TestCase
+class GeoLocationTest extends AbstractTestCase
 {
     /**
      * Tests getName() returns the expected plugin name.

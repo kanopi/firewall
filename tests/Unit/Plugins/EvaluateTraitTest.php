@@ -4,23 +4,44 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Plugins\PluginInterface;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 use Kanopi\Firewall\Plugins\EvaluateTrait;
 
-class EvaluateTraitTest extends TestCase {
+class EvaluateTraitTest extends AbstractTestCase
+{
     /**
      * Anonymous plugin using the EvaluateTrait with getValue override.
      */
     protected function getMockPlugin(array $variables = []): object {
-        return new class($variables) {
+        return new class($variables) implements PluginInterface {
             use EvaluateTrait;
             private array $vars;
             public function __construct(array $vars) {
                 $this->vars = $vars;
             }
+            public function getName(): string {
+                return 'Mock Plugin';
+            }
+
+            public function getDescription(): string {
+                return 'Mock Plugin Description';
+            }
+
             protected function getValue(Request $request, string $key): mixed {
                 return $this->vars[$key] ?? null;
+            }
+
+            public function evaluate(Request $request): bool {
+                return true;
+            }
+
+            public function getStatusCode(): int {
+                return 400;
+            }
+            public function getExpirationTime(): int {
+                return 0;
             }
         };
     }

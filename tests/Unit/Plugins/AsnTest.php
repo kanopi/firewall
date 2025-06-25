@@ -7,13 +7,13 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 use GeoIp2\Database\Reader;
 use GeoIp2\Model\Asn as AsnModel;
 use Kanopi\Firewall\Plugins\Asn;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Unit tests for the ASN plugin.
  */
-class AsnTest extends TestCase
+class AsnTest extends AbstractTestCase
 {
     /**
      * Returns a testable Asn plugin with a mocked GeoIP2 reader.

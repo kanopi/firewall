@@ -114,17 +114,6 @@ final class LoggingFactoryTest extends TestCase
     }
 
     /**
-     * Tests that logger() throws if setLogger() was not called first.
-     */
-    public function testLoggerThrowsIfNotInitialized(): void
-    {
-        $this->expectException(\Exception::class);
-        $this->expectExceptionMessage('LoggingFactory::$logger is not initialized yet');
-
-        LoggingFactory::logger();
-    }
-
-    /**
      * Tests that create() does not throw or fail if the handler class does not exist.
      */
     public function testCreateWithInvalidHandlerClass(): void

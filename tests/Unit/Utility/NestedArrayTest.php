@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\NestedArray;
 use LogicException;
-use PHPUnit\Framework\TestCase;
 
-class NestedArrayTest extends TestCase
+class NestedArrayTest extends AbstractTestCase
 {
     /**
      * Tests that getValue() returns the correct nested value

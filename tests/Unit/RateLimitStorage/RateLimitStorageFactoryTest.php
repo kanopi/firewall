@@ -6,9 +6,9 @@ namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\InMemoryRateLimitStorage;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageFactory;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
-class RateLimitStorageFactoryTest extends TestCase {
+class RateLimitStorageFactoryTest extends AbstractTestCase {
     /**
      * It should default to InMemoryRateLimitStorage when no type is passed.
      */

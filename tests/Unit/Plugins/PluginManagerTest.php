@@ -9,10 +9,10 @@ use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginHigh;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginLow;
 use Kanopi\Firewall\Tests\Plugins\TestTruePlugin;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 
-class PluginManagerTest extends TestCase
+class PluginManagerTest extends AbstractTestCase
 {
     /**
      * Test: A valid plugin returns false.

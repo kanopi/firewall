@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\CacheRateLimitStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
+use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 
-class CacheRateLimitStorageTest extends TestCase
+class CacheRateLimitStorageTest extends AbstractTestCase
 {
     /**
      * Tests constructor with valid CacheInterface object.
@@ -69,10 +70,12 @@ class CacheRateLimitStorageTest extends TestCase
      */
     public function testRecordAndCountWithoutCache(): void
     {
-        $storage = new CacheRateLimitStorage([]);
+        $storage = new CacheRateLimitStorage([
+            'adaptor' => ArrayAdapter::class,
+        ]);
         $storage->recordRequest('key', time());
 
-        $this->assertSame(0, $storage->countRequests('key', 0, time()));
+        $this->assertSame(1, $storage->countRequests('key', 0, time()));
     }
 
     /**

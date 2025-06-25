@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\LazyObjectRegistry;
 use stdClass;
 use RuntimeException;
 use TypeError;
 
-class LazyObjectRegistryTest extends TestCase
+class LazyObjectRegistryTest extends AbstractTestCase
 {
     /**
      * Tests that entries added to the registry are sorted in ascending order by priority.

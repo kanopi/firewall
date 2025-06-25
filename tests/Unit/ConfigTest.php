@@ -3,10 +3,9 @@
 namespace Kanopi\Firewall\Tests\Unit;
 
 use Kanopi\Firewall\Config;
-use PHPUnit\Framework\TestCase;
 use Symfony\Component\Yaml\Yaml;
 
-class ConfigTest extends TestCase
+class ConfigTest extends AbstractTestCase
 {
 
     protected string $tempFile1;

@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Redis;
 
-class RedisRateLimitStorageTest extends TestCase
+class RedisRateLimitStorageTest extends AbstractTestCase
 {
     /**
      * Tests the constructor initializes with injected Redis instance.

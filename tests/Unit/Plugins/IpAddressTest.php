@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Plugins\IpAddress;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 
-class IpAddressTest extends TestCase
+class IpAddressTest extends AbstractTestCase
 {
+
     /**
      * Tests getName() returns correct name.
      */

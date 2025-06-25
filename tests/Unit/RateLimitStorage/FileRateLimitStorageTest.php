@@ -5,14 +5,15 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
-class FileRateLimitStorageTest extends TestCase
+class FileRateLimitStorageTest extends AbstractTestCase
 {
     protected string $tempFile;
 
     protected function setUp(): void
     {
+        parent::setUp();
         // Create a temporary file for testing
         $this->tempFile = tempnam(sys_get_temp_dir(), 'ratelimit_test_');
     }

@@ -6,9 +6,9 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use GeoIp2\WebService\Client;
 use Kanopi\Firewall\Plugins\GeoLocationTrait;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
-class GeoLocationTraitTest extends TestCase
+class GeoLocationTraitTest extends AbstractTestCase
 {
     /**
      * Create a trait wrapper instance for testing.

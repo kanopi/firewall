@@ -6,15 +6,15 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Tests\Plugins\TestablePlugin;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Monolog\Level;
-use PHPUnit\Framework\TestCase;
 use Monolog\Logger;
 use Monolog\Handler\TestHandler;
 
 /**
  * Unit tests for AbstractPluginBase.
  */
-final class AbstractPluginBaseTest extends TestCase
+final class AbstractPluginBaseTest extends AbstractTestCase
 {
     protected function tearDown(): void
     {

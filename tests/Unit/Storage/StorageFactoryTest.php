@@ -7,12 +7,12 @@ namespace Kanopi\Firewall\Tests\Unit\Storage;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Tests\Storage\FakeCustomStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
 /**
  * Unit tests for the StorageFactory class.
  */
-class StorageFactoryTest extends TestCase
+class StorageFactoryTest extends AbstractTestCase
 {
     /**
      * Tests that create() returns an instance of InMemoryStorage

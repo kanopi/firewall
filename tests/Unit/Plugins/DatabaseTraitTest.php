@@ -5,20 +5,18 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Doctrine\DBAL\DriverManager;
-use Doctrine\DBAL\Schema\AbstractSchemaManager;
-use Doctrine\DBAL\Schema\DefaultSchemaManagerFactory;
 use Doctrine\DBAL\Schema\MySQLSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
 use Kanopi\Firewall\Plugins\DatabaseTrait;
 use Kanopi\Firewall\Storage\DatabaseStorage;
-use PHPUnit\Framework\TestCase;
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
 /**
  * Integration tests for DatabaseTrait using SQLite in-memory connection.
  */
-class DatabaseTraitTest extends TestCase
+class DatabaseTraitTest extends AbstractTestCase
 {
     /**
      * Creates a test instance with `getStorageTable()` implemented.
