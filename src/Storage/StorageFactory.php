@@ -42,7 +42,7 @@ class StorageFactory
 
             LoggingFactory::logMessage('info', 'Storage type defaulted to InMemoryStorage', [
                 'requested_type' => $requestedType,
-                'reason' => is_string($requestedType) ? (!class_exists($requestedType) ? 'class_not_found' : 'invalid_interface') : ('not_string'),
+                'reason' => is_string($requestedType) ? (class_exists($requestedType) ? 'invalid_interface' : 'class_not_found') : ('not_string'),
             ]);
         }
 
