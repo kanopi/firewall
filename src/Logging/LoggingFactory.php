@@ -116,4 +116,19 @@ class LoggingFactory
     {
         static::$logger = $logger;
     }
+
+    /**
+     * Helper method to log messages when logging is available.
+     *
+     * @param string $level
+     *   Log level.
+     * @param string $message
+     *   Log message.
+     * @param array $context
+     *   Log context.
+     */
+    public static function logMessage(string $level, string $message, array $context = []): void
+    {
+        (LoggingFactory::logger())->log($level, $message, $context);
+    }
 }
