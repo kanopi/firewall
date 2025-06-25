@@ -32,18 +32,11 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_rate_limit_storage';
 
-        try {
-            $this->createConnection($config['connection'] ?? []);
-            $this->getLogger()->info('Database rate limit storage initialized', [
-                'table' => $this->config['storage_table'],
-                'driver' => $config['connection']['driver'] ?? 'unknown',
-            ]);
-        } catch (\Exception $exception) {
-            $this->getLogger()->error('Failed to initialize database rate limit storage', [
-                'error' => $exception->getMessage(),
-                'table' => $this->config['storage_table'],
-            ]);
-        }
+        $this->createConnection($config['connection'] ?? []);
+        $this->getLogger()->info('Database rate limit storage initialized', [
+            'table' => $this->config['storage_table'],
+            'driver' => $config['connection']['driver'] ?? 'unknown',
+        ]);
     }
 
     /**
