@@ -100,9 +100,7 @@ class LoggingFactory
     public static function logger(): Logger
     {
         if (!static::$logger instanceof \Monolog\Logger) {
-            throw new \Exception(
-                \Kanopi\Firewall\Logging\LoggingFactory::class . '::$logger is not initialized yet. ' . \Kanopi\Firewall\Logging\LoggingFactory::class . '::setLogger() must be called.'
-            );
+            static::$logger = new Logger('firewall');
         }
 
         return static::$logger;
