@@ -36,8 +36,9 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
         parent::__construct($config);
 
         try {
-            $this->redis = (($config['instance'] ?? null) instanceof Redis) ? $config['instance'] : new Redis($config['redis']);
             $this->redisPrefix = strval($config['redis']['prefix'] ?? 'ratelimit:');
+            $this->redis = (($config['instance'] ?? null) instanceof Redis) ? $config['instance'] : new Redis($config['redis']);
+            $this->redis->echo('Connected');
 
             $this->getLogger()->info('Redis rate limit storage initialized', [
                 'prefix' => $this->redisPrefix,
