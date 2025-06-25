@@ -168,6 +168,8 @@ final readonly class Firewall
                     'plugin' => $plugin->getName(),
                     'status_code' => $plugin->getStatusCode(),
                     'path' => $request->getPathInfo(),
+                    'query' => $request->query->all(),
+                    'user_agent' => $request->headers->get('User-Agent') ?? 'unknown',
                 ]);
                 $this->blockIp($request, $plugin);
                 $this->sendBlockingResponse($request, $plugin->getStatusCode());

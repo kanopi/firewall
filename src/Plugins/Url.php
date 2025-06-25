@@ -38,7 +38,7 @@ class Url extends AbstractPluginBase
             'method' => $request->getMethod(),
             'host' => $request->getHost(),
             'path' => $request->getPathInfo(),
-            'query' => $request->getQueryString(),
+            'query' => $request->query->all(),
         ]);
 
         $result = $this->evaluateRequest($request, $this->config);
