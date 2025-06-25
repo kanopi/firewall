@@ -32,17 +32,10 @@ class DatabaseStorage extends AbstractStorageBase
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_storage';
 
-        try {
-            $this->createConnection($config['connection'] ?? []);
-            $this->getLogger()->info('Database storage initialized', [
-                'table' => $this->config['storage_table'],
-            ]);
-        } catch (\Exception $exception) {
-            $this->getLogger()->error('Failed to initialize database storage', [
-                'error' => $exception->getMessage(),
-                'table' => $this->config['storage_table'],
-            ]);
-        }
+        $this->createConnection($config['connection'] ?? []);
+        $this->getLogger()->info('Database storage initialized', [
+            'table' => $this->config['storage_table'],
+        ]);
     }
 
     /**
