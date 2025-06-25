@@ -75,6 +75,7 @@ class LazyObjectRegistry
 
                     $this->getLogger()->debug('Object loaded successfully', [
                         'name' => $entry['name'],
+                        /** @phpstan-ignore classConstant.nonObject */
                         'class' => $entry['instance']::class,
                     ]);
                 } catch (\Exception $e) {

@@ -64,6 +64,7 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
             ]);
         } else {
             $this->getLogger()->warning('Cache rate limit storage failed to initialize', [
+                /** @phpstan-ignore classConstant.nonObject */
                 'adaptor' => is_string($cache) ? $cache : $cache::class,
             ]);
         }
