@@ -1,4 +1,4 @@
-DB_DSN: &DB_DSN "pdo-mysql://user:user@db:3306/default?serverVersion=10.6"
+DB_DSN: &DB_DSN "pdo-mysql://root:password@mariadb:3306/firewall_test?serverVersion=10.6"
 REDIS_CONNECTION: &REDIS_CONNECTION
   redis:
     host: redis
@@ -22,7 +22,7 @@ block:
     priority: -10
     enable: true
     config:
-      - 'method:GET'
+      - '!method:GET'
 
   Kanopi\Firewall\Plugins\RateLimit:
     enable: true
@@ -47,4 +47,13 @@ block:
     config: ~
 
 logger:
-  -
+  # File logging
+  - class: Monolog\Handler\StreamHandler
+    args:
+      - /var/www/html/example/data/firewall.log
+      - Monolog\Level::Warning
+    formatter:
+      class: Monolog\Formatter\LineFormatter
+      args:
+        - "[%datetime%] [%level_name%] [%context.plugin%] %message% %context% %extra%\n"
+        - "Y-m-d H:i:s"
