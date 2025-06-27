@@ -18,11 +18,38 @@ block:
         - "config.ip.yml"
     config: ~
 
+  Kanopi\Firewall\Plugins\GeoLocation:
+    priority: -50
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: GeoLite2-City.mmdb
+    config:
+      - 'country:US'
+      - 'country:CA'
+
   Kanopi\Firewall\Plugins\Url:
     priority: -10
     enable: true
     config:
       - '!method:GET'
+
+  Kanopi\Firewall\Plugins\VulnerabilityScore:
+    priority: -75
+    enable: true
+    metadata:
+      config:
+        - "config.vulnerability-score.yml"
+      default_expiration_time: 3600
+      status_code: 403
+      country_reader:
+        type: reader
+        db: GeoLite2-Country.mmdb
+      asn_reader:
+        type: reader
+        db: GeoLite2-ASN.mmdb
+    config: ~
 
   Kanopi\Firewall\Plugins\RateLimit:
     enable: true
