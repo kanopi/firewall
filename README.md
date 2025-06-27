@@ -18,6 +18,7 @@
   - [User Agent Plugin](#user-agent-plugin)
   - [ASN Plugin](#asn-plugin)
   - [Rate Limit Plugin](#rate-limit-plugin)
+  - [Vulnerability Score Plugin](#vulnerability-score-plugin)
 - [Conditional Logic](#conditional-logic)
 - [Logging Configuration](#logging-configuration)
 - [Dynamic Configuration Overrides](#dynamic-configuration-overrides)
@@ -31,6 +32,7 @@
 - **Flexible Plugin System**: Modular architecture allows for easy extension and customization
 - **Multiple Storage Backends**: Support for in-memory, file-based, database, and Redis storage
 - **Comprehensive Request Analysis**: Evaluate requests based on IP, location, user agent, URL patterns, and more
+- **Vulnerability Scoring**: Advanced risk assessment based on multiple factors with configurable thresholds
 - **Rate Limiting**: Built-in rate limiting with configurable storage backends
 - **GeoIP Integration**: Full support for MaxMind GeoIP2 databases (both local and web service)
 - **Advanced Conditional Logic**: Support for simple, complex, and grouped conditional rules
@@ -93,6 +95,21 @@ block:
     config:
       - 192.168.1.100
       - 10.0.0.0/24
+  
+  # Optional: Enable vulnerability scoring for advanced threat detection
+  # \Kanopi\Firewall\Plugins\VulnerabilityScore:
+  #   enable: true
+  #   config:
+  #     scoring:
+  #       patterns:
+  #         - pattern: "/<script|union.*select/i"
+  #           score: 50
+  #           type: regex
+  #           locations: ["uri", "query_string"]
+  #     risk_levels:
+  #       high:
+  #         threshold: 40
+  #         block: true
 
 # Optional: Configure logging
 logger:
@@ -507,6 +524,398 @@ block:
 - Wildcard: `/api/*` (matches /api/users, /api/posts/123, etc.)
 - Regex: `/^\/api\/v[0-9]+\//` (matches /api/v1/, /api/v2/, etc.)
 
+### Vulnerability Score Plugin
+
+**Namespace**: `\Kanopi\Firewall\Plugins\VulnerabilityScore`
+
+Evaluates requests based on a comprehensive scoring system that combines multiple risk factors to determine if a request should be blocked. This plugin provides fine-grained control over security policies by assigning scores to various request characteristics and blocking based on cumulative risk levels.
+
+#### Key Features
+
+- **Multi-Factor Scoring**: Evaluates HTTP methods, geographic origin, ASN, patterns, and user agents
+- **Configurable Risk Levels**: Define custom thresholds with different blocking behaviors
+- **Pattern Detection**: Built-in detection for SQL injection, XSS, command injection, and custom patterns
+- **Geographic Intelligence**: Optional integration with GeoIP databases for country and ASN scoring
+- **Dynamic Response**: Different status codes and expiration times based on risk level
+
+#### Configuration Example
+
+```yaml
+block:
+  \Kanopi\Firewall\Plugins\VulnerabilityScore:
+    enable: true
+    priority: -50  # Run after basic filters but before rate limiting
+    metadata:
+      # Default response settings
+      default_expiration_time: 3600
+      status_code: 403
+      
+      # Optional: GeoIP database for country scoring
+      country_reader:
+        type: reader
+        db: /path/to/GeoLite2-Country.mmdb
+      
+      # Optional: ASN database for network scoring
+      asn_reader:
+        type: reader
+        db: /path/to/GeoLite2-ASN.mmdb
+      
+      # Load scoring rules from external file
+      config:
+        - vulnerability-score-rules.yml
+    
+    config:
+      scoring:
+        # HTTP Method Scoring
+        methods:
+          GET: 0          # Safe read operations
+          HEAD: 0
+          OPTIONS: 1      # CORS probing
+          POST: 10        # Write operations
+          PUT: 15         # Full replacements
+          PATCH: 15       # Partial updates
+          DELETE: 20      # Destructive operations
+          TRACE: 50       # Security risk
+          CONNECT: 50     # Proxy tunneling
+        
+        # Country-based Scoring
+        countries:
+          # Low risk countries
+          US: 1
+          CA: 1
+          GB: 1
+          DE: 1
+          
+          # Medium risk countries
+          BR: 10
+          IN: 10
+          
+          # High risk countries
+          CN: 30
+          RU: 30
+          KP: 50
+          IR: 40
+        
+        # ASN (Network) Scoring
+        asn:
+          # Trusted networks
+          "15169": 1      # Google
+          "13335": 1      # Cloudflare
+          "16509": 1      # Amazon AWS
+          
+          # Suspicious networks
+          "4134": 30      # Chinanet
+          "45102": 25     # Alibaba Cloud
+        
+        # ASN Organization Pattern Matching
+        asn_patterns:
+          "vpn": 20
+          "proxy": 20
+          "hosting": 15
+          "datacenter": 10
+          "residential": 5
+        
+        # Malicious Pattern Detection
+        patterns:
+          # SQL Injection
+          - pattern: "/(union.*select|select.*from|drop.*table)/i"
+            score: 40
+            type: regex
+            locations: ["uri", "query_string", "body"]
+          
+          # XSS Attacks
+          - pattern: "/<script[^>]*>.*?<\/script>/i"
+            score: 35
+            type: regex
+            locations: ["uri", "query_string", "body"]
+          
+          - pattern: "javascript:"
+            score: 30
+            type: contains
+            locations: ["uri", "query_string", "body"]
+          
+          # Command Injection
+          - pattern: "/(;|\||&&|`|\$\()/i"
+            score: 25
+            type: regex
+            locations: ["uri", "query_string"]
+          
+          # Path Traversal
+          - pattern: "/(\.\.[\/\\]){2,}/i"
+            score: 30
+            type: regex
+            locations: ["uri", "query_string"]
+          
+          # Sensitive Files
+          - pattern: ".git"
+            score: 20
+            type: contains
+            locations: ["uri"]
+          
+          - pattern: ".env"
+            score: 25
+            type: contains
+            locations: ["uri"]
+          
+          # Admin Access
+          - pattern: "admin"
+            score: 10
+            type: contains
+            locations: ["uri"]
+        
+        # User Agent Scoring
+        user_agents:
+          # Known attack tools
+          - pattern: "sqlmap"
+            score: 50
+            type: contains
+          
+          - pattern: "nikto"
+            score: 45
+            type: contains
+          
+          - pattern: "nmap"
+            score: 40
+            type: contains
+          
+          # Suspicious agents
+          - pattern: "python-requests"
+            score: 15
+            type: contains
+          
+          - pattern: "curl"
+            score: 10
+            type: contains
+          
+          # Empty user agent
+          - pattern: "^$"
+            score: 20
+            type: regex
+      
+      # Risk Level Configuration
+      risk_levels:
+        low:
+          threshold: 0
+          block: false      # Monitor only
+          
+        medium:
+          threshold: 25
+          block: false      # Still monitoring
+          
+        high:
+          threshold: 50
+          block: true
+          status_code: 403
+          expiration_time: 3600    # 1 hour
+          
+        critical:
+          threshold: 75
+          block: true
+          status_code: 403
+          expiration_time: 86400   # 24 hours
+          
+        extreme:
+          threshold: 100
+          block: true
+          status_code: 403
+          expiration_time: 604800  # 7 days
+```
+
+#### Scoring Components
+
+##### 1. Method Scoring
+Assigns scores based on HTTP methods, with higher scores for potentially dangerous operations.
+
+##### 2. Country Scoring
+Uses GeoIP database to identify request origin and assign scores based on geographic risk assessment.
+
+##### 3. ASN Scoring
+Evaluates the Autonomous System Number of the request origin, identifying datacenter, VPN, or residential connections.
+
+##### 4. Pattern Detection
+Searches for malicious patterns in various parts of the request:
+- **Locations**: `uri`, `query_string`, `body`, `headers`
+- **Types**: `regex`, `contains`, `exact`
+- **Patterns**: SQL injection, XSS, command injection, path traversal, etc.
+
+##### 5. User Agent Analysis
+Identifies and scores suspicious or malicious user agents, including security tools and bots.
+
+#### Risk Levels
+
+Each risk level can be configured with:
+- `threshold`: Minimum score to trigger this level
+- `block`: Whether to block requests at this level
+- `status_code`: HTTP status code to return when blocking
+- `expiration_time`: How long to block the IP address (in seconds)
+
+#### Advanced Usage Examples
+
+##### Example 1: E-commerce Site Protection
+
+```yaml
+config:
+  scoring:
+    methods:
+      GET: 0
+      POST: 5        # Allow normal form submissions
+      DELETE: 50     # High risk for e-commerce
+    
+    patterns:
+      # Credit card testing
+      - pattern: "/4[0-9]{12}(?:[0-9]{3})?/"
+        score: 60
+        type: regex
+        locations: ["body", "query_string"]
+      
+      # Price manipulation attempts
+      - pattern: "price="
+        score: 30
+        type: contains
+        locations: ["query_string", "body"]
+      
+      # Admin panel access
+      - pattern: "/admin|/backend|/dashboard/i"
+        score: 20
+        type: regex
+        locations: ["uri"]
+    
+    user_agents:
+      # Block automated scanners
+      - pattern: "bot|crawler|spider"
+        score: 15
+        type: regex
+  
+  risk_levels:
+    high:
+      threshold: 40
+      block: true
+      status_code: 403
+      expiration_time: 7200
+```
+
+##### Example 2: API Protection
+
+```yaml
+config:
+  scoring:
+    methods:
+      GET: 0
+      POST: 5
+      PUT: 10
+      DELETE: 30
+    
+    patterns:
+      # GraphQL introspection
+      - pattern: "__schema"
+        score: 40
+        type: contains
+        locations: ["body", "query_string"]
+      
+      # Mass assignment attempts
+      - pattern: "/(role|admin|permission)=/i"
+        score: 35
+        type: regex
+        locations: ["body"]
+    
+    user_agents:
+      # Require proper user agents for API access
+      - pattern: "^$"
+        score: 50  # No user agent = suspicious
+        type: regex
+  
+  risk_levels:
+    medium:
+      threshold: 30
+      block: true
+      status_code: 429  # Too Many Requests
+      expiration_time: 300
+```
+
+##### Example 3: Geographic Restrictions with Exceptions
+
+```yaml
+config:
+  scoring:
+    countries:
+      # Blocked regions
+      CN: 50
+      RU: 50
+      KP: 100
+      
+      # Allowed regions
+      US: 0
+      CA: 0
+      GB: 0
+    
+    # But allow known good ASNs from blocked countries
+    asn:
+      "45102": -40  # Alibaba Cloud (reduces China score)
+      "13335": -40  # Cloudflare (reduces any country score)
+    
+  risk_levels:
+    high:
+      threshold: 40
+      block: true
+```
+
+#### Integration with Other Plugins
+
+The VulnerabilityScore plugin works well with other firewall plugins:
+
+```yaml
+# Use IP whitelist to bypass scoring
+bypass:
+  \Kanopi\Firewall\Plugins\IpAddress:
+    enable: true
+    priority: -200
+    config:
+      - 192.168.1.0/24  # Internal network
+
+# Apply vulnerability scoring
+block:
+  \Kanopi\Firewall\Plugins\VulnerabilityScore:
+    enable: true
+    priority: -50
+    config: # ... scoring configuration ...
+  
+  # Then apply rate limiting to scored requests
+  \Kanopi\Firewall\Plugins\RateLimit:
+    enable: true
+    priority: 100
+    config:
+      - path: "/*"
+        rate: 60
+        sample: 60
+```
+
+#### Performance Considerations
+
+- The plugin evaluates all scoring factors for each request
+- Pattern matching can be CPU intensive with many patterns
+- Consider using Redis or database storage for better performance at scale
+- Place the plugin after basic filters (like IP blocking) for efficiency
+
+#### Debugging and Monitoring
+
+The plugin logs detailed information about scoring decisions:
+
+```yaml
+logger:
+  - class: Monolog\Handler\StreamHandler
+    args:
+      - /var/log/firewall/vulnerability-scores.log
+      - Monolog\Level::Debug
+    formatter:
+      class: Monolog\Formatter\JsonFormatter
+```
+
+Log entries include:
+- Total score calculated
+- Individual component scores
+- Risk level determined
+- Blocking decision
+
 ## Conditional Logic
 
 The firewall supports three formats for defining conditions:
@@ -775,6 +1184,43 @@ block:
             rules:
               - "client.name:Chrome"
               - "client.version < 80"
+  
+  # Vulnerability scoring for comprehensive threat assessment
+  \Kanopi\Firewall\Plugins\VulnerabilityScore:
+    enable: true
+    priority: -25
+    metadata:
+      country_reader:
+        type: reader
+        db: /usr/share/GeoIP/GeoLite2-Country.mmdb
+      asn_reader:
+        type: reader
+        db: /usr/share/GeoIP/GeoLite2-ASN.mmdb
+    config:
+      scoring:
+        methods:
+          DELETE: 30
+          PUT: 20
+          POST: 10
+        countries:
+          CN: 25
+          RU: 25
+          KP: 50
+        patterns:
+          - pattern: "/(union.*select|drop.*table)/i"
+            score: 50
+            type: regex
+            locations: ["uri", "query_string", "body"]
+          - pattern: "/<script|javascript:/i"
+            score: 40
+            type: regex
+            locations: ["uri", "query_string", "body"]
+      risk_levels:
+        high:
+          threshold: 50
+          block: true
+          status_code: 403
+          expiration_time: 7200
   
   # URL-based protection
   \Kanopi\Firewall\Plugins\Url:

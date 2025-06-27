@@ -13,6 +13,6 @@ class TestFalsePlugin implements PluginInterface {
     public function getName(): string { return 'false'; }
     public function getDescription(): string { return 'always false'; }
     public function evaluate(Request $request): bool { return false; }
-    public function getStatusCode(): int { return 403; }
-    public function getExpirationTime(): int { return 60; }
+    public function getStatusCode(?Request $requst = null): int { return 403; }
+    public function getExpirationTime(?Request $requst = null): int { return 60; }
 }

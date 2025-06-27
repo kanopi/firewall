@@ -10,6 +10,6 @@ class TestTruePlugin implements PluginInterface {
     public function getName(): string { return 'true'; }
     public function getDescription(): string { return 'true desc'; }
     public function evaluate(Request $request): bool { return true; }
-    public function getStatusCode(): int { return 403; }
-    public function getExpirationTime(): int { return 300; }
+    public function getStatusCode(?Request $requst = null): int { return 403; }
+    public function getExpirationTime(?Request $requst = null): int { return 300; }
 }

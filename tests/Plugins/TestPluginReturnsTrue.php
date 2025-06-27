@@ -15,7 +15,7 @@ class TestPluginReturnsTrue implements PluginInterface
 
     public function evaluate(Request $request): bool { return true; }
 
-    public function getStatusCode(): int { return 200; }
+    public function getStatusCode(?Request $requst = null): int { return 200; }
 
-    public function getExpirationTime(): int { return 0; }
+    public function getExpirationTime(?Request $requst = null): int { return 0; }
 }

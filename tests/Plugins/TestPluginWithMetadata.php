@@ -24,7 +24,7 @@ class TestPluginWithMetadata implements PluginInterface
 
     public function evaluate(Request $request): bool { return false; }
 
-    public function getStatusCode(): int { return 400; }
+    public function getStatusCode(?Request $requst = null): int { return 400; }
 
-    public function getExpirationTime(): int { return 0; }
+    public function getExpirationTime(?Request $requst = null): int { return 0; }
 }

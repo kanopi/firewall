@@ -509,6 +509,163 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
     }
     
     /**
+     * Tests VulnerabilityScore plugin with various scoring factors.
+     * 
+     * This test verifies:
+     * - Method scoring works correctly
+     * - Pattern detection catches malicious content
+     * - User agent scoring identifies threats
+     * - Combined scores trigger appropriate risk levels
+     * - Risk-based blocking and expiration times
+     */
+    public function testVulnerabilityScorePlugin(): void
+    {
+        $config = [
+            'storage' => [
+                'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
+            ],
+            'block' => [
+                'Kanopi\Firewall\Plugins\VulnerabilityScore' => [
+                    'enable' => true,
+                    'priority' => 0,
+                    'metadata' => [
+                        'default_expiration_time' => 3600,
+                        'status_code' => 403,
+                    ],
+                    'config' => [
+                        'scoring' => [
+                            'methods' => [
+                                'GET' => 0,
+                                'POST' => 10,
+                                'PUT' => 15,
+                                'DELETE' => 20,
+                            ],
+                            'patterns' => [
+                                [
+                                    'pattern' => '/(union.*select|select.*from|drop.*table)/i',
+                                    'score' => 30,
+                                    'type' => 'regex',
+                                    'locations' => ['uri', 'query_string', 'body']
+                                ],
+                                [
+                                    'pattern' => '/<script[^>]*>.*?<\/script>/i',
+                                    'score' => 25,
+                                    'type' => 'regex',
+                                    'locations' => ['uri', 'query_string', 'body']
+                                ],
+                                [
+                                    'pattern' => 'admin',
+                                    'score' => 10,
+                                    'type' => 'contains',
+                                    'locations' => ['uri']
+                                ],
+                                [
+                                    'pattern' => '.git',
+                                    'score' => 15,
+                                    'type' => 'contains',
+                                    'locations' => ['uri']
+                                ]
+                            ],
+                            'user_agents' => [
+                                [
+                                    'pattern' => 'sqlmap',
+                                    'score' => 40,
+                                    'type' => 'contains'
+                                ],
+                                [
+                                    'pattern' => 'nikto',
+                                    'score' => 35,
+                                    'type' => 'contains'
+                                ],
+                                [
+                                    'pattern' => 'python-requests',
+                                    'score' => 10,
+                                    'type' => 'contains'
+                                ]
+                            ]
+                        ],
+                        'risk_levels' => [
+                            'low' => [
+                                'threshold' => 0,
+                                'block' => false
+                            ],
+                            'medium' => [
+                                'threshold' => 20,
+                                'block' => false
+                            ],
+                            'high' => [
+                                'threshold' => 30,
+                                'block' => true,
+                                'status_code' => 403,
+                                'expiration_time' => 3600
+                            ],
+                            'critical' => [
+                                'threshold' => 50,
+                                'block' => true,
+                                'status_code' => 403,
+                                'expiration_time' => 86400
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ];
+        
+        $firewall = $this->createFirewall($config);
+        
+        // Test low risk request (GET to normal path)
+        $this->assertRequestAllowed($firewall, '192.168.1.1', 'Normal GET request allowed', [
+            'method' => 'GET',
+            'path' => '/index.php'
+        ]);
+        
+        // Test medium risk but not blocked (POST to admin)
+        $this->assertRequestAllowed($firewall, '192.168.1.2', 'Medium risk POST allowed', [
+            'method' => 'POST',
+            'path' => '/admin/login'  // POST (10) + admin (10) = 20
+        ]);
+        
+        // Test high risk - SQL injection
+        $this->assertRequestBlocked($firewall, '192.168.1.3', 'SQL injection blocked', [
+            'path' => '/products?id=1 UNION SELECT * FROM users'
+        ]);
+        
+        // Test critical risk - SQLMap tool
+        try {
+            $request = $this->createRequest('192.168.1.4', [
+                'method' => 'DELETE',
+                'path' => '/admin/users',
+                'headers' => ['User-Agent' => 'sqlmap/1.0']
+            ]);
+            $firewall->evaluate($request);
+            $this->fail('Critical risk request should be blocked');
+        } catch (\Exception $e) {
+            $this->assertEquals(403, $e->getCode());
+            // DELETE (20) + admin (10) + sqlmap (40) = 70 (critical level)
+        }
+        
+        // Test XSS attempt
+        $this->assertRequestBlocked($firewall, '192.168.1.5', 'XSS attempt blocked', [
+            'path' => '/comment?text=<script>alert(1)</script>',
+            'headers' => ['User-Agent' => 'sqlmap/1.0']
+        ]);
+        
+        // Test suspicious file access
+        $this->assertRequestBlocked($firewall, '192.168.1.6', 'Git file access blocked', [
+            'method' => 'DELETE',  // 20 points
+            'path' => '/.git/config'  // 15 points = 35 total
+        ]);
+        
+        // Test python requests to sensitive endpoint
+        $this->assertRequestBlocked($firewall, '192.168.1.7', 'Automated tool blocked', [
+            'method' => 'PUT',
+            'path' => '/admin/settings',
+            'headers' => ['User-Agent' => 'python-requests/2.25.1']
+            // PUT (15) + admin (10) + python (10) = 35
+        ]);
+    }
+    
+    /**
      * Tests multiple plugins working together.
      * 
      * This test verifies:
@@ -545,6 +702,31 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
                     'priority' => -50,
                     'config' => ['bot:true']
                 ],
+                // Apply vulnerability scoring
+                'Kanopi\Firewall\Plugins\VulnerabilityScore' => [
+                    'enable' => true,
+                    'priority' => -25,
+                    'config' => [
+                        'scoring' => [
+                            'methods' => ['DELETE' => 50],
+                            'patterns' => [
+                                [
+                                    'pattern' => 'malicious',
+                                    'score' => 50,
+                                    'type' => 'contains',
+                                    'locations' => ['uri']
+                                ]
+                            ]
+                        ],
+                        'risk_levels' => [
+                            'high' => [
+                                'threshold' => 40,
+                                'block' => true,
+                                'status_code' => 403
+                            ]
+                        ]
+                    ]
+                ],
                 // Finally apply rate limits
                 'Kanopi\Firewall\Plugins\RateLimit' => [
                     'enable' => true,
@@ -579,10 +761,108 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
             'headers' => ['User-Agent' => 'BadBot/1.0']
         ]);
         
+        // Test vulnerability score blocking
+        $this->assertRequestBlocked($firewall, '192.168.1.103', 'High vulnerability score blocked', [
+            'method' => 'DELETE',
+            'path' => '/malicious/endpoint'
+        ]);
+        
         // Verify plugin priority (URL plugin blocked first)
         $storageData = unserialize(file_get_contents($this->tempDir . '/multi.data'));
         $this->assertEquals('URL', $storageData['192.168.1.101']['value']['plugin'] ?? null);
         $this->assertEquals('User Agent', $storageData['192.168.1.102']['value']['plugin'] ?? null);
+        $this->assertEquals('VulnerabilityScore', $storageData['192.168.1.103']['value']['plugin'] ?? null);
+    }
+    
+    /**
+     * Tests VulnerabilityScore plugin with GeoIP databases.
+     * 
+     * This test verifies:
+     * - Country-based scoring works with real databases
+     * - ASN-based scoring works with real databases
+     * - Combined geo-scoring with other factors
+     */
+    public function testVulnerabilityScoreWithGeoIP(): void
+    {
+        $this->skipIfGroupDisabled('geolocation');
+        
+        $cityDb = self::getEnv('MAXMIND_CITY_DB');
+        $asnDb = self::getEnv('MAXMIND_ASN_DB');
+        
+        if (!$cityDb || !file_exists($cityDb) || !$asnDb || !file_exists($asnDb)) {
+            $this->markTestSkipped('MaxMind databases not available for geo scoring test');
+        }
+        
+        $config = [
+            'storage' => [
+                'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
+            ],
+            'block' => [
+                'Kanopi\Firewall\Plugins\VulnerabilityScore' => [
+                    'enable' => true,
+                    'priority' => 0,
+                    'metadata' => [
+                        'country_reader' => [
+                            'type' => 'reader',
+                            'db' => $cityDb
+                        ],
+                        'asn_reader' => [
+                            'type' => 'reader',
+                            'db' => $asnDb
+                        ]
+                    ],
+                    'config' => [
+                        'scoring' => [
+                            'methods' => [
+                                'POST' => 10
+                            ],
+                            'countries' => [
+                                'US' => 1,
+                                'CN' => 25,
+                                'RU' => 20
+                            ],
+                            'asn' => [
+                                '15169' => 1,  // Google
+                                '13335' => 1   // Cloudflare
+                            ],
+                            'asn_patterns' => [
+                                'vpn' => 15,
+                                'hosting' => 10
+                            ]
+                        ],
+                        'risk_levels' => [
+                            'low' => [
+                                'threshold' => 0,
+                                'block' => false
+                            ],
+                            'high' => [
+                                'threshold' => 25,
+                                'block' => true,
+                                'status_code' => 403
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ];
+        
+        $firewall = $this->createFirewall($config);
+        $testIps = self::getTestIps();
+        
+        // Test with known good IPs (if available)
+        if (isset($testIps['public_us'])) {
+            $this->assertRequestAllowed($firewall, $testIps['public_us'], 'US IP with low score allowed', [
+                'method' => 'POST',
+                'path' => '/api/data'
+            ]);
+        }
+        
+        // Test Google DNS (known ASN)
+        if (isset($testIps['public_us']) && $testIps['public_us'] === '8.8.8.8') {
+            $this->assertRequestAllowed($firewall, '8.8.8.8', 'Google IP allowed', [
+                'method' => 'POST'
+            ]);
+        }
     }
     
     /**

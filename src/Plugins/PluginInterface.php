@@ -42,16 +42,22 @@ interface PluginInterface
     /**
      * Return the status code for the matching request.
      *
+     * @param Request|null $request
+     *   The request that was being evaluated.
+     *
      * @return int
      *   Status code to return.
      */
-    public function getStatusCode(): int;
+    public function getStatusCode(?Request $request = null): int;
 
     /**
      * Number of seconds when an IP address should be expired from the list of blocked elements.
      *
+     * @param Request|null $request
+     *   The request that was being evaluated.
+     *
      * @return int
      *   Return the number of seconds.
      */
-    public function getExpirationTime(): int;
+    public function getExpirationTime(?Request $request = null): int;
 }

@@ -113,7 +113,7 @@ final readonly class Firewall
     {
         // If PHP is running on cli mode skip.
         // @codeCoverageIgnoreStart
-        if (PHP_SAPI === 'cli' && getenv('FIREWALL_BYPASS_CLI') !== '1') {
+        if (PHP_SAPI === 'cli' && getenv('FIREWALL_TEST') !== '1') {
             $this->getLogger()->debug('CLI mode detected, bypassing firewall');
             return true;
         }
@@ -166,13 +166,13 @@ final readonly class Firewall
                     'request_id' => $request->attributes->get('x-request-id'),
                     'client_ip' => $request->getClientIp(),
                     'plugin' => $plugin->getName(),
-                    'status_code' => $plugin->getStatusCode(),
+                    'status_code' => $plugin->getStatusCode($request),
                     'path' => $request->getPathInfo(),
                     'query' => $request->query->all(),
                     'user_agent' => $request->headers->get('User-Agent') ?? 'unknown',
                 ]);
                 $this->blockIp($request, $plugin);
-                $this->sendBlockingResponse($request, $plugin->getStatusCode());
+                $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
             }
         });
 
@@ -234,7 +234,7 @@ final readonly class Firewall
                 'blocked' => date('c'),
                 'request' => $this->serializeRequest($request),
             ],
-            $plugin->getExpirationTime()
+            $plugin->getExpirationTime($request)
         );
 
         if ($success) {
@@ -242,7 +242,7 @@ final readonly class Firewall
                 'request_id' => $request->attributes->get('x-request-id'),
                 'client_ip' => $request->getClientIp(),
                 'plugin' => $plugin->getName(),
-                'expiration_time' => $plugin->getExpirationTime(),
+                'expiration_time' => $plugin->getExpirationTime($request),
             ]);
         } else {
             $this->getLogger()->error('Failed to block IP', [
@@ -321,6 +321,9 @@ final readonly class Firewall
      *   Request to evaluate.
      * @param int $statusCode
      *   Status code to return for the request.
+     *
+     * @throws \Exception
+     *   When env variable is used for testing.
      */
     protected function sendBlockingResponse(Request $request, int $statusCode = 400): void
     {

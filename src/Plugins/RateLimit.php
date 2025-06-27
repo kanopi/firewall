@@ -191,7 +191,7 @@ class RateLimit extends AbstractPluginBase
     /**
      * {@inheritdoc}
      */
-    public function getStatusCode(): int
+    public function getStatusCode(?Request $request = null): int
     {
         return 429;
     }

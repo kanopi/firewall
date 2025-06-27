@@ -21,7 +21,7 @@ class TestPluginWithPriority1 implements PluginInterface
         return false;
     }
 
-    public function getStatusCode(): int { return 401; }
+    public function getStatusCode(?Request $requst = null): int { return 401; }
 
-    public function getExpirationTime(): int { return 0; }
+    public function getExpirationTime(?Request $requst = null): int { return 0; }
 }
