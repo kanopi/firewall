@@ -113,7 +113,7 @@ final readonly class Firewall
     {
         // If PHP is running on cli mode skip.
         // @codeCoverageIgnoreStart
-        if (PHP_SAPI === 'cli' && getenv('FIREWALL_BYPASS_CLI') !== '1') {
+        if (PHP_SAPI === 'cli' && getenv('FIREWALL_TEST') !== '1') {
             $this->getLogger()->debug('CLI mode detected, bypassing firewall');
             return true;
         }
