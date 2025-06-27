@@ -166,13 +166,13 @@ final readonly class Firewall
                     'request_id' => $request->attributes->get('x-request-id'),
                     'client_ip' => $request->getClientIp(),
                     'plugin' => $plugin->getName(),
-                    'status_code' => $plugin->getStatusCode(),
+                    'status_code' => $plugin->getStatusCode($request),
                     'path' => $request->getPathInfo(),
                     'query' => $request->query->all(),
                     'user_agent' => $request->headers->get('User-Agent') ?? 'unknown',
                 ]);
                 $this->blockIp($request, $plugin);
-                $this->sendBlockingResponse($request, $plugin->getStatusCode());
+                $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
             }
         });
 
@@ -234,7 +234,7 @@ final readonly class Firewall
                 'blocked' => date('c'),
                 'request' => $this->serializeRequest($request),
             ],
-            $plugin->getExpirationTime()
+            $plugin->getExpirationTime($request)
         );
 
         if ($success) {
@@ -242,7 +242,7 @@ final readonly class Firewall
                 'request_id' => $request->attributes->get('x-request-id'),
                 'client_ip' => $request->getClientIp(),
                 'plugin' => $plugin->getName(),
-                'expiration_time' => $plugin->getExpirationTime(),
+                'expiration_time' => $plugin->getExpirationTime($request),
             ]);
         } else {
             $this->getLogger()->error('Failed to block IP', [
