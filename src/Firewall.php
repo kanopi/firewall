@@ -321,6 +321,9 @@ final readonly class Firewall
      *   Request to evaluate.
      * @param int $statusCode
      *   Status code to return for the request.
+     *
+     * @throws \Exception
+     *   When env variable is used for testing.
      */
     protected function sendBlockingResponse(Request $request, int $statusCode = 400): void
     {
