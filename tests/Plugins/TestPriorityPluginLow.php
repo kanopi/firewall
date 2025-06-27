@@ -15,6 +15,6 @@ class TestPriorityPluginLow implements PluginInterface {
         $this->metadata['order'][] = static::class;
         return false;
     }
-    public function getStatusCode(): int { return 200; }
-    public function getExpirationTime(): int { return 10; }
+    public function getStatusCode(?Request $requst = null): int { return 200; }
+    public function getExpirationTime(?Request $requst = null): int { return 10; }
 }

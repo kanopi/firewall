@@ -37,10 +37,10 @@ class EvaluateTraitTest extends AbstractTestCase
                 return true;
             }
 
-            public function getStatusCode(): int {
+            public function getStatusCode(?Request $requst = null): int {
                 return 400;
             }
-            public function getExpirationTime(): int {
+            public function getExpirationTime(?Request $requst = null): int {
                 return 0;
             }
         };

@@ -21,7 +21,7 @@ class TestPluginWithCounter implements PluginInterface
         return false;
     }
 
-    public function getStatusCode(): int { return 429; }
+    public function getStatusCode(?Request $requst = null): int { return 429; }
 
-    public function getExpirationTime(): int { return 300; }
+    public function getExpirationTime(?Request $requst = null): int { return 300; }
 }
