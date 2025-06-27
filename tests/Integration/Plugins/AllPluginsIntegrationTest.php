@@ -646,7 +646,8 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
         
         // Test XSS attempt
         $this->assertRequestBlocked($firewall, '192.168.1.5', 'XSS attempt blocked', [
-            'path' => '/comment?text=<script>alert(1)</script>'
+            'path' => '/comment?text=<script>alert(1)</script>',
+            'headers' => ['User-Agent' => 'sqlmap/1.0']
         ]);
         
         // Test suspicious file access
