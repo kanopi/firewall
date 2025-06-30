@@ -33,4 +33,20 @@ abstract class AbstractStorageBase implements StorageInterface
             'config' => array_keys($config),
         ]);
     }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
+    {
+        return 0;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): array
+    {
+        return [];
+    }
 }

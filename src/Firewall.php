@@ -36,8 +36,10 @@ final readonly class Firewall
      *   Plugin manager for Blocking Plugins.
      * @param PluginManager $bypassPluginManager
      *   Plugin manager for Bypass Plugins.
+     * @param array $config
+     *   Firewall configuration.
      */
-    protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager)
+    protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager, private array $config)
     {
         $this->getLogger()->debug('Firewall instance created', [
             'storage_type' => $storage::class,
@@ -81,13 +83,15 @@ final readonly class Firewall
         $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
         $config['block'] = isset($config['block']) && is_array($config['block']) ? array_filter($config['block']) : [];
         $config['bypass'] = isset($config['bypass']) && is_array($config['bypass']) ? array_filter($config['bypass']) : [];
+        $config['global'] = isset($config['global']) && is_array($config['global']) ? array_filter($config['global']) : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 
         $firewall = new self(
             StorageFactory::create($config['storage']),
             PluginManager::create($config['block']),
-            PluginManager::create($config['bypass'])
+            PluginManager::create($config['bypass']),
+            $config['global']
         );
 
         $firewall->getLogger()->info('Firewall initialized', [
@@ -95,6 +99,7 @@ final readonly class Firewall
             'storage_config' => $config['storage'],
             'block_plugins' => array_keys($config['block']),
             'bypass_plugins' => array_keys($config['bypass']),
+            'global' => $config['global'],
         ]);
 
         return $firewall;
@@ -226,6 +231,12 @@ final readonly class Firewall
      */
     protected function blockIp(Request $request, PluginInterface $plugin): bool
     {
+        $expirationTime = $this->determineBanDuration(
+            $plugin->getExpirationTime($request),
+            $request->getClientIp(),
+            $this->config['blocking_escalation'] ?? []
+        );
+
         $success = $this->storage->set(
             $request->getClientIp(),
             [
@@ -234,7 +245,7 @@ final readonly class Firewall
                 'blocked' => date('c'),
                 'request' => $this->serializeRequest($request),
             ],
-            $plugin->getExpirationTime($request)
+            $expirationTime
         );
 
         if ($success) {
@@ -242,7 +253,7 @@ final readonly class Firewall
                 'request_id' => $request->attributes->get('x-request-id'),
                 'client_ip' => $request->getClientIp(),
                 'plugin' => $plugin->getName(),
-                'expiration_time' => $plugin->getExpirationTime($request),
+                'expiration_time' => $expirationTime,
             ]);
         } else {
             $this->getLogger()->error('Failed to block IP', [
@@ -253,6 +264,39 @@ final readonly class Firewall
         }
 
         return $success;
+    }
+
+    /**
+     * Determine the ban duration based on the stage.
+     *
+     * @param int $initialTime
+     *   Initial time to possibly modify.
+     * @param string $ip
+     *   IP Address to look up.
+     * @param array $stages
+     *   Stages to review.
+     *
+     * @return int
+     *   Rre
+     */
+    protected function determineBanDuration(int $initialTime, string $ip, array $stages): int
+    {
+        if ($initialTime === 0) {
+            return $initialTime;
+        }
+
+        $now = time();
+
+        foreach ($stages as $stage) {
+            $windowStart = $now - $stage['window'];
+            $count = $this->storage->countOffenses($ip, $windowStart, $now);
+
+            if ($count >= $stage['offense']) {
+                return $stage['duration'];
+            }
+        }
+
+        return $stages[0]['duration']; // default to stage 1
     }
 
     /**

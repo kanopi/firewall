@@ -94,4 +94,34 @@ interface StorageInterface
      *   Return TRUE if successful, FALSE if issues.
      */
     public function addToExpire(string $key, int $amount): bool;
+
+    /**
+     * Count the number of offenses within a specific timeframe.
+     *
+     * @param string $key
+     *   IP Address to look up.
+     * @param int $start
+     *   Start timestamp to look for.
+     * @param int $end
+     *   End timestamp to look for.
+     *
+     * @return int
+     *   Count the number of offenses.
+     */
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int;
+
+    /**
+     * Return a list of all offenses the offending IP address has made.
+     *
+     * @param string $key
+     *   IP Address to look up.
+     * @param int $start
+     *   Start timestamp to look for.
+     * @param int $end
+     *   End timestamp to look for.
+     *
+     * @return array
+     *   Return a list of all offenses.
+     */
+    public function getOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): array;
 }
