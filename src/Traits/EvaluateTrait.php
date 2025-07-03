@@ -397,7 +397,7 @@ trait EvaluateTrait
 
         $this->getLogger()->debug('Comparison matched', [
             'operator' => $operator,
-            'request_value_type' => gettype($requestValue),
+            'request_value' => $requestValue,
             'case_sensitive' => $caseSensitive,
         ]);
 
