@@ -64,7 +64,9 @@ trait GeoLocationTrait
      */
     protected function getReader(string $fileLocation): ?Reader
     {
-        if (!file_exists($fileLocation)) {
+        /** @phpstan-ignore-next-line */
+        $fileLocation = realpath($fileLocation);
+        if (!is_file($fileLocation) || !file_exists($fileLocation)) {
             $this->getLogger()->warning('GeoLocation database file not found', [
                 'file' => $fileLocation,
             ]);
