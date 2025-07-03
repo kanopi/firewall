@@ -15,7 +15,7 @@ use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Index;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Type;
-use Kanopi\Firewall\Plugins\DatabaseTrait;
+use Kanopi\Firewall\Traits\DatabaseTrait;
 
 /**
  * Connection to Database Storage related items.
