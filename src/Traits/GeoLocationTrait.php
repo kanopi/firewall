@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins;
+namespace Kanopi\Firewall\Traits;
 
 use GeoIp2\Database\Reader;
 use GeoIp2\WebService\Client;

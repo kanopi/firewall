@@ -14,6 +14,7 @@ namespace Kanopi\Firewall\Plugins;
 use DeviceDetector\ClientHints;
 use DeviceDetector\DeviceDetector;
 use DeviceDetector\Parser\Device\AbstractDeviceParser;
+use Kanopi\Firewall\Traits\EvaluateTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**

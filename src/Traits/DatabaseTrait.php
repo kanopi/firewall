@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins;
+namespace Kanopi\Firewall\Traits;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;

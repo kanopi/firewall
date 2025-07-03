@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\Traits\EvaluateTrait;
+use Kanopi\Firewall\Traits\GeoLocationTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
