@@ -84,7 +84,7 @@ class PluginManager
         $manager = new self($lazyObjectRegistry);
 
         if ($enabledPlugins !== []) {
-            $manager->getLogger()->info('Plugins loaded', [
+            $manager->getLogger()->debug('Plugins loaded', [
                 'enabled_plugins' => $enabledPlugins,
                 'enabled_count' => count($enabledPlugins),
             ]);
@@ -105,15 +105,11 @@ class PluginManager
      *
      * @param Request $request
      *   The request to evaluate.
-     * @param bool $block
-     *   Block the request.
-     * @paran callable $callback
-     *   Callback to use when blocking.
      *
-     * @return bool
-     *   Return TRUE if allowed, FALSE if not.
+     * @return false|PluginInterface
+     *   Return false if not evaluated or return Plugin that matched criteria.
      */
-    public function evaluate(Request $request, bool $block = false, ?callable $callback = null): bool
+    public function evaluate(Request $request): false|PluginInterface
     {
         $evaluatedPlugins = [];
 
@@ -135,22 +131,16 @@ class PluginManager
                 $this->getLogger()->debug('Plugin evaluation matched', [
                     'plugin' => $pluginName,
                     'request_id' => $request->attributes->get('x-request-id'),
-                    'block_mode' => $block,
                     'evaluation_time_ms' => $evaluationTime,
                     'evaluated_plugins' => $evaluatedPlugins,
                 ]);
 
-                if ($callback !== null) {
-                    call_user_func($callback, $block, $request, $plugin);
-                }
-
-                return true;
+                return $plugin;
             }
         }
 
         $this->getLogger()->debug('No plugins matched', [
             'request_id' => $request->attributes->get('x-request-id'),
-            'block_mode' => $block,
             'evaluated_plugins' => $evaluatedPlugins,
             'total_plugins' => count($evaluatedPlugins),
         ]);

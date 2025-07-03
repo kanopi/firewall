@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Storage;
 
+use Symfony\Component\HttpFoundation\Request;
+
 /**
  * In-memory key-value store for temporary runtime use.
  */
@@ -23,10 +25,35 @@ class InMemoryStorage extends AbstractStorageBase
     protected array $store = [];
 
     /**
+     * Stores the offenses.
+     * @var array<string, array<mixed>>
+     */
+    protected array $offenses = [];
+
+    /**
      * {@inheritdoc}
      */
-    public function set(string $key, mixed $value, int $expire = 0): bool
+    public function recordOffense(Request $request): bool
     {
+        $key = $request->getClientIp();
+        if (!array_key_exists($key, $this->offenses)) {
+            $this->offenses[$key] = [];
+        }
+
+        $this->offenses[$key][] = [
+            'timestamp' => date('c'),
+        ];
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function set(Request $request, int $expire = 0): bool
+    {
+        $key = $request->getClientIp();
+        $plugin = $request->attributes->get('blocking-plugin');
+        $value = $this->getBlockingData($request, $plugin);
         $this->store[$key] = [
             "value" => $value,
             "expire" => $expire > 0 ? time() + $expire : 0,
@@ -38,15 +65,18 @@ class InMemoryStorage extends AbstractStorageBase
             'expire_at' => $expire > 0 ? date('c', time() + $expire) : 'never',
         ]);
 
+        $this->recordOffense($request);
+
         return true;
     }
 
     /**
      * {@inheritdoc}
      */
-    public function delete(string $key): bool
+    public function delete(Request $request): bool
     {
-        if ($this->exists($key)) {
+        $key = $request->getClientIp();
+        if ($this->exists($request)) {
             unset($this->store[$key]);
             $this->getLogger()->debug('Key deleted from memory storage', [
                 'key' => $key,
@@ -63,8 +93,9 @@ class InMemoryStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function get(string $key, mixed $default = null): mixed
+    public function get(Request $request, mixed $default = null): mixed
     {
+        $key = $request->getClientIp();
         $value = $this->store[$key] ?? null;
         if ($value === null || ($value['expire'] > 0 && $value['expire'] < time())) {
             if ($value !== null && $value['expire'] > 0 && $value['expire'] < time()) {
@@ -74,7 +105,7 @@ class InMemoryStorage extends AbstractStorageBase
                 ]);
             }
 
-            $this->delete($key);
+            $this->delete($request);
             return $default;
         }
 
@@ -104,9 +135,9 @@ class InMemoryStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function exists(string $key): bool
+    public function exists(Request $request): bool
     {
-        return array_key_exists($key, $this->store);
+        return array_key_exists($request->getClientIp(), $this->store);
     }
 
     /**
@@ -119,7 +150,7 @@ class InMemoryStorage extends AbstractStorageBase
 
         foreach ($this->store as $key => $value) {
             if ($value['expire'] > 0 && $value['expire'] < $currentTime) {
-                $this->delete($key);
+                unset($this->store[$key]);
                 $cleared++;
             }
         }
@@ -136,9 +167,10 @@ class InMemoryStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function addToExpire(string $key, int $amount): bool
+    public function addToExpire(Request $request, int $amount): bool
     {
-        if ($this->exists($key) && intval($this->store[$key]['expire']) > 0) {
+        $key = $request->getClientIp();
+        if ($this->exists($request) && intval($this->store[$key]['expire']) > 0) {
             $oldExpire = $this->store[$key]['expire'];
             $this->store[$key]['expire'] = intval($this->store[$key]['expire']) + $amount;
 
@@ -154,9 +186,17 @@ class InMemoryStorage extends AbstractStorageBase
 
         $this->getLogger()->debug('Cannot extend expiration - key not found or no expiration set', [
             'key' => $key,
-            'exists' => $this->exists($key),
+            'exists' => $this->exists($request),
         ]);
 
         return false;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function countOffenses(Request $request, int $start = 0, int $end = PHP_INT_MAX): int
+    {
+        return count(array_filter($this->offenses, fn($item): bool => strtotime((string) $item['timestamp']) >= $start && strtotime((string) $item['timestamp']) <= $end));
     }
 }

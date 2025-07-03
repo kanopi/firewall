@@ -13,11 +13,10 @@ namespace Kanopi\Firewall;
 
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
-use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Plugins\PluginInterface;
+use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Kanopi\Firewall\Utility\Config;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -37,13 +36,16 @@ final readonly class Firewall
      *   Plugin manager for Blocking Plugins.
      * @param PluginManager $bypassPluginManager
      *   Plugin manager for Bypass Plugins.
+     * @param array $config
+     *   Global configuration that can be set as defaults.
      */
-    protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager)
+    protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager, private array $config)
     {
         $this->getLogger()->debug('Firewall instance created', [
             'storage_type' => $storage::class,
             'blocking_plugins_count' => count($blockingPluginManager->getPlugins()),
             'bypass_plugins_count' => count($bypassPluginManager->getPlugins()),
+            'config' => $config,
         ]);
         $this->storage->clearExpire();
     }
@@ -82,20 +84,23 @@ final readonly class Firewall
         $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
         $config['block'] = isset($config['block']) && is_array($config['block']) ? array_filter($config['block']) : [];
         $config['bypass'] = isset($config['bypass']) && is_array($config['bypass']) ? array_filter($config['bypass']) : [];
+        $config['global'] = isset($config['global']) && is_array($config['global']) ? array_filter($config['global']) : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 
         $firewall = new self(
             StorageFactory::create($config['storage']),
             PluginManager::create($config['block']),
-            PluginManager::create($config['bypass'])
+            PluginManager::create($config['bypass']),
+            $config['global']
         );
 
-        $firewall->getLogger()->info('Firewall initialized', [
+        $firewall->getLogger()->debug('Firewall initialized', [
             'logger_config' => $config['logger'],
             'storage_config' => $config['storage'],
             'block_plugins' => array_keys($config['block']),
             'bypass_plugins' => array_keys($config['bypass']),
+            'global_config' => $config['global'],
         ]);
 
         return $firewall;
@@ -137,45 +142,24 @@ final readonly class Firewall
             ]);
         }
 
-        if ($this->bypassPluginManager->evaluate($request)) {
+        if (($plugin = $this->bypassPluginManager->evaluate($request)) !== false) {
             $this->getLogger()->info('Request bypassed', [
                 'request_id' => $request->attributes->get('x-request-id'),
                 'client_ip' => $request->getClientIp(),
                 'path' => $request->getPathInfo(),
+                'plugin' => $plugin->getName(),
             ]);
             return true;
         }
 
-        if (($blocked = $this->isBlocked($request->getClientIp() ?? '')) !== false) {
-            $request->attributes->set('x-request-id', $blocked['event_id'] ?? '');
-            $this->getLogger()->warning('Request from blocked IP', [
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'original_plugin' => $blocked['plugin'] ?? 'unknown',
-                'blocked_since' => $blocked['blocked'] ?? 'unknown',
-            ]);
-            $this->storage->addToExpire($request->getClientIp() ?? '', 300);
+        if ($this->storage->isBlocked($request, intval($this->config['add_to_expire'] ?? 3600)) !== false) {
             $this->sendBlockingResponse($request);
         }
 
-        $this->blockingPluginManager->evaluate($request, true, function ($block, $request, $plugin): void {
-            /** @var bool $block */
-            /** @var Request $request */
-            /** @var PluginInterface $plugin */
-            if ($block) {
-                $this->getLogger()->warning('Request blocked by plugin', [
-                    'request_id' => $request->attributes->get('x-request-id'),
-                    'client_ip' => $request->getClientIp(),
-                    'plugin' => $plugin->getName(),
-                    'status_code' => $plugin->getStatusCode($request),
-                    'path' => $request->getPathInfo(),
-                    'query' => $request->query->all(),
-                    'user_agent' => $request->headers->get('User-Agent') ?? 'unknown',
-                ]);
-                $this->blockIp($request, $plugin);
-                $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
-            }
-        });
+        if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {
+            $this->storage->blockIp($request, $plugin);
+            $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
+        }
 
         $this->getLogger()->debug('Request allowed', [
             'request_id' => $request->attributes->get('x-request-id'),
@@ -201,121 +185,6 @@ final readonly class Firewall
     }
 
     /**
-     * Check to see if the IP address is currently blocked.
-     *
-     * @param string $ip
-     *   IP address to check against.
-     *
-     * @return mixed
-     *   Return array of items if found, False if issues.
-     */
-    protected function isBlocked(string $ip): mixed
-    {
-        return $this->storage->get($ip, false);
-    }
-
-    /**
-     * Block the IP Address against the database.
-     *
-     * @param Request $request
-     *   Request information.
-     * @param PluginInterface $plugin
-     *   Plugin that is blocking the IP Address.
-     *
-     * @return bool
-     *   Return TRUE if successful, FALSE if issue.
-     */
-    protected function blockIp(Request $request, PluginInterface $plugin): bool
-    {
-        $success = $this->storage->set(
-            $request->getClientIp(),
-            [
-                'plugin' => $plugin->getName(),
-                'event_id' => $request->attributes->get('x-request-id'),
-                'blocked' => date('c'),
-                'request' => $this->serializeRequest($request),
-            ],
-            $plugin->getExpirationTime($request)
-        );
-
-        if ($success) {
-            $this->getLogger()->info('IP blocked successfully', [
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'plugin' => $plugin->getName(),
-                'expiration_time' => $plugin->getExpirationTime($request),
-            ]);
-        } else {
-            $this->getLogger()->error('Failed to block IP', [
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'plugin' => $plugin->getName(),
-            ]);
-        }
-
-        return $success;
-    }
-
-    /**
-     * Serialize relevant Symfony Request data.
-     *
-     * @param Request $request
-     *   Request Information.
-     *
-     * @return array
-     *   Return the structured data.
-     */
-    protected function serializeRequest(Request $request): array
-    {
-        return [
-            'method' => $request->getMethod(),
-            'uri' => $request->getUri(),
-            'path' => $request->getPathInfo(),
-            'query' => $request->query->all(),
-            'request' => $request->request->all(),
-            'headers' => $request->headers->all(),
-            'cookies' => $request->cookies->all(),
-            'files' => $this->formatUploadedFiles($request->files->all()),
-            // @todo evaluate as possible debug parameters.
-            // 'server' => $request->server->all(),
-            // 'content' => $request->getContent(),
-        ];
-    }
-
-    /**
-     * Normalize uploaded files so they can be safely serialized.
-     *
-     * @param array $files
-     *   List of all the file items.
-     *
-     * @return array
-     *   Files structured.
-     */
-    protected function formatUploadedFiles(array $files): array
-    {
-        $normalized = [];
-
-        foreach ($files as $key => $file) {
-            if (is_array($file)) {
-                $normalized[$key] = $this->formatUploadedFiles($file);
-            } elseif ($file instanceof UploadedFile) {
-                $normalized[$key] = [
-                    'originalName' => $file->getClientOriginalName(),
-                    'mimeType' => $file->getClientMimeType(),
-                    'size' => $file->getSize(),
-                    'error' => $file->getError(),
-                    // optionally store file contents as base64 (use with caution)
-                    // 'content' => base64_encode(file_get_contents($file->getPathname())),
-                ];
-            } else {
-                $normalized[$key] = null;
-            }
-        }
-
-        return $normalized;
-    }
-
-    /**
      * Block the request and status code.
      *
      * @param Request $request
@@ -326,25 +195,132 @@ final readonly class Firewall
      * @throws \Exception
      *   When env variable is used for testing.
      */
-    protected function sendBlockingResponse(Request $request, int $statusCode = 400): void
+    protected function sendBlockingResponse(Request $request, int $statusCode = 0): void
     {
+        // Check to see if status code is 0 and a global config is set.
+        if ($statusCode === 0 && array_key_exists('banning_status_code', $this->config) && is_int($this->config['banning_status_code'])) {
+            $statusCode = intval($this->config['banning_status_code']);
+        }
+
+        // Fallback to setting status code to 400 if nothing is set.
+        if ($statusCode === 0) {
+            $statusCode = 400;
+        }
+
         $this->getLogger()->notice('Sending blocking response', [
             'request_id' => $request->attributes->get('x-request-id'),
             'status_code' => $statusCode,
             'client_ip' => $request->getClientIp(),
         ]);
 
+        // Replace variables in the custom message.
+        $banningMessage = $this->interpolateTemplate(
+            (
+                (
+                    array_key_exists('banning_message', $this->config) &&
+                    is_string($this->config['banning_message'])
+                ) ?
+                $this->config['banning_message'] :
+                "{{request.id}} Request Banned"
+            ),
+            $request
+        );
+
         // Used for testing.
         if (getenv('FIREWALL_TEST') === '1') {
-            throw new \Exception(
-                sprintf('%s %s', $request->attributes->get('x-request-id'), 'Request Banned'),
-                $statusCode
-            );
+            throw new \Exception($banningMessage, $statusCode);
         }
 
         // @codeCoverageIgnoreStart
         http_response_code($statusCode);
-        exit(sprintf('%s %s', $request->attributes->get('x-request-id'), 'Request Banned'));
+        exit($banningMessage);
         // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Replace placeholders in a template string with values taken from a Symfony Request
+     * and/or an additional context array.
+     *
+     * Supported placeholders (case-insensitive):
+     *   • {{ request.method }}          →  GET / POST / …
+     *   • {{ request.scheme }}          →  http / https
+     *   • {{ request.host }}            →  example.com
+     *   • {{ request.path }}            →  /search
+     *   • {{ request.ip }}              →  client IP (trusts your Symfony trusted proxies config)
+     *   • {{ request.header.X-Foo }}    →  any HTTP header
+     *   • {{ request.query.q }}         →  ?q=something
+     *   • {{ request.post.name }}       →  body fields (application/x-www-form-urlencoded, multipart, JSON parsed by you, …)
+     *   • {{ request.cookie.session }}  →  cookies
+     *
+     * Any other placeholder is looked up verbatim in $context (e.g. {{ user_id }}).
+     * Unknown placeholders are left untouched so you can chain calls safely.
+     *
+     * @param  string  $template
+     *   The string containing {{ … }} placeholders
+     * @param  Request $request
+     *   The current Symfony Request
+     * @param  array   $context
+     *   Optional extra key/value pairs to interpolate
+     *
+     * @return string
+     *   The interpolated result
+     */
+    protected function interpolateTemplate(string $template, Request $request, array $context = []): string
+    {
+        return strval(preg_replace_callback(
+            '/\{\{\s*([a-zA-Z0-9_\.\-]+)\s*\}\}/',
+            function (array $m) use ($request, $context) {
+                $key = strtolower($m[1]);
+
+                // 1. Built-in request values ------------------------------------
+                switch ($key) {
+                    case 'request.method':
+                        return $request->getMethod();
+                    case 'request.scheme':
+                        return $request->getScheme();
+                    case 'request.host':
+                        return $request->getHost();
+                    case 'request.path':
+                        return $request->getPathInfo();
+                    case 'request.ip':
+                        return $request->getClientIp();
+                    case 'request.id':
+                        return $request->attributes->get('x-request-id');
+                }
+
+                // 2. request.header.<name>
+                if (str_starts_with($key, 'request.header.')) {
+                    $header = substr($key, 15);          // after 'request.header.'
+                    return (string) $request->headers->get($header, '');
+                }
+
+                // 3. request.query.<param>
+                if (str_starts_with($key, 'request.query.')) {
+                    $param = substr($key, 14);
+                    return (string) $request->query->get($param, '');
+                }
+
+                // 4. request.post.<param>  (body fields)
+                if (str_starts_with($key, 'request.post.')) {
+                    $param = substr($key, 13);
+                    return (string) $request->request->get($param, '');
+                }
+
+                // 5. request.cookie.<name>
+                if (str_starts_with($key, 'request.cookie.')) {
+                    $param = substr($key, 15);
+                    return (string) $request->cookies->get($param, '');
+                }
+
+                // 6. Arbitrary context values ----------------------------------
+                if (array_key_exists($m[1], $context)) {
+                    return (string) $context[$m[1]];
+                }
+
+                // 7. Unknown placeholder – leave as-is so caller sees what was missing
+                return $m[0];
+            },
+            $template
+        ));
     }
 }

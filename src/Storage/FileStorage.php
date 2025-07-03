@@ -11,7 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Storage;
 
-use RuntimeException;
+use Kanopi\Firewall\Traits\FileTrait;
+use Symfony\Component\HttpFoundation\Request;
 
 /**
  * File-based key-value store with in-memory caching.
@@ -19,117 +20,101 @@ use RuntimeException;
  */
 class FileStorage extends InMemoryStorage
 {
+    use FileTrait;
+
     /**
      * Path of the file to save/load.
      */
     protected string $filePath;
 
     /**
+     * Path of the file to save/load the offenses from.
+     */
+    protected string $offensesFilePath;
+
+    /**
      * Construct a FileStorage instance.
      *
      * @param array<string, mixed> $config
-     *   Configuration array, must contain 'file' => string path.
-     *
-     * @throws RuntimeException
-     *   If file path is missing or inaccessible.
+     *   Configuration array.
      */
     public function __construct(array $config = [])
     {
         parent::__construct($config);
 
-        if (!isset($config['file']) || !is_string($config['file'])) {
-            throw new RuntimeException("Missing or invalid 'file' path in configuration.");
-        }
+        /** @phpstan-ignore-next-line  */
+        $this->filePath = realpath(strval($config['storage_file'] ?? '/tmp/storage_data.data'));
+        /** @phpstan-ignore-next-line  */
+        $this->offensesFilePath = realpath(strval($config['offense_file'] ?? '/tmp/storage_data_offenses.data'));
 
-        $this->filePath = $config['file'];
+        $this->validateFilePath($this->filePath);
+        $this->loadStorageFile();
+        $this->getLogger()->debug('FileStorage initialized', ['file' => $this->filePath]);
 
-        if (!file_exists($this->filePath) && !@touch($this->filePath)) {
-            $this->getLogger()->error('Unable to create storage file', ['file' => $this->filePath]);
-            throw new RuntimeException(sprintf("Unable to create file at '%s'", $this->filePath));
-        }
-
-        if (!is_readable($this->filePath)) {
-            $this->getLogger()->error('Storage file not readable', ['file' => $this->filePath]);
-            throw new RuntimeException(sprintf("File '%s' must be readable.", $this->filePath));
-        }
-
-        if (!is_writable($this->filePath)) {
-            $this->getLogger()->error('Storage file not writable', ['file' => $this->filePath]);
-            throw new RuntimeException(sprintf("File '%s' must be writeable.", $this->filePath));
-        }
-
-        $this->getLogger()->info('FileStorage initialized', ['file' => $this->filePath]);
-        $this->loadFromFile();
+        $this->validateFilePath($this->offensesFilePath);
+        $this->loadOffenseFile();
+        $this->getLogger()->debug('FileStorage offenses initialized', ['file' => $this->offensesFilePath]);
     }
 
     /**
-     * Load data from file into memory.
+     * Internal method used for loading the storage file.
      */
-    protected function loadFromFile(): void
+    protected function loadStorageFile(): void
     {
-        $contents = file_get_contents($this->filePath);
-        if ($contents !== false && strlen(trim($contents)) > 0) {
-            $data = @unserialize($contents);
-            if (is_array($data)) {
-                $this->store = [];
-                $count = 0;
-                foreach ($data as $key => $value) {
-                    if (is_string($key)) {
-                        $this->store[$key] = $value;
-                        $count++;
-                    }
-                }
-
-                $this->getLogger()->debug('Data loaded from file', [
-                    'file' => $this->filePath,
-                    'entries_loaded' => $count,
-                ]);
-            } else {
-                $this->getLogger()->warning('Failed to unserialize file data', [
-                    'file' => $this->filePath,
-                ]);
-            }
-        } else {
-            $this->getLogger()->debug('No data to load from file', [
-                'file' => $this->filePath,
-            ]);
-        }
+        /** @phpstan-ignore assign.propertyType */
+        $this->store = $this->loadFromFile($this->filePath);
     }
 
     /**
-     * Persist in-memory data to file.
+     * Internal method used for saving to storage file.
      */
-    protected function persistToFile(): void
+    protected function persistStorageFile(): void
     {
-        $serialized = serialize($this->store);
-        if (@file_put_contents($this->filePath, $serialized) === false) {
-            $this->getLogger()->error('Failed to write to storage file', [
-                'file' => $this->filePath,
-                'data_size' => strlen($serialized),
-            ]);
-        } else {
-            $this->getLogger()->debug('Data persisted to file', [
-                'file' => $this->filePath,
-                'entries' => count($this->store),
-                'size_bytes' => strlen($serialized),
-            ]);
-        }
+        $this->persistToFile($this->store, $this->filePath);
+    }
+
+    /**
+     * Internal method used for loading the offense file.
+     */
+    protected function loadOffenseFile(): void
+    {
+        /** @phpstan-ignore assign.propertyType */
+        $this->offenses = $this->loadFromFile($this->offensesFilePath);
+    }
+
+    /**
+     * Internal method used for saving to the offense file.
+     */
+    protected function persistOffenseFile(): void
+    {
+        $this->persistToFile($this->offenses, $this->offensesFilePath);
     }
 
     /**
      * {@inheritdoc}
      */
-    public function set(string $key, mixed $value, int $expire = 0): bool
+    public function recordOffense(Request $request): bool
     {
-        $this->loadFromFile();
-        $result = parent::set($key, $value, $expire);
+        $this->loadOffenseFile();
+        parent::recordOffense($request);
+        $this->persistOffenseFile();
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function set(Request $request, int $expire = 0): bool
+    {
+        $this->loadStorageFile();
+        $result = parent::set($request, $expire);
         if ($result) {
             $this->getLogger()->debug('Value set in file storage', [
-                'key' => $key,
+                'key' => $request->getClientIp(),
                 'expire' => $expire,
                 'file' => $this->filePath,
             ]);
-            $this->persistToFile();
+            $this->persistStorageFile();
         }
 
         return $result;
@@ -138,16 +123,16 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
-    public function delete(string $key): bool
+    public function delete(Request $request): bool
     {
-        $this->loadFromFile();
-        $result = parent::delete($key);
+        $this->loadStorageFile();
+        $result = parent::delete($request);
         if ($result) {
             $this->getLogger()->debug('Key deleted from file storage', [
-                'key' => $key,
+                'key' => $request->getClientIp(),
                 'file' => $this->filePath,
             ]);
-            $this->persistToFile();
+            $this->persistStorageFile();
         }
 
         return $result;
@@ -165,7 +150,7 @@ class FileStorage extends InMemoryStorage
                 'file' => $this->filePath,
                 'entries_cleared' => $previousCount,
             ]);
-            $this->persistToFile();
+            $this->persistStorageFile();
         }
 
         return $result;
@@ -174,14 +159,23 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
-    public function addToExpire(string $key, int $amount): bool
+    public function addToExpire(Request $request, int $amount): bool
     {
-        $this->loadFromFile();
-        $return = parent::addToExpire($key, $amount);
+        $this->loadStorageFile();
+        $return = parent::addToExpire($request, $amount);
         if ($return) {
-            $this->persistToFile();
+            $this->persistStorageFile();
         }
 
         return $return;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function countOffenses(Request $request, int $start = 0, int $end = PHP_INT_MAX): int
+    {
+        $this->loadOffenseFile();
+        return parent::countOffenses($request, $start, $end);
     }
 }
