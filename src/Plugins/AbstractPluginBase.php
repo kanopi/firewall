@@ -36,10 +36,18 @@ abstract class AbstractPluginBase implements PluginInterface
         if (isset($metadata['config'])) {
             $files = $metadata['config'];
             if (!is_array($files)) {
-                $files = [$files];
+                $files = [@realpath($files)];
             }
 
             $files[] = $config;
+            $files = array_filter($files);
+
+            foreach ($files as &$file) {
+                if (is_string($file)) {
+                    $file = realpath($file);
+                }
+            }
+
             $this->config = Config::load($files);
 
             $this->getLogger()->debug('Plugin initialized with config files', [
