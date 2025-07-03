@@ -18,6 +18,7 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
+use Kanopi\Firewall\Utility\Config;
 use Symfony\Component\HttpFoundation\Request;
 
 /**

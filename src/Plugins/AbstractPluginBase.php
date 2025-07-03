@@ -11,8 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
-use Kanopi\Firewall\Config;
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Utility\Config;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
