@@ -40,21 +40,23 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
     }
 
     /**
-     * Create the storage table.
+     * Return the storage table definition.
      */
-    protected function getStorageTable(): Table
+    protected function getStorageTables(): array
     {
-        return new Table(
-            $this->config['storage_table'],
-            [
-                new Column('id', Type::getType('integer'), ['autoincrement' => true, 'unsigned' => true]),
-                new Column('rule', Type::getType('string'), ['length' => 255]),
-                new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
-            ], // Columns.
-            [
-                new Index('PRIMARY', ['id'], true, true),
-            ], // Indexes.
-        );
+        return [
+            new Table(
+                $this->config['storage_table'],
+                [
+                    new Column('id', Type::getType('integer'), ['autoincrement' => true, 'unsigned' => true]),
+                    new Column('rule', Type::getType('string'), ['length' => 255]),
+                    new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
+                ], // Columns.
+                [
+                    new Index('PRIMARY', ['id'], true, true),
+                ], // Indexes.
+            )
+        ];
     }
 
     /**

@@ -76,39 +76,28 @@ trait DatabaseTrait
      */
     protected function createTable(): void
     {
-        $tables = [];
         /** @phpstan-ignore-next-line */
-        if (method_exists($this, 'getStorageTable') && !$this->schemaManager->tableExists($this->config['storage_table'])) {
-            /** @var Table $table */
-            $tables[] = $this->getStorageTable();
-        } else {
-            $this->getLogger()->debug('Database table already exists', [
-                'table' => $this->config['storage_table'],
-            ]);
-        }
-
-        /** @phpstan-ignore-next-line */
-        if (method_exists($this, 'getOffenseStorageTable') && !$this->schemaManager->tableExists($this->config['offense_table'])) {
-            /** @var Table $table */
-            $tables[] = $this->getOffenseStorageTable();
-        } else {
-            $this->getLogger()->debug('Database table already exists', [
-                'offense_table' => $this->config['offense_table'],
-            ]);
-        }
-
-        foreach ($tables as $table) {
-            try {
-                $this->schemaManager->createTable($table);
-
-                $this->getLogger()->info('Database table created', [
-                    'table' => $table->getName(),
-                ]);
-            } catch (\Exception $e) {
-                $this->getLogger()->error('Failed to create database table', [
-                    'table' => $table->getName(),
-                    'error' => $e->getMessage(),
-                ]);
+        if (method_exists($this, 'getStorageTables')) {
+            $tables = $this->getStorageTables();
+            /** @var Table[] $tables */
+            foreach ($tables as $table) {
+                if (!$this->schemaManager->tablesExist([$table->getName()])) {
+                    try {
+                        $this->schemaManager->createTable($table);
+                        $this->getLogger()->info('Database table created', [
+                            'table' => $table->getName(),
+                        ]);
+                    } catch (\Exception $e) {
+                        $this->getLogger()->error('Failed to create database table', [
+                            'table' => $table->getName(),
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                } else {
+                    $this->getLogger()->debug('Database table already exists', [
+                        'table' => $this->config['storage_table'],
+                    ]);
+                }
             }
         }
     }

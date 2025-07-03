@@ -31,6 +31,7 @@ class DatabaseStorage extends AbstractStorageBase
     {
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_storage';
+        $this->config['offenses_table'] ??= 'firewall_offenses';
 
         $this->createConnection($config['connection'] ?? []);
         $this->getLogger()->info('Database storage initialized', [
@@ -39,25 +40,39 @@ class DatabaseStorage extends AbstractStorageBase
     }
 
     /**
-     * Create the storage table.
+     * Get the storage table.
      */
-    protected function getStorageTable(): Table
+    protected function getStorageTables(): array
     {
-        return new Table(
-            $this->config['storage_table'],
-            [
-                new Column('remote_address', Type::getType('string'), ['length' => 255]),
-                new Column('plugin', Type::getType('string'), ['length' => 255]),
-                new Column('event_id', Type::getType('string'), ['length' => 255]),
-                new Column('blocked', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
-                new Column('request', Type::getType('text')),
-                new Column('expire', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
-                new Column('metadata', Type::getType('text'))
-            ], // Columns.
-            [
-                new Index('remote_address', ['remote_address'], true, true),
-            ], // Indexes.
-        );
+        return [
+            new Table(
+                $this->config['storage_table'],
+                [
+                    new Column('remote_address', Type::getType('string'), ['length' => 255]),
+                    new Column('plugin', Type::getType('string'), ['length' => 255]),
+                    new Column('event_id', Type::getType('string'), ['length' => 255]),
+                    new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
+                    new Column('request', Type::getType('text')),
+                    new Column('expire', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
+                    new Column('metadata', Type::getType('text'))
+                ], // Columns.
+                [
+                    new Index('remote_address', ['remote_address'], true, true),
+                ], // Indexes.
+            ),
+            new Table(
+                $this->config['offenses_table'],
+                [
+                    new Column('id', Type::getType('integer'), ['autoincrement' => true]),
+                    new Column('remote_address', Type::getType('string'), ['length' => 255]),
+                    new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
+                ],
+                [
+                    new Index('idx', ['id'], true, true),
+                    new Index('remote_address_x', ['remote_address'], false, false),
+                ]
+            )
+        ];
     }
 
     /**
