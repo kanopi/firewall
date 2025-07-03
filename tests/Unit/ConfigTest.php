@@ -2,7 +2,7 @@
 
 namespace Kanopi\Firewall\Tests\Unit;
 
-use Kanopi\Firewall\Config;
+use Kanopi\Firewall\Utility\Config;
 use Symfony\Component\Yaml\Yaml;
 
 class ConfigTest extends AbstractTestCase

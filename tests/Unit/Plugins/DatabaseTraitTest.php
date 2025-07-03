@@ -9,9 +9,9 @@ use Doctrine\DBAL\Schema\MySQLSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
-use Kanopi\Firewall\Plugins\DatabaseTrait;
 use Kanopi\Firewall\Storage\DatabaseStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Kanopi\Firewall\Traits\DatabaseTrait;
 
 /**
  * Integration tests for DatabaseTrait using SQLite in-memory connection.
@@ -191,7 +191,7 @@ class DatabaseTraitTest extends AbstractTestCase
     public function testCreateTableThrowsAndIsCaughtGracefully(): void
     {
         $instance = new class {
-            use \Kanopi\Firewall\Plugins\DatabaseTrait;
+            use \Kanopi\Firewall\Traits\DatabaseTrait;
 
             public array $config = ['storage_table' => 'broken_table'];
 
@@ -225,7 +225,7 @@ class DatabaseTraitTest extends AbstractTestCase
         $mockSchemaManager = $this->createMock(MySQLSchemaManager::class);
         $mockSchemaManager->expects($this->any())->method('listTableColumns')->willThrowException(new \Exception('Exception Thrown From getColumnListing'));
         $instance = new class($mockSchemaManager) {
-            use \Kanopi\Firewall\Plugins\DatabaseTrait;
+            use \Kanopi\Firewall\Traits\DatabaseTrait;
 
             public function __construct($schemaManager)
             {
