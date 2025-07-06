@@ -36,7 +36,8 @@ class DatabaseStorage extends AbstractStorageBase
 
         $this->createConnection($config['connection'] ?? []);
         $this->getLogger()->info('Database storage initialized', [
-            'table' => $this->config['storage_table'],
+            'storage_table' => $this->config['storage_table'],
+            'offenses_table' => $this->config['offenses_table'],
         ]);
     }
 
