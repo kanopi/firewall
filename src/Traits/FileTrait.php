@@ -93,7 +93,10 @@ trait FileTrait
         return true;
     }
 
-    protected function validateFilePath(string $filePath): void
+    /**
+     * Validate and confirm the file path.
+     */
+    protected function validateFilePath(string $filePath): string
     {
         if (!file_exists($filePath) && !@touch($filePath)) {
             $this->getLogger()->error('Unable to create storage file', ['file' => $filePath]);
@@ -109,5 +112,7 @@ trait FileTrait
             $this->getLogger()->error('Storage file not writable', ['file' => $filePath]);
             throw new RuntimeException(sprintf("File '%s' must be writeable.", $filePath));
         }
+
+        return strval(realpath($filePath));
     }
 }
