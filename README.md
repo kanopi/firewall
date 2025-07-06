@@ -9,7 +9,9 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration Overview](#configuration-overview)
+- [Global Configuration](#global-configuration)
 - [Storage Configuration](#storage-configuration)
+  - [Multiple Offenses Defense](#multiple-offenses-defense)
 - [Plugin Architecture](#plugin-architecture)
 - [Available Plugins](#available-plugins)
   - [IP Address Plugin](#ip-address-plugin)
@@ -125,10 +127,48 @@ The firewall configuration consists of four main sections:
 
 | Section   | Purpose                                                  | Required |
 |-----------|----------------------------------------------------------|----------|
+| `global`  | Defines global configuration settings                    | No       |
 | `storage` | Defines where blocked IP addresses are persisted         | Yes      |
 | `bypass`  | Plugins that allow trusted traffic through               | No       |
 | `block`   | Plugins that deny harmful or suspicious traffic          | No       |
 | `logger`  | Monolog handlers for logging firewall events             | No       |
+
+## Global Configuration
+
+The global configuration allows for items like the default status code and the default block message template to be
+configured. More options to come.
+
+```yaml
+global:
+  banning_status_code: 429
+  banning_message: '{{request.id}} Request Banned'
+```
+
+### Status Code
+
+The status code of the default message can be defined here. By default, it sets it to 400 but can be set to something
+else if it is needed.
+
+### Banning Message
+
+The banning message can be configured and dynamically replaced with placeholders. Examples of placeholders can be found
+below.
+
+```
+* Replace placeholders in a template string with values taken from a Symfony Request
+* and/or an additional context array.
+*
+* Supported placeholders (case-insensitive):
+*   • {{ request.method }}          →  GET / POST / …
+*   • {{ request.scheme }}          →  http / https
+*   • {{ request.host }}            →  example.com
+*   • {{ request.path }}            →  /search
+*   • {{ request.ip }}              →  client IP (trusts your Symfony trusted proxies config)
+*   • {{ request.header.? }}        →  any HTTP header
+*   • {{ request.query.? }}         →  ?q=something
+*   • {{ request.post.? }}          →  body fields (application/x-www-form-urlencoded, multipart, JSON parsed by you, …)
+*   • {{ request.cookie.? }}        →  cookies
+```
 
 ## Storage Configuration
 
@@ -153,7 +193,8 @@ Persists blocked IPs to the filesystem.
 storage:
   type: \Kanopi\Firewall\Storage\FileStorage
   config:
-    file: /var/log/firewall/blocked_ips.data
+    storage_file: /var/log/firewall/blocked_ips.data
+    offense_file: /var/log/firewall/blocked_ip_offenses.data
 ```
 
 #### 3. Database Storage
@@ -164,7 +205,8 @@ Stores blocked IPs in a SQL database using Doctrine DBAL.
 storage:
   type: \Kanopi\Firewall\Storage\DatabaseStorage
   config:
-    storage-table: firewall_blocked_ips
+    storage_table: firewall_blocked_ips
+    offenses_table: firewall_blocked_ip_offenses
     connection:
       # Option 1: Using DSN (recommended)
       dsn: "mysql://user:password@localhost:3306/database?serverVersion=8.0"
@@ -177,6 +219,43 @@ storage:
       # port: 3306
       # driver: 'pdo_mysql'
 ```
+
+### Multiple Offenses Defense
+
+Some storage plugins can track multiple offenses from the same attacker over time. You can control how blocking escalates by using the blocking_escalation configuration setting.
+
+Below is an example of how to configure it:
+
+```yaml
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+  blocking_escalation:
+    - window: 300
+      offense: 0
+    - window: 3600
+      duration: 3600
+      offense: 1
+    - window: 7200
+      offense: 3
+      duration: 18000
+    - window: 7200
+      offense: 3
+      duration: 0
+```
+
+Each escalation rule includes the following:
+
+- `window` – Time period in seconds to look back for offenses (e.g., 300 = 5 minutes).
+
+- `offense` – Number of offenses required during the window to trigger the rule.
+
+- `duration` – How long to ban the client (in seconds).
+
+  - Use `0` for a permanent ban.
+
+  - If duration is not set, the plugin's default ban duration will be used.
+
+This system lets you gradually increase penalties for repeat offenders, starting with temporary bans and escalating to permanent blocks if necessary.
 
 ## Plugin Architecture
 
@@ -1132,7 +1211,7 @@ $app = require_once __DIR__.'/../bootstrap/app.php';
 storage:
   type: \Kanopi\Firewall\Storage\DatabaseStorage
   config:
-    storage-table: firewall_blocked
+    storage_table: firewall_blocked
     connection:
       dsn: "mysql://firewall:secure@localhost/security"
 
