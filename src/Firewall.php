@@ -308,9 +308,9 @@ final readonly class Firewall
 
                 // 5. request.cookie.<name>
                 if (str_starts_with($key, 'request.cookie.')) {
-                    $key = $m[1];
                     $param = substr($key, 15);
-                    return (string) $request->cookies->get($param, '');
+                    $cookies = array_change_key_case($request->cookies->all());
+                    return strval($cookies[$param] ?? '');
                 }
 
                 // 6. Arbitrary context values ----------------------------------
