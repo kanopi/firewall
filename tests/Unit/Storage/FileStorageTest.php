@@ -9,7 +9,7 @@ use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use RuntimeException;
 
-require_once __DIR__ . '/../../Storage/NamespaceOverrides.php';
+require_once __DIR__ . '/../../Traits/NamespaceOverrides.php';
 
 /**
  * Unit tests for FileStorage class.
@@ -23,6 +23,9 @@ class FileStorageTest extends AbstractTestCase
         parent::setUp();
         // Create a temporary file to use for testing
         $this->tempFile = tempnam(sys_get_temp_dir(), 'filestorage_test_');
+
+        $GLOBALS['simulate_is_readable_failure'] = false;
+        $GLOBALS['simulate_is_writeable_failure'] = false;
     }
 
     protected function tearDown(): void
@@ -33,17 +36,6 @@ class FileStorageTest extends AbstractTestCase
     }
 
     /**
-     * Tests that FileStorage constructor throws if 'file' is missing.
-     */
-    public function testConstructorThrowsIfFileMissing(): void
-    {
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage("Missing or invalid 'file' path in configuration.");
-
-        new FileStorage([]);
-    }
-
-    /**
      * Tests that FileStorage constructor throws if file is not writable.
      */
     public function testConstructorThrowsIfFileNotWritable(): void
@@ -51,7 +43,7 @@ class FileStorageTest extends AbstractTestCase
         $unwritableFile = '/root/forbidden_file';
 
         $this->expectException(RuntimeException::class);
-        new FileStorage(['file' => $unwritableFile]);
+        new FileStorage(['storage_file' => $unwritableFile]);
     }
 
     /**
@@ -60,12 +52,14 @@ class FileStorageTest extends AbstractTestCase
     public function testDataLoadsFromFile(): void
     {
         $data = serialize([
-            'mykey' => ['value' => 'data', 'expire' => 0],
+            '127.0.0.1' => ['value' => ['event_id' => 'data'], 'expire' => 0],
         ]);
         file_put_contents($this->tempFile, $data);
 
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $this->assertSame('data', $storage->get('mykey'));
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+
+        $request = $this->getRequest('127.0.0.1', 'data');
+        $this->assertSame('data', $storage->get($request)['event_id']);
     }
 
     /**
@@ -75,8 +69,10 @@ class FileStorageTest extends AbstractTestCase
     {
         file_put_contents($this->tempFile, 'not-serialized-data');
 
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $this->assertFalse($storage->exists('mykey'));
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+
+        $request = $this->getRequest();
+        $this->assertFalse($storage->exists($request));
     }
 
     /**
@@ -84,11 +80,12 @@ class FileStorageTest extends AbstractTestCase
      */
     public function testSetPersistsToFile(): void
     {
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $storage->set('test', 'persisted');
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $storage->set($request);
 
-        $reloaded = new FileStorage(['file' => $this->tempFile]);
-        $this->assertSame('persisted', $reloaded->get('test'));
+        $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
+        $this->assertSame('abc', $reloaded->get($request)['event_id']);
     }
 
     /**
@@ -96,13 +93,14 @@ class FileStorageTest extends AbstractTestCase
      */
     public function testDeletePersistsToFile(): void
     {
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $storage->set('todelete', 'value');
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $storage->set($request);
 
-        $this->assertTrue($storage->delete('todelete'));
+        $this->assertTrue($storage->delete($request));
 
-        $reloaded = new FileStorage(['file' => $this->tempFile]);
-        $this->assertFalse($reloaded->exists('todelete'));
+        $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
+        $this->assertFalse($reloaded->exists($request));
     }
 
     /**
@@ -110,12 +108,13 @@ class FileStorageTest extends AbstractTestCase
      */
     public function testResetPersistsToFile(): void
     {
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $storage->set('one', 'value');
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $storage->set($request);
         $storage->reset();
 
-        $reloaded = new FileStorage(['file' => $this->tempFile]);
-        $this->assertFalse($reloaded->exists('one'));
+        $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
+        $this->assertFalse($reloaded->exists($request));
     }
 
     /**
@@ -123,12 +122,13 @@ class FileStorageTest extends AbstractTestCase
      */
     public function testAddToExpirePersists(): void
     {
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $storage->set('session', 'data', 2);
-        $storage->addToExpire('session', 5);
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $storage->set($request, 2);
+        $storage->addToExpire($request, 5);
 
-        $reloaded = new FileStorage(['file' => $this->tempFile]);
-        $this->assertSame('data', $reloaded->get('session'));
+        $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
+        $this->assertSame('abc', $reloaded->get($request)['event_id']);
     }
 
     /**
@@ -136,10 +136,11 @@ class FileStorageTest extends AbstractTestCase
      */
     public function testAddToExpireFailsIfNoExpiration(): void
     {
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $storage->set('static', 'value', 0);
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $storage->set($request, 0);
 
-        $this->assertFalse($storage->addToExpire('static', 5));
+        $this->assertFalse($storage->addToExpire($request, 5));
     }
 
     /**
@@ -150,7 +151,7 @@ class FileStorageTest extends AbstractTestCase
         unlink($this->tempFile); // Delete to simulate fresh creation
         $this->assertFalse(file_exists($this->tempFile));
 
-        new FileStorage(['file' => $this->tempFile]);
+        new FileStorage(['storage_file' => $this->tempFile]);
         $this->assertFileExists($this->tempFile);
     }
 
@@ -167,8 +168,9 @@ class FileStorageTest extends AbstractTestCase
             ]
         ]));
 
-        $storage = new FileStorage(['file' => $this->tempFile]);
-        $storage->set('badwrite', 'fail');
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $storage->set($request);
 
         $GLOBALS['simulate_file_put_contents_failure'] = false;
 
@@ -189,7 +191,9 @@ class FileStorageTest extends AbstractTestCase
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage("must be writeable");
 
-        new FileStorage(['file' => $this->tempFile]);
+        new FileStorage(['storage_file' => $this->tempFile]);
+
+        $GLOBALS['simulate_is_writeable_failure'] = false;
     }
 
     /**
@@ -202,7 +206,27 @@ class FileStorageTest extends AbstractTestCase
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage("must be readable");
 
-        new FileStorage(['file' => $this->tempFile]);
+        new FileStorage(['storage_file' => $this->tempFile]);
+
+        $GLOBALS['simulate_is_readable_failure'] = false;
     }
 
+    /**
+     * Test Count Offenses.
+     */
+    public function testFileStorageCountOffenses(): void
+    {
+        $tempOffenseFile = tempnam(sys_get_temp_dir(), 'filestorage_offense_test_');
+        $tempStorageFile = tempnam(sys_get_temp_dir(), 'filestorage_test_');
+
+        $storage = new FileStorage(['storage_file' => $tempStorageFile, 'offense_file' => $tempOffenseFile]);
+        $request = $this->getRequest();
+        $this->assertEquals(0, $storage->countOffenses($request));
+
+        $storage->recordOffense($request);
+        $this->assertEquals(1, $storage->countOffenses($request));
+
+        @unlink($tempStorageFile);
+        @unlink($tempOffenseFile);
+    }
 }

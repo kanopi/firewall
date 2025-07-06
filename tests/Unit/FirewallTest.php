@@ -9,7 +9,6 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageInterface;
 use PHPUnit\Framework\MockObject\MockObject;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 
 class FirewallTest extends AbstractTestCase
@@ -28,12 +27,12 @@ class FirewallTest extends AbstractTestCase
     /**
      * Creates a Firewall instance with protected constructor via reflection.
      */
-    private function createFirewall(): Firewall {
+    private function createFirewall(array $config = []): Firewall {
         $ref = new \ReflectionClass(Firewall::class);
         $firewall = $ref->newInstanceWithoutConstructor();
         $constructor = $ref->getConstructor();
         $constructor->setAccessible(true);
-        $constructor->invoke($firewall, $this->storage, $this->blockManager, $this->bypassManager);
+        $constructor->invoke($firewall, $this->storage, $this->blockManager, $this->bypassManager, $config);
         return $firewall;
     }
 
@@ -42,7 +41,10 @@ class FirewallTest extends AbstractTestCase
      */
     public function testEvaluateBypassPluginAllows(): void {
         $request = Request::create('/');
-        $this->bypassManager->method('evaluate')->willReturn(true);
+        $request->attributes->set('x-request-id', 'abc123');
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('TestPlugin');
+        $this->bypassManager->method('evaluate')->willReturn($plugin);
         $firewall = $this->createFirewall();
         $this->assertTrue($firewall->evaluate($request));
     }
@@ -55,13 +57,29 @@ class FirewallTest extends AbstractTestCase
         $request->attributes->set('x-request-id', 'mock-blocked');
 
         $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('get')->willReturn(['event_id' => 'mock-blocked']);
-        $this->storage->expects($this->once())->method('addToExpire');
+        $this->storage->method('isBlocked')->willReturn(true);
 
         $firewall = $this->createFirewall();
         $this->expectException(\Exception::class);
         $this->expectExceptionMessage('mock-blocked Request Banned');
         $this->expectExceptionCode(400);
+        $firewall->evaluate($request);
+    }
+
+    /**
+     * Ensure blocked IP triggers sendBlockingResponse and stops evaluation.
+     */
+    public function testEvaluateBlockedIpCustomStatusMessage(): void {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
+        $request->attributes->set('x-request-id', 'mock-blocked');
+
+        $this->bypassManager->method('evaluate')->willReturn(false);
+        $this->storage->method('isBlocked')->willReturn(true);
+
+        $firewall = $this->createFirewall(['banning_status_code' => 429, 'banning_message' => 'You are banned']);
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage('You are banned');
+        $this->expectExceptionCode(429);
         $firewall->evaluate($request);
     }
 
@@ -78,12 +96,10 @@ class FirewallTest extends AbstractTestCase
         $plugin->method('getStatusCode')->willReturn(403);
 
         $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('get')->willReturn(false);
-        $this->storage->expects($this->once())->method('set')->willReturn(true);
+        $this->storage->method('isBlocked')->willReturn(false);
 
-        $this->blockManager->expects($this->once())->method('evaluate')->willReturnCallback(function ($r, $b, $cb) use ($plugin) {
-            $cb(true, $r, $plugin);
-        });
+        $this->blockManager->expects($this->once())->method('evaluate')->willReturn($plugin);
+        $this->storage->method('blockIp');
 
         $firewall = $this->createFirewall();
         $this->expectException(\Exception::class);
@@ -98,8 +114,8 @@ class FirewallTest extends AbstractTestCase
     public function testEvaluateContinuesIfNotBlocked(): void {
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '9.9.9.9']);
         $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('get')->willReturn(false);
-        $this->blockManager->expects($this->once())->method('evaluate');
+        $this->storage->method('isBlocked')->willReturn(false);
+        $this->blockManager->method('evaluate')->willReturn(false);
         $firewall = $this->createFirewall();
         $this->assertTrue($firewall->evaluate($request));
     }
@@ -115,71 +131,6 @@ class FirewallTest extends AbstractTestCase
         $method->setAccessible(true);
         $id = $method->invoke($firewall, $request);
         $this->assertMatchesRegularExpression('/^[A-F0-9]{32}$/', $id);
-    }
-
-    /**
-     * Ensure blockIp() stores all expected data and returns true.
-     */
-    public function testBlockIpReturnsTrue(): void {
-        $request = Request::create('/', 'GET', [], ['foo' => 'bar'], [], ['REMOTE_ADDR' => '1.1.1.1']);
-        $request->attributes->set('x-request-id', 'abc123');
-        $plugin = $this->createMock(PluginInterface::class);
-        $plugin->method('getName')->willReturn('TestPlugin');
-        $plugin->method('getExpirationTime')->willReturn(600);
-
-        $this->storage->expects($this->once())->method('set')->willReturn(true);
-        $ref = new \ReflectionClass(Firewall::class);
-        $firewall = $this->createFirewall();
-        $method = $ref->getMethod('blockIp');
-        $method->setAccessible(true);
-        $result = $method->invoke($firewall, $request, $plugin);
-        $this->assertTrue($result);
-    }
-
-    /**
-     * Ensure blockIp() stores all expected data and returns false.
-     */
-    public function testBlockIpReturnsFalse(): void {
-        $request = Request::create('/', 'GET', [], ['foo' => 'bar'], [], ['REMOTE_ADDR' => '1.1.1.1']);
-        $request->attributes->set('x-request-id', 'abc123');
-        $plugin = $this->createMock(PluginInterface::class);
-        $plugin->method('getName')->willReturn('TestPlugin');
-        $plugin->method('getExpirationTime')->willReturn(600);
-
-        $this->storage->expects($this->once())->method('set')->willReturn(false);
-        $ref = new \ReflectionClass(Firewall::class);
-        $firewall = $this->createFirewall();
-        $method = $ref->getMethod('blockIp');
-        $method->setAccessible(true);
-        $result = $method->invoke($firewall, $request, $plugin);
-        $this->assertFalse($result);
-    }
-
-
-    /**
-     * Ensure uploaded files are normalized correctly into arrays.
-     */
-    public function testFormatUploadedFiles(): void {
-        $file = $this->createMock(UploadedFile::class);
-        $file->method('getClientOriginalName')->willReturn('test.jpg');
-        $file->method('getClientMimeType')->willReturn('image/jpeg');
-        $file->method('getSize')->willReturn(1234);
-        $file->method('getError')->willReturn(0);
-
-        $firewall = $this->createFirewall();
-        $ref = new \ReflectionClass(Firewall::class);
-        $method = $ref->getMethod('formatUploadedFiles');
-        $method->setAccessible(true);
-
-        $result = $method->invoke($firewall, ['file' => $file]);
-        $this->assertEquals([
-            'file' => [
-                'originalName' => 'test.jpg',
-                'mimeType' => 'image/jpeg',
-                'size' => 1234,
-                'error' => 0,
-            ]
-        ], $result);
     }
 
     /**
@@ -202,54 +153,50 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
-     * Test formatUploadedFiles() handles flat, nested, and null structures.
+     * Test the Interpolate Template function with GET.
      */
-    public function testFormatUploadedFilesHandlesVariousStructures(): void {
-        $mockFile1 = $this->createMock(UploadedFile::class);
-        $mockFile1->method('getClientOriginalName')->willReturn('flat.jpg');
-        $mockFile1->method('getClientMimeType')->willReturn('image/jpeg');
-        $mockFile1->method('getSize')->willReturn(1111);
-        $mockFile1->method('getError')->willReturn(0);
-
-        $mockFile2 = $this->createMock(UploadedFile::class);
-        $mockFile2->method('getClientOriginalName')->willReturn('nested.png');
-        $mockFile2->method('getClientMimeType')->willReturn('image/png');
-        $mockFile2->method('getSize')->willReturn(2222);
-        $mockFile2->method('getError')->willReturn(0);
-
-        $input = [
-            'flat' => $mockFile1,
-            'nested' => [
-                'inner' => $mockFile2,
-                'empty' => null,
-            ],
-            'nullFile' => null,
-        ];
-
-        $firewall = $this->createFirewall();
+    public function testInterpolateTemplateGet(): void {
+        $request = Request::create('/', 'GET', ['abc' => '123'], [], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+            'HTTP_HOST' => 'localhost',
+            'HTTP_PORT' => 80,
+            'HTTP_ACCEPT' => 'text/html',
+        ]);
+        $request->attributes->set('x-request-id', 'ABC123');
         $ref = new \ReflectionClass(Firewall::class);
-        $method = $ref->getMethod('formatUploadedFiles');
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
         $method->setAccessible(true);
 
-        $result = $method->invoke($firewall, $input);
+        $message = '{{request.id}} Request Banned';
+        $result = $method->invoke($firewall, $message, $request);
+        $this->assertEquals('ABC123 Request Banned', $result);
 
-        $this->assertEquals([
-            'flat' => [
-                'originalName' => 'flat.jpg',
-                'mimeType' => 'image/jpeg',
-                'size' => 1111,
-                'error' => 0
-            ],
-            'nested' => [
-                'inner' => [
-                    'originalName' => 'nested.png',
-                    'mimeType' => 'image/png',
-                    'size' => 2222,
-                    'error' => 0
-                ],
-                'empty' => null
-            ],
-            'nullFile' => null
-        ], $result);
+        $message = '{{request.scheme}} {{request.method}} {{request.host}} {{request.ip}} {{request.path}} {{request.query.abc}} {{request.header.accept}}';
+        $result = $method->invoke($firewall, $message, $request);
+        $this->assertEquals('http GET localhost 8.8.8.8 / 123 text/html', $result);
+    }
+
+    /**
+     * Test the Interpolate Template function with POST.
+     */
+    public function testInterpolateTemplatePost(): void {
+        $request = Request::create('/', 'POST', ['abc' => '123'], [
+            'X-REQUEST-ID' => 'ABC123',
+        ], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+            'HTTP_HOST' => 'localhost',
+            'HTTP_PORT' => 80,
+            'HTTP_ACCEPT' => 'text/html',
+        ]);
+        $request->attributes->set('x-request-id', 'ABC123');
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $message = '{{request.scheme}} {{request.method}} {{request.host}} {{request.ip}} {{request.path}} {{request.post.abc}} {{request.header.accept}} {{request.cookie.X-REQUEST-ID}} {{notfound}} {{context-element}}';
+        $result = $method->invoke($firewall, $message, $request, ['context-element' => 'context']);
+        $this->assertEquals('http POST localhost 8.8.8.8 / 123 text/html ABC123 {{notfound}} context', $result);
     }
 }

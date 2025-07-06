@@ -1,6 +1,6 @@
 <?php
 
-namespace Kanopi\Firewall\RateLimitStorage;
+namespace Kanopi\Firewall\Traits;
 
 // Simulated flag controlled from the test class
 $GLOBALS['simulate_file_put_contents_failure'] = false;

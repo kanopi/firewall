@@ -35,12 +35,12 @@ class DatabaseTraitTest extends AbstractTestCase
                 $this->createConnection(['dsn' => 'sqlite3:///:memory:']);
             }
 
-            public function getStorageTable(): Table
+            public function getStorageTables(): array
             {
                 $table = new Table($this->config['storage_table']);
                 $table->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
                 $table->setPrimaryKey(['id']);
-                return $table;
+                return [$table];
             }
 
             public function tableExists(): bool
@@ -75,6 +75,81 @@ class DatabaseTraitTest extends AbstractTestCase
     {
         $instance = $this->getConcreteInstance([]);
         $this->assertTrue($instance->tableExists(), 'Expected table to be created');
+    }
+
+    /**
+     * Test that exception is caught if getTables doesn't return a valid table.
+     */
+    public function testCreateTablesWithException(): void
+    {
+        $config = [];
+        $instance = new class($config) {
+            use DatabaseTrait;
+
+            protected array $config;
+
+            public function __construct(array $config)
+            {
+                $this->config = $config;
+                $this->config['storage_table'] ??= 'test_table';
+                $this->createConnection(['dsn' => 'sqlite3:///:memory:']);
+            }
+
+            public function getStorageTables(): array
+            {
+                $table = new Table('temp_table');
+                return [$table];
+            }
+
+            public function tableExists(): bool
+            {
+                return $this->schemaManager->tablesExist([$this->config['storage_table']]);
+            }
+        };
+
+        $this->assertFalse($instance->tableExists(), 'Expected table to not be created');
+    }
+
+    /**
+     * Test no exceptions thrown if table already exists.
+     */
+    public function testCreateTablesTableExists(): void
+    {
+        $config = [];
+        $instance = new class($config) {
+            use DatabaseTrait;
+
+            protected array $config;
+
+            public function __construct(array $config)
+            {
+                $this->config = $config;
+                $this->config['storage_table'] ??= 'test_table';
+
+                $dsnParser = (new DsnParser())->parse('sqlite3:///:memory:');
+                $connection = DriverManager::getConnection($dsnParser);
+
+                $tables = $this->getStorageTables();
+                $connection->createSchemaManager()->createTable($tables[0]);
+
+                $this->createConnection($connection);
+            }
+
+            public function getStorageTables(): array
+            {
+                $table = new Table($this->config['storage_table']);
+                $table->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
+                $table->setPrimaryKey(['id']);
+                return [$table];
+            }
+
+            public function tableExists(): bool
+            {
+                return $this->schemaManager->tablesExist([$this->config['storage_table']]);
+            }
+        };
+
+        $this->assertTrue($instance->tableExists(), 'Do nothing if table exists');
     }
 
     /**
