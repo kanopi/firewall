@@ -351,7 +351,8 @@ final class InMemoryStorageTest extends AbstractTestCase
     /**
      * Confirm that is blocked returns true.
      */
-    public function testDetermineExpirationTime(): void {
+    public function testDetermineExpirationTime(): void
+    {
         $request = Request::create('/', 'GET', [], ['foo' => 'bar'], [], ['REMOTE_ADDR' => '1.1.1.1']);
         $request->attributes->set('x-request-id', 'abc123');
         $plugin = $this->createMock(PluginInterface::class);
@@ -366,8 +367,13 @@ final class InMemoryStorageTest extends AbstractTestCase
                 ],
                 [
                     'window' => 3600,
-                    'offense' => 1,
+                    'offense' => 3,
                     'duration' => 300,
+                ],
+                [
+                    'window' => 86400,
+                    'offense' => 4,
+                    'duration' => 0,
                 ]
             ],
         ];
@@ -378,10 +384,20 @@ final class InMemoryStorageTest extends AbstractTestCase
             }
         };
 
+        $storage->recordOffense($request);
         $result = $storage->determineExpirationTime($request, 0);
         $this->assertEquals(0, $result);
 
+        $storage->recordOffense($request);
         $result = $storage->determineExpirationTime($request, 100);
         $this->assertEquals(100, $result);
+
+        $storage->recordOffense($request);
+        $result = $storage->determineExpirationTime($request, 100);
+        $this->assertEquals(300, $result);
+
+        $storage->recordOffense($request);
+        $result = $storage->determineExpirationTime($request, 100);
+        $this->assertEquals(0, $result);
     }
 }
