@@ -197,6 +197,6 @@ class InMemoryStorage extends AbstractStorageBase
      */
     public function countOffenses(Request $request, int $start = 0, int $end = PHP_INT_MAX): int
     {
-        return count(array_filter($this->offenses, fn($item): bool => strtotime((string) $item['timestamp']) >= $start && strtotime((string) $item['timestamp']) <= $end));
+        return count(array_filter($this->offenses[$request->getClientIp()] ?? [], fn($item): bool => strtotime((string) $item['timestamp']) >= $start && strtotime((string) $item['timestamp']) <= $end));
     }
 }
