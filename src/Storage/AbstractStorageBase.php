@@ -129,7 +129,7 @@ abstract class AbstractStorageBase implements StorageInterface
 
         $stages = array_reverse($this->config['blocking_escalation'] ?? [], true);
         foreach ($stages as $stage) {
-            $windowStart = $now - intval($stage['window']);
+            $windowStart = $now - intval($stage['window'] ?? 0);
             $count = $this->countOffenses($request, $windowStart, $now);
 
             if ($count >= intval($stage['offense'])) {
