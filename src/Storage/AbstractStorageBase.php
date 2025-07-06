@@ -133,7 +133,7 @@ abstract class AbstractStorageBase implements StorageInterface
             $count = $this->countOffenses($request, $windowStart, $now);
 
             if ($count >= intval($stage['offense'])) {
-                return intval($stage['duration']);
+                return intval($stage['duration'] ?? $initialTime);
             }
         }
 
