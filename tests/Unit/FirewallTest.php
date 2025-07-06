@@ -180,7 +180,8 @@ class FirewallTest extends AbstractTestCase
     /**
      * Test the Interpolate Template function with POST.
      */
-    public function testInterpolateTemplatePost(): void {
+    public function testInterpolateTemplatePost(): void
+    {
         $request = Request::create('/', 'POST', ['abc' => '123'], [
             'X-REQUEST-ID' => 'ABC123',
         ], [], [
