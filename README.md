@@ -10,8 +10,8 @@
 - [Quick Start](#quick-start)
 - [Configuration Overview](#configuration-overview)
 - [Global Configuration](#global-configuration)
-- [Storage Configuration](#storage-configuration)
   - [Multiple Offenses Defense](#multiple-offenses-defense)
+- [Storage Configuration](#storage-configuration)
 - [Plugin Architecture](#plugin-architecture)
 - [Available Plugins](#available-plugins)
   - [IP Address Plugin](#ip-address-plugin)
@@ -142,6 +142,18 @@ configured. More options to come.
 global:
   banning_status_code: 429
   banning_message: '{{request.id}} Request Banned'
+  blocking_escalation:
+    - window: 300
+      offense: 0
+    - window: 3600
+      duration: 3600
+      offense: 1
+    - window: 7200
+      offense: 3
+      duration: 18000
+    - window: 7200
+      offense: 3
+      duration: 0
 ```
 
 ### Status Code
@@ -169,6 +181,42 @@ below.
 *   • {{ request.post.? }}          →  body fields (application/x-www-form-urlencoded, multipart, JSON parsed by you, …)
 *   • {{ request.cookie.? }}        →  cookies
 ```
+
+### Multiple Offenses Defense
+
+Some storage plugins can track multiple offenses from the same attacker over time. You can control how blocking escalates by using the `blocking_escalation` configuration setting.
+
+Below is an example of how to configure it:
+
+```yaml
+global:
+  blocking_escalation:
+    - window: 300
+      offense: 0
+    - window: 3600
+      duration: 3600
+      offense: 1
+    - window: 7200
+      offense: 3
+      duration: 18000
+    - window: 7200
+      offense: 3
+      duration: 0
+```
+
+Each escalation rule includes the following:
+
+- `window` – Time period in seconds to look back for offenses (e.g., 300 = 5 minutes).
+
+- `offense` – Number of offenses required during the window to trigger the rule.
+
+- `duration` – How long to ban the client (in seconds).
+
+    - Use `0` for a permanent ban.
+
+    - If duration is not set, the plugin's default ban duration will be used.
+
+This system lets you gradually increase penalties for repeat offenders, starting with temporary bans and escalating to permanent blocks if necessary.
 
 ## Storage Configuration
 
@@ -219,43 +267,6 @@ storage:
       # port: 3306
       # driver: 'pdo_mysql'
 ```
-
-### Multiple Offenses Defense
-
-Some storage plugins can track multiple offenses from the same attacker over time. You can control how blocking escalates by using the blocking_escalation configuration setting.
-
-Below is an example of how to configure it:
-
-```yaml
-storage:
-  type: Kanopi\Firewall\Storage\InMemoryStorage
-  blocking_escalation:
-    - window: 300
-      offense: 0
-    - window: 3600
-      duration: 3600
-      offense: 1
-    - window: 7200
-      offense: 3
-      duration: 18000
-    - window: 7200
-      offense: 3
-      duration: 0
-```
-
-Each escalation rule includes the following:
-
-- `window` – Time period in seconds to look back for offenses (e.g., 300 = 5 minutes).
-
-- `offense` – Number of offenses required during the window to trigger the rule.
-
-- `duration` – How long to ban the client (in seconds).
-
-  - Use `0` for a permanent ban.
-
-  - If duration is not set, the plugin's default ban duration will be used.
-
-This system lets you gradually increase penalties for repeat offenders, starting with temporary bans and escalating to permanent blocks if necessary.
 
 ## Plugin Architecture
 
