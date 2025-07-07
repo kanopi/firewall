@@ -40,104 +40,26 @@ abstract class AbstractStorageBase implements StorageInterface
     /**
      * {@inheritdoc}
      */
-    public function isBlocked(Request $request, int $addToExpire = 0): bool
+    public function getKey(Request $request): string
     {
-        $blocked = $this->get($request);
-
-        if (is_null($blocked)) {
-            return false;
-        }
-
-        $request->attributes->set('x-request-id', $blocked['event_id'] ?? '');
-        $this->getLogger()->warning(
-            'Request from blocked IP',
-            array_merge(
-                [
-                    'request_id' => $request->attributes->get('x-request-id'),
-                    'client_ip' => $request->getClientIp(),
-                ],
-                $blocked
-            )
-        );
-        $this->addToExpire($request, $addToExpire);
-        $this->recordOffense($request);
-        return true;
+        return strval($request->getClientIp());
     }
 
     /**
      * {@inheritdoc}
      */
-    public function blockIp(Request $request, PluginInterface $plugin): bool
+    public function isBlocked(string $key): array|false
     {
-        $this->getLogger()->warning('Request blocked by plugin', [
-            'request_id' => $request->attributes->get('x-request-id'),
-            'client_ip' => $request->getClientIp(),
-            'plugin' => $plugin->getName(),
-            'status_code' => $plugin->getStatusCode($request),
-            'path' => $request->getPathInfo(),
-            'query' => $request->query->all(),
-            'user_agent' => $request->headers->get('User-Agent') ?? 'unknown',
-        ]);
-
-        $request->attributes->set('blocking-plugin', $plugin);
-        $expirationTime = $this->determineExpirationTime(
-            $request,
-            $plugin->getExpirationTime($request)
-        );
-
-        $success = $this->set(
-            $request,
-            $expirationTime,
-        );
-
-        if ($success) {
-            $this->getLogger()->info('IP blocked successfully', [
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'plugin' => $plugin->getName(),
-                'expiration_time' => $expirationTime,
-            ]);
-        } else {
-            $this->getLogger()->error('Failed to block IP', [
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'plugin' => $plugin->getName(),
-            ]);
+        $data = $this->get($key, false);
+        if ($data === false) {
+            return false;
         }
 
-        return $success;
-    }
-
-    /**
-     * Determine the expiration time based on the request and offenses.
-     *
-     * @param Request $request
-     *   Request to evaluate.
-     * @param int $initialTime
-     *   Initial time.
-     *
-     * @return int
-     *   Return the expiration time.
-     */
-    protected function determineExpirationTime(Request $request, int $initialTime): int
-    {
-        if ($initialTime === 0) {
-            return 0;
+        if (!is_array($data)) {
+            return ['value' => $data];
         }
 
-        $now = time();
-
-        $stages = array_reverse($this->config['blocking_escalation'] ?? [], true);
-        foreach ($stages as $stage) {
-            $windowStart = $now - intval($stage['window'] ?? 0);
-            $count = $this->countOffenses($request, $windowStart, $now);
-
-            if ($count >= intval($stage['offense'])) {
-                return intval($stage['duration'] ?? $initialTime);
-            }
-        }
-
-        return intval($stages[0]['duration'] ?? $initialTime);
+        return $data;
     }
 
     /**
@@ -149,7 +71,7 @@ abstract class AbstractStorageBase implements StorageInterface
      * @return array
      *   Return the structured data.
      */
-    final protected function serializeRequest(Request $request): array
+    protected function serializeRequest(Request $request): array
     {
         return [
             'method' => $request->getMethod(),
@@ -175,7 +97,7 @@ abstract class AbstractStorageBase implements StorageInterface
      * @return array
      *   Files structured.
      */
-    final protected function formatUploadedFiles(array $files): array
+    protected function formatUploadedFiles(array $files): array
     {
         $normalized = [];
 
@@ -200,17 +122,9 @@ abstract class AbstractStorageBase implements StorageInterface
     }
 
     /**
-     * Standard function for returning default data to store blocked request.
-     *
-     * @param Request $request
-     *   Request to get information from.
-     * @param PluginInterface|null $plugin
-     *   Plugin that is doing the blocking.
-     *
-     * @return array
-     *   Information to return.
+     * {@inheritdoc}
      */
-    protected function getBlockingData(Request $request, ?PluginInterface $plugin): array
+    public function getStorageData(Request $request, ?PluginInterface $plugin): array
     {
         return [
             'plugin' => $plugin?->getName(),

@@ -80,15 +80,15 @@ class DatabaseStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function recordOffense(Request $request): bool
+    public function recordOffense(string $key): bool
     {
         try {
             $this->connection->insert($this->config['offenses_table'], [
-                'remote_address' => $request->getClientIp(),
+                'remote_address' => $key,
                 'timestamp' => strtotime(date('c')),
             ]);
             $this->getLogger()->debug('Recorded offense', [
-                'remote_address' => $request->getClientIp(),
+                'remote_address' => $key,
                 'timestamp' => date('c'),
             ]);
         } catch (\Exception $exception) {
@@ -104,11 +104,8 @@ class DatabaseStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function set(Request $request, int $expire = 0): bool
+    public function set(string $key, array $value, int $expire = 0): bool
     {
-        $key = $request->getClientIp();
-        $plugin = $request->attributes->get('blocking-plugin');
-        $value = $this->getBlockingData($request, $plugin);
         try {
             $value['request'] = @serialize($value['request']);
             $value['timestamp'] = strtotime((string) $value['timestamp']);
@@ -121,7 +118,7 @@ class DatabaseStorage extends AbstractStorageBase
             );
             $data['metadata'] = json_encode($data);
             $data = $this->enforceTableData($this->config['storage_table'], $data);
-            if ($this->exists($request)) {
+            if ($this->exists($key)) {
                 $this->connection->update(
                     $this->config['storage_table'],
                     $data,
@@ -135,7 +132,7 @@ class DatabaseStorage extends AbstractStorageBase
                     'expire' => $expire,
                 ]);
             } else {
-                $this->connection->insert($this->config['storage_table'], $data);
+                $this->connection->insert($this->config['storage_table'], $value);
                 $this->getLogger()->debug('Inserted new entry in database storage', [
                     'key' => $key,
                     'table' => $this->config['storage_table'],
@@ -151,16 +148,15 @@ class DatabaseStorage extends AbstractStorageBase
             return false;
         }
 
-        $this->recordOffense($request);
+        $this->recordOffense($key);
         return true;
     }
 
     /**
      * {@inheritdoc}
      */
-    public function delete(Request $request): bool
+    public function delete(string $key): bool
     {
-        $key = $request->getClientIp();
         try {
             $affected = $this->connection->delete($this->config['storage_table'], [
                 'remote_address' => $key,
@@ -187,10 +183,9 @@ class DatabaseStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function get(Request $request, mixed $default = null): mixed
+    public function get(string $key, mixed $default = null): mixed
     {
-        $key = $request->getClientIp();
-        if ($this->exists($request)) {
+        if ($this->exists($key)) {
             try {
                 $count = $this->connection->createQueryBuilder()
                     ->select('*')
@@ -199,7 +194,12 @@ class DatabaseStorage extends AbstractStorageBase
                     ->setParameter('remote_address', $key)
                     ->executeQuery();
                 return $count->fetchAssociative();
-            } catch (\Exception) {
+            } catch (\Exception $exception) {
+                $this->getLogger()->error('Failed to get entry from database storage', [
+                    'table' => $this->config['storage_table'],
+                    'key' => $key,
+                    'error' => $exception->getMessage(),
+                ]);
             }
         }
 
@@ -231,9 +231,8 @@ class DatabaseStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function exists(Request $request): bool
+    public function exists(string $key): bool
     {
-        $key = $request->getClientIp();
         try {
             $results = $this->connection->createQueryBuilder()
                 ->select('remote_address')
@@ -242,7 +241,12 @@ class DatabaseStorage extends AbstractStorageBase
                 ->setParameter('remote_address', $key)
                 ->executeQuery()
                 ->fetchAllAssociative();
-        } catch (\Exception) {
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to check if key exists', [
+                'table' => $this->config['storage_table'],
+                'key' => $key,
+                'error' => $exception->getMessage(),
+            ]);
             return false;
         }
 
@@ -252,7 +256,7 @@ class DatabaseStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function clearExpire(): bool
+    public function expire(): bool
     {
         try {
             $result = $this->connection->createQueryBuilder()
@@ -282,9 +286,8 @@ class DatabaseStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function addToExpire(Request $request, int $amount): bool
+    public function addToExpire(string $key, int $amount): bool
     {
-        $key = $request->getClientIp();
         try {
             $result = $this->connection->createQueryBuilder()
                 /** @phpstan-ignore-next-line  */
@@ -319,9 +322,8 @@ class DatabaseStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function countOffenses(Request $request, int $start = 0, int $end = PHP_INT_MAX): int
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
     {
-        $key = $request->getClientIp();
         try {
             $results = $this->connection->createQueryBuilder()
                 ->select('remote_address')

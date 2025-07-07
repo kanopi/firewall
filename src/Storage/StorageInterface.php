@@ -20,41 +20,54 @@ use Symfony\Component\HttpFoundation\Request;
 interface StorageInterface
 {
     /**
-     * Set the value of the provided key.
+     * Return the key for the provided request.
      *
      * @param Request $request
-     *   Request data.
+     *   Request to get information from.
+     *
+     * @return string
+     *   Return the key.
+     */
+    public function getKey(Request $request): string;
+
+    /**
+     * Set the value of the provided key.
+     *
+     * @param string $key
+     *   Key to set.
+     * @param array $value
+     *   Value to set.
      * @param int $expire
      *   Timestamp when the key should be expired.
      *
      * @return bool
      *   True if successful, False if not.
      */
-    public function set(Request $request, int $expire = 0): bool;
+    public function set(string $key, array $value, int $expire = 0): bool;
 
     /**
      * Delete the provided key.
      *
-     * @param Request $request
-     *   Request data.
+     * @param string $key
+     *   Key to look up data.
      *
      * @return bool
      *   True if successful, False if not.
      */
-    public function delete(Request $request): bool;
+    public function delete(string $key): bool;
 
     /**
      * Get the value for the provided key.
      *
-     * @param Request $request
-     *   Request data.
+     * @param string $key
+     *   Key to look up.
      * @param mixed $default
-     *   If the key isn't found, return the default value.
+     *   Default value to return.
      *
      * @return mixed
-     *   Return the value for the provided key.
+     *   Return the value for the provided key, null if not found.
      */
-    public function get(Request $request, mixed $default = null): mixed;
+    public function get(string $key, mixed $default = null): mixed;
 
     /**
      * Delete all elements in the storage and reset to nothing.
@@ -67,13 +80,13 @@ interface StorageInterface
     /**
      * Check if key exists.
      *
-     * @param Request $request
-     *   Request data.
+     * @param string $key
+     *   Check to see if the provided key exists.
      *
      * @return bool
      *   Return TRUE if found, FALSE if not.
      */
-    public function exists(Request $request): bool;
+    public function exists(string $key): bool;
 
     /**
      * Clear out all the expired items.
@@ -81,37 +94,37 @@ interface StorageInterface
      * @return bool
      *   Return TRUE if successful, FALSE if issues.
      */
-    public function clearExpire(): bool;
+    public function expire(): bool;
 
     /**
      * Example the expiration time by a specific amount.
      *
-     * @param Request $request
-     *   Request data.
+     * @param string $key
+     *   Key to look up.
      * @param int $amount
      *   Amount of time to add to the expiration time.
      *
      * @return bool
      *   Return TRUE if successful, FALSE if issues.
      */
-    public function addToExpire(Request $request, int $amount): bool;
+    public function addToExpire(string $key, int $amount): bool;
 
     /**
      * Record the offense in the database.
      *
-     * @param Request $request
-     *   Request to get information about.
+     * @param string $key
+     *   Key to set offense for..
      *
      * @return bool
      *   Return TRUE if successful.
      */
-    public function recordOffense(Request $request): bool;
+    public function recordOffense(string $key): bool;
 
     /**
      * Count how many offenses happened between a certain time period.
      *
-     * @param Request $request
-     *   Request data.
+     * @param string $key
+     *   Key to search for periods.
      * @param int $start
      *   The start timestamp to look for.
      * @param int $end
@@ -120,31 +133,29 @@ interface StorageInterface
      * @return int
      *   The total number of offenses found.
      */
-    public function countOffenses(Request $request, int $start = 0, int $end = PHP_INT_MAX): int;
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int;
 
     /**
-     * Check to see if the request is currently blocked.
+     * Check to see if the key is currently blocked.
      *
-     * @param Request $request
-     *   Request to evaluate.
-     * @param int $addToExpire
-     *   Amount of time to add if the request is already blocked.
+     * @param string $key
+     *   Key to look up.
      *
-     * @return mixed
+     * @return array|false
      *   Return an array of items if found, False if issues.
      */
-    public function isBlocked(Request $request, int $addToExpire = 0): mixed;
+    public function isBlocked(string $key): array|false;
 
     /**
-     * Block the IP Address against the database.
+     * Return the data for storage.
      *
      * @param Request $request
-     *   Request information.
-     * @param PluginInterface $plugin
-     *   Plugin that is blocking the IP Address.
+     *   Request element.
+     * @param PluginInterface|null $plugin
+     *   Plugin making the request.
      *
-     * @return bool
-     *   Return TRUE if successful, FALSE if there is an issue.
+     * @return array
+     *   Return the data for the provided request.
      */
-    public function blockIp(Request $request, PluginInterface $plugin): bool;
+    public function getStorageData(Request $request, ?PluginInterface $plugin): array;
 }

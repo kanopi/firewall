@@ -12,7 +12,6 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Storage;
 
 use Kanopi\Firewall\Traits\FileTrait;
-use Symfony\Component\HttpFoundation\Request;
 
 /**
  * File-based key-value store with in-memory caching.
@@ -88,10 +87,10 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
-    public function recordOffense(Request $request): bool
+    public function recordOffense(string $key): bool
     {
         $this->loadOffenseFile();
-        parent::recordOffense($request);
+        parent::recordOffense($key);
         $this->persistOffenseFile();
         return true;
     }
@@ -99,13 +98,13 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
-    public function set(Request $request, int $expire = 0): bool
+    public function set(string $key, array $value, int $expire = 0): bool
     {
         $this->loadStorageFile();
-        $result = parent::set($request, $expire);
+        $result = parent::set($key, $value, $expire);
         if ($result) {
             $this->getLogger()->debug('Value set in file storage', [
-                'key' => $request->getClientIp(),
+                'key' => $key,
                 'expire' => $expire,
                 'file' => $this->filePath,
             ]);
@@ -118,13 +117,22 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
-    public function delete(Request $request): bool
+    public function get(string $key, mixed $default = null): mixed
     {
         $this->loadStorageFile();
-        $result = parent::delete($request);
+        return parent::get($key, $default);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function delete(string $key): bool
+    {
+        $this->loadStorageFile();
+        $result = parent::delete($key);
         if ($result) {
             $this->getLogger()->debug('Key deleted from file storage', [
-                'key' => $request->getClientIp(),
+                'key' => $key,
                 'file' => $this->filePath,
             ]);
             $this->persistStorageFile();
@@ -154,10 +162,10 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
-    public function addToExpire(Request $request, int $amount): bool
+    public function addToExpire(string $key, int $amount): bool
     {
         $this->loadStorageFile();
-        $return = parent::addToExpire($request, $amount);
+        $return = parent::addToExpire($key, $amount);
         if ($return) {
             $this->persistStorageFile();
         }
@@ -168,9 +176,9 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
-    public function countOffenses(Request $request, int $start = 0, int $end = PHP_INT_MAX): int
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
     {
         $this->loadOffenseFile();
-        return parent::countOffenses($request, $start, $end);
+        return parent::countOffenses($key, $start, $end);
     }
 }
