@@ -47,7 +47,7 @@ final readonly class Firewall
             'bypass_plugins_count' => count($bypassPluginManager->getPlugins()),
             'config' => $config,
         ]);
-        $this->storage->clearExpire();
+        $this->storage->expire();
     }
 
     /**
@@ -114,6 +114,7 @@ final readonly class Firewall
      *
      * @return bool
      *   Return TRUE if allowed to pass. FALSE
+     * @throws \Exception
      */
     public function evaluate(?Request $request = null): bool
     {
@@ -152,12 +153,17 @@ final readonly class Firewall
             return true;
         }
 
-        if ($this->storage->isBlocked($request, intval($this->config['add_to_expire'] ?? 3600)) !== false) {
-            $this->sendBlockingResponse($request);
+        if (($data = $this->storage->isBlocked($this->storage->getKey($request))) !== false) {
+            if (array_key_exists('event_id', $data)) {
+                $request->attributes->set('x-request-id', $data['event_id']);
+            }
+
+            $this->repeatOffender($request);
+            $this->sendBlockingResponse($request, intval($this->config['repeat_offender_status'] ?? 429));
         }
 
         if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {
-            $this->storage->blockIp($request, $plugin);
+            $this->block($request, $plugin);
             $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
         }
 
@@ -168,6 +174,28 @@ final readonly class Firewall
         ]);
 
         return true;
+    }
+
+    /**
+     * Action to acknowledge someone who has already been blocked.
+     *
+     * @param Request $request
+     *   Request to evaluate.
+     */
+    protected function repeatOffender(Request $request): void
+    {
+        $addToExpire = intval($this->config['add_to_expire'] ?? 3600);
+        if ($addToExpire > 0) {
+            $this->storage->addToExpire($this->storage->getKey($request), $addToExpire);
+        }
+
+        $this->storage->recordOffense($this->storage->getKey($request));
+
+        $this->getLogger()->debug('Repeat Offender', [
+            'request_id' => $request->attributes->get('x-request-id'),
+            'client_ip' => $request->getClientIp(),
+            'path' => $request->getPathInfo(),
+        ]);
     }
 
     /**
@@ -323,5 +351,120 @@ final readonly class Firewall
             },
             $template
         ));
+    }
+
+    /**
+     * Block the specific key.
+     *
+     * @param Request $request
+     *   Request information.
+     * @param PluginInterface $plugin
+     *   Plugin that is blocking.
+     *
+     * @return bool
+     *   Return TRUE if successful, FALSE if there is an issue.
+     */
+    protected function block(Request $request, PluginInterface $plugin): bool
+    {
+        $this->getLogger()->warning('Request blocked by plugin', [
+            'request_id' => $request->attributes->get('x-request-id'),
+            'client_ip' => $request->getClientIp(),
+            'plugin' => $plugin->getName(),
+            'status_code' => $plugin->getStatusCode($request),
+            'path' => $request->getPathInfo(),
+            'query' => $request->query->all(),
+            'user_agent' => $request->headers->get('User-Agent') ?? 'unknown',
+        ]);
+
+        $expirationTime = $this->determineExpirationTime(
+            $request,
+            $plugin->getExpirationTime($request)
+        );
+
+        $key = $this->storage->getKey($request);
+        $value = $this->storage->getStorageData($request, $plugin);
+        $success = $this->storage->set(
+            $key,
+            $value,
+            $expirationTime
+        );
+
+        if ($success) {
+            $this->getLogger()->info('IP blocked successfully', [
+                'request_id' => $request->attributes->get('x-request-id'),
+                'key' => $key,
+                'plugin' => $plugin->getName(),
+                'expiration_time' => $expirationTime,
+            ]);
+        } else {
+            $this->getLogger()->error('Failed to block IP', [
+                'request_id' => $request->attributes->get('x-request-id'),
+                'client_ip' => $request->getClientIp(),
+                'plugin' => $plugin->getName(),
+            ]);
+        }
+
+        return $success;
+    }
+
+    /**
+     * Determine the expiration time based on the request and offenses.
+     *
+     * Escalation periods are written in an array/yaml format that look like:
+     *
+     * blocking_escalation:
+     *   - window: 300
+     *     offense: 1
+     *   - window: 3600
+     *     offense: 3
+     *     duration: 3600
+     *   - window: 86400
+     *     offense: 5
+     *     duration: 0
+     *
+     * Setting the window is how far back to look and count the number of offenses recorded. This is required.
+     * Setting the offense is how many offenses we need to count to be able to bypass. If omitted, this defaults to 0.
+     * Setting the duration is how many seconds the request should be banned for. Setting it to 0 means that it
+     * should be permanently banned. Not setting this will use the default amount sent in from the plugin.
+     *
+     * @param Request $request
+     *   Request to evaluate.
+     * @param int $initialTime
+     *   Initial time.
+     *
+     * @return int
+     *   Return the expiration time.
+     */
+    protected function determineExpirationTime(Request $request, int $initialTime = 0): int
+    {
+        if ($initialTime === 0) {
+            return 0;
+        }
+
+        $now = time();
+
+        $key = $this->storage->getKey($request);
+
+        // Reverse the blocking_escalation elements to start from bottom and go up.
+        $stages = array_reverse($this->config['blocking_escalation'] ?? [], true);
+        foreach ($stages as $stage) {
+            // Require the window amount to exist to acknowledge.
+            if (!array_key_exists('window', $stage)) {
+                continue;
+            }
+
+            $windowStart = $now - intval($stage['window']);
+            $count = $this->storage->countOffenses($key, $windowStart, $now);
+
+            if ($count >= intval($stage['offense'])) {
+                return intval($stage['duration'] ?? $initialTime);
+            }
+        }
+
+        if ($stages !== []) {
+            return intval($stages[array_key_last($stages)]['duration'] ?? $initialTime);
+        }
+
+        return $initialTime;
     }
 }
