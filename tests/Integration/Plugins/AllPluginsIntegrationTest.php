@@ -679,7 +679,7 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
         $config = [
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\FileStorage',
-                'config' => ['file' => $this->tempDir . '/multi.data']
+                'config' => ['storage_file' => $this->tempDir . '/multi.data']
             ],
             'bypass' => [
                 // High priority: IP whitelist

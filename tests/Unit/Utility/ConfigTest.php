@@ -1,7 +1,8 @@
 <?php
 
-namespace Kanopi\Firewall\Tests\Unit;
+namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\Config;
 use Symfony\Component\Yaml\Yaml;
 

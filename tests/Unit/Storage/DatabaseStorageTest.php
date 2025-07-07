@@ -90,8 +90,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $plugin = $this->createMock(PluginInterface::class);
         $plugin->method('getName')->willReturn('TestPlugin');
         $request = $this->getRequest();
-        $request->attributes->set('blocking-plugin', $plugin);
-        $result = $this->storage->set($request);
+        $result = $this->storage->set($request->getClientIp(), $this->storage->getStorageData($request, $plugin));
 
         $this->assertTrue($result);
     }
@@ -106,7 +105,7 @@ class DatabaseStorageTest extends AbstractTestCase
             ->with('firewall_storage', ['remote_address' => '1.2.3.4']);
 
         $request = $this->getRequest('1.2.3.4');
-        $this->assertTrue($this->storage->delete($request));
+        $this->assertTrue($this->storage->delete($request->getClientIp()));
     }
 
     /**
@@ -126,7 +125,7 @@ class DatabaseStorageTest extends AbstractTestCase
         // Prevent constructor from connecting, but fake it anyway
         $storage->expects($this->once())
             ->method('createConnection')
-            ->willReturnCallback(function () use ($storage){
+            ->willReturnCallback(function () use ($storage) {
                 $this->injectProtectedProperty($storage, 'connection', $this->mockConnection);
                 $this->injectProtectedProperty($storage, 'schemaManager', $this->mockSchema);
                 $this->injectProtectedProperty($storage, 'config', [
@@ -137,7 +136,7 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $storage->expects($this->once())
             ->method('exists')
-            ->with($request)
+            ->with($request->getClientIp())
             ->willReturn(true);
 
         // Trigger constructor logic
@@ -155,7 +154,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
         $this->mockResult->method('fetchAssociative')->willReturn($row);
 
-        $this->assertSame($row, $storage->get($request));
+        $this->assertSame($row, $storage->get($request->getClientIp()));
     }
 
     /**
@@ -185,7 +184,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockResult->method('fetchAllAssociative')->willReturn([['remote_address' => '1.2.3.4']]);
 
         $request = $this->getRequest('1.2.3.4');
-        $this->assertTrue($this->storage->exists($request));
+        $this->assertTrue($this->storage->exists($request->getClientIp()));
     }
 
     /**
@@ -202,7 +201,7 @@ class DatabaseStorageTest extends AbstractTestCase
         // ✅ Ensure executeQuery returns a valid Result mock
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
 
-        $this->assertTrue($this->storage->clearExpire());
+        $this->assertTrue($this->storage->expire());
     }
 
     /**
@@ -222,7 +221,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
 
         $request = $this->getRequest('1.2.3.4');
-        $this->assertTrue($this->storage->addToExpire($request, 300));
+        $this->assertTrue($this->storage->addToExpire($request->getClientIp(), 300));
     }
 
     /**
@@ -266,7 +265,7 @@ class DatabaseStorageTest extends AbstractTestCase
         // Prevent constructor from connecting, but fake it anyway
         $storage->expects($this->once())
             ->method('createConnection')
-            ->willReturnCallback(function () use ($storage){
+            ->willReturnCallback(function () use ($storage) {
                 $this->injectProtectedProperty($storage, 'connection', $this->mockConnection);
                 $this->injectProtectedProperty($storage, 'schemaManager', $this->mockSchema);
                 $this->injectProtectedProperty($storage, 'config', [
@@ -277,7 +276,7 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $storage->expects($this->once())
             ->method('exists')
-            ->with($request)
+            ->with($request->getClientIp())
             ->willReturn(true);
 
         // Trigger constructor logic
@@ -299,7 +298,7 @@ class DatabaseStorageTest extends AbstractTestCase
         // Simulate update() failing
         $this->mockConnection->method('update')->willThrowException(new \Exception('Simulated failure'));
 
-        $result = $storage->set($request);
+        $result = $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
 
         $this->assertFalse($result);
     }
@@ -320,7 +319,7 @@ class DatabaseStorageTest extends AbstractTestCase
         // Prevent constructor from connecting, but fake it anyway
         $storage->expects($this->once())
             ->method('createConnection')
-            ->willReturnCallback(function () use ($storage){
+            ->willReturnCallback(function () use ($storage) {
                 $this->injectProtectedProperty($storage, 'connection', $this->mockConnection);
                 $this->injectProtectedProperty($storage, 'schemaManager', $this->mockSchema);
                 $this->injectProtectedProperty($storage, 'config', [
@@ -331,7 +330,7 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $storage->expects($this->once())
             ->method('exists')
-            ->with($request)
+            ->with($request->getClientIp())
             ->willReturn(true);
 
         // Trigger constructor logic
@@ -352,7 +351,7 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $this->mockConnection->method('update')->willReturn(1);
 
-        $result = $storage->set($request);
+        $result = $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
 
         $this->assertTrue($result);
     }
@@ -364,7 +363,7 @@ class DatabaseStorageTest extends AbstractTestCase
     {
         $this->mockConnection->method('delete')->willThrowException(new \Exception());
         $request = $this->getRequest('1.2.3.4');
-        $this->assertFalse($this->storage->delete($request));
+        $this->assertFalse($this->storage->delete($request->getClientIp()));
     }
 
     /**
@@ -374,7 +373,7 @@ class DatabaseStorageTest extends AbstractTestCase
     {
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
         $request = $this->getRequest('1.2.3.4');
-        $result = $this->storage->get($request, 'default');
+        $result = $this->storage->get($request->getClientIp(), 'default');
         $this->assertSame('default', $result);
     }
 
@@ -394,7 +393,7 @@ class DatabaseStorageTest extends AbstractTestCase
     {
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
         $request = $this->getRequest('1.2.3.4');
-        $this->assertFalse($this->storage->exists($request));
+        $this->assertFalse($this->storage->exists($request->getClientIp()));
     }
 
     /**
@@ -404,7 +403,7 @@ class DatabaseStorageTest extends AbstractTestCase
     {
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
         $request = $this->getRequest('1.2.3.4');
-        $this->assertFalse($this->storage->addToExpire($request, 60));
+        $this->assertFalse($this->storage->addToExpire($request->getClientIp(), 60));
     }
 
     /**
@@ -419,7 +418,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willThrowException(new \Exception('delete failed'));
 
-        $this->assertFalse($this->storage->clearExpire());
+        $this->assertFalse($this->storage->expire());
     }
 
     /**
@@ -438,7 +437,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $defaultValue = ['fallback' => true];
 
         $request = $this->getRequest('1.2.3.4');
-        $result = $this->storage->get($request, $defaultValue);
+        $result = $this->storage->get($request->getClientIp(), $defaultValue);
 
         $this->assertSame($defaultValue, $result);
     }
@@ -460,7 +459,7 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $default = ['safe' => 'fallback'];
         $request = $this->getRequest('1.2.3.4');
-        $this->assertSame($default, $this->storage->get($request, $default));
+        $this->assertSame($default, $this->storage->get($request->getClientIp(), $default));
     }
 
     /**
@@ -470,7 +469,7 @@ class DatabaseStorageTest extends AbstractTestCase
     {
         $this->mockConnection->method('insert')->willThrowException(new \Exception());
         $request = $this->getRequest('1.2.3.4');
-        $this->assertFalse($this->storage->recordOffense($request));
+        $this->assertFalse($this->storage->recordOffense($request->getClientIp()));
     }
 
     /**
@@ -480,7 +479,7 @@ class DatabaseStorageTest extends AbstractTestCase
     {
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
         $request = $this->getRequest('1.2.3.4');
-        $this->assertEquals(0, $this->storage->countOffenses($request));
+        $this->assertEquals(0, $this->storage->countOffenses($request->getClientIp()));
     }
 
     /**
@@ -498,7 +497,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockResult->method('fetchAllAssociative')->willReturn([['remote_address' => '1.2.3.4']]);
 
         $request = $this->getRequest('1.2.3.4');
-        $this->assertEquals(1, $this->storage->countOffenses($request));
+        $this->assertEquals(1, $this->storage->countOffenses($request->getClientIp()));
     }
 
     /**
@@ -528,7 +527,7 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $storage->expects($this->once())
             ->method('exists')
-            ->with($request)
+            ->with($request->getClientIp())
             ->willReturn(true);
 
         // Trigger constructor logic
@@ -540,6 +539,6 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
 
-        $this->assertEquals('not found', $storage->get($request, 'not found'));
+        $this->assertEquals('not found', $storage->get($request->getClientIp(), 'not found'));
     }
 }

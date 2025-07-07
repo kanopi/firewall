@@ -67,7 +67,7 @@ class FirewallRequestFlowTest extends TestCase
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\FileStorage',
                 'config' => [
-                    'file' => $this->tempDir . '/blocked.data'
+                    'storage_file' => $this->tempDir . '/blocked.data'
                 ]
             ],
             'block' => [
@@ -115,7 +115,7 @@ class FirewallRequestFlowTest extends TestCase
         $blockedData = $storageData['192.168.1.100']['value'] ?? [];
         $this->assertArrayHasKey('plugin', $blockedData);
         $this->assertEquals('IP Address', $blockedData['plugin']);
-        $this->assertArrayHasKey('blocked', $blockedData);
+        $this->assertArrayHasKey('timestamp', $blockedData);
         $this->assertArrayHasKey('event_id', $blockedData);
         $this->assertArrayHasKey('request', $blockedData);
     }
@@ -190,7 +190,7 @@ class FirewallRequestFlowTest extends TestCase
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\FileStorage',
                 'config' => [
-                    'file' => $storageFile
+                    'storage_file' => $storageFile
                 ]
             ],
             'block' => [
@@ -265,7 +265,7 @@ class FirewallRequestFlowTest extends TestCase
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\FileStorage',
                 'config' => [
-                    'file' => $storageFile
+                    'storage_file' => $storageFile
                 ]
             ],
             'block' => [
@@ -426,7 +426,7 @@ class FirewallRequestFlowTest extends TestCase
         
         // Override configuration values
         $overrides = [
-            '[storage][config][file]' => $this->tempDir . '/overridden.data',
+            '[storage][config][storage_file]' => $this->tempDir . '/overridden.data',
             '[block][Kanopi\Firewall\Plugins\IpAddress][enable]' => true,
             '[block][Kanopi\Firewall\Plugins\IpAddress][config][1]' => '192.168.1.2'
         ];

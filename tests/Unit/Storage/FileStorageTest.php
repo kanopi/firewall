@@ -26,6 +26,7 @@ class FileStorageTest extends AbstractTestCase
 
         $GLOBALS['simulate_is_readable_failure'] = false;
         $GLOBALS['simulate_is_writeable_failure'] = false;
+        $GLOBALS['simulate_file_put_contents_failure'] = false;
     }
 
     protected function tearDown(): void
@@ -59,7 +60,7 @@ class FileStorageTest extends AbstractTestCase
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
 
         $request = $this->getRequest('127.0.0.1', 'data');
-        $this->assertSame('data', $storage->get($request)['event_id']);
+        $this->assertSame('data', $storage->get($request->getClientIp())['event_id']);
     }
 
     /**
@@ -72,7 +73,7 @@ class FileStorageTest extends AbstractTestCase
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
 
         $request = $this->getRequest();
-        $this->assertFalse($storage->exists($request));
+        $this->assertFalse($storage->exists($request->getClientIp()));
     }
 
     /**
@@ -82,10 +83,10 @@ class FileStorageTest extends AbstractTestCase
     {
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
         $request = $this->getRequest();
-        $storage->set($request);
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
 
         $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
-        $this->assertSame('abc', $reloaded->get($request)['event_id']);
+        $this->assertSame('abc', $reloaded->get($request->getClientIp())['event_id']);
     }
 
     /**
@@ -95,12 +96,12 @@ class FileStorageTest extends AbstractTestCase
     {
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
         $request = $this->getRequest();
-        $storage->set($request);
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
 
-        $this->assertTrue($storage->delete($request));
+        $this->assertTrue($storage->delete($request->getClientIp()));
 
         $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
-        $this->assertFalse($reloaded->exists($request));
+        $this->assertFalse($reloaded->exists($request->getClientIp()));
     }
 
     /**
@@ -110,11 +111,11 @@ class FileStorageTest extends AbstractTestCase
     {
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
         $request = $this->getRequest();
-        $storage->set($request);
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
         $storage->reset();
 
         $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
-        $this->assertFalse($reloaded->exists($request));
+        $this->assertFalse($reloaded->exists($request->getClientIp()));
     }
 
     /**
@@ -124,11 +125,11 @@ class FileStorageTest extends AbstractTestCase
     {
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
         $request = $this->getRequest();
-        $storage->set($request, 2);
-        $storage->addToExpire($request, 5);
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, null), 2);
+        $storage->addToExpire($request->getClientIp(), 5);
 
         $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
-        $this->assertSame('abc', $reloaded->get($request)['event_id']);
+        $this->assertSame('abc', $reloaded->get($request->getClientIp())['event_id']);
     }
 
     /**
@@ -138,9 +139,9 @@ class FileStorageTest extends AbstractTestCase
     {
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
         $request = $this->getRequest();
-        $storage->set($request, 0);
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, null), 0);
 
-        $this->assertFalse($storage->addToExpire($request, 5));
+        $this->assertFalse($storage->addToExpire($request->getClientIp(), 5));
     }
 
     /**
@@ -170,7 +171,7 @@ class FileStorageTest extends AbstractTestCase
 
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
         $request = $this->getRequest();
-        $storage->set($request);
+        $storage->set($request->getClientIp(), ['value' => 1]);
 
         $GLOBALS['simulate_file_put_contents_failure'] = false;
 
@@ -221,10 +222,10 @@ class FileStorageTest extends AbstractTestCase
 
         $storage = new FileStorage(['storage_file' => $tempStorageFile, 'offense_file' => $tempOffenseFile]);
         $request = $this->getRequest();
-        $this->assertEquals(0, $storage->countOffenses($request));
+        $this->assertEquals(0, $storage->countOffenses($request->getClientIp()));
 
-        $storage->recordOffense($request);
-        $this->assertEquals(1, $storage->countOffenses($request));
+        $storage->recordOffense($request->getClientIp());
+        $this->assertEquals(1, $storage->countOffenses($request->getClientIp()));
 
         @unlink($tempStorageFile);
         @unlink($tempOffenseFile);

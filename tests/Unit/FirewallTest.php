@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit;
 
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
+use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
 use PHPUnit\Framework\MockObject\MockObject;
 use Symfony\Component\HttpFoundation\Request;
@@ -27,19 +29,20 @@ class FirewallTest extends AbstractTestCase
     /**
      * Creates a Firewall instance with protected constructor via reflection.
      */
-    private function createFirewall(array $config = []): Firewall {
+    private function createFirewall(array $config = [], ?StorageInterface $storage = null): Firewall {
         $ref = new \ReflectionClass(Firewall::class);
         $firewall = $ref->newInstanceWithoutConstructor();
         $constructor = $ref->getConstructor();
         $constructor->setAccessible(true);
-        $constructor->invoke($firewall, $this->storage, $this->blockManager, $this->bypassManager, $config);
+        $constructor->invoke($firewall, $storage ?? $this->storage, $this->blockManager, $this->bypassManager, $config);
         return $firewall;
     }
 
     /**
      * Ensure bypass plugin short-circuits evaluation and returns true.
      */
-    public function testEvaluateBypassPluginAllows(): void {
+    public function testEvaluateBypassPluginAllows(): void
+    {
         $request = Request::create('/');
         $request->attributes->set('x-request-id', 'abc123');
         $plugin = $this->createMock(PluginInterface::class);
@@ -52,29 +55,31 @@ class FirewallTest extends AbstractTestCase
     /**
      * Ensure blocked IP triggers sendBlockingResponse and stops evaluation.
      */
-    public function testEvaluateBlockedIp(): void {
+    public function testEvaluateBlockedIp(): void
+    {
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
-        $request->attributes->set('x-request-id', 'mock-blocked');
+        $request->attributes->set('x-request-id', 'abc12e');
 
         $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('isBlocked')->willReturn(true);
+        $this->storage->method('isBlocked')->willReturn(['event_id' => 'mock-blocked']);
 
         $firewall = $this->createFirewall();
         $this->expectException(\Exception::class);
         $this->expectExceptionMessage('mock-blocked Request Banned');
-        $this->expectExceptionCode(400);
+        $this->expectExceptionCode(429);
         $firewall->evaluate($request);
     }
 
     /**
      * Ensure blocked IP triggers sendBlockingResponse and stops evaluation.
      */
-    public function testEvaluateBlockedIpCustomStatusMessage(): void {
+    public function testEvaluateBlockedIpCustomStatusMessage(): void
+    {
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
         $request->attributes->set('x-request-id', 'mock-blocked');
 
         $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('isBlocked')->willReturn(true);
+        $this->storage->method('isBlocked')->willReturn([]);
 
         $firewall = $this->createFirewall(['banning_status_code' => 429, 'banning_message' => 'You are banned']);
         $this->expectException(\Exception::class);
@@ -86,7 +91,8 @@ class FirewallTest extends AbstractTestCase
     /**
      * Ensure blocking plugin can block and invoke sendBlockingResponse().
      */
-    public function testEvaluateBlockingPluginBlocks(): void {
+    public function testEvaluateBlockingPluginBlocks(): void
+    {
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
         $request->attributes->set('x-request-id', 'plugin-id');
 
@@ -99,9 +105,9 @@ class FirewallTest extends AbstractTestCase
         $this->storage->method('isBlocked')->willReturn(false);
 
         $this->blockManager->expects($this->once())->method('evaluate')->willReturn($plugin);
-        $this->storage->method('blockIp');
 
         $firewall = $this->createFirewall();
+
         $this->expectException(\Exception::class);
         $this->expectExceptionMessage('plugin-id Request Banned');
         $this->expectExceptionCode(403);
@@ -109,9 +115,62 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Test Status Code when the value is 0.
+     */
+    public function testEvaluateBlockingPluginBlocksStatusCode(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
+        $request->attributes->set('x-request-id', 'plugin-id');
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Blocker');
+        $plugin->method('getExpirationTime')->willReturn(600);
+        $plugin->method('getStatusCode')->willReturn(0);
+
+        $this->bypassManager->method('evaluate')->willReturn(false);
+        $this->storage->method('isBlocked')->willReturn(false);
+
+        $this->blockManager->expects($this->once())->method('evaluate')->willReturn($plugin);
+
+        $firewall = $this->createFirewall(['banning_status_code' => 429, 'banning_message' => 'You are banned']);
+
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage('You are banned');
+        $this->expectExceptionCode(429);
+        $firewall->evaluate($request);
+    }
+
+    /**
+     * Test Status Code when the value is 0.
+     */
+    public function testEvaluateBlockingPluginBlocksStatusCodeWithNoDefaults(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
+        $request->attributes->set('x-request-id', 'plugin-id');
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Blocker');
+        $plugin->method('getExpirationTime')->willReturn(600);
+        $plugin->method('getStatusCode')->willReturn(0);
+
+        $this->bypassManager->method('evaluate')->willReturn(false);
+        $this->storage->method('isBlocked')->willReturn(false);
+
+        $this->blockManager->expects($this->once())->method('evaluate')->willReturn($plugin);
+
+        $firewall = $this->createFirewall();
+
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage('plugin-id Request Banned');
+        $this->expectExceptionCode(400);
+        $firewall->evaluate($request);
+    }
+
+    /**
      * Ensure request not bypassed and not blocked continues to pass through.
      */
-    public function testEvaluateContinuesIfNotBlocked(): void {
+    public function testEvaluateContinuesIfNotBlocked(): void
+    {
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '9.9.9.9']);
         $this->bypassManager->method('evaluate')->willReturn(false);
         $this->storage->method('isBlocked')->willReturn(false);
@@ -123,7 +182,8 @@ class FirewallTest extends AbstractTestCase
     /**
      * Ensure generated request ID is uppercase 32-character hash.
      */
-    public function testGenerateIdReturnsValidHash(): void {
+    public function testGenerateIdReturnsValidHash(): void
+    {
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '8.8.8.8']);
         $ref = new \ReflectionClass(Firewall::class);
         $firewall = $this->createFirewall();
@@ -199,5 +259,114 @@ class FirewallTest extends AbstractTestCase
         $message = '{{request.scheme}} {{request.method}} {{request.host}} {{request.ip}} {{request.path}} {{request.post.abc}} {{request.header.accept}} {{request.cookie.X-REQUEST-ID}} {{notfound}} {{context-element}}';
         $result = $method->invoke($firewall, $message, $request, ['context-element' => 'context']);
         $this->assertEquals('http POST localhost 8.8.8.8 / 123 text/html ABC123 {{notfound}} context', $result);
+    }
+
+    /**
+     * Confirm that is blocked returns true.
+     */
+    public function testDetermineExpirationTime(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.1.1.1']);
+        $config = [
+            'blocking_escalation' => [
+                [
+                    'window' => 600,
+                    'offense' => 0,
+                ],
+                [
+                    'window' => 3600,
+                    'offense' => 3,
+                    'duration' => 300,
+                ],
+                [
+                    'window' => 86400,
+                    'offense' => 4,
+                    'duration' => 0,
+                ]
+            ],
+        ];
+
+        $storage = new InMemoryStorage();
+
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall($config, $storage);
+        $method = $ref->getMethod('determineExpirationTime');
+        $method->setAccessible(true);
+
+        $storage->recordOffense($request->getClientIp());
+        $result = $method->invoke($firewall, $request, 0);
+        $this->assertEquals(0, $result);
+
+        $storage->recordOffense($request->getClientIp());
+        $result = $method->invoke($firewall, $request, 100);
+        $this->assertEquals(100, $result);
+
+        $storage->recordOffense($request->getClientIp());
+        $result = $method->invoke($firewall, $request, 100);
+        $this->assertEquals(300, $result);
+
+        $storage->recordOffense($request->getClientIp());
+        $result = $method->invoke($firewall, $request, 100);
+        $this->assertEquals(0, $result);
+    }
+
+    /**
+     * Confirm that is blocked returns true.
+     */
+    public function testDetermineExpirationTimeDefaults(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.1.1.1']);
+        $config = [
+            'blocking_escalation' => [
+                [
+                    'offense' => 0,
+                    'duration' => 300
+                ],
+                [
+                    'window' => 3600,
+                    'offense' => 3,
+                    'duration' => 300,
+                ],
+                [
+                    'window' => 86400,
+                    'offense' => 4,
+                    'duration' => 0,
+                ]
+            ],
+        ];
+
+        $storage = new InMemoryStorage();
+
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall($config, $storage);
+        $method = $ref->getMethod('determineExpirationTime');
+        $method->setAccessible(true);
+
+        $storage->recordOffense($request->getClientIp());
+        $result = $method->invoke($firewall, $request, 0);
+        $this->assertEquals(0, $result);
+
+        $storage->recordOffense($request->getClientIp());
+        $result = $method->invoke($firewall, $request, 100);
+        $this->assertEquals(300, $result);
+    }
+
+    /**
+     * Test Returns true if successful.
+     */
+    public function testBlockFunction(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.1.1.1']);
+        $storage = new InMemoryStorage();
+
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall([], $storage);
+        $method = $ref->getMethod('block');
+        $method->setAccessible(true);
+
+        $plugin = new IpAddress();
+
+        $result = $method->invoke($firewall, $request, $plugin);
+        $this->assertTrue($result);
     }
 }
