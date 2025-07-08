@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins;
+namespace Kanopi\Firewall\Traits;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
@@ -77,25 +77,28 @@ trait DatabaseTrait
     protected function createTable(): void
     {
         /** @phpstan-ignore-next-line */
-        if (method_exists($this, 'getStorageTable') && !$this->schemaManager->tableExists($this->config['storage_table'])) {
-            /** @var Table $table */
-            $table = $this->getStorageTable();
-            try {
-                $this->schemaManager->createTable($table);
-
-                $this->getLogger()->info('Database table created', [
-                    'table' => $this->config['storage_table'],
-                ]);
-            } catch (\Exception $e) {
-                $this->getLogger()->error('Failed to create database table', [
-                    'table' => $this->config['storage_table'],
-                    'error' => $e->getMessage(),
-                ]);
+        if (method_exists($this, 'getStorageTables')) {
+            $tables = $this->getStorageTables();
+            /** @var Table[] $tables */
+            foreach ($tables as $table) {
+                if (!$this->schemaManager->tablesExist([$table->getName()])) {
+                    try {
+                        $this->schemaManager->createTable($table);
+                        $this->getLogger()->info('Database table created', [
+                            'table' => $table->getName(),
+                        ]);
+                    } catch (\Exception $e) {
+                        $this->getLogger()->error('Failed to create database table', [
+                            'table' => $table->getName(),
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                } else {
+                    $this->getLogger()->debug('Database table already exists', [
+                        'table' => $this->config['storage_table'],
+                    ]);
+                }
             }
-        } else {
-            $this->getLogger()->debug('Database table already exists', [
-                'table' => $this->config['storage_table'],
-            ]);
         }
     }
 

@@ -2,6 +2,7 @@
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\Traits\EvaluateTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**

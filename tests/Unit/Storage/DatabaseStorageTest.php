@@ -8,6 +8,8 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Kanopi\Firewall\Plugins\IpAddress;
+use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Storage\DatabaseStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
@@ -45,7 +47,7 @@ class DatabaseStorageTest extends AbstractTestCase
         // Partial mock
         $this->storage = $this->getMockBuilder(DatabaseStorage::class)
             ->disableOriginalConstructor()
-            ->onlyMethods(['createConnection', 'getStorageTable'])
+            ->onlyMethods(['createConnection', 'getStorageTables'])
             ->getMock();
 
         // Prevent constructor from connecting, but fake it anyway
@@ -56,6 +58,7 @@ class DatabaseStorageTest extends AbstractTestCase
                 $this->injectProtectedProperty($this->storage, 'schemaManager', $this->mockSchema);
                 $this->injectProtectedProperty($this->storage, 'config', [
                     'storage_table' => 'firewall_storage',
+                    'offenses_table' => 'firewall_offense',
                 ]);
             });
 
@@ -63,6 +66,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->storage->__construct([
             'connection' => [],
             'storage_table' => 'firewall_storage',
+            'offenses_table' => 'firewall_offense',
         ]);
     }
 
@@ -81,14 +85,12 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
 
-        $this->mockResult->method('rowCount')->willReturn(0);
+        $this->mockResult->method('fetchAssociative')->willReturn([]);
 
-        $result = $this->storage->set('1.2.3.4', [
-            'plugin' => 'TestPlugin',
-            'event_id' => 'EVT',
-            'request' => ['foo' => 'bar'],
-            'blocked' => 'now',
-        ]);
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('TestPlugin');
+        $request = $this->getRequest();
+        $result = $this->storage->set($request->getClientIp(), $this->storage->getStorageData($request, $plugin));
 
         $this->assertTrue($result);
     }
@@ -102,7 +104,8 @@ class DatabaseStorageTest extends AbstractTestCase
             ->method('delete')
             ->with('firewall_storage', ['remote_address' => '1.2.3.4']);
 
-        $this->assertTrue($this->storage->delete('1.2.3.4'));
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertTrue($this->storage->delete($request->getClientIp()));
     }
 
     /**
@@ -111,6 +114,37 @@ class DatabaseStorageTest extends AbstractTestCase
     public function testGetReturnsDataIfExists(): void
     {
         $row = ['remote_address' => '1.2.3.4', 'plugin' => 'TestPlugin'];
+        $request = $this->getRequest('1.2.3.4');
+
+        // Partial mock
+        $storage = $this->getMockBuilder(DatabaseStorage::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['createConnection', 'getStorageTables', 'exists'])
+            ->getMock();
+
+        // Prevent constructor from connecting, but fake it anyway
+        $storage->expects($this->once())
+            ->method('createConnection')
+            ->willReturnCallback(function () use ($storage) {
+                $this->injectProtectedProperty($storage, 'connection', $this->mockConnection);
+                $this->injectProtectedProperty($storage, 'schemaManager', $this->mockSchema);
+                $this->injectProtectedProperty($storage, 'config', [
+                    'storage_table' => 'firewall_storage',
+                    'offenses_table' => 'firewall_offense',
+                ]);
+            });
+
+        $storage->expects($this->once())
+            ->method('exists')
+            ->with($request->getClientIp())
+            ->willReturn(true);
+
+        // Trigger constructor logic
+        $storage->__construct([
+            'connection' => [],
+            'storage_table' => 'firewall_storage',
+            'offenses_table' => 'firewall_offense',
+        ]);
 
         $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
         $this->mockBuilder->method('select')->willReturnSelf();
@@ -118,11 +152,9 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('where')->willReturnSelf();
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
-
         $this->mockResult->method('fetchAssociative')->willReturn($row);
-        $this->mockResult->method('rowCount')->willReturn(1);
 
-        $this->assertSame($row, $this->storage->get('1.2.3.4'));
+        $this->assertSame($row, $storage->get($request->getClientIp()));
     }
 
     /**
@@ -149,9 +181,10 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
 
-        $this->mockResult->method('rowCount')->willReturn(1);
+        $this->mockResult->method('fetchAllAssociative')->willReturn([['remote_address' => '1.2.3.4']]);
 
-        $this->assertTrue($this->storage->exists('1.2.3.4'));
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertTrue($this->storage->exists($request->getClientIp()));
     }
 
     /**
@@ -168,7 +201,7 @@ class DatabaseStorageTest extends AbstractTestCase
         // ✅ Ensure executeQuery returns a valid Result mock
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
 
-        $this->assertTrue($this->storage->clearExpire());
+        $this->assertTrue($this->storage->expire());
     }
 
     /**
@@ -187,29 +220,31 @@ class DatabaseStorageTest extends AbstractTestCase
         // ✅ Ensure executeQuery returns a valid Result mock
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
 
-        $this->assertTrue($this->storage->addToExpire('1.2.3.4', 300));
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertTrue($this->storage->addToExpire($request->getClientIp(), 300));
     }
 
     /**
-     * Tests that getStorageTable() returns a valid Table with expected columns and indexes.
+     * Tests that getStorageTables() returns a valid Table with expected columns and indexes.
      */
-    public function testGetStorageTableStructure(): void
+    public function testGetStorageTablesStructure(): void
     {
         $storage = new \Kanopi\Firewall\Storage\DatabaseStorage(['connection' => [
             'dsn' => 'sqlite3:///:memory:'
         ], 'storage_table' => 'firewall_storage']);
         $table = (new \ReflectionClass($storage))
-            ->getMethod('getStorageTable');
+            ->getMethod('getStorageTables');
         $table->setAccessible(true);
 
-        /** @var \Doctrine\DBAL\Schema\Table $result */
-        $result = $table->invoke($storage);
+        /** @var \Doctrine\DBAL\Schema\Table[] $tables */
+        $tables = $table->invoke($storage);
+        $result = $tables[array_key_first($tables)];
 
         $this->assertSame('firewall_storage', $result->getName());
         $this->assertTrue($result->hasColumn('remote_address'));
         $this->assertTrue($result->hasColumn('plugin'));
         $this->assertTrue($result->hasColumn('event_id'));
-        $this->assertTrue($result->hasColumn('blocked'));
+        $this->assertTrue($result->hasColumn('timestamp'));
         $this->assertTrue($result->hasColumn('request'));
         $this->assertTrue($result->hasColumn('expire'));
         $this->assertTrue($result->hasIndex('remote_address'));
@@ -220,6 +255,37 @@ class DatabaseStorageTest extends AbstractTestCase
      */
     public function testSetHandlesException(): void
     {
+        $request = $this->getRequest('1.2.3.4');
+        // Partial mock
+        $storage = $this->getMockBuilder(DatabaseStorage::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['createConnection', 'getStorageTables', 'exists'])
+            ->getMock();
+
+        // Prevent constructor from connecting, but fake it anyway
+        $storage->expects($this->once())
+            ->method('createConnection')
+            ->willReturnCallback(function () use ($storage) {
+                $this->injectProtectedProperty($storage, 'connection', $this->mockConnection);
+                $this->injectProtectedProperty($storage, 'schemaManager', $this->mockSchema);
+                $this->injectProtectedProperty($storage, 'config', [
+                    'storage_table' => 'firewall_storage',
+                    'offenses_table' => 'firewall_offense',
+                ]);
+            });
+
+        $storage->expects($this->once())
+            ->method('exists')
+            ->with($request->getClientIp())
+            ->willReturn(true);
+
+        // Trigger constructor logic
+        $storage->__construct([
+            'connection' => [],
+            'storage_table' => 'firewall_storage',
+            'offenses_table' => 'firewall_offense',
+        ]);
+
         // Simulate that the key exists (so it takes the update path)
         $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
         $this->mockBuilder->method('select')->willReturnSelf();
@@ -227,17 +293,12 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('where')->willReturnSelf();
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
-        $this->mockResult->method('rowCount')->willReturn(1); // Simulate key exists
+        $this->mockResult->method('fetchAssociative')->willReturn([]); // Simulate key exists
 
         // Simulate update() failing
         $this->mockConnection->method('update')->willThrowException(new \Exception('Simulated failure'));
 
-        $result = $this->storage->set('1.2.3.4', [
-            'plugin' => 'TestPlugin',
-            'event_id' => 'TestEvent',
-            'request' => ['example' => 'data'],
-            'blocked' => 'now',
-        ]);
+        $result = $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
 
         $this->assertFalse($result);
     }
@@ -247,6 +308,38 @@ class DatabaseStorageTest extends AbstractTestCase
      */
     public function testSetHandlesUpdate(): void
     {
+        $request = $this->getRequest('1.2.3.4');
+
+        // Partial mock
+        $storage = $this->getMockBuilder(DatabaseStorage::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['createConnection', 'getStorageTables', 'exists'])
+            ->getMock();
+
+        // Prevent constructor from connecting, but fake it anyway
+        $storage->expects($this->once())
+            ->method('createConnection')
+            ->willReturnCallback(function () use ($storage) {
+                $this->injectProtectedProperty($storage, 'connection', $this->mockConnection);
+                $this->injectProtectedProperty($storage, 'schemaManager', $this->mockSchema);
+                $this->injectProtectedProperty($storage, 'config', [
+                    'storage_table' => 'firewall_storage',
+                    'offenses_table' => 'firewall_offense',
+                ]);
+            });
+
+        $storage->expects($this->once())
+            ->method('exists')
+            ->with($request->getClientIp())
+            ->willReturn(true);
+
+        // Trigger constructor logic
+        $storage->__construct([
+            'connection' => [],
+            'storage_table' => 'firewall_storage',
+            'offenses_table' => 'firewall_offense',
+        ]);
+
         // Simulate that the key exists (so it takes the update path)
         $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
         $this->mockBuilder->method('select')->willReturnSelf();
@@ -254,16 +347,11 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('where')->willReturnSelf();
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
-        $this->mockResult->method('rowCount')->willReturn(1); // Simulate key exists
+        $this->mockResult->method('fetchAllAssociative')->willReturn([[]]); // Simulate key exists
 
         $this->mockConnection->method('update')->willReturn(1);
 
-        $result = $this->storage->set('1.2.3.4', [
-            'plugin' => 'TestPlugin',
-            'event_id' => 'TestEvent',
-            'request' => ['example' => 'data'],
-            'blocked' => 'now',
-        ]);
+        $result = $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
 
         $this->assertTrue($result);
     }
@@ -274,7 +362,8 @@ class DatabaseStorageTest extends AbstractTestCase
     public function testDeleteHandlesException(): void
     {
         $this->mockConnection->method('delete')->willThrowException(new \Exception());
-        $this->assertFalse($this->storage->delete('x.x.x.x'));
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertFalse($this->storage->delete($request->getClientIp()));
     }
 
     /**
@@ -283,7 +372,8 @@ class DatabaseStorageTest extends AbstractTestCase
     public function testGetHandlesException(): void
     {
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
-        $result = $this->storage->get('1.2.3.4', 'default');
+        $request = $this->getRequest('1.2.3.4');
+        $result = $this->storage->get($request->getClientIp(), 'default');
         $this->assertSame('default', $result);
     }
 
@@ -302,7 +392,8 @@ class DatabaseStorageTest extends AbstractTestCase
     public function testExistsHandlesException(): void
     {
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
-        $this->assertFalse($this->storage->exists('1.2.3.4'));
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertFalse($this->storage->exists($request->getClientIp()));
     }
 
     /**
@@ -311,7 +402,8 @@ class DatabaseStorageTest extends AbstractTestCase
     public function testAddToExpireHandlesException(): void
     {
         $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
-        $this->assertFalse($this->storage->addToExpire('1.2.3.4', 60));
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertFalse($this->storage->addToExpire($request->getClientIp(), 60));
     }
 
     /**
@@ -326,7 +418,7 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willThrowException(new \Exception('delete failed'));
 
-        $this->assertFalse($this->storage->clearExpire());
+        $this->assertFalse($this->storage->expire());
     }
 
     /**
@@ -343,7 +435,9 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('executeQuery')->willThrowException(new \Exception('read failed'));
 
         $defaultValue = ['fallback' => true];
-        $result = $this->storage->get('nonexistent-key', $defaultValue);
+
+        $request = $this->getRequest('1.2.3.4');
+        $result = $this->storage->get($request->getClientIp(), $defaultValue);
 
         $this->assertSame($defaultValue, $result);
     }
@@ -364,6 +458,87 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockResult->method('fetchAssociative')->willThrowException(new \Exception('DB fetch failed'));
 
         $default = ['safe' => 'fallback'];
-        $this->assertSame($default, $this->storage->get('1.2.3.4', $default));
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertSame($default, $this->storage->get($request->getClientIp(), $default));
+    }
+
+    /**
+     * Test Recording Offense Throws Exception and Returns False.
+     */
+    public function testRecordOffenseThrowsExceptionReturnsFalse(): void
+    {
+        $this->mockConnection->method('insert')->willThrowException(new \Exception());
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertFalse($this->storage->recordOffense($request->getClientIp()));
+    }
+
+    /**
+     * Test Recording Offense Throws Exception and Returns False.
+     */
+    public function testCountOffensesThrowsExceptionReturns0(): void
+    {
+        $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertEquals(0, $this->storage->countOffenses($request->getClientIp()));
+    }
+
+    /**
+     * Test Recording Offense Throws Exception and Returns False.
+     */
+    public function testCountOffensesThrowsExceptionReturnsCount(): void
+    {
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('andWhere')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn([['remote_address' => '1.2.3.4']]);
+
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertEquals(1, $this->storage->countOffenses($request->getClientIp()));
+    }
+
+    /**
+     * Test Get returns default if item not already found.
+     */
+    public function testGetExceptionThrownReturnDefault(): void
+    {
+        $request = $this->getRequest('1.2.3.4');
+
+        // Partial mock
+        $storage = $this->getMockBuilder(DatabaseStorage::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['createConnection', 'getStorageTables', 'exists'])
+            ->getMock();
+
+        // Prevent constructor from connecting, but fake it anyway
+        $storage->expects($this->once())
+            ->method('createConnection')
+            ->willReturnCallback(function () use ($storage){
+                $this->injectProtectedProperty($storage, 'connection', $this->mockConnection);
+                $this->injectProtectedProperty($storage, 'schemaManager', $this->mockSchema);
+                $this->injectProtectedProperty($storage, 'config', [
+                    'storage_table' => 'firewall_storage',
+                    'offenses_table' => 'firewall_offense',
+                ]);
+            });
+
+        $storage->expects($this->once())
+            ->method('exists')
+            ->with($request->getClientIp())
+            ->willReturn(true);
+
+        // Trigger constructor logic
+        $storage->__construct([
+            'connection' => [],
+            'storage_table' => 'firewall_storage',
+            'offenses_table' => 'firewall_offense',
+        ]);
+
+        $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception());
+
+        $this->assertEquals('not found', $storage->get($request->getClientIp(), 'not found'));
     }
 }

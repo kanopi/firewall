@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\Traits\EvaluateTrait;
+use Kanopi\Firewall\Traits\GeoLocationTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -24,7 +26,7 @@ class GeoLocation extends AbstractPluginBase
     /**
      * Constructs a new GeoLocation object.
      */
-    public function __construct(array $metadata, array $config = [])
+    public function __construct(array $metadata = [], array $config = [])
     {
         parent::__construct($metadata, $config);
         $this->reader = $this->createService($metadata['reader']['type'] ?? null, $metadata['reader'] ?? []);

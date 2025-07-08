@@ -4,21 +4,23 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Integration;
 
+use Kanopi\Firewall\Traits\FileTrait;
 use PHPUnit\Framework\TestCase;
 use Kanopi\Firewall\Firewall;
 use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Yaml\Yaml;
 
 /**
  * Integration tests for the complete Firewall request flow.
- * 
+ *
  * These tests verify the end-to-end functionality of the firewall system,
  * including configuration loading, plugin evaluation, storage persistence,
  * and response handling.
  */
 class FirewallRequestFlowTest extends TestCase
 {
+    use FileTrait;
+
     /**
      * Temporary directory for test files.
      */
@@ -67,7 +69,7 @@ class FirewallRequestFlowTest extends TestCase
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\FileStorage',
                 'config' => [
-                    'file' => $this->tempDir . '/blocked.data'
+                    'storage_file' => $this->tempDir . '/blocked.data'
                 ]
             ],
             'block' => [
@@ -107,7 +109,7 @@ class FirewallRequestFlowTest extends TestCase
         $this->assertFileExists($this->tempDir . '/blocked.data');
         
         // Load and verify storage data
-        $storageData = unserialize(file_get_contents($this->tempDir . '/blocked.data'));
+        $storageData = $this->loadFromFile($this->tempDir . '/blocked.data');
         $this->assertIsArray($storageData);
         $this->assertArrayHasKey('192.168.1.100', $storageData);
         
@@ -115,7 +117,7 @@ class FirewallRequestFlowTest extends TestCase
         $blockedData = $storageData['192.168.1.100']['value'] ?? [];
         $this->assertArrayHasKey('plugin', $blockedData);
         $this->assertEquals('IP Address', $blockedData['plugin']);
-        $this->assertArrayHasKey('blocked', $blockedData);
+        $this->assertArrayHasKey('timestamp', $blockedData);
         $this->assertArrayHasKey('event_id', $blockedData);
         $this->assertArrayHasKey('request', $blockedData);
     }
@@ -190,7 +192,7 @@ class FirewallRequestFlowTest extends TestCase
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\FileStorage',
                 'config' => [
-                    'file' => $storageFile
+                    'storage_file' => $storageFile
                 ]
             ],
             'block' => [
@@ -225,7 +227,7 @@ class FirewallRequestFlowTest extends TestCase
         }
         
         // Verify the URL plugin blocked it (not the IP plugin)
-        $storageData = unserialize(file_get_contents($storageFile));
+        $storageData = $this->loadFromFile($storageFile);
         $blockedData = $storageData['192.168.1.1']['value'] ?? [];
         $this->assertEquals('URL', $blockedData['plugin'], 'URL plugin should have blocked the request');
         
@@ -242,14 +244,14 @@ class FirewallRequestFlowTest extends TestCase
         }
         
         // Verify the IP plugin blocked it
-        $storageData = unserialize(file_get_contents($storageFile));
+        $storageData = $this->loadFromFile($storageFile);
         $blockedData = $storageData['10.5.5.5']['value'] ?? [];
         $this->assertEquals('IP Address', $blockedData['plugin'], 'IP Address plugin should have blocked the request');
     }
     
     /**
      * Tests that previously blocked IPs remain blocked on subsequent requests.
-     * 
+     *
      * This test verifies:
      * - Blocked IPs are persisted across firewall instances
      * - A new firewall instance reads existing blocked data
@@ -265,7 +267,7 @@ class FirewallRequestFlowTest extends TestCase
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\FileStorage',
                 'config' => [
-                    'file' => $storageFile
+                    'storage_file' => $storageFile
                 ]
             ],
             'block' => [
@@ -291,7 +293,7 @@ class FirewallRequestFlowTest extends TestCase
         
         // Verify data was persisted
         $this->assertFileExists($storageFile);
-        $originalData = unserialize(file_get_contents($storageFile));
+        $originalData = $this->loadFromFile($storageFile);
         $originalEventId = $originalData['192.168.1.100']['value']['event_id'];
         
         // Second request with new firewall instance - should still be blocked
@@ -308,14 +310,14 @@ class FirewallRequestFlowTest extends TestCase
         }
         
         // Verify the same event ID is used (no re-evaluation)
-        $currentData = unserialize(file_get_contents($storageFile));
+        $currentData = $this->loadFromFile($storageFile);
         $currentEventId = $currentData['192.168.1.100']['value']['event_id'];
         $this->assertEquals($originalEventId, $currentEventId, 'Should use original event ID');
     }
     
     /**
      * Tests configuration merging when multiple config files are provided.
-     * 
+     *
      * This test verifies:
      * - Multiple YAML files can be loaded and merged
      * - Later configs override earlier ones for scalar values
@@ -426,7 +428,7 @@ class FirewallRequestFlowTest extends TestCase
         
         // Override configuration values
         $overrides = [
-            '[storage][config][file]' => $this->tempDir . '/overridden.data',
+            '[storage][config][storage_file]' => $this->tempDir . '/overridden.data',
             '[block][Kanopi\Firewall\Plugins\IpAddress][enable]' => true,
             '[block][Kanopi\Firewall\Plugins\IpAddress][config][1]' => '192.168.1.2'
         ];

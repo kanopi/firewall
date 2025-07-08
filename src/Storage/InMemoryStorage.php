@@ -23,20 +23,47 @@ class InMemoryStorage extends AbstractStorageBase
     protected array $store = [];
 
     /**
+     * Stores the offenses.
+     * @var array<string, array<mixed>>
+     */
+    protected array $offenses = [];
+
+    /**
      * {@inheritdoc}
      */
-    public function set(string $key, mixed $value, int $expire = 0): bool
+    public function recordOffense(string $key): bool
     {
-        $this->store[$key] = [
-            "value" => $value,
-            "expire" => $expire > 0 ? time() + $expire : 0,
+        if (!array_key_exists($key, $this->offenses)) {
+            $this->offenses[$key] = [];
+        }
+
+        $this->offenses[$key][] = [
+            'timestamp' => date('c'),
         ];
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function set(string $key, array $value, int $expire = 0): bool
+    {
+        if ($this->exists($key)) {
+            $this->store[$key]['value'] = $value;
+        } else {
+            $this->store[$key] = [
+                "value" => $value,
+                "expire" => $expire > 0 ? time() + $expire : 0,
+            ];
+        }
 
         $this->getLogger()->debug('Value set in memory storage', [
             'key' => $key,
             'expire' => $expire,
             'expire_at' => $expire > 0 ? date('c', time() + $expire) : 'never',
         ]);
+
+        $this->recordOffense($key);
 
         return true;
     }
@@ -112,7 +139,7 @@ class InMemoryStorage extends AbstractStorageBase
     /**
      * {@inheritdoc}
      */
-    public function clearExpire(): bool
+    public function expire(): bool
     {
         $cleared = 0;
         $currentTime = time();
@@ -158,5 +185,15 @@ class InMemoryStorage extends AbstractStorageBase
         ]);
 
         return false;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
+    {
+        return count(array_filter($this->offenses[$key] ?? [], function (array $item) use ($start, $end): bool {
+            return strtotime((string) $item['timestamp']) >= $start && strtotime((string) $item['timestamp']) <= $end;
+        }));
     }
 }

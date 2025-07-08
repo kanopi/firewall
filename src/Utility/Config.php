@@ -9,9 +9,8 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall;
+namespace Kanopi\Firewall\Utility;
 
-use Kanopi\Firewall\Utility\NestedArray;
 use Symfony\Component\PropertyAccess\PropertyAccess;
 use Symfony\Component\Yaml\Yaml;
 
@@ -60,7 +59,6 @@ readonly class Config
             }
         }
 
-        /** @phpstan-ignore-next-line */
         return $merged;
     }
 

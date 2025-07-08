@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins;
+namespace Kanopi\Firewall\Traits;
 
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Symfony\Component\HttpFoundation\Request;
@@ -397,7 +397,7 @@ trait EvaluateTrait
 
         $this->getLogger()->debug('Comparison matched', [
             'operator' => $operator,
-            'request_value_type' => gettype($requestValue),
+            'request_value' => $requestValue,
             'case_sensitive' => $caseSensitive,
         ]);
 

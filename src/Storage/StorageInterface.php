@@ -11,31 +11,45 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Storage;
 
+use Kanopi\Firewall\Plugins\PluginInterface;
+use Symfony\Component\HttpFoundation\Request;
+
 /**
  * Interface used for defining a Storage Item
  */
 interface StorageInterface
 {
     /**
+     * Return the key for the provided request.
+     *
+     * @param Request $request
+     *   Request to get information from.
+     *
+     * @return string
+     *   Return the key.
+     */
+    public function getKey(Request $request): string;
+
+    /**
      * Set the value of the provided key.
      *
      * @param string $key
-     *   Key value of the storage item.
-     * @param mixed $value
-     *   Value to set for the key element.
+     *   Key to set.
+     * @param array $value
+     *   Value to set.
      * @param int $expire
      *   Timestamp when the key should be expired.
      *
      * @return bool
      *   True if successful, False if not.
      */
-    public function set(string $key, mixed $value, int $expire = 0): bool;
+    public function set(string $key, array $value, int $expire = 0): bool;
 
     /**
      * Delete the provided key.
      *
      * @param string $key
-     *   Key value of the storage item.
+     *   Key to look up data.
      *
      * @return bool
      *   True if successful, False if not.
@@ -46,12 +60,12 @@ interface StorageInterface
      * Get the value for the provided key.
      *
      * @param string $key
-     *   Key to search for.
+     *   Key to look up.
      * @param mixed $default
-     *   If the key isn't found, return the default value.
+     *   Default value to return.
      *
      * @return mixed
-     *   Return the value for the provided key.
+     *   Return the value for the provided key, null if not found.
      */
     public function get(string $key, mixed $default = null): mixed;
 
@@ -67,7 +81,7 @@ interface StorageInterface
      * Check if key exists.
      *
      * @param string $key
-     *   The key to check for.
+     *   Check to see if the provided key exists.
      *
      * @return bool
      *   Return TRUE if found, FALSE if not.
@@ -80,18 +94,68 @@ interface StorageInterface
      * @return bool
      *   Return TRUE if successful, FALSE if issues.
      */
-    public function clearExpire(): bool;
+    public function expire(): bool;
 
     /**
      * Example the expiration time by a specific amount.
      *
      * @param string $key
-     *   The key to check for.
+     *   Key to look up.
      * @param int $amount
-     *   Amount of time to expand the expiration time for.
+     *   Amount of time to add to the expiration time.
      *
      * @return bool
      *   Return TRUE if successful, FALSE if issues.
      */
     public function addToExpire(string $key, int $amount): bool;
+
+    /**
+     * Record the offense in the database.
+     *
+     * @param string $key
+     *   Key to set offense for..
+     *
+     * @return bool
+     *   Return TRUE if successful.
+     */
+    public function recordOffense(string $key): bool;
+
+    /**
+     * Count how many offenses happened between a certain time period.
+     *
+     * @param string $key
+     *   Key to search for periods.
+     * @param int $start
+     *   The start timestamp to look for.
+     * @param int $end
+     *   The ending timestamp to include.
+     *
+     * @return int
+     *   The total number of offenses found.
+     */
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int;
+
+    /**
+     * Check to see if the key is currently blocked.
+     *
+     * @param string $key
+     *   Key to look up.
+     *
+     * @return array|false
+     *   Return an array of items if found, False if issues.
+     */
+    public function isBlocked(string $key): array|false;
+
+    /**
+     * Return the data for storage.
+     *
+     * @param Request $request
+     *   Request element.
+     * @param PluginInterface|null $plugin
+     *   Plugin making the request.
+     *
+     * @return array
+     *   Return the data for the provided request.
+     */
+    public function getStorageData(Request $request, ?PluginInterface $plugin): array;
 }

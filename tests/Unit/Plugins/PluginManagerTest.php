@@ -83,16 +83,9 @@ class PluginManagerTest extends AbstractTestCase
             ],
         ]);
 
-        $callback = function (bool $block, Request $request, PluginInterface $plugin) use (&$called) {
-            $called = true;
-            $this->assertTrue($block);
-            $this->assertInstanceOf(PluginInterface::class, $plugin);
-        };
+        $result = $manager->evaluate(new Request());
 
-        $result = $manager->evaluate(new Request(), true, $callback);
-
-        $this->assertTrue($result);
-        $this->assertTrue($called);
+        $this->assertInstanceOf(TestTruePlugin::class, $result);
     }
 
     /**

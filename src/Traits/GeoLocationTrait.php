@@ -9,7 +9,7 @@ declare(strict_types=1);
  * file that was distributed with this source code.
  */
 
-namespace Kanopi\Firewall\Plugins;
+namespace Kanopi\Firewall\Traits;
 
 use GeoIp2\Database\Reader;
 use GeoIp2\WebService\Client;
@@ -31,7 +31,7 @@ trait GeoLocationTrait
     /**
      * Create an object for use.
      *
-     * @param string $type
+     * @param string|null $type
      *   Type of reader to create.
      * @param array $config
      *   Configuration for reader.
@@ -39,7 +39,7 @@ trait GeoLocationTrait
      * @return Reader|Client|null
      *   Return the created reader.
      */
-    protected function createService(string $type, array $config = []): Reader|Client|null
+    protected function createService(?string $type, array $config = []): Reader|Client|null
     {
         return match ($type) {
             'reader' => $this->getReader($config['db'] ?? ''),
@@ -64,7 +64,7 @@ trait GeoLocationTrait
      */
     protected function getReader(string $fileLocation): ?Reader
     {
-        if (!file_exists($fileLocation)) {
+        if (!is_file($fileLocation) || !file_exists($fileLocation)) {
             $this->getLogger()->warning('GeoLocation database file not found', [
                 'file' => $fileLocation,
             ]);

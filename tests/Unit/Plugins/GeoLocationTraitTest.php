@@ -6,8 +6,8 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use GeoIp2\Database\Reader;
 use GeoIp2\WebService\Client;
-use Kanopi\Firewall\Plugins\GeoLocationTrait;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Kanopi\Firewall\Traits\GeoLocationTrait;
 
 class GeoLocationTraitTest extends AbstractTestCase
 {

@@ -6,8 +6,8 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Kanopi\Firewall\Traits\EvaluateTrait;
 use Symfony\Component\HttpFoundation\Request;
-use Kanopi\Firewall\Plugins\EvaluateTrait;
 
 class EvaluateTraitTest extends AbstractTestCase
 {

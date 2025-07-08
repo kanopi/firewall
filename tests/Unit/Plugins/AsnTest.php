@@ -33,7 +33,7 @@ class AsnTest extends AbstractTestCase
         }
 
         return new class(['reader' => ['type' => 'mock', 'instance' => $mockReader]]) extends Asn {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'] ?? null;
             }
         };
@@ -57,7 +57,7 @@ class AsnTest extends AbstractTestCase
     public function testEvaluateReturnsFalseIfReaderIsNull(): void
     {
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => null]]) extends Asn {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return null;
             }
         };
@@ -70,7 +70,7 @@ class AsnTest extends AbstractTestCase
     public function testGetRequestValueReturnsFalseIfReaderIsNull(): void
     {
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => null]]) extends Asn {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return null;
             }
         };
@@ -150,7 +150,7 @@ class AsnTest extends AbstractTestCase
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]]) extends Asn {
             public bool $wasCalled = false;
 
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'];
             }
 
@@ -174,7 +174,7 @@ class AsnTest extends AbstractTestCase
         $reader = $this->createMock(\GeoIp2\WebService\Client::class); // ✅ client has no `asn()`
 
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]]) extends \Kanopi\Firewall\Plugins\Asn {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'];
             }
         };

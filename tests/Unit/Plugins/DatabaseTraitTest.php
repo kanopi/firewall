@@ -9,9 +9,9 @@ use Doctrine\DBAL\Schema\MySQLSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
-use Kanopi\Firewall\Plugins\DatabaseTrait;
 use Kanopi\Firewall\Storage\DatabaseStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Kanopi\Firewall\Traits\DatabaseTrait;
 
 /**
  * Integration tests for DatabaseTrait using SQLite in-memory connection.
@@ -35,12 +35,12 @@ class DatabaseTraitTest extends AbstractTestCase
                 $this->createConnection(['dsn' => 'sqlite3:///:memory:']);
             }
 
-            public function getStorageTable(): Table
+            public function getStorageTables(): array
             {
                 $table = new Table($this->config['storage_table']);
                 $table->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
                 $table->setPrimaryKey(['id']);
-                return $table;
+                return [$table];
             }
 
             public function tableExists(): bool
@@ -75,6 +75,81 @@ class DatabaseTraitTest extends AbstractTestCase
     {
         $instance = $this->getConcreteInstance([]);
         $this->assertTrue($instance->tableExists(), 'Expected table to be created');
+    }
+
+    /**
+     * Test that exception is caught if getTables doesn't return a valid table.
+     */
+    public function testCreateTablesWithException(): void
+    {
+        $config = [];
+        $instance = new class($config) {
+            use DatabaseTrait;
+
+            protected array $config;
+
+            public function __construct(array $config)
+            {
+                $this->config = $config;
+                $this->config['storage_table'] ??= 'test_table';
+                $this->createConnection(['dsn' => 'sqlite3:///:memory:']);
+            }
+
+            public function getStorageTables(): array
+            {
+                $table = new Table('temp_table');
+                return [$table];
+            }
+
+            public function tableExists(): bool
+            {
+                return $this->schemaManager->tablesExist([$this->config['storage_table']]);
+            }
+        };
+
+        $this->assertFalse($instance->tableExists(), 'Expected table to not be created');
+    }
+
+    /**
+     * Test no exceptions thrown if table already exists.
+     */
+    public function testCreateTablesTableExists(): void
+    {
+        $config = [];
+        $instance = new class($config) {
+            use DatabaseTrait;
+
+            protected array $config;
+
+            public function __construct(array $config)
+            {
+                $this->config = $config;
+                $this->config['storage_table'] ??= 'test_table';
+
+                $dsnParser = (new DsnParser())->parse('sqlite3:///:memory:');
+                $connection = DriverManager::getConnection($dsnParser);
+
+                $tables = $this->getStorageTables();
+                $connection->createSchemaManager()->createTable($tables[0]);
+
+                $this->createConnection($connection);
+            }
+
+            public function getStorageTables(): array
+            {
+                $table = new Table($this->config['storage_table']);
+                $table->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
+                $table->setPrimaryKey(['id']);
+                return [$table];
+            }
+
+            public function tableExists(): bool
+            {
+                return $this->schemaManager->tablesExist([$this->config['storage_table']]);
+            }
+        };
+
+        $this->assertTrue($instance->tableExists(), 'Do nothing if table exists');
     }
 
     /**
@@ -191,7 +266,7 @@ class DatabaseTraitTest extends AbstractTestCase
     public function testCreateTableThrowsAndIsCaughtGracefully(): void
     {
         $instance = new class {
-            use \Kanopi\Firewall\Plugins\DatabaseTrait;
+            use \Kanopi\Firewall\Traits\DatabaseTrait;
 
             public array $config = ['storage_table' => 'broken_table'];
 
@@ -225,7 +300,7 @@ class DatabaseTraitTest extends AbstractTestCase
         $mockSchemaManager = $this->createMock(MySQLSchemaManager::class);
         $mockSchemaManager->expects($this->any())->method('listTableColumns')->willThrowException(new \Exception('Exception Thrown From getColumnListing'));
         $instance = new class($mockSchemaManager) {
-            use \Kanopi\Firewall\Plugins\DatabaseTrait;
+            use \Kanopi\Firewall\Traits\DatabaseTrait;
 
             public function __construct($schemaManager)
             {

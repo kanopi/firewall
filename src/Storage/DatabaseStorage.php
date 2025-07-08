@@ -15,7 +15,8 @@ use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Index;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Type;
-use Kanopi\Firewall\Plugins\DatabaseTrait;
+use Kanopi\Firewall\Traits\DatabaseTrait;
+use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Connection to Database Storage related items.
@@ -31,45 +32,85 @@ class DatabaseStorage extends AbstractStorageBase
     {
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_storage';
+        $this->config['offenses_table'] ??= 'firewall_offenses';
 
         $this->createConnection($config['connection'] ?? []);
         $this->getLogger()->info('Database storage initialized', [
-            'table' => $this->config['storage_table'],
+            'storage_table' => $this->config['storage_table'],
+            'offenses_table' => $this->config['offenses_table'],
         ]);
     }
 
     /**
-     * Create the storage table.
+     * Get the storage table.
      */
-    protected function getStorageTable(): Table
+    protected function getStorageTables(): array
     {
-        return new Table(
-            $this->config['storage_table'],
-            [
-                new Column('remote_address', Type::getType('string'), ['length' => 255]),
-                new Column('plugin', Type::getType('string'), ['length' => 255]),
-                new Column('event_id', Type::getType('string'), ['length' => 255]),
-                new Column('blocked', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
-                new Column('request', Type::getType('text')),
-                new Column('expire', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
-                new Column('metadata', Type::getType('text'))
-            ], // Columns.
-            [
-                new Index('remote_address', ['remote_address'], true, true),
-            ], // Indexes.
-        );
+        return [
+            new Table(
+                $this->config['storage_table'],
+                [
+                    new Column('remote_address', Type::getType('string'), ['length' => 255]),
+                    new Column('plugin', Type::getType('string'), ['length' => 255]),
+                    new Column('event_id', Type::getType('string'), ['length' => 255]),
+                    new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
+                    new Column('request', Type::getType('text')),
+                    new Column('expire', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
+                    new Column('metadata', Type::getType('text'))
+                ], // Columns.
+                [
+                    new Index('remote_address', ['remote_address'], true, true),
+                ], // Indexes.
+            ),
+            new Table(
+                $this->config['offenses_table'],
+                [
+                    new Column('id', Type::getType('integer'), ['autoincrement' => true]),
+                    new Column('remote_address', Type::getType('string'), ['length' => 255]),
+                    new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
+                ],
+                [
+                    new Index('idx', ['id'], true, true),
+                    new Index('remote_address_x', ['remote_address'], false, false),
+                ]
+            )
+        ];
     }
 
     /**
      * {@inheritdoc}
      */
-    public function set(string $key, mixed $value, int $expire = 0): bool
+    public function recordOffense(string $key): bool
+    {
+        try {
+            $this->connection->insert($this->config['offenses_table'], [
+                'remote_address' => $key,
+                'timestamp' => strtotime(date('c')),
+            ]);
+            $this->getLogger()->debug('Recorded offense', [
+                'remote_address' => $key,
+                'timestamp' => date('c'),
+            ]);
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to record offense', [
+                'error' => $exception->getMessage(),
+            ]);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function set(string $key, array $value, int $expire = 0): bool
     {
         try {
             $value['request'] = @serialize($value['request']);
-            $value['blocked'] = strtotime((string) $value['blocked']);
+            $value['timestamp'] = strtotime((string) $value['timestamp']);
             $data = array_merge(
-                is_array($value) ? $value : ['value' => $value],
+                $value,
                 [
                     'remote_address' => $key,
                     'expire' => $expire > 0 ? time() + $expire : $expire,
@@ -107,6 +148,7 @@ class DatabaseStorage extends AbstractStorageBase
             return false;
         }
 
+        $this->recordOffense($key);
         return true;
     }
 
@@ -152,7 +194,12 @@ class DatabaseStorage extends AbstractStorageBase
                     ->setParameter('remote_address', $key)
                     ->executeQuery();
                 return $count->fetchAssociative();
-            } catch (\Exception) {
+            } catch (\Exception $exception) {
+                $this->getLogger()->error('Failed to get entry from database storage', [
+                    'table' => $this->config['storage_table'],
+                    'key' => $key,
+                    'error' => $exception->getMessage(),
+                ]);
             }
         }
 
@@ -187,23 +234,29 @@ class DatabaseStorage extends AbstractStorageBase
     public function exists(string $key): bool
     {
         try {
-            $count = $this->connection->createQueryBuilder()
+            $results = $this->connection->createQueryBuilder()
                 ->select('remote_address')
                 ->from($this->config['storage_table'])
                 ->where('remote_address = :remote_address')
                 ->setParameter('remote_address', $key)
-                ->executeQuery();
-        } catch (\Exception) {
+                ->executeQuery()
+                ->fetchAllAssociative();
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to check if key exists', [
+                'table' => $this->config['storage_table'],
+                'key' => $key,
+                'error' => $exception->getMessage(),
+            ]);
             return false;
         }
 
-        return $count->rowCount() > 0;
+        return $results !== [];
     }
 
     /**
      * {@inheritdoc}
      */
-    public function clearExpire(): bool
+    public function expire(): bool
     {
         try {
             $result = $this->connection->createQueryBuilder()
@@ -244,9 +297,10 @@ class DatabaseStorage extends AbstractStorageBase
                 ->andWhere('u.expire > 0')
                 ->setParameter('remote_address', $key)
                 ->setParameter('expire', $amount)
-                ->executeQuery();
+                ->executeQuery()
+                ->fetchAllAssociative();
 
-            if ($result->rowCount() > 0) {
+            if ($result !== []) {
                 $this->getLogger()->debug('Extended expiration time', [
                     'key' => $key,
                     'table' => $this->config['storage_table'],
@@ -263,5 +317,28 @@ class DatabaseStorage extends AbstractStorageBase
         }
 
         return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
+    {
+        try {
+            $results = $this->connection->createQueryBuilder()
+                ->select('remote_address')
+                ->from($this->config['offenses_table'])
+                ->where('remote_address = :remote_address')
+                ->andWhere('timestamp >= :start AND timestamp <= :end')
+                ->setParameter('remote_address', $key)
+                ->setParameter('start', $start)
+                ->setParameter('end', $end)
+                ->executeQuery()
+                ->fetchAllAssociative();
+        } catch (\Exception) {
+            return 0;
+        }
+
+        return count($results);
     }
 }
