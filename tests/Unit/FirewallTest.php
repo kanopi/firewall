@@ -66,7 +66,7 @@ class FirewallTest extends AbstractTestCase
         $firewall = $this->createFirewall();
         $this->expectException(\Exception::class);
         $this->expectExceptionMessage('mock-blocked Request Banned');
-        $this->expectExceptionCode(429);
+        $this->expectExceptionCode(400);
         $firewall->evaluate($request);
     }
 

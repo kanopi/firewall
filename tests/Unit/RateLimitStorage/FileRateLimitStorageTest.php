@@ -38,12 +38,13 @@ class FileRateLimitStorageTest extends AbstractTestCase
         $storage->recordRequest('user:123', $now);
 
         $this->assertFileExists($this->tempFile);
-        $data = unserialize(file_get_contents($this->tempFile));
+        $data = $this->loadFromFile($this->tempFile);
 
         $this->assertArrayHasKey('user:123', $data);
         $this->assertContains($now, $data['user:123']);
 
         file_put_contents($this->tempFile, '');
+        $GLOBALS['simulate_fwrite_failure'] = true;
         $GLOBALS['simulate_file_put_contents_failure'] = true;
         $storage->recordRequest('user:123', $now);
 
@@ -60,7 +61,7 @@ class FileRateLimitStorageTest extends AbstractTestCase
     {
         $now = time();
         $initialData = ['ip:1.2.3.4' => [$now - 10, $now]];
-        file_put_contents($this->tempFile, serialize($initialData));
+        $this->persistToFile($initialData, $this->tempFile);
 
         $storage = new FileRateLimitStorage(['file' => $this->tempFile]);
 

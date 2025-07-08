@@ -6,12 +6,13 @@ namespace Kanopi\Firewall\Tests\Integration\Plugins;
 
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Tests\Integration\IntegrationTestCase;
+use Kanopi\Firewall\Traits\FileTrait;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Yaml\Yaml;
 
 /**
  * Integration tests for all firewall plugins in both bypass and block modes.
- * 
+ *
  * These tests verify that each plugin:
  * - Works correctly in both bypass and block configurations
  * - Integrates properly with the firewall system
@@ -21,6 +22,8 @@ use Symfony\Component\Yaml\Yaml;
  */
 class AllPluginsIntegrationTest extends IntegrationTestCase
 {
+
+    use FileTrait;
 
     /**
      * {@inheritdoc}
@@ -768,7 +771,7 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
         ]);
         
         // Verify plugin priority (URL plugin blocked first)
-        $storageData = unserialize(file_get_contents($this->tempDir . '/multi.data'));
+        $storageData = $this->loadFromFile($this->tempDir . '/multi.data');
         $this->assertEquals('URL', $storageData['192.168.1.101']['value']['plugin'] ?? null);
         $this->assertEquals('User Agent', $storageData['192.168.1.102']['value']['plugin'] ?? null);
         $this->assertEquals('VulnerabilityScore', $storageData['192.168.1.103']['value']['plugin'] ?? null);

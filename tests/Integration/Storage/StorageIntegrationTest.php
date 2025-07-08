@@ -30,7 +30,7 @@ class StorageIntegrationTest extends IntegrationTestCase
 {
     /**
      * Tests FileStorage with real file operations.
-     * 
+     *
      * This test verifies:
      * - File creation and permissions
      * - Data serialization and deserialization
@@ -43,48 +43,48 @@ class StorageIntegrationTest extends IntegrationTestCase
         $storage = new FileStorage(['storage_file' => $storageFile]);
 
         $plugin = new IpAddress();
-        $request1 = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
+        $request1 = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
         $request1->attributes->set('blocking-plugin', $plugin);
         $request1->attributes->set('x-request-id', 'TEST123');
-        $result = $storage->set($request1, 3600);
+        $result = $storage->set($request1->getClientIp(), $storage->getStorageData($request1, $plugin), 3600);
         $this->assertTrue($result, 'Write operation should succeed');
         
         // Verify file was created with correct permissions
         $this->assertFileExists($storageFile);
 
         // Test read operation
-        $readData = $storage->get($request1);
+        $readData = $storage->get($request1->getClientIp());
         $this->assertIsArray($readData);
         $this->assertEquals('IP Address', $readData['plugin']);
         $this->assertEquals('TEST123', $readData['event_id']);
         
         // Test multiple entries
         $plugin = new GeoLocation();
-        $request2 = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => '10.0.0.1']);
+        $request2 = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.1']);
         $request2->attributes->set('blocking-plugin', $plugin);
         $request2->attributes->set('x-request-id', 'TEST123');
-        $storage->set($request2, 3600);
+        $storage->set($request2->getClientIp(), $storage->getStorageData($request2, $plugin), 3600);
 
         $plugin = new UserAgent();
-        $request3 = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => '10.0.0.2']);
+        $request3 = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.2']);
         $request3->attributes->set('blocking-plugin', $plugin);
         $request3->attributes->set('x-request-id', 'TEST123');
-        $storage->set($request3, 3600);
+        $storage->set($request3->getClientIp(), $storage->getStorageData($request3, $plugin), 3600);
         
         // Verify all entries exist
-        $this->assertNotFalse($storage->get($request1));
-        $this->assertNotFalse($storage->get($request2));
-        $this->assertNotFalse($storage->get($request3));
+        $this->assertNotFalse($storage->get($request1->getClientIp()));
+        $this->assertNotFalse($storage->get($request2->getClientIp()));
+        $this->assertNotFalse($storage->get($request3->getClientIp()));
         
         // Test deletion
-        $storage->delete($request2);
-        $this->assertNull($storage->get($request2), 'Deleted entry should not exist');
-        $this->assertNotFalse($storage->get($request3), 'Other entries should remain');
+        $storage->delete($request2->getClientIp());
+        $this->assertNull($storage->get($request2->getClientIp()), 'Deleted entry should not exist');
+        $this->assertNotFalse($storage->get($request3->getClientIp()), 'Other entries should remain');
     }
     
     /**
      * Tests FileStorage with concurrent write operations.
-     * 
+     *
      * This test verifies:
      * - Multiple processes can safely write to the same file
      * - File locking prevents data corruption
@@ -105,21 +105,21 @@ class StorageIntegrationTest extends IntegrationTestCase
         $writes = [];
         foreach ($storages as $index => $storage) {
             $ip = "192.168.1." . ($index + 1);
-            $request = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => $ip]);
+            $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ip]);
             $plugin = new IpAddress();
             $request->attributes->set('plugin', $plugin);
             $request->attributes->set('x-request-id', 'TEST123');
 
             $data = ['instance' => $index, 'timestamp' => microtime(true)];
-            $storage->set($plugin, 3600);
+            $storage->set($request->getClientIp(), $data, 3600);
             $writes[$ip] = $data;
         }
         
         // Verify all writes succeeded
         $verifyStorage = new FileStorage(['storage_file' => $storageFile]);
         foreach ($writes as $ip => $expectedData) {
-            $request = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => $ip]);
-            $actualData = $verifyStorage->get($request);
+            $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ip]);
+            $actualData = $verifyStorage->get($request->getClientIp());
             $this->assertIsArray($actualData, "Data for $ip should exist");
             $this->assertEquals($expectedData['instance'], $actualData['instance']);
         }
@@ -127,7 +127,7 @@ class StorageIntegrationTest extends IntegrationTestCase
     
     /**
      * Tests FileStorage expiration and cleanup.
-     * 
+     *
      * This test verifies:
      * - Expired entries are properly identified
      * - clearExpire() removes only expired entries
@@ -140,21 +140,21 @@ class StorageIntegrationTest extends IntegrationTestCase
         $storage = new FileStorage(['storage_file' => $storageFile]);
 
         $plugin = new IpAddress();
-        $request = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
         $request->attributes->set('plugin', $plugin);
         $request->attributes->set('x-request-id', 'TEST123');
         // Add entries with different expiration times
-        $storage->set($request, 0); // Never expires
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, $plugin), 0); // Never expires
 
-        $request = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => '192.168.1.101']);
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.101']);
         $request->attributes->set('plugin', $plugin);
         $request->attributes->set('x-request-id', 'TEST123');
-        $storage->set($request, 2); // Expires in 2 seconds
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, $plugin), 2); // Expires in 2 seconds
 
-        $request = Request::create('/', 'GET', [], [], [], [], ['REMOTE_ADDR' => '192.168.1.102']);
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.102']);
         $request->attributes->set('plugin', $plugin);
         $request->attributes->set('x-request-id', 'TEST123');
-        $storage->set($request, 5); // Expires in 5 seconds
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, $plugin), 5); // Expires in 5 seconds
         
         // Initial file size
         clearstatcache();
@@ -164,17 +164,17 @@ class StorageIntegrationTest extends IntegrationTestCase
         sleep(3);
         
         // Clear expired entries
-        $storage->clearExpire();
+        $storage->expire();
         
         // Verify expired entries are removed
-        $this->assertNotNull($storage->get('expire_now'), 'Permanently banned, will not remove');
-        $this->assertNull($storage->get('expire_soon'), 'Soon-expired entry should be removed');
-        $this->assertNotNull($storage->get('expire_later'), 'Later expired entry should still stay');
+        $this->assertNotNull($storage->get('192.168.1.100'), 'Permanently banned, will not remove');
+        $this->assertNull($storage->get('192.168.1.101'), 'Soon-expired entry should be removed');
+        $this->assertNotNull($storage->get('192.168.1.102'), 'Later expired entry should still stay');
 
         sleep(3);
         // Clear expired entries
-        $storage->clearExpire();
-        $this->assertNull($storage->get('expire_later'), 'Soon-expired entry should be removed');
+        $storage->expire();
+        $this->assertNull($storage->get('192.168.1.102'), 'Later expired entry should be removed');
 
         // Verify file was compacted
         clearstatcache();
@@ -242,7 +242,7 @@ class StorageIntegrationTest extends IntegrationTestCase
     
     /**
      * Tests DatabaseStorage with SQLite.
-     * 
+     *
      * This test verifies:
      * - SQLite file creation
      * - In-memory database support
@@ -277,13 +277,6 @@ class StorageIntegrationTest extends IntegrationTestCase
         // Test table creation
         $schemaManager = $connection->createSchemaManager();
         $this->assertTrue($schemaManager->tablesExist([$tableName]), "Table $tableName should be created");
-        
-        // Test basic operations
-        $testData = [
-            'plugin' => 'IpAddress',
-            'blocked' => date('c'),
-            'event_id' => 'DB_TEST_' . $dbType,
-        ];
 
         $plugin = new IpAddress();
 
@@ -291,14 +284,14 @@ class StorageIntegrationTest extends IntegrationTestCase
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
         $request->attributes->set('x-request-id', 'abc');
         $request->attributes->set('blocking-plugin', $plugin);
-        $result = $storage->set($request, 3600);
+        $result = $storage->set($request->getClientIp(), $storage->getStorageData($request, $plugin), 3600);
         $this->assertTrue($result, 'Insert should succeed');
         
         // Read
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
         $request->attributes->set('x-request-id', 'abc');
         $request->attributes->set('blocking-plugin', $plugin);
-        $readData = $storage->get($request);
+        $readData = $storage->get($request->getClientIp());
         $this->assertIsArray($readData);
         $this->assertEquals('IP Address', $readData['plugin']);
 
@@ -306,18 +299,18 @@ class StorageIntegrationTest extends IntegrationTestCase
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
         $request->attributes->set('blocking-plugin', $plugin);
         $request->attributes->set('x-request-id', 'abc123');
-        $storage->set($request, 3600);
-        $readData = $storage->get($request);
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, $plugin), 3600);
+        $readData = $storage->get($request->getClientIp());
         $this->assertEquals('abc123', $readData['event_id']);
         
         // Test expiration
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
         $request->attributes->set('x-request-id', 'abc');
         $request->attributes->set('blocking-plugin', $plugin);
-        $storage->set($request, 1);
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, $plugin), 1);
         sleep(2);
-        $storage->clearExpire();
-        $this->assertNull($storage->get($request), 'Expired entry should be removed');
+        $storage->expire();
+        $this->assertNull($storage->get($request->getClientIp()), 'Expired entry should be removed');
         
         // Clean up
         $connection->executeStatement("DROP TABLE $tableName");
@@ -342,23 +335,22 @@ class StorageIntegrationTest extends IntegrationTestCase
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ips[0]]);
 
         // Write to first instance
-        $storage1->set($request, 3600);
+        $storage1->set($request->getClientIp(), $storage1->getStorageData($request, null), 3600);
 
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '192.168.1.100']);
         // Verify isolation
-        $this->assertNotFalse($storage1->get($request), 'Data should exist in instance 1');
-        $this->assertNull($storage2->get($request), 'Data should not exist in instance 2');
+        $this->assertNotFalse($storage1->get($request->getClientIp()), 'Data should exist in instance 1');
+        $this->assertNull($storage2->get($request->getClientIp()), 'Data should not exist in instance 2');
         
         // Test memory cleanup
         for ($i = 0; $i < 1000; $i++) {
-            $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ips[$i+1]]);
-            $storage1->set($request, 3600);
+            $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ips[$i + 1]]);
+            $storage1->set($request->getClientIp(), $storage1->getStorageData($request, null), 3600);
         }
         
         // Clear all data
         for ($i = 0; $i < 1000; $i++) {
-            $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ips[$i+1]]);
-            $storage1->delete($request);
+            $storage1->delete($ips[$i + 1]);
         }
         
         // Memory should be released (this is a basic check)
@@ -390,7 +382,7 @@ class StorageIntegrationTest extends IntegrationTestCase
     
     /**
      * Tests storage performance with large datasets.
-     * 
+     *
      * This test verifies:
      * - Storage can handle thousands of entries
      * - Performance remains acceptable
@@ -399,7 +391,7 @@ class StorageIntegrationTest extends IntegrationTestCase
      */
     public function testStoragePerformanceWithLargeDataset(): void
     {
-        $iterations = (int) self::getEnv('PERF_TEST_ITERATIONS', 1000);
+        $iterations = intval(self::getEnv('PERF_TEST_ITERATIONS', 1000));
         
         // Test each storage type
         $storageTypes = [
@@ -416,7 +408,7 @@ class StorageIntegrationTest extends IntegrationTestCase
             // Write many entries
             for ($i = 0; $i < $iterations; $i++) {
                 $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ips[$i]]);
-                $storage->set($request, 3600);
+                $storage->set($request->getClientIp(), $storage->getStorageData($request, null), 3600);
             }
             
             $writeTime = microtime(true) - $startTime;
@@ -425,7 +417,7 @@ class StorageIntegrationTest extends IntegrationTestCase
             $readStart = microtime(true);
             for ($i = 0; $i < 100; $i++) {
                 $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ips[$i]]);
-                $data = $storage->get($request);
+                $data = $storage->get($request->getClientIp());
                 $index = $request->getClientIp();
                 $this->assertIsArray($data, "Entry $index should exist");
             }
@@ -434,7 +426,7 @@ class StorageIntegrationTest extends IntegrationTestCase
             
             // Clean up
             $cleanStart = microtime(true);
-            $storage->clearExpire();
+            $storage->expire();
             $cleanTime = microtime(true) - $cleanStart;
             
             $memoryUsed = memory_get_usage() - $startMemory;

@@ -26,7 +26,10 @@ class FileStorageTest extends AbstractTestCase
 
         $GLOBALS['simulate_is_readable_failure'] = false;
         $GLOBALS['simulate_is_writeable_failure'] = false;
-        $GLOBALS['simulate_file_put_contents_failure'] = false;
+        $GLOBALS['simulate_fwrite_failure'] = false;
+        $GLOBALS['simulate_fopen_failure'] = false;
+        $GLOBALS['simulate_fgets_failure'] = false;
+        $GLOBALS['simulate_flock_failure'] = false;
     }
 
     protected function tearDown(): void
@@ -52,10 +55,9 @@ class FileStorageTest extends AbstractTestCase
      */
     public function testDataLoadsFromFile(): void
     {
-        $data = serialize([
+        $this->persistToFile([
             '127.0.0.1' => ['value' => ['event_id' => 'data'], 'expire' => 0],
-        ]);
-        file_put_contents($this->tempFile, $data);
+        ], $this->tempFile);
 
         $storage = new FileStorage(['storage_file' => $this->tempFile]);
 
@@ -161,6 +163,7 @@ class FileStorageTest extends AbstractTestCase
      */
     public function testSetLogsErrorOnWriteFailure(): void
     {
+        $GLOBALS['simulate_fwrite_failure'] = true;
         $GLOBALS['simulate_file_put_contents_failure'] = true;
 
         LoggingFactory::setLogger(LoggingFactory::create([
@@ -173,6 +176,7 @@ class FileStorageTest extends AbstractTestCase
         $request = $this->getRequest();
         $storage->set($request->getClientIp(), ['value' => 1]);
 
+        $GLOBALS['simulate_fwrite_failure'] = false;
         $GLOBALS['simulate_file_put_contents_failure'] = false;
 
         // ✅ Assert that an error log was generated

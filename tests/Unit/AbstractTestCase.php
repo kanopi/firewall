@@ -4,6 +4,7 @@ namespace Kanopi\Firewall\Tests\Unit;
 
 
 use Kanopi\Firewall\Logging\LoggingFactory;
+use Kanopi\Firewall\Traits\FileTrait;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -12,6 +13,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 abstract class AbstractTestCase extends TestCase
 {
+
+    use FileTrait;
 
     /**
      * Set Up Method.

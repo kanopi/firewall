@@ -17,7 +17,7 @@ class GeoLocationTest extends AbstractTestCase
     public function testGetName(): void
     {
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => null]]) extends GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return null;
             }
         };
@@ -31,7 +31,7 @@ class GeoLocationTest extends AbstractTestCase
     public function testGetDescription(): void
     {
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => null]]) extends GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return null;
             }
         };
@@ -45,7 +45,7 @@ class GeoLocationTest extends AbstractTestCase
     public function testEvaluateReturnsFalseIfReaderIsNull(): void
     {
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => null]]) extends GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return null;
             }
         };
@@ -65,7 +65,7 @@ class GeoLocationTest extends AbstractTestCase
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]]) extends GeoLocation {
             public bool $wasCalled = false;
 
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'];
             }
 
@@ -89,7 +89,7 @@ class GeoLocationTest extends AbstractTestCase
         $reader->method('city')->willThrowException(new \Exception());
 
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]]) extends GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'];
             }
         };
@@ -126,7 +126,7 @@ class GeoLocationTest extends AbstractTestCase
         $reader->method('city')->willReturn($cityModel);
 
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]]) extends GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'];
             }
         };
@@ -166,7 +166,7 @@ class GeoLocationTest extends AbstractTestCase
         $reader->method('city')->willReturn($cityModel);
 
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]]) extends GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'];
             }
         };
@@ -186,7 +186,7 @@ class GeoLocationTest extends AbstractTestCase
     {
         // Plugin with a null reader
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => null]]) extends \Kanopi\Firewall\Plugins\GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return null;
             }
         };
@@ -209,7 +209,7 @@ class GeoLocationTest extends AbstractTestCase
         $reader = $this->createMock(\GeoIp2\Database\Reader::class);
 
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]]) extends \Kanopi\Firewall\Plugins\GeoLocation {
-            protected function createService(string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
                 return $config['instance'];
             }
         };
