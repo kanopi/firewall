@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 use Rector\Config\RectorConfig;
-use Rector\Privatization\Rector\ClassMethod\PrivatizeFinalClassMethodRector;
+use Rector\Php74\Rector\Closure\ClosureToArrowFunctionRector;
 use Rector\PHPUnit\Set\PHPUnitSetList;
+use Rector\Privatization\Rector\ClassMethod\PrivatizeFinalClassMethodRector;
 use Rector\Set\ValueObject\LevelSetList;
 use Rector\Set\ValueObject\SetList;
 
@@ -29,6 +30,7 @@ return static function (RectorConfig $rectorConfig): void {
 
     $rectorConfig->skip([
         PrivatizeFinalClassMethodRector::class,
+        ClosureToArrowFunctionRector::class
     ]);
 
     $rectorConfig->phpstanConfig(__DIR__ . '/phpstan.neon');
