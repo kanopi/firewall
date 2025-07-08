@@ -318,7 +318,7 @@ class StorageIntegrationTest extends IntegrationTestCase
     
     /**
      * Tests InMemoryStorage behavior.
-     * 
+     *
      * This test verifies:
      * - Data is not persisted between instances
      * - Memory usage is reasonable
@@ -363,7 +363,8 @@ class StorageIntegrationTest extends IntegrationTestCase
      * @param int $count The number of IP addresses to generate.
      * @return array An array of randomly generated IPv4 addresses.
      */
-    public function generateRandomIPv4Addresses(int $count): array {
+    public function generateRandomIPv4Addresses(int $count): array
+    {
         $addresses = [];
 
         for ($i = 0; $i < $count; $i++) {
