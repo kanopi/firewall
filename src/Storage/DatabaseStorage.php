@@ -132,7 +132,7 @@ class DatabaseStorage extends AbstractStorageBase
                     'expire' => $expire,
                 ]);
             } else {
-                $this->connection->insert($this->config['storage_table'], $value);
+                $this->connection->insert($this->config['storage_table'], $data);
                 $this->getLogger()->debug('Inserted new entry in database storage', [
                     'key' => $key,
                     'table' => $this->config['storage_table'],
