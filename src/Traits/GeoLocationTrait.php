@@ -31,7 +31,7 @@ trait GeoLocationTrait
     /**
      * Create an object for use.
      *
-     * @param string $type
+     * @param string|null $type
      *   Type of reader to create.
      * @param array $config
      *   Configuration for reader.
@@ -39,7 +39,7 @@ trait GeoLocationTrait
      * @return Reader|Client|null
      *   Return the created reader.
      */
-    protected function createService(string $type, array $config = []): Reader|Client|null
+    protected function createService(?string $type, array $config = []): Reader|Client|null
     {
         return match ($type) {
             'reader' => $this->getReader($config['db'] ?? ''),
