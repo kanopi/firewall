@@ -159,7 +159,7 @@ final readonly class Firewall
             }
 
             $this->repeatOffender($request);
-            $this->sendBlockingResponse($request, intval($this->config['repeat_offender_status'] ?? 429));
+            $this->sendBlockingResponse($request, intval($this->config['repeat_offender_status'] ?? 0));
         }
 
         if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {
