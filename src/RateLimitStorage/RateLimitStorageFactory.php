@@ -57,7 +57,6 @@ class RateLimitStorageFactory
             'config_keys' => array_keys($config),
         ]);
 
-        /** @phpstan-ignore return.type */
         return $storage;
     }
 }

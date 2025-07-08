@@ -11,3 +11,4 @@ parameters:
         - identifier: foreach.nonIterable
         - identifier: cast.string
         - identifier: parameterByRef.unusedType
+        - identifier: return.type

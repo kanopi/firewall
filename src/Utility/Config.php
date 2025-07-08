@@ -59,7 +59,6 @@ readonly class Config
             }
         }
 
-        /** @phpstan-ignore-next-line */
         return $merged;
     }
 

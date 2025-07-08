@@ -156,7 +156,6 @@ class PluginManager
      */
     public function getPlugins(): array
     {
-        /** @phpstan-ignore return.type */
         return iterator_to_array($this->registry->getIterator());
     }
 }
