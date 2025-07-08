@@ -26,7 +26,7 @@ class GeoLocation extends AbstractPluginBase
     /**
      * Constructs a new GeoLocation object.
      */
-    public function __construct(array $metadata, array $config = [])
+    public function __construct(array $metadata = [], array $config = [])
     {
         parent::__construct($metadata, $config);
         $this->reader = $this->createService($metadata['reader']['type'] ?? null, $metadata['reader'] ?? []);
