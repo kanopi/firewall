@@ -1,5 +1,7 @@
 # Simple Firewall
 
+> THIS IS BETA SOFTWARE. DO NOT DEPLOY IN PRODUCTION
+
 The following library is a simple setup that evaluates the request. The idea of
 this library is that the database doesn't need to bootstrap for the CMS therefore
 causing more overhead.
