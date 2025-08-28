@@ -6,6 +6,11 @@ orbs:
 PHP_VERSION: &PHP_VERSION "8.2"
 PHP_IMAGE: &PHP_IMAGE "cimg/php:8.2"
 
+PHP_VERSION_TEST: &PHP_VERSION_TEST
+  - '8.2'
+  - '8.3'
+  - '8.4'
+
 jobs:
   build:
     docker:
@@ -41,9 +46,9 @@ jobs:
     parameters:
       php:
         type: string
-        default: *PHP_IMAGE
+        default: *PHP_VERSION
     docker:
-      - image: << parameters.php >>
+      - image: cimg/php:<< parameters.php >>
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
@@ -275,17 +280,16 @@ workflows:
           context: kanopi-code
           matrix:
             parameters:
-              php: ['cimg/php:8.2', 'cimg/php:8.3', 'cimg/php:8.4']
+              php: *PHP_VERSION_TEST
           filters:
             tags:
               ignore: /.*/
             branches:
               only: /.*/
       - ci-tools/composer:
-          #tag: *PHP_VERSION
           matrix:
             parameters:
-              tag: ['8.2', '8.3', '8.4']
+              tag: *PHP_VERSION_TEST
           name: phpstan <<matrix.tag>>
           context: kanopi-code
           command: 'check:security:circleci'
@@ -301,8 +305,10 @@ workflows:
                 path: phpstan-report.xml
                 destination: phpstan
       - ci-tools/composer:
-          tag: *PHP_VERSION
-          name: 'rector'
+          matrix:
+            parameters:
+              tag: *PHP_VERSION_TEST
+          name: 'rector <<matrix.tag>>'
           context: kanopi-code
           command: 'check:rector:circleci'
           filters:
@@ -317,8 +323,10 @@ workflows:
                 path: rector-report.xml
                 destination: rector
       - ci-tools/composer:
-          tag: *PHP_VERSION
-          name: 'quality'
+          matrix:
+            parameters:
+              tag: *PHP_VERSION_TEST
+          name: 'quality <<matrix.tag>>'
           context: kanopi-code
           command: 'check:code:circleci'
           filters:
