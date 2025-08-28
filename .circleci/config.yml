@@ -286,7 +286,7 @@ workflows:
           matrix:
             parameters:
               tag: ['8.2', '8.3', '8.4']
-          name: 'phpstan'
+          #name: 'phpstan <<parameters.tag>>'
           context: kanopi-code
           command: 'check:security:circleci'
           filters:
