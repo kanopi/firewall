@@ -38,8 +38,12 @@ jobs:
             gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall.zip --clobber
 
   phpunit:
+    parameters:
+      php:
+        type: string
+        default: *PHP_IMAGE
     docker:
-      - image: *PHP_IMAGE
+      - image: << parameters.php >>
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
@@ -269,13 +273,19 @@ workflows:
     jobs:
       - phpunit:
           context: kanopi-code
+          matrix:
+            parameters:
+              php: ['cimg/php:8.2', 'cimg/php:8.3', 'cimg/php:8.4']
           filters:
             tags:
               ignore: /.*/
             branches:
               only: /.*/
       - ci-tools/composer:
-          tag: *PHP_VERSION
+          #tag: *PHP_VERSION
+          matrix:
+            parameters:
+              tag: ['8.2', '8.3', '8.4']
           name: 'phpstan'
           context: kanopi-code
           command: 'check:security:circleci'
