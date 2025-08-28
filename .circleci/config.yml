@@ -277,10 +277,11 @@ workflows:
   test:
     jobs:
       - phpunit:
-          context: kanopi-code
           matrix:
             parameters:
               php: *PHP_VERSION_TEST
+          name: 'phpunit <<matrix.php>>'
+          context: kanopi-code
           filters:
             tags:
               ignore: /.*/
