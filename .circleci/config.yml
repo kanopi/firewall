@@ -150,8 +150,12 @@ jobs:
           path: reports
 
   performance-test:
+    parameters:
+      php:
+        type: string
+        default: *PHP_VERSION
     docker:
-      - image: *PHP_IMAGE
+      - image: cimg/php:<< parameters.php >>
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
