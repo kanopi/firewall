@@ -17,7 +17,7 @@ use Symfony\Component\Yaml\Yaml;
 /**
  * Config related items.
  */
-readonly class Config
+class Config
 {
     /**
      * Loader function used for producing the configuration files and merging.

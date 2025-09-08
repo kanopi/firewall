@@ -23,7 +23,7 @@ use Symfony\Component\HttpFoundation\Request;
 /**
  * Firewall class that creates and evaluates requests.
  */
-final readonly class Firewall
+final class Firewall
 {
     use LoggingTrait;
 
