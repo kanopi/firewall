@@ -22,7 +22,10 @@ jobs:
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
+        environment:
+          - PHP_VERSION=<<parameters.php>>
     resource_class: small
+    environment:
     steps:
       - checkout
       - run:
@@ -44,7 +47,7 @@ jobs:
       - run:
           name: Post Artifact
           command: |
-            gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall.zip --clobber
+            gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall-${PHP_VERSION}.zip --clobber
 
   phpunit:
     parameters:
@@ -350,7 +353,10 @@ workflows:
                 path: phpcs-report.xml
                 destination: phpcs
       - build:
-          name: "build"
+          matrix:
+            parameters:
+              php: *PHP_VERSION_TEST
+          name: "build <<matrix.php>>"
           context: kanopi-code
           filters:
             tags:

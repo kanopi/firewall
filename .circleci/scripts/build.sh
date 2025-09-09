@@ -5,7 +5,9 @@ set -e
 # Config
 APP_ROOT=$(pwd)
 BUILD_DIR="/tmp/firewall"
-ZIP_FILE="/tmp/firewall.zip"
+PHP_VERSION_DEFAULT=$(php -r '$version=explode(".", phpversion()); echo sprintf("%s.%s", $version[0], $version[1]);' | tr -d '[:space:]' )
+PHP_VERSION=$(PHP_VERSION:-$PHP_VERSION_DEFAULT)
+ZIP_FILE="/tmp/firewall-${PHP_VERSION}.zip"
 
 # Step 1: Clean up previous builds
 echo "Cleaning previous builds..."
