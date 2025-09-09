@@ -43,11 +43,13 @@ jobs:
           command: |
             bash .circleci/scripts/build.sh
       - store_artifacts:
-          path: /tmp/firewall.zip
+          path: /tmp/firewall-${PHP_VERSION}.zip
       - run:
           name: Post Artifact
           command: |
-            gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall-${PHP_VERSION}.zip --clobber
+            if [[ "${CIRCLE_TAG}" != "" ]]; then
+              gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall-${PHP_VERSION}.zip --clobber
+            fi
 
   phpunit:
     parameters:
@@ -358,11 +360,11 @@ workflows:
               php: *PHP_VERSION_TEST
           name: "build <<matrix.php>>"
           context: kanopi-code
-          filters:
-            tags:
-              only: /.*/
-            branches:
-              ignore: /.*/
+          # filters:
+          #   tags:
+          #     only: /.*/
+          #   branches:
+          #     ignore: /.*/
       # - performance-test:
       #     name: "performance"
       #     context: kanopi-code
