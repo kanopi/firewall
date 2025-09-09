@@ -37,18 +37,22 @@ jobs:
       - run:
           name: Generate Version File
           command: |
-            echo "${CIRCLE_TAG}" > VERSION
+            if [[ "${CIRCLE_TAG}" != "" ]]; then
+              echo "${CIRCLE_TAG}" > VERSION
+            else
+              echo "2.x-dev-${CIRCLE_SHA1:0:7}" > VERSION
+            fi
       - run:
           name: Build
           command: |
             bash .circleci/scripts/build.sh
       - store_artifacts:
-          path: /tmp/firewall-${PHP_VERSION}.zip
+          path: /tmp/firewall.zip
       - run:
           name: Post Artifact
           command: |
             if [[ "${CIRCLE_TAG}" != "" ]]; then
-              gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall-${PHP_VERSION}.zip --clobber
+              gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} "/tmp/firewall.zip#firewall-${PHP_VERSION}.zip" --clobber
             fi
 
   phpunit:
