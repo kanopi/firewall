@@ -4,16 +4,28 @@ orbs:
   ci-tools: kanopi/ci-tools@2
 
 PHP_VERSION: &PHP_VERSION "8.2"
-PHP_IMAGE: &PHP_IMAGE "cimg/php:8.2"
+
+PHP_VERSION_TEST: &PHP_VERSION_TEST
+  - '8.1'
+  - '8.2'
+  - '8.3'
+  - '8.4'
 
 jobs:
   build:
+    parameters:
+      php:
+        type: string
+        default: *PHP_VERSION
     docker:
-      - image: *PHP_IMAGE
+      - image: cimg/php:<< parameters.php >>
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
+        environment:
+          - PHP_VERSION=<<parameters.php>>
     resource_class: small
+    environment:
     steps:
       - checkout
       - run:
@@ -25,7 +37,11 @@ jobs:
       - run:
           name: Generate Version File
           command: |
-            echo "${CIRCLE_TAG}" > VERSION
+            if [[ "${CIRCLE_TAG}" != "" ]]; then
+              echo "${CIRCLE_TAG}" > VERSION
+            else
+              echo "2.x-dev-${CIRCLE_SHA1:0:7}" > VERSION
+            fi
       - run:
           name: Build
           command: |
@@ -35,11 +51,17 @@ jobs:
       - run:
           name: Post Artifact
           command: |
-            gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} /tmp/firewall.zip --clobber
+            if [[ "${CIRCLE_TAG}" != "" ]]; then
+              gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} "/tmp/firewall.zip#firewall-${PHP_VERSION}.zip" --clobber
+            fi
 
   phpunit:
+    parameters:
+      php:
+        type: string
+        default: *PHP_VERSION
     docker:
-      - image: *PHP_IMAGE
+      - image: cimg/php:<< parameters.php >>
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
@@ -137,8 +159,12 @@ jobs:
           path: reports
 
   performance-test:
+    parameters:
+      php:
+        type: string
+        default: *PHP_VERSION
     docker:
-      - image: *PHP_IMAGE
+      - image: cimg/php:<< parameters.php >>
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
@@ -268,6 +294,10 @@ workflows:
   test:
     jobs:
       - phpunit:
+          matrix:
+            parameters:
+              php: *PHP_VERSION_TEST
+          name: 'phpunit <<matrix.php>>'
           context: kanopi-code
           filters:
             tags:
@@ -275,8 +305,10 @@ workflows:
             branches:
               only: /.*/
       - ci-tools/composer:
-          tag: *PHP_VERSION
-          name: 'phpstan'
+          matrix:
+            parameters:
+              tag: *PHP_VERSION_TEST
+          name: phpstan <<matrix.tag>>
           context: kanopi-code
           command: 'check:security:circleci'
           filters:
@@ -291,8 +323,10 @@ workflows:
                 path: phpstan-report.xml
                 destination: phpstan
       - ci-tools/composer:
-          tag: *PHP_VERSION
-          name: 'rector'
+          matrix:
+            parameters:
+              tag: *PHP_VERSION_TEST
+          name: 'rector <<matrix.tag>>'
           context: kanopi-code
           command: 'check:rector:circleci'
           filters:
@@ -307,8 +341,10 @@ workflows:
                 path: rector-report.xml
                 destination: rector
       - ci-tools/composer:
-          tag: *PHP_VERSION
-          name: 'quality'
+          matrix:
+            parameters:
+              tag: *PHP_VERSION_TEST
+          name: 'quality <<matrix.tag>>'
           context: kanopi-code
           command: 'check:code:circleci'
           filters:
@@ -323,13 +359,16 @@ workflows:
                 path: phpcs-report.xml
                 destination: phpcs
       - build:
-          name: "build"
+          matrix:
+            parameters:
+              php: *PHP_VERSION_TEST
+          name: "build <<matrix.php>>"
           context: kanopi-code
-          filters:
-            tags:
-              only: /.*/
-            branches:
-              ignore: /.*/
+          # filters:
+          #   tags:
+          #     only: /.*/
+          #   branches:
+          #     ignore: /.*/
       # - performance-test:
       #     name: "performance"
       #     context: kanopi-code

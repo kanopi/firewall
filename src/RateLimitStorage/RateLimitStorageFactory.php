@@ -29,7 +29,7 @@ class RateLimitStorageFactory
      * @return RateLimitStorageInterface
      *   Return the newly created object.
      */
-    public static function create(string|RateLimitStorageInterface $type = null, array $config = []): RateLimitStorageInterface
+    public static function create(string|RateLimitStorageInterface|null $type = null, array $config = []): RateLimitStorageInterface
     {
         $requestedType = $type;
 

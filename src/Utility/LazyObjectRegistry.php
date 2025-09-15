@@ -45,7 +45,7 @@ class LazyObjectRegistry
             'factory' => $factory,
         ];
 
-        usort($this->entries, fn($a, $b): int =>
+        usort($this->entries, fn(array $a, array $b): int =>
             $a['priority'] <=> $b['priority']);
 
         $this->getLogger()->debug('Object registered in lazy registry', [
