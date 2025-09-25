@@ -364,11 +364,11 @@ workflows:
               php: *PHP_VERSION_TEST
           name: "build <<matrix.php>>"
           context: kanopi-code
-          # filters:
-          #   tags:
-          #     only: /.*/
-          #   branches:
-          #     ignore: /.*/
+          filters:
+            tags:
+              only: /.*/
+            branches:
+              only: /.*/
       # - performance-test:
       #     name: "performance"
       #     context: kanopi-code
