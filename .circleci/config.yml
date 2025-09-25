@@ -52,7 +52,8 @@ jobs:
           name: Post Artifact
           command: |
             if [[ "${CIRCLE_TAG}" != "" ]]; then
-              gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} "/tmp/firewall.zip#firewall-${PHP_VERSION}.zip"
+              cp -R /tmp/firewall.zip "/tmp/firewall-${PHP_VERSION}.zip"
+              gh -R "github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}" release upload ${CIRCLE_TAG} "/tmp/firewall-${PHP_VERSION}.zip" --clobber
             fi
 
   phpunit:
