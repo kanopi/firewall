@@ -34,7 +34,7 @@ trait FileTrait
     {
         $contents = @file_get_contents($filePath);
         $store = [];
-        if ($contents !== false && strlen(trim($contents)) > 0) {
+        if ($contents !== false && trim($contents) !== '') {
             $data = @unserialize($contents);
             if (is_array($data)) {
                 $count = 0;
