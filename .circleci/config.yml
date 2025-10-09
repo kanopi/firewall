@@ -136,6 +136,7 @@ jobs:
             PASSING=85
             OUTCOME=$(echo "${PERCENTAGE} < ${PASSING}" | bc)
             echo "# PHPUnit Code Coverage" | tee -a /tmp/report.md
+            echo "PHP Version: <<parameters.php>>" | tee -a /tmp/report.md
             echo "Percent: ${PERCENTAGE}" | tee -a /tmp/report.md
             echo "Passing: ${PASSING}" | tee -a /tmp/report.md
             echo "" | tee -a /tmp/report.md
