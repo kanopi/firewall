@@ -27,7 +27,7 @@
         "php": ">=8.1",
         "amphp/dns": "^2.4",
         "doctrine/dbal": "^4.2",
-        "geoip2/geoip2": "^3.2",
+        "geoip2/geoip2": "~2 || ^3",
         "guzzlehttp/guzzle": "^7.9",
         "matomo/device-detector": "^6.4",
         "monolog/monolog": "^3.9",
