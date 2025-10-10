@@ -30,8 +30,8 @@ class DatabaseStorage extends AbstractStorageBase
      */
     public function __construct(array $config)
     {
-        if (isset($config['connection']['port'])) {
-            $config['connection']['port'] = (int) $config['connection']['port'];
+        if (isset($config['connection']['port']) && is_numeric($config['connection']['port'])) {
+            $config['connection']['port'] = intval($config['connection']['port']);
         }
 
         parent::__construct($config);
