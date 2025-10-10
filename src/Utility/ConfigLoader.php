@@ -51,14 +51,19 @@ final class ConfigLoader
      * token, the resolved value is returned as a native PHP type (bool/int/float/array/string).
      * When %env(...)% appears inside a larger string, it is interpolated as text.
      *
-     * @param string $yaml               The YAML content to parse.
-     * @param string $configFilePath     A file path used only to determine the base directory for relative paths/includes.
-     * @param array<string> $relativePathKeys Dot-path patterns (supporting '*' wildcards) that should be treated as file paths and
-     *                                       rewritten to absolute when they are relative and exist on disk.
+     * @param string $yaml
+     *   The YAML content to parse.
+     * @param string $configFilePath
+     *   A file path used only to determine the base directory for relative paths/includes.
+     * @param array<string> $relativePathKeys
+     *   Dot-path patterns (supporting '*' wildcards) that should be treated as file paths and
+     *   rewritten to absolute when they are relative and exist on disk.
      *
-     * @return array<string,mixed> The parsed configuration array after env substitution, includes, and relative-path resolution.
+     * @return array<string,mixed>
+     *   The parsed configuration array after env substitution, includes, and relative-path resolution.
      *
-     * @throws \RuntimeException If the configFilePath does not exist, includes cause circular references, or %env(...)% fails.
+     * @throws \RuntimeException
+     *   If the configFilePath does not exist, includes cause circular references, or %env(...)% fails.
      */
     public static function parse(string $yaml, string $configFilePath, array $relativePathKeys = []): array
     {
@@ -75,12 +80,16 @@ final class ConfigLoader
      * Relative paths and "configs" includes are resolved relative to the file's own directory.
      * %env(...)% placeholders are expanded (typed for full-scalar tokens).
      *
-     * @param string $filePath           Absolute or relative path to a YAML file on disk.
-     * @param array<string> $relativePathKeys See parse() for details; keys to treat as path-like.
+     * @param string $filePath
+     *   Absolute or relative path to a YAML file on disk.
+     * @param array<string> $relativePathKeys
+     *   See parse() for details; keys to treat as path-like.
      *
-     * @return array<string,mixed> The parsed configuration array after env substitution, includes, and relative-path resolution.
+     * @return array<string,mixed>
+     *   The parsed configuration array after env substitution, includes, and relative-path resolution.
      *
-     * @throws \RuntimeException If the file is missing/unreadable, circular includes occur, or %env(...)% fails.
+     * @throws \RuntimeException
+     *   If the file is missing/unreadable, circular includes occur, or %env(...)% fails.
      */
     public static function load(string $filePath, array $relativePathKeys = []): array
     {
@@ -90,13 +99,18 @@ final class ConfigLoader
     /**
      * Internal loader for YAML files with include depth/circular guards.
      *
-     * @param string $filePath           Path to YAML file.
-     * @param array<string> $relativePathKeys Path-like key patterns for post-processing.
-     * @param int $depth                 Current include depth (for guard).
+     * @param string $filePath
+     *   Path to YAML file.
+     * @param array<string> $relativePathKeys
+     *   Path-like key patterns for post-processing.
+     * @param int $depth
+     *   Current include depth (for guard).
      *
-     * @return array<string,mixed> Fully post-processed configuration.
+     * @return array<string,mixed>
+     *   Fully post-processed configuration.
      *
-     * @throws \RuntimeException On missing file, exceeded depth, circular include, or YAML/placeholder issues.
+     * @throws \RuntimeException
+     *   On missing file, exceeded depth, circular include, or YAML/placeholder issues.
      */
     private static function loadInternal(string $filePath, array $relativePathKeys, int $depth): array
     {
@@ -127,15 +141,22 @@ final class ConfigLoader
      *  2) Process "configs" includes (relative to $baseDir, supporting {config_dir}, %env(...)%, and glob patterns).
      *  3) Resolve relative paths for configured key patterns against $baseDir.
      *
-     * @param array<string,mixed> $data  Parsed YAML as array.
-     * @param string $baseDir            Directory used for resolving relative paths and include entries.
-     * @param array<string> $relativePathKeys Dot-path patterns for path-like values to rewrite to absolute paths.
-     * @param string $origin             Human-readable origin (filename) for error messages.
-     * @param int $depth                 Current include depth (for guards).
+     * @param array<string,mixed> $data
+     *   Parsed YAML as array.
+     * @param string $baseDir
+     *   Directory used for resolving relative paths and include entries.
+     * @param array<string> $relativePathKeys
+     *   Dot-path patterns for path-like values to rewrite to absolute paths.
+     * @param string $origin
+     *   Human-readable origin (filename) for error messages.
+     * @param int $depth
+     *   Current include depth (for guards).
      *
-     * @return array<string,mixed> Post-processed configuration array.
+     * @return array<string,mixed>
+     *   Post-processed configuration array.
      *
-     * @throws \RuntimeException On invalid include entries, circular includes, depth overflow, or env resolution issues.
+     * @throws \RuntimeException
+     *   On invalid include entries, circular includes, depth overflow, or env resolution issues.
      */
     private static function postProcess(array $data, string $baseDir, array $relativePathKeys, string $origin, int $depth): array
     {
@@ -182,11 +203,14 @@ final class ConfigLoader
      * Supported processors (chained left-to-right):
      *  string, int, float, bool, json, base64, file, trim, lower, upper, csv, query_string, url
      *
-     * @param mixed $value The node to process (array/scalar).
+     * @param mixed $value
+     *   The node to process (array/scalar).
      *
-     * @return mixed The node with %env(...)% placeholders resolved.
+     * @return mixed
+     *   The node with %env(...)% placeholders resolved.
      *
-     * @throws \RuntimeException On missing env variables, invalid casts, or malformed processor input.
+     * @throws \RuntimeException
+     *   On missing env variables, invalid casts, or malformed processor input.
      */
     private static function resolvePlaceholders(mixed $value): mixed
     {
@@ -225,11 +249,14 @@ final class ConfigLoader
      *  - "json:CFG"          → array (decoded JSON)
      *  - "file:SECRET_PATH"  → string (file contents)
      *
-     * @param string $token The inside of %env(...), optionally with processors (e.g., "int:PORT").
+     * @param string $token
+     *   The inside of %env(...), optionally with processors (e.g., "int:PORT").
      *
-     * @return mixed A native value: bool|int|float|string|array depending on processors and data.
+     * @return mixed
+     *   A native value: bool|int|float|string|array depending on processors and data.
      *
-     * @throws \RuntimeException If the env var is missing, processors are unknown, or data cannot be cast/decoded.
+     * @throws \RuntimeException
+     *   If the env var is missing, processors are unknown, or data cannot be cast/decoded.
      */
     private static function resolveEnvTokenTyped(string $token): mixed
     {
@@ -357,12 +384,16 @@ final class ConfigLoader
      *  - Resolves a single-token %env(...)% to a string path.
      *  - If the result is not absolute and not a URL, it is joined with $baseDir.
      *
-     * @param string $value   The include entry from YAML.
-     * @param string $baseDir The directory used for relative resolution.
+     * @param string $value
+     *   The include entry from YAML.
+     * @param string $baseDir
+     *   The directory used for relative resolution.
      *
-     * @return string Absolute (or URL/stream) path for inclusion; may contain glob patterns.
+     * @return string
+     *   Absolute (or URL/stream) path for inclusion; may contain glob patterns.
      *
-     * @throws \RuntimeException If %env(...)% resolves to a non-string value.
+     * @throws \RuntimeException
+     *   If %env(...)% resolves to a non-string value.
      */
     private static function normalizeInclude(string $value, string $baseDir): string
     {
@@ -390,11 +421,15 @@ final class ConfigLoader
      *  - If it's relative and the corresponding file exists relative to $baseDir,
      *    it is replaced with its absolute/real path.
      *
-     * @param array<string,mixed> $data Configuration tree to scan/modify.
-     * @param string $baseDir            Base directory for relative paths.
-     * @param array<string> $dotKeys     Dot-path patterns to match (e.g., "logger.*.args.0").
+     * @param array<string,mixed> $data
+     *   Configuration tree to scan/modify.
+     * @param string $baseDir
+     *   Base directory for relative paths.
+     * @param array<string> $dotKeys
+     *   Dot-path patterns to match (e.g., "logger.*.args.0").
      *
-     * @return array<string,mixed> Configuration with matched relative paths rewritten.
+     * @return array<string,mixed>
+     *   Configuration with matched relative paths rewritten.
      */
     private static function resolveRelativePathsForKeys(array $data, string $baseDir, array $dotKeys): array
     {
@@ -419,10 +454,13 @@ final class ConfigLoader
      * - If both sides are lists (0..N integer keys in order), the right list REPLACES the left list entirely.
      * - Otherwise, the right value overwrites the left value.
      *
-     * @param array<string,mixed> $base Left-hand/base configuration.
-     * @param array<string,mixed> $over Right-hand/override configuration.
+     * @param array<string,mixed> $base
+     *   Left-hand/base configuration.
+     * @param array<string,mixed> $over
+     *   Right-hand/override configuration.
      *
-     * @return array<string,mixed> Merged configuration.
+     * @return array<string,mixed>
+     *   Merged configuration.
      */
     private static function mergeConfigs(array $base, array $over): array
     {
@@ -451,46 +489,81 @@ final class ConfigLoader
      *
      * Each '*' matches any single key at that depth. Non-matching segments are skipped.
      *
-     * @param array<string,mixed> $data   The configuration to traverse.
-     * @param string $pattern             Dot-path pattern with optional '*' segments.
+     * Expand a dot/wildcard pattern like:
+     *   "logger.*.args.0"
+     *   "block|allow.\Kanopi\Firewall\Plugins\Asn.metadata.reader.db"
+     *   "{block,allow}.\Kanopi\Firewall\Plugins\RateLimit.metadata.storage.config.file"
+     *   "(block|allow).\Kanopi\Firewall\Plugins\GeoLocation.metadata.reader.db"
+     *
+     * Supported per-segment tokens:
+     *   - "*"                     : match any single key
+     *   - "a|b|c"                 : alternation (parentheses optional)
+     *   - "{a,b,c}"               : brace alternation
+     *   - literal                 : exact match
+     *
+     * Returns a list of ([pathSegments], value) matches.
+     *
+     *
+     * @param array<string,mixed> $data
+     *   The configuration to traverse.
+     * @param string $pattern
+     *   Dot-path pattern with optional '*' segments.
      *
      * @return array<int, array{0: array<int|string>, 1: mixed}>
-     *         A list of tuples: [pathSegments[], value] for every match.
+     *   A list of tuples: [pathSegments[], value] for every match.
      */
     private static function expandMatches(array $data, string $pattern): array
     {
         $parts = \explode('.', $pattern);
-        $paths = [[[], $data]];
+        $paths = [[[], $data]]; // queue of [pathSoFar, node]
+    
         foreach ($parts as $part) {
+            $alts = self::tokenAlternatives($part); // e.g., ['block','allow'] or ['*'] or ['literal']
             $next = [];
+    
             foreach ($paths as [$p, $node]) {
                 if (!\is_array($node)) {
-                    continue;
+                    continue; // cannot descend
                 }
-
-                if ($part === '*') {
+    
+                // Fast path: wildcard '*' present in alts
+                if (\in_array('*', $alts, true)) {
                     foreach ($node as $k => $v) {
                         $next[] = [\array_merge($p, [$k]), $v];
                     }
-                } elseif (\array_key_exists($part, $node)) {
-                    $next[] = [\array_merge($p, [$part]), $node[$part]];
+
+                    continue;
+                }
+    
+                // Alternation / literals
+                foreach ($alts as $alt) {
+                    if (\array_key_exists($alt, $node)) {
+                        $next[] = [\array_merge($p, [$alt]), $node[$alt]];
+                    }
                 }
             }
-
+    
             $paths = $next;
+            if ($paths === []) {
+                break; // no matches at this level; early exit
+            }
         }
-
+    
         return $paths;
     }
 
     /**
      * Set an array value by a path of keys.
      *
-     * @param array<string,mixed> $data The array to modify.
-     * @param array<int|string> $path   List of keys (including integer indexes).
-     * @param mixed $value              Value to set at the given path.
+     * @param array<string,mixed> $data
+     *   The array to modify.
+     * @param array<int|string> $path
+     *   List of keys (including integer indexes).
+     * @param mixed $value
+     *   Value to set at the given path.
      *
-     * @return array<string,mixed> The modified array.
+     * @return array<string,mixed>
+     *   The modified array.
      */
     private static function setByPath(array $data, array $path, mixed $value): array
     {
@@ -517,11 +590,14 @@ final class ConfigLoader
      *
      * Use this to gracefully handle paths where realpath() may fail (streams, zip, permissions) but the file exists.
      *
-     * @param string $path The path to normalize.
+     * @param string $path
+     *   The path to normalize.
      *
-     * @return string Real path or the original if realpath() fails but the file exists.
+     * @return string
+     *   Real path or the original if realpath() fails but the file exists.
      *
-     * @throws \RuntimeException If the file does not exist.
+     * @throws \RuntimeException
+     *   If the file does not exist.
      */
     private static function realOrGiven(string $path): string
     {
@@ -540,9 +616,11 @@ final class ConfigLoader
     /**
      * Determine whether a path is absolute (POSIX, Windows drive, UNC) or a URL.
      *
-     * @param string $p The path string to test.
+     * @param string $p
+     *   The path string to test.
      *
-     * @return bool True if the path is absolute (or a URL/stream); false if it's a relative filesystem path.
+     * @return bool
+     *   True if the path is absolute (or a URL/stream); false if it's a relative filesystem path.
      */
     private static function isAbsolute(string $p): bool
     {
@@ -555,9 +633,11 @@ final class ConfigLoader
     /**
      * Heuristic to decide if a string looks like a URL or stream wrapper.
      *
-     * @param string $s The string to check.
+     * @param string $s
+     *   The string to check.
      *
-     * @return bool True if it looks like "scheme://..."; false otherwise.
+     * @return bool
+     *   True if it looks like "scheme://..."; false otherwise.
      */
     private static function looksLikeUrl(string $s): bool
     {
@@ -567,14 +647,60 @@ final class ConfigLoader
     /**
      * Build a consistent error message for bad type casts in env processing.
      *
-     * @param string $type Target type name ("int", "float", "bool").
-     * @param string $var  Environment variable name.
-     * @param mixed  $val  The original value that failed to cast.
+     * @param string $type
+     *   Target type name ("int", "float", "bool").
+     * @param string $var
+     *   Environment variable name.
+     * @param mixed  $val
+     *   The original value that failed to cast.
      *
      * @return string Human-friendly error string.
      */
     private static function badCast(string $type, string $var, mixed $val): string
     {
         return \sprintf('Cannot cast %s value "%s" from %s to %s', \gettype($val), (string) $val, $var, $type);
+    }
+
+    /**
+     * Convert a segment token into a list of alternatives.
+     * Examples:
+     *   "*"                => ["*"]
+     *   "block|allow"      => ["block","allow"]
+     *   "(block|allow)"    => ["block","allow"]
+     *   "{block,allow}"    => ["block","allow"]
+     *   "literal"          => ["literal"]
+     */
+    private static function tokenAlternatives(string $token): array
+    {
+        $t = \trim($token);
+
+        if ($t === '*') {
+            return ['*'];
+        }
+
+        // Strip optional parens "(a|b|c)"
+        if ($t !== '' && $t[0] === '(' && \str_ends_with($t, ')')) {
+            $t = \substr($t, 1, -1);
+        }
+
+        // Brace CSV "{a,b,c}"
+        if ($t !== '' && $t[0] === '{' && \str_ends_with($t, '}')) {
+            $csv = \substr($t, 1, -1);
+            return self::splitAlternativesCsv($csv);
+        }
+
+        // Pipe alternation "a|b|c"
+        if (\str_contains($t, '|')) {
+            return \array_values(\array_filter(\array_map('trim', \explode('|', $t)), 'strlen'));
+        }
+
+        // Literal segment
+        return [$t];
+    }
+
+    /** Split a simple CSV like "a,b,c" into ["a","b","c"] (trimmed, empty removed). */
+    private static function splitAlternativesCsv(string $csv): array
+    {
+        return \array_values(\array_filter(\array_map('trim', \explode(',', $csv)), 'strlen'));
     }
 }
