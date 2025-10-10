@@ -740,11 +740,9 @@ final class ConfigLoader
                 } else {
                     $result[$key] = [$result[$key], $value];
                 }
-
             } else {
                 $result[$key] = $value;
             }
-
         }
 
         return $result;
