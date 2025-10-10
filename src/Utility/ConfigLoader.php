@@ -129,6 +129,10 @@ final class ConfigLoader
             $baseDir = \dirname($abs);
             $data    = Yaml::parseFile($abs) ?? [];
 
+            if (!is_array($data)) {
+                return [];
+            }
+
             return self::postProcess($data, $baseDir, $relativePathKeys, $abs, $depth);
         } finally {
             unset(self::$includeStack[$abs]);
