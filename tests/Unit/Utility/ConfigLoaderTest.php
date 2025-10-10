@@ -138,7 +138,8 @@ configs:
   - "{config_dir}/more/*.yml"
   - "%env(string:EXTRA_CFG)%"
   - "config/extra.yml"
-YML);
+YML
+        );
 
         // Files referenced by relative path patterns
         $this->write($this->tmp . '/logs/app.log', '');
@@ -161,14 +162,14 @@ YML);
         self::assertSame(3.14, $cfg['app']['pi']);
         self::assertTrue($cfg['app']['truthy']);
         self::assertFalse($cfg['app']['falsy']);
-        self::assertSame(['a' => 1, 'b' => [2,3]], $cfg['app']['json']);
+        self::assertSame(['a' => 1, 'b' => [2, 3]], $cfg['app']['json']);
         self::assertSame("hello world", $cfg['app']['b64']);
         self::assertSame("s3cr3t\n", $cfg['app']['file']);
         self::assertSame('TrimMe', $cfg['app']['trimmed']);
         self::assertSame('dev', $cfg['app']['lower']);
         self::assertSame('DEV', $cfg['app']['upper']);
-        self::assertSame(['alpha','beta','gamma'], $cfg['app']['csv']);
-        self::assertSame(['foo' => '1', 'bar' => ['2','3']], $cfg['app']['qs']);
+        self::assertSame(['alpha', 'beta', 'gamma'], $cfg['app']['csv']);
+        self::assertSame(['foo' => '1', 'bar' => ['2', '3']], $cfg['app']['qs']);
         self::assertIsArray($cfg['app']['url']);
         self::assertSame('example.com', $cfg['app']['url']['host']);
 
@@ -284,7 +285,8 @@ YML;
 configs:
   - "%env(string:EXTRA_ONE)%"
   - "{config_dir}/rel/thing.yml"
-YML);
+YML
+        );
 
         $cfg = ConfigLoader::load($main);
         self::assertSame('ok', $cfg['env_included']);
@@ -298,7 +300,8 @@ YML);
 logger:
   main:
     args: ["http://example.com/logs/app.log", "/abs/path.log", "rel/app2.log"]
-YML);
+YML
+        );
         $this->write($this->tmp . '/rel/app2.log', '');
 
         $cfg = ConfigLoader::load($main, ['logger.*.args.0', 'logger.*.args.1', 'logger.*.args.2']);
@@ -319,14 +322,16 @@ arr: [1,2,3]
 obj:
   x: 1
   y: 2
-YML);
+YML
+        );
 
         $this->write($b, <<<YML
 arr: [4,5]      # should REPLACE not append
 obj:
   y: 20         # should override only y
   z: 3
-YML);
+YML
+        );
 
         // Build a main file that includes both, so ConfigLoader's merge (replace-lists) is used
         $main = $this->tmp . '/main.yml';
@@ -335,8 +340,143 @@ YML);
         $cfg = ConfigLoader::load($main);
 
         // list replaced entirely
-        self::assertSame([4,5], $cfg['arr']);
+        self::assertSame([4, 5], $cfg['arr']);
         // object deep-merged
         self::assertSame(['x' => 1, 'y' => 20, 'z' => 3], $cfg['obj']);
+    }
+
+    public function testRootScalarYamlReturnsEmptyArray(): void
+    {
+        $f = $this->tmp . '/root_scalar.yml';
+        $this->write($f, "--- justastring\n");
+        $cfg = ConfigLoader::load($f);
+        self::assertSame([], $cfg);
+    }
+
+    public function testUnknownEnvProcessorThrows(): void
+    {
+        putenv('FOO=bar');
+        $f = $this->tmp . '/unknown_proc.yml';
+        $this->write($f, "x: '%env(weird:FOO)%'\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unknown env processor');
+        ConfigLoader::load($f);
+    }
+
+    public function testBadIntCastThrows(): void
+    {
+        putenv('BAD_INT=notanumber');
+        $f = $this->tmp . '/bad_int.yml';
+        $this->write($f, "x: '%env(int:BAD_INT)%'\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Cannot cast');
+        ConfigLoader::load($f);
+    }
+
+    public function testBadFloatCastThrows(): void
+    {
+        putenv('BAD_FLOAT=NaNish');
+        $f = $this->tmp . '/bad_float.yml';
+        $this->write($f, "x: '%env(float:BAD_FLOAT)%'\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Cannot cast');
+        ConfigLoader::load($f);
+    }
+
+    public function testInvalidBase64Throws(): void
+    {
+        putenv('BAD_B64=*not-base64*');
+        $f = $this->tmp . '/bad_b64.yml';
+        $this->write($f, "x: '%env(base64:BAD_B64)%'\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Invalid base64');
+        ConfigLoader::load($f);
+    }
+
+    public function testFileProcessorMissingThrows(): void
+    {
+        putenv('MISSING_FILE=' . $this->tmp . '/nope.txt');
+        $f = $this->tmp . '/missing_file.yml';
+        $this->write($f, "x: '%env(file:MISSING_FILE)%'\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not found or unreadable');
+        ConfigLoader::load($f);
+    }
+
+    public function testUrlProcessorReturnsParsedArray(): void
+    {
+        putenv('OK_URL=:still/a/url'); // parse_url returns an array (path-only)
+        $f = $this->tmp . '/ok_url.yml';
+        $this->write($f, "x: '%env(url:OK_URL)%'\n");
+        $cfg = ConfigLoader::load($f);
+        self::assertIsArray($cfg['x']);
+        self::assertArrayHasKey('path', $cfg['x']);
+        self::assertSame(':still/a/url', $cfg['x']['path']);
+    }
+
+    public function testQueryStringEmptyReturnsEmptyArray(): void
+    {
+        putenv('APP_QS_EMPTY=');
+        $f = $this->tmp . '/qs_empty.yml';
+        $this->write($f, "x: '%env(query_string:APP_QS_EMPTY)%'\n");
+        $cfg = ConfigLoader::load($f);
+        self::assertSame([], $cfg['x']);
+    }
+
+    public function testNormalizeIncludeEnvResolvesToNonStringThrows(): void
+    {
+        putenv('INCLUDE_JSON={"a":1}');
+        $f = $this->tmp . '/main_nonstring_include.yml';
+        $this->write($f, "configs: ['%env(json:INCLUDE_JSON)%']\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Invalid include entry (must be string)');
+        ConfigLoader::load($f);
+    }
+
+    public function testExpandMatchesEarlyExitOnMissingSegment(): void
+    {
+        $f = $this->tmp . '/early_exit.yml';
+        $this->write($f, "a:\n  b:\n    c: 1\n");
+        $cfg = ConfigLoader::load($f, ['a.nope.c']); // pattern won't match; ensures branch is exercised
+        self::assertSame(1, $cfg['a']['b']['c']);
+    }
+
+    public function testRelativePathResolverSkipsWindowsAndUncAbsolutes(): void
+    {
+        $main = $this->tmp . '/main_win.yml';
+        $this->write($main, <<<YML
+logger:
+  main:
+    args: ['C:\\\\abs\\\\path.log', '\\\\server\\share\\file.log', 'rel/app3.log']
+YML
+        );
+        $this->write($this->tmp . '/rel/app3.log', '');
+        $cfg = ConfigLoader::load($main, ['logger.*.args.0', 'logger.*.args.1', 'logger.*.args.2']);
+        self::assertSame('C:\\\\abs\\\\path.log', $cfg['logger']['main']['args'][0]);  // untouched
+        self::assertSame('\\\\server\\share\\file.log', $cfg['logger']['main']['args'][1]); // untouched        $tmpBase = realpath($this->tmp) ?: $this->tmp;
+        $tmpBase = realpath($this->tmp) ?: $this->tmp;
+        $rhs = realpath($cfg['logger']['main']['args'][2]) ?: $cfg['logger']['main']['args'][2];
+        self::assertStringStartsWith($tmpBase, $rhs); // rewritten
+    }
+
+    public function testParseWithFileSchemeOriginCoversRealOrGivenBranch(): void
+    {
+        // Create a child config and a main YAML as strings, but pass origin with file:// scheme.
+        $child = $this->tmp . '/rel/child2.yml';
+        $this->write($child, "k: v\n");
+        $yaml = "configs: ['rel/child2.yml']\n";
+        $origin = $this->tmp . '/root2.yml';
+        $this->write($origin, "root: ok\n");
+        $cfg = ConfigLoader::parse($yaml, $origin, []);
+        self::assertSame('v', $cfg['k']);
+    }
+
+    public function testInvalidIncludeEntryTypeThrows(): void
+    {
+        $f = $this->tmp . '/invalid_inc.yml';
+        $this->write($f, "configs:\n  - { bad: type }\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Invalid include entry');
+        ConfigLoader::load($f);
     }
 }
