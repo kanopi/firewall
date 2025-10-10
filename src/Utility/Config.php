@@ -12,7 +12,6 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Utility;
 
 use Symfony\Component\PropertyAccess\PropertyAccess;
-use Symfony\Component\Yaml\Yaml;
 
 /**
  * Config related items.
@@ -77,13 +76,13 @@ class Config
         if (file_exists($file) && is_file($file) && !is_dir($file) && is_readable($file)) {
             try {
                 // Load the file and parse as Yaml.
-                $config = Yaml::parseFile($file);
+                $config = ConfigLoader::load($file, [
+                    'storage.config.(storage_file|offense_file)',
+                    '(allow|block).*.metadata.storage.config.file',
+                    '(allow|block).*.metadata.config.*',
+                    '(allow|block).*.metadata.(asn_reader|reader|country_reader).db',
+                ]);
             } catch (\Exception) {
-            }
-
-            // If it isn't an array make empty array.
-            if (!is_array($config)) {
-                $config = [];
             }
         }
 

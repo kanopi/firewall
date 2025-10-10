@@ -9,6 +9,8 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration Overview](#configuration-overview)
+- [Configuration Loading & Includes](#configuration-loading--includes)
+- [Environment Variables in YAML](#environment-variables-in-yaml)
 - [Global Configuration](#global-configuration)
   - [Multiple Offenses Defense](#multiple-offenses-defense)
 - [Storage Configuration](#storage-configuration)
@@ -54,12 +56,6 @@ Install via Composer:
 
 ```bash
 composer require kanopi/firewall
-```
-
-For geolocation features, also install:
-
-```bash
-composer require geoip2/geoip2
 ```
 
 ## Quick Start
@@ -117,9 +113,88 @@ block:
 logger:
   - class: Monolog\Handler\StreamHandler
     args:
-      - /var/log/firewall/firewall.log
+      - logs/firewall.log   # relative to this YAML's directory
       - Monolog\Level::Info
 ```
+
+
+### Test Drive
+
+Follow these steps to quickly test Simple Firewall locally in a clean environment:
+
+#### 🧪 Quick Test Drive Setup
+
+1. **Create a temporary folder**
+   ```bash
+   mkdir testdrive
+   cd testdrive
+   touch firewall.data
+   ```
+
+2. **Install Simple Firewall via Composer**
+   ```bash
+   composer require kanopi/firewall
+   ```
+
+3. **Create a basic `firewall.yml` configuration**
+
+   ```yaml
+    storage:
+        type: '\Kanopi\Firewall\Storage\FileStorage'
+        config:
+            storage_file: firewall.data
+    
+    block:
+        '\Kanopi\Firewall\Plugins\Url':
+        enable: true
+        config:
+            - "query.block:1"   # Block any request that includes ?block=1
+   ```
+
+4. **Create an `index.php` file**
+
+   ```php
+   <?php
+   require __DIR__ . '/vendor/autoload.php';
+
+   use Kanopi\Firewall\Firewall;
+
+   // Initialize firewall
+   Firewall::create([__DIR__ . '/firewall.yml'])->evaluate();
+
+   echo "Hello, world!";
+   ```
+
+5. **Start a PHP built-in web server**
+   ```bash
+   php -S localhost:8000
+   ```
+
+6. **Open your browser and test**
+
+   - Visit [http://localhost:8000](http://localhost:8000) — you should see:
+     ```
+     Hello, world!
+     ```
+
+   - Visit [http://localhost:8000?block=1](http://localhost:8000?block=1) — you should see:
+     ```
+     Request Blocked
+     ```
+
+   - Visit [http://localhost:8000](http://localhost:8000) — you should see:
+     ```
+     Request Blocked
+     ```
+
+This simple example demonstrates how the firewall intercepts requests using YAML configuration and shows how easy it is to add rule-based blocking.
+
+To start over empty the contents of the Storage file
+
+```bash
+echo "" > firewall.data
+```
+
 
 ## Configuration Overview
 
@@ -132,6 +207,91 @@ The firewall configuration consists of four main sections:
 | `bypass`  | Plugins that allow trusted traffic through               | No       |
 | `block`   | Plugins that deny harmful or suspicious traffic          | No       |
 | `logger`  | Monolog handlers for logging firewall events             | No       |
+
+## Configuration Loading & Includes
+
+The firewall supports **modular configuration** via a top‑level `configs:` key in any YAML file. Paths listed under `configs:` are loaded and **merged** into the current file.
+
+**Rules & behavior**
+
+- Paths in `configs:` can be:
+  - **Relative** (resolved against the directory of the YAML file that declares them)
+  - **Absolute**
+  - Use the `{config_dir}` token (expanded to the current YAML's directory)
+  - **Glob patterns** (e.g., `more/*.yml`; matched files are sorted alphabetically)
+  - **Environment-driven** using `%env(...)%` (must resolve to a string path)
+- **Merge semantics**:
+  - Objects (associative arrays) are merged **deeply**; later files override earlier keys
+  - Lists (numeric arrays) are **replaced as a whole** by later files
+- Safety: circular includes are prevented and excessive include depth is rejected.
+
+**Example**
+
+```yaml
+# base: config/firewall.yml
+configs:
+  - "{config_dir}/sites/*.yml"       # include all site-specific configs
+  - "config/extra.yml"               # include another file relative to this YAML
+  - "%env(string:EXTRA_CFG)%"        # include a path from env var
+
+logger:
+  - class: Monolog\Handler\StreamHandler
+    args: ["logs/firewall.log", "Monolog\\Level::Info"]
+
+block:
+  \Kanopi\Firewall\Plugins\GeoLocation:
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: "geo/GeoLite2-City.mmdb"   # relative path resolved against this file's directory
+```
+
+In the example above, the log file and GeoIP database paths are **relative to the YAML file** (not the PHP current working directory). This makes configs portable regardless of where your app bootstraps from.
+
+## Environment Variables in YAML
+
+You can reference OS environment variables inside YAML using Symfony‑style tokens: `%env(NAME)%`.
+
+- When a YAML scalar is **exactly** a single token (e.g., `port: '%env(int:APP_PORT)%'`), the value is returned as a **native type** based on the processor (int, float, bool, array, or string).
+- When a token appears **inside a larger string**, it is interpolated as text.
+- Remember to **quote** tokens in YAML (e.g., `' %env(...)% '`) because `%` is a reserved indicator in YAML.
+
+**Supported processors (can be chained left→right):**
+
+`string`, `int`, `float`, `bool`, `json` (→ array), `base64`, `file` (reads file contents), `trim`, `lower`, `upper`, `csv` (→ list), `query_string` (→ array, preserves duplicate keys), `url` (→ array from `parse_url`).
+
+**Examples**
+
+```yaml
+app:
+  env: '%env(string:APP_ENV)%'           # "dev"
+  port: '%env(int:APP_PORT)%'            # 8080 (int)
+  debug: '%env(bool:APP_DEBUG)%'         # true/false (bool)
+  options: '%env(json:APP_JSON)%'        # { key: value } (array)
+  secret: '%env(file:SECRET_PATH)%'      # file contents as string
+  list: '%env(csv:ALLOWED)%'             # ["a","b","c"]
+  params: '%env(query_string:QS)%'       # { foo: "1", bar: ["2","3"] }
+  note: "running on %env(APP_ENV)%"     # string interpolation
+```
+
+**Path resolution for common keys**
+
+Some metadata values are commonly file paths. The loader automatically rewrites **relative** values to **absolute** when they exist on disk, using the **YAML file's directory** as the base. You can target keys with dot‑path patterns and lightweight alternation:
+
+- `*` matches any key at that level
+- Alternation per segment: `block|allow`, `{block,allow}`, or `(block|allow)`
+
+**Useful patterns**
+
+```text
+logger.*.args.0
+(block|allow).\Kanopi\Firewall\Plugins\GeoLocation.metadata.reader.db
+(block|allow).\Kanopi\Firewall\Plugins\Asn.metadata.reader.db
+(block|allow).\Kanopi\Firewall\Plugins\RateLimit.metadata.storage.config.file
+```
+
+With these patterns, paths like `logs/app.log`, `geo/GeoLite2-ASN.mmdb`, or `limits/rate.yml` will be resolved relative to the YAML file and stored as absolute paths at runtime.
 
 ## Global Configuration
 
@@ -1079,7 +1239,9 @@ Combine multiple conditions with logical operators:
 
 ## Logging Configuration
 
-The firewall uses Monolog for flexible logging. Multiple handlers can be configured:
+The firewall uses Monolog for flexible logging.
+Relative log file paths (e.g., in `args[0]` for `StreamHandler`) are resolved **relative to the YAML file** that declares them.
+Multiple handlers can be configured:
 
 ```yaml
 logger:
