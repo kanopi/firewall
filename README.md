@@ -58,12 +58,6 @@ Install via Composer:
 composer require kanopi/firewall
 ```
 
-For geolocation features, also install:
-
-```bash
-composer require geoip2/geoip2
-```
-
 ## Quick Start
 
 ### Basic Implementation
@@ -122,6 +116,74 @@ logger:
       - logs/firewall.log   # relative to this YAML's directory
       - Monolog\Level::Info
 ```
+
+
+### Test Drive
+
+Follow these steps to quickly test Simple Firewall locally in a clean environment:
+
+#### 🧪 Quick Test Drive Setup
+
+1. **Create a temporary folder**
+   ```bash
+   mkdir testdrive
+   cd testdrive
+   ```
+
+2. **Install Simple Firewall via Composer**
+   ```bash
+   composer require kanopi/firewall
+   ```
+
+3. **Create a basic `firewall.yml` configuration**
+
+   ```yaml
+   storage:
+     type: \Kanopi\Firewall\Storage\FileStorage
+     config:
+       file: ./firewall.data
+
+   block:
+     \Kanopi\Firewall\Plugins\Url:
+       enable: true
+       config:
+         - "query.block:1"   # Block any request that includes ?block=1
+   ```
+
+4. **Create an `index.php` file**
+
+   ```php
+   <?php
+   require __DIR__ . '/vendor/autoload.php';
+
+   use Kanopi\Firewall\Firewall;
+
+   // Initialize firewall
+   Firewall::create([__DIR__ . '/firewall.yml'])->evaluate();
+
+   echo "Hello, world!";
+   ```
+
+5. **Start a PHP built-in web server**
+   ```bash
+   php -S localhost:8000
+   ```
+
+6. **Open your browser and test**
+
+   - Visit [http://localhost:8000](http://localhost:8000) — you should see:
+     ```
+     Hello, world!
+     ```
+
+   - Visit [http://localhost:8000?block=1](http://localhost:8000?block=1) — you should see:
+     ```
+     Request Blocked
+     ```
+
+This simple example demonstrates how the firewall intercepts requests using YAML configuration and shows how easy it is to add rule-based blocking.
+
+
 
 ## Configuration Overview
 
