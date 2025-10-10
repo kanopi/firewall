@@ -103,10 +103,11 @@ final class ConfigLoader
         $abs = self::realOrGiven($filePath);
 
         if ($depth > self::MAX_DEPTH) {
-            throw new \RuntimeException("Include depth exceeded at $abs");
+            throw new \RuntimeException("Include depth exceeded at " . $abs);
         }
+
         if (isset(self::$includeStack[$abs])) {
-            throw new \RuntimeException("Circular include detected at $abs");
+            throw new \RuntimeException("Circular include detected at " . $abs);
         }
 
         self::$includeStack[$abs] = true;
@@ -146,25 +147,25 @@ final class ConfigLoader
             $includes = $data['configs'];
             unset($data['configs']);
 
-            foreach ($includes as $inc) {
-                if (!\is_string($inc)) {
-                    throw new \RuntimeException("Invalid include entry (must be string) in $origin");
+            foreach ($includes as $include) {
+                if (!\is_string($include)) {
+                    throw new \RuntimeException("Invalid include entry (must be string) in " . $origin);
                 }
 
-                $norm = self::normalizeInclude($inc, $baseDir);
+                $norm = self::normalizeInclude($include, $baseDir);
                 $matches = \glob($norm) ?: [$norm];
                 \sort($matches, \SORT_STRING);
 
-                foreach ($matches as $p) {
-                    $sub  = self::loadInternal($p, $relativePathKeys, $depth + 1);
+                foreach ($matches as $match) {
+                    $sub  = self::loadInternal($match, $relativePathKeys, $depth + 1);
                     $data = self::mergeConfigs($data, $sub); // replace-lists semantics
                 }
             }
         }
 
         // 3) Resolve relative paths for selected keys (dot-paths with * wildcards)
-        if (!empty($relativePathKeys)) {
-            $data = self::resolveRelativePathsForKeys($data, $baseDir, $relativePathKeys);
+        if ($relativePathKeys !== []) {
+            return self::resolveRelativePathsForKeys($data, $baseDir, $relativePathKeys);
         }
 
         return $data;
@@ -193,6 +194,7 @@ final class ConfigLoader
             foreach ($value as $k => $v) {
                 $value[$k] = self::resolvePlaceholders($v);
             }
+
             return $value;
         }
 
@@ -208,7 +210,7 @@ final class ConfigLoader
          // Interpolate within string → cast to string
         return \preg_replace_callback(
             '/%env\(([^)]+)\)%/',
-            fn(array $m) => (string) self::resolveEnvTokenTyped($m[1]),
+            fn(array $m): string => (string) self::resolveEnvTokenTyped($m[1]),
             $value
         );
     }
@@ -241,9 +243,9 @@ final class ConfigLoader
 
         $val = $raw;
 
-        foreach ($parts as $proc) {
-            $proc = \strtolower(\trim($proc));
-            switch ($proc) {
+        foreach ($parts as $part) {
+            $part = \strtolower(\trim($part));
+            switch ($part) {
                 case 'string':
                     $val = (string) $val;
                     break;
@@ -252,6 +254,7 @@ final class ConfigLoader
                     if (!\is_numeric($val)) {
                         throw new \RuntimeException(self::badCast('int', $var, $val));
                     }
+
                     $val = (int) $val;
                     break;
 
@@ -259,6 +262,7 @@ final class ConfigLoader
                     if (!\is_numeric($val)) {
                         throw new \RuntimeException(self::badCast('float', $var, $val));
                     }
+
                     $val = (float) $val;
                     break;
 
@@ -273,6 +277,7 @@ final class ConfigLoader
                     } else {
                         throw new \RuntimeException(self::badCast('bool', $var, $val));
                     }
+
                     break;
 
                 case 'json':
@@ -280,6 +285,7 @@ final class ConfigLoader
                     if (\json_last_error() !== JSON_ERROR_NONE) {
                         throw new \RuntimeException(\sprintf('Invalid JSON in %s: %s', $var, \json_last_error_msg()));
                     }
+
                     $val = $d; // native array
                     break;
 
@@ -288,6 +294,7 @@ final class ConfigLoader
                     if ($d === false) {
                         throw new \RuntimeException(\sprintf('Invalid base64 in %s', $var));
                     }
+
                     $val = $d;
                     break;
 
@@ -296,10 +303,12 @@ final class ConfigLoader
                     if (!\is_file($p) || !\is_readable($p)) {
                         throw new \RuntimeException(\sprintf('file:%s not found or unreadable (from %s)', $p, $var));
                     }
+
                     $c = \file_get_contents($p);
                     if ($c === false) {
                         throw new \RuntimeException(\sprintf('Failed reading file for %s', $var));
                     }
+
                     $val = $c;
                     break;
 
@@ -330,11 +339,12 @@ final class ConfigLoader
                     if ($u === false) {
                         throw new \RuntimeException(\sprintf('Invalid URL in %s', $var));
                     }
+
                     $val = $u; // native array
                     break;
 
                 default:
-                    throw new \RuntimeException(\sprintf('Unknown env processor "%s" in token "%s"', $proc, $token));
+                    throw new \RuntimeException(\sprintf('Unknown env processor "%s" in token "%s"', $part, $token));
             }
         }
 
@@ -365,6 +375,7 @@ final class ConfigLoader
             if (!\is_string($resolved)) {
                 throw new \RuntimeException('%env(...)% for include must resolve to a string path');
             }
+
             $value = $resolved;
         }
 
@@ -387,8 +398,8 @@ final class ConfigLoader
      */
     private static function resolveRelativePathsForKeys(array $data, string $baseDir, array $dotKeys): array
     {
-        foreach ($dotKeys as $pattern) {
-            foreach (self::expandMatches($data, $pattern) as [$path, $value]) {
+        foreach ($dotKeys as $dotKey) {
+            foreach (self::expandMatches($data, $dotKey) as [$path, $value]) {
                 if (\is_string($value) && !self::isAbsolute($value) && !self::looksLikeUrl($value)) {
                     $candidate = $baseDir . DIRECTORY_SEPARATOR . $value;
                     if (\file_exists($candidate)) {
@@ -397,6 +408,7 @@ final class ConfigLoader
                 }
             }
         }
+
         return $data;
     }
 
@@ -419,6 +431,7 @@ final class ConfigLoader
                 $base[$k] = $v;
                 continue;
             }
+
             if (\is_array($v) && \is_array($base[$k])) {
                 $baseIsList = \array_keys($base[$k]) === \range(0, \count($base[$k]) - 1);
                 $overIsList = \array_keys($v) === \range(0, \count($v) - 1);
@@ -429,6 +442,7 @@ final class ConfigLoader
                 $base[$k] = $v;
             }
         }
+
         return $base;
     }
 
@@ -453,6 +467,7 @@ final class ConfigLoader
                 if (!\is_array($node)) {
                     continue;
                 }
+
                 if ($part === '*') {
                     foreach ($node as $k => $v) {
                         $next[] = [\array_merge($p, [$k]), $v];
@@ -461,8 +476,10 @@ final class ConfigLoader
                     $next[] = [\array_merge($p, [$part]), $node[$part]];
                 }
             }
+
             $paths = $next;
         }
+
         return $paths;
     }
 
@@ -482,12 +499,16 @@ final class ConfigLoader
             if (!\is_array($ref)) {
                 $ref = [];
             }
+
             if (!\array_key_exists($seg, $ref)) {
                 $ref[$seg] = [];
             }
+
             $ref =& $ref[$seg];
         }
+
         $ref = $value;
+
         return $data;
     }
 
@@ -508,9 +529,11 @@ final class ConfigLoader
         if ($real !== false) {
             return $real;
         }
+
         if (!\file_exists($path)) {
-            throw new \RuntimeException("Config not found: $path");
+            throw new \RuntimeException("Config not found: " . $path);
         }
+
         return $path; // exists but realpath failed (e.g., stream/zip/permission)
     }
 
