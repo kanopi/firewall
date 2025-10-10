@@ -33,6 +33,10 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
      */
     public function __construct(array $config = [])
     {
+        if (isset($config['redis']['port']) && is_numeric($config['redis']['port'])) {
+            $config['redis']['port'] = intval($config['redis']['port']);
+        }
+
         parent::__construct($config);
 
         try {

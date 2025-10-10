@@ -29,6 +29,10 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
      */
     public function __construct(array $config = [])
     {
+        if (is_array($config['connection']) && isset($config['connection']['port']) && is_numeric($config['connection']['port'])) {
+            $config['connection']['port'] = intval($config['connection']['port']);
+        }
+
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_rate_limit_storage';
 
