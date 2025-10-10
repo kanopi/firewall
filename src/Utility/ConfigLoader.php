@@ -725,10 +725,12 @@ final class ConfigLoader
         if ($qs === '') {
             return $result;
         }
+
         foreach (explode('&', $qs) as $pair) {
             if ($pair === '') {
                 continue;
             }
+
             [$k, $v] = array_pad(explode('=', $pair, 2), 2, '');
             $key = urldecode($k);
             $value = urldecode($v);
@@ -738,10 +740,13 @@ final class ConfigLoader
                 } else {
                     $result[$key] = [$result[$key], $value];
                 }
+
             } else {
                 $result[$key] = $value;
             }
+
         }
+
         return $result;
     }
 }
