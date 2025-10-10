@@ -128,6 +128,7 @@ Follow these steps to quickly test Simple Firewall locally in a clean environmen
    ```bash
    mkdir testdrive
    cd testdrive
+   touch firewall.data
    ```
 
 2. **Install Simple Firewall via Composer**
@@ -138,16 +139,16 @@ Follow these steps to quickly test Simple Firewall locally in a clean environmen
 3. **Create a basic `firewall.yml` configuration**
 
    ```yaml
-   storage:
-     type: \Kanopi\Firewall\Storage\FileStorage
-     config:
-       file: ./firewall.data
-
-   block:
-     \Kanopi\Firewall\Plugins\Url:
-       enable: true
-       config:
-         - "query.block:1"   # Block any request that includes ?block=1
+    storage:
+        type: '\Kanopi\Firewall\Storage\FileStorage'
+        config:
+            storage_file: firewall.data
+    
+    block:
+        '\Kanopi\Firewall\Plugins\Url':
+        enable: true
+        config:
+            - "query.block:1"   # Block any request that includes ?block=1
    ```
 
 4. **Create an `index.php` file**
@@ -181,8 +182,18 @@ Follow these steps to quickly test Simple Firewall locally in a clean environmen
      Request Blocked
      ```
 
+   - Visit [http://localhost:8000](http://localhost:8000) — you should see:
+     ```
+     Request Blocked
+     ```
+
 This simple example demonstrates how the firewall intercepts requests using YAML configuration and shows how easy it is to add rule-based blocking.
 
+To start over empty the contents of the Storage file
+
+```bash
+echo "" > firewall.data
+```
 
 
 ## Configuration Overview
