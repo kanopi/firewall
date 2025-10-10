@@ -361,8 +361,9 @@ final class ConfigLoader
                     break;
 
                 case 'query_string':
-                    \parse_str((string) $val, $arr);
-                    $val = $arr; // native array
+                    // Preserve duplicate keys by aggregating values into arrays, e.g.
+                    // "foo=1&bar=2&bar=3" → ["foo" => "1", "bar" => ["2","3"]]
+                    $val = self::parseQueryPreserveDuplicates((string) $val);
                     break;
 
                 case 'url':
@@ -706,5 +707,41 @@ final class ConfigLoader
     private static function splitAlternativesCsv(string $csv): array
     {
         return \array_values(\array_filter(\array_map('trim', \explode(',', $csv)), 'strlen'));
+    }
+
+    /**
+     * Parse a URL query string while preserving duplicate keys.
+     * Example: "foo=1&bar=2&bar=3" becomes ["foo" => "1", "bar" => ["2","3"]]
+     *
+     * @param string $qs
+     *   Raw query string without the leading '?'.
+     *
+     * @return array<string, mixed>
+     *   Associative array where repeated keys are collected into arrays.
+     */
+    private static function parseQueryPreserveDuplicates(string $qs): array
+    {
+        $result = [];
+        if ($qs === '') {
+            return $result;
+        }
+        foreach (explode('&', $qs) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+            [$k, $v] = array_pad(explode('=', $pair, 2), 2, '');
+            $key = urldecode($k);
+            $value = urldecode($v);
+            if (array_key_exists($key, $result)) {
+                if (is_array($result[$key])) {
+                    $result[$key][] = $value;
+                } else {
+                    $result[$key] = [$result[$key], $value];
+                }
+            } else {
+                $result[$key] = $value;
+            }
+        }
+        return $result;
     }
 }
