@@ -67,8 +67,8 @@ final class ConfigLoader
      */
     public static function parse(string $yaml, string $configFilePath, array $relativePathKeys = []): array
     {
-        $absOrigin = self::realOrGiven($configFilePath);
-        $baseDir   = \dirname($absOrigin);
+        $absOrigin = self::looksLikeUrl($configFilePath) ? $configFilePath : self::realOrGiven($configFilePath);
+        $baseDir = \dirname($absOrigin);
         $data      = Yaml::parse($yaml) ?? [];
 
         return self::postProcess($data, $baseDir, $relativePathKeys, $absOrigin, 0);
@@ -444,6 +444,11 @@ final class ConfigLoader
                     $candidate = $baseDir . DIRECTORY_SEPARATOR . $value;
                     if (\file_exists($candidate)) {
                         $data = self::setByPath($data, $path, self::realOrGiven($candidate));
+                    } elseif (self::looksLikeUrl($baseDir)) {
+                        if (str_contains($candidate, '{config_dir}')) {
+                            $candidate = str_ireplace(['{config_dir}/','{config_dir}'], '', $candidate);
+                        }
+                        $data = self::setByPath($data, $path, $candidate);
                     }
                 }
             }
@@ -644,7 +649,7 @@ final class ConfigLoader
      * @return bool
      *   True if it looks like "scheme://..."; false otherwise.
      */
-    private static function looksLikeUrl(string $s): bool
+    public static function looksLikeUrl(string $s): bool
     {
         return \preg_match('~^[a-z][a-z0-9+.-]*://~i', $s) === 1;
     }
