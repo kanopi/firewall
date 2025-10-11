@@ -128,6 +128,7 @@ class Config
                 if ($contents === false) {
                     return [];
                 }
+
                 $config = ConfigLoader::parse($contents, $file, $replacementPaths);
             } catch (\Exception) {
             }
