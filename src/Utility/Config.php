@@ -146,7 +146,7 @@ class Config
             }
         } elseif (file_exists($file) && is_file($file) && !is_dir($file) && is_readable($file)) {
             try {
-                // Load the file and parse as Yaml.
+                // Load the file and parse as YAML.
                 $config = ConfigLoader::load($file, $replacementPaths);
             } catch (\Exception) {
             }
