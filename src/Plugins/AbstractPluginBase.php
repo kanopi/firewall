@@ -52,7 +52,7 @@ abstract class AbstractPluginBase implements PluginInterface
 
             $this->getLogger()->debug('Plugin initialized with config files', [
                 'plugin' => $this->getName(),
-                'config_files' => array_filter($files, 'is_string'),
+                'config_files' => array_filter($files, is_string(...)),
                 'metadata' => $this->metadata,
             ]);
         } else {

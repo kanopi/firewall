@@ -39,7 +39,7 @@ class RateLimit extends AbstractPluginBase
                 'storage_config' => $this->metadata['storage']['config'] ?? [],
             ]);
         } else {
-            $this->storage = RateLimitStorageFactory::create(null);
+            $this->storage = RateLimitStorageFactory::create();
             $this->getLogger()->debug('Rate limit using default storage');
         }
     }
