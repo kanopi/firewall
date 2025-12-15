@@ -251,6 +251,42 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
+     * Test Config::loadFile() with a remote file.
+     *
+     * Confirms that loadFIle can load a remote valid YAML file
+     */
+    public function testLoadFileFromRemote(): void
+    {
+        $config = Config::loadFile("https://gist.githubusercontent.com/sean-e-dietrich/24f023f6e5ea0dc8eb5f631e95f60759/raw/1564049a49078eaf1e805b60b9d361b6d0400339/firewall.yaml");
+
+        $this->assertIsArray($config);
+        $this->assertArrayHasKey('block', $config);
+    }
+
+    /**
+     * Test Config::loadFile() with invalid YAML
+     *
+     * Confirms that loadFile handles invalid YAML gracefully
+     */
+    public function testLoadFileFromRemoteException(): void
+    {
+        define('KANOPI_FIREWALL_CACHE_DIR', sys_get_temp_dir());
+
+        $url = "https://gist.githubusercontent.com/sean-e-dietrich/24f023f6e5ea0dc8eb5f631e95f60759/raw/1564049a49078eaf1e805b60b9d361b6d0400339/firewall.yaml";
+
+        $tempFile = sys_get_temp_dir() . '/' . md5($url) . '.cache';
+        file_put_contents($tempFile, "invalid: yaml: content:\n  - missing");
+
+        $config = Config::loadFile($url);
+
+        $this->assertIsArray($config);
+        // Should return empty array on parse error
+        $this->assertEmpty($config);
+
+        @unlink($tempFile);
+    }
+
+    /**
      * Test Config::loadFile() with non-existent file
      *
      * Confirms that loadFile returns empty array for non-existent file
