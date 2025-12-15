@@ -356,7 +356,7 @@ final class ConfigLoader
                     break;
 
                 case 'csv':
-                    $items = \array_map('trim', \array_filter(\explode(',', (string) $val), 'strlen'));
+                    $items = \array_map(trim(...), \array_filter(\explode(',', (string) $val), strlen(...)));
                     $val = \array_values($items); // native list
                     break;
 
@@ -702,7 +702,7 @@ final class ConfigLoader
 
         // Pipe alternation "a|b|c"
         if (\str_contains($t, '|')) {
-            return \array_values(\array_filter(\array_map('trim', \explode('|', $t)), 'strlen'));
+            return \array_values(\array_filter(\array_map(trim(...), \explode('|', $t)), strlen(...)));
         }
 
         // Literal segment
@@ -712,7 +712,7 @@ final class ConfigLoader
     /** Split a simple CSV like "a,b,c" into ["a","b","c"] (trimmed, empty removed). */
     private static function splitAlternativesCsv(string $csv): array
     {
-        return \array_values(\array_filter(\array_map('trim', \explode(',', $csv)), 'strlen'));
+        return \array_values(\array_filter(\array_map(trim(...), \explode(',', $csv)), strlen(...)));
     }
 
     /**

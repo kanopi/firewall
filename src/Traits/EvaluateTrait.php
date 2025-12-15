@@ -258,7 +258,7 @@ trait EvaluateTrait
         $multiValueOps = ['in', 'matches_any', 'equals', 'contains', 'starts_with', 'ends_with', 'regex'];
         $value = trim($value);
         if (str_contains($value, ',') && in_array($operator, $multiValueOps, true)) {
-            $value = array_map('trim', explode(',', $value));
+            $value = array_map(trim(...), explode(',', $value));
         }
 
         return [
@@ -378,7 +378,7 @@ trait EvaluateTrait
         if (!$caseSensitive && is_string($value)) {
             $value = strtolower($value);
         } elseif (!$caseSensitive && is_array($value)) {
-            $value = array_map('strtolower', $value);
+            $value = array_map(strtolower(...), $value);
         }
 
         $result = match ($operator) {
