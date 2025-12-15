@@ -94,7 +94,7 @@ class Config
             mkdir($cacheDir, 0775, true);
         }
 
-        $cacheFile = rtrim($cacheDir, '/') . '/' . md5($url) . '.cache';
+        $cacheFile = rtrim((string) $cacheDir, '/') . '/' . md5($url) . '.cache';
 
         if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $ttl)) {
             return file_get_contents($cacheFile);
