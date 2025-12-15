@@ -78,6 +78,18 @@ class Config
      */
     private static function fileGetContents(string $url, string $cacheDir = '/tmp/cache', int $ttl = 3600, float $timeout = 5.0): string|false
     {
+        if (defined('KANOPI_FIREWALL_CACHE_DIR')) {
+            $cacheDir = KANOPI_FIREWALL_CACHE_DIR;
+        }
+
+        if (defined('KANOPI_FIREWALL_CACHE_TTL')) {
+            $ttl = intval(KANOPI_FIREWALL_CACHE_TTL);
+        }
+
+        if (defined('KANOPI_FIREWALL_CACHE_TIMEOUT')) {
+            $timeout = floatval(KANOPI_FIREWALL_CACHE_TIMEOUT);
+        }
+
         if (!is_dir($cacheDir)) {
             mkdir($cacheDir, 0775, true);
         }
