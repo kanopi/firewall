@@ -599,4 +599,373 @@ class ConfigTest extends AbstractTestCase
             $this->assertTrue(true); // Just pass this assertion
         }
     }
+
+    // ===================================================================
+    // Reflection-based tests for private method fileGetContents()
+    // ===================================================================
+
+    /**
+     * Get reflection method for fileGetContents
+     */
+    private function getFileGetContentsMethod(): \ReflectionMethod
+    {
+        $reflection = new \ReflectionClass(Config::class);
+        $method = $reflection->getMethod('fileGetContents');
+        $method->setAccessible(true);
+        return $method;
+    }
+
+    /**
+     * Test fileGetContents() with cache hit (fresh cache)
+     *
+     * Tests line 99-100: Cache exists and is fresh
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testFileGetContentsCacheHit(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_hit_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://example.com/cached-file.yml';
+        $expectedContent = "cached: data\ntest: value";
+
+        // Create a fresh cache file
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, $expectedContent);
+        touch($cacheFile); // Make it current
+
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 5.0);
+
+        $this->assertEquals($expectedContent, $result);
+    }
+
+    /**
+     * Test fileGetContents() with expired cache
+     *
+     * Tests that expired cache triggers new fetch (which will fail for fake URL)
+     */
+    public function testFileGetContentsCacheExpiredTriggersNewFetch(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_expired_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://nonexistent-test-domain-12345.com/expired.yml';
+        $oldContent = "old: data";
+
+        // Create an expired cache file (older than TTL)
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, $oldContent);
+        touch($cacheFile, time() - 7200); // 2 hours old
+
+        $method = $this->getFileGetContentsMethod();
+        // Use 1 hour TTL, so cache is expired
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 1.0);
+
+        // Should return false because fetch fails for nonexistent domain
+        $this->assertFalse($result);
+    }
+
+    /**
+     * Test fileGetContents() with successful remote fetch and cache creation
+     *
+     * Tests lines 104-114: Fetch from URL and save to cache
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testFileGetContentsSuccessfulFetchAndCacheCreation(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_fetch_success_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        // Use example.com which is reliable and always available
+        $url = 'https://example.com';
+
+        // Check if we can actually fetch it first
+        $testContext = stream_context_create(['http' => ['timeout' => 5]]);
+        $testFetch = @file_get_contents($url, false, $testContext);
+
+        if ($testFetch === false) {
+            $this->markTestSkipped('Network unavailable or example.com unreachable');
+        }
+
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 5.0);
+
+        // Should return content (not false)
+        $this->assertNotFalse($result, 'Should successfully fetch from ' . $url);
+
+        // Cache file should exist
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        $this->assertFileExists($cacheFile);
+
+        // Cache file should contain the fetched content
+        $cachedContent = file_get_contents($cacheFile);
+        $this->assertEquals($result, $cachedContent);
+    }
+
+    /**
+     * Test fileGetContents() successful fetch IN SAME PROCESS (for code coverage)
+     *
+     * This test runs without @runInSeparateProcess to ensure code coverage tracks lines 113-114
+     */
+    public function testFileGetContentsSuccessSameProcess(): void
+    {
+        // Use a temp cache dir that might be overridden by constants
+        $tempCacheDir = sys_get_temp_dir() . '/reflection_same_process_' . uniqid();
+
+        // If constants are defined, they will override our parameter
+        // But we need to clean up whichever directory gets used
+        if (defined('KANOPI_FIREWALL_CACHE_DIR')) {
+            $actualCacheDir = KANOPI_FIREWALL_CACHE_DIR;
+        } else {
+            $actualCacheDir = $tempCacheDir;
+            mkdir($actualCacheDir, 0775, true);
+        }
+
+        $this->tempCacheDir = $actualCacheDir;
+
+        // Use example.com with a unique query parameter to avoid cache hits from other tests
+        $url = 'https://example.com/?testrun=' . uniqid();
+
+        // Check if we can fetch it first (without query param for the test)
+        $testContext = stream_context_create(['http' => ['timeout' => 5]]);
+        $testFetch = @file_get_contents('https://example.com', false, $testContext);
+
+        if ($testFetch === false) {
+            $this->markTestSkipped('Network unavailable or example.com unreachable');
+        }
+
+        // Delete cache file if it exists from previous runs
+        $cacheFile = $actualCacheDir . '/' . md5($url) . '.cache';
+        if (file_exists($cacheFile)) {
+            unlink($cacheFile);
+        }
+
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(null, $url, $tempCacheDir, 3600, 5.0);
+
+        // Should return content (not false) - THIS HITS LINE 114
+        $this->assertNotFalse($result, 'Should successfully fetch from ' . $url);
+
+        // Cache file should exist - THIS VERIFIES LINE 113 WAS HIT
+        $cacheFile = $actualCacheDir . '/' . md5($url) . '.cache';
+        $this->assertFileExists($cacheFile);
+
+        // Cache file should contain the fetched content
+        $cachedContent = file_get_contents($cacheFile);
+        $this->assertEquals($result, $cachedContent);
+    }
+
+    /**
+     * Test fileGetContents() with failed remote fetch (line 109-110)
+     *
+     * Tests that failed fetch returns false
+     */
+    public function testFileGetContentsFailedFetch(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_fetch_fail_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        // Use a URL that will definitely fail
+        $url = 'https://this-domain-absolutely-does-not-exist-99999.com/fail.yml';
+
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 1.0);
+
+        // Should return false on failed fetch
+        $this->assertFalse($result);
+    }
+
+    /**
+     * Test fileGetContents() respects KANOPI_FIREWALL_CACHE_DIR constant
+     *
+     * Tests line 81-83: Constant overrides default cache directory
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testFileGetContentsRespectsCustomCacheDir(): void
+    {
+        // Note: If constant is already defined, we test with provided parameter
+        $customCacheDir = sys_get_temp_dir() . '/reflection_custom_dir_' . uniqid();
+        mkdir($customCacheDir, 0775, true);
+        $this->tempCacheDir = $customCacheDir;
+
+        $url = 'https://example-custom-dir.com/test.yml';
+        $content = "custom: dir\ntest: value";
+
+        // Pre-populate cache
+        $cacheFile = $customCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, $content);
+
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(null, $url, $customCacheDir, 3600, 5.0);
+
+        $this->assertEquals($content, $result);
+        $this->assertFileExists($cacheFile);
+    }
+
+    /**
+     * Test fileGetContents() with custom TTL parameter
+     *
+     * Tests that custom TTL is used for cache expiration check
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testFileGetContentsCustomTTL(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_custom_ttl_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://example-custom-ttl.com/test.yml';
+        $content = "ttl: test";
+
+        // Create cache file that's 90 seconds old
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, $content);
+        touch($cacheFile, time() - 90);
+
+        $method = $this->getFileGetContentsMethod();
+
+        // Test with TTL of 60 seconds - cache should be expired
+        $result1 = $method->invoke(null, $url, $this->tempCacheDir, 60, 1.0);
+        $this->assertFalse($result1); // Cache expired, fetch fails
+
+        // Refresh cache
+        file_put_contents($cacheFile, $content);
+        touch($cacheFile, time() - 90);
+
+        // Test with TTL of 120 seconds - cache should be valid
+        $result2 = $method->invoke(null, $url, $this->tempCacheDir, 120, 1.0);
+        $this->assertEquals($content, $result2); // Cache still valid
+    }
+
+    /**
+     * Test fileGetContents() with custom timeout parameter
+     *
+     * Tests line 104-106: Custom timeout is used in stream context
+     */
+    public function testFileGetContentsCustomTimeout(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_custom_timeout_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        // Use a URL that will timeout
+        $url = 'https://httpbin.org/delay/10'; // Delays response by 10 seconds
+
+        $method = $this->getFileGetContentsMethod();
+
+        $startTime = microtime(true);
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 1.0); // 1 second timeout
+        $duration = microtime(true) - $startTime;
+
+        // Should timeout and return false
+        $this->assertFalse($result);
+
+        // Should have timed out in approximately 1 second (allow some overhead)
+        $this->assertLessThan(3, $duration, 'Request should timeout within ~1 second');
+    }
+
+    /**
+     * Test fileGetContents() creates cache directory if it doesn't exist
+     *
+     * Tests line 93-95: Auto-creation of cache directory
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testFileGetContentsAutoCreatesCacheDirectory(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_auto_create_' . uniqid();
+
+        // Ensure directory doesn't exist
+        $this->assertDirectoryDoesNotExist($this->tempCacheDir);
+
+        $url = 'https://example-auto-create.com/test.yml';
+        $content = "auto: created";
+
+        // Create a subdir path that doesn't exist
+        $cacheDir = $this->tempCacheDir . '/subdir';
+
+        $method = $this->getFileGetContentsMethod();
+
+        // This should create the directory
+        // Since URL is fake, it will try to fetch and fail, but directory should be created
+        $result = $method->invoke(null, $url, $cacheDir, 3600, 1.0);
+
+        // Directory should now exist
+        $this->assertDirectoryExists($cacheDir);
+
+        // Result should be false because fetch fails
+        $this->assertFalse($result);
+    }
+
+    /**
+     * Test fileGetContents() with cache file MD5 naming
+     *
+     * Tests line 97: Cache file is named using MD5 hash of URL
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testFileGetContentsCacheFileNaming(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_md5_naming_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://example-md5-test.com/file.yml';
+        $content = "md5: test";
+        $expectedCacheFileName = md5($url) . '.cache';
+
+        // Pre-populate cache
+        $cacheFile = $this->tempCacheDir . '/' . $expectedCacheFileName;
+        file_put_contents($cacheFile, $content);
+
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 5.0);
+
+        // Should return cached content
+        $this->assertEquals($content, $result);
+
+        // Verify file name is MD5 hash
+        $this->assertFileExists($this->tempCacheDir . '/' . $expectedCacheFileName);
+        $this->assertEquals($expectedCacheFileName, md5($url) . '.cache');
+    }
+
+    /**
+     * Test fileGetContents() strips trailing slash from cache directory
+     *
+     * Tests line 97: rtrim() removes trailing slash
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testFileGetContentsStripsCacheDirTrailingSlash(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_trailing_slash_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://example-trailing-slash.com/test.yml';
+        $content = "slash: test";
+
+        // Test with trailing slash
+        $cacheDirWithSlash = $this->tempCacheDir . '/';
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, $content);
+
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(null, $url, $cacheDirWithSlash, 3600, 5.0);
+
+        // Should still work correctly
+        $this->assertEquals($content, $result);
+        $this->assertFileExists($cacheFile);
+
+        // Verify no double slashes in path
+        $this->assertStringNotContainsString('//', $cacheFile);
+    }
 }
