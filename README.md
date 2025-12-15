@@ -40,12 +40,13 @@
 - **Rate Limiting**: Built-in rate limiting with configurable storage backends
 - **GeoIP Integration**: Full support for MaxMind GeoIP2 databases (both local and web service)
 - **Advanced Conditional Logic**: Support for simple, complex, and grouped conditional rules
+- **Remote Configuration Support**: Load configuration files from remote URLs with local caching
 - **PSR-3 Compatible Logging**: Integration with Monolog for flexible logging
 - **Framework Agnostic**: Works with any PHP application or framework
 
 ## Requirements
 
-- PHP 8.0 or higher
+- PHP 8.1 or higher
 - Composer
 - Optional: MaxMind GeoIP2 databases for geolocation features
 - Optional: Redis for distributed rate limiting
@@ -217,6 +218,7 @@ The firewall supports **modular configuration** via a top‑level `configs:` key
 - Paths in `configs:` can be:
   - **Relative** (resolved against the directory of the YAML file that declares them)
   - **Absolute**
+  - **Remote URLs** (e.g., `https://example.com/firewall-rules.yml`; cached locally with configurable TTL)
   - Use the `{config_dir}` token (expanded to the current YAML's directory)
   - **Glob patterns** (e.g., `more/*.yml`; matched files are sorted alphabetically)
   - **Environment-driven** using `%env(...)%` (must resolve to a string path)
@@ -224,6 +226,28 @@ The firewall supports **modular configuration** via a top‑level `configs:` key
   - Objects (associative arrays) are merged **deeply**; later files override earlier keys
   - Lists (numeric arrays) are **replaced as a whole** by later files
 - Safety: circular includes are prevented and excessive include depth is rejected.
+
+**Remote Configuration Files**
+
+Configuration files can be loaded from remote URLs, which is useful for centralized management across multiple servers:
+
+```yaml
+configs:
+  - "https://cdn.example.com/firewall/base-rules.yml"
+  - "https://cdn.example.com/firewall/ip-blocklist.yml"
+```
+
+Remote files are cached locally to improve performance and reduce external dependencies. You can control caching behavior using PHP constants:
+
+```php
+<?php
+// Define before initializing the firewall
+define('KANOPI_FIREWALL_CACHE_DIR', '/var/cache/firewall');  // Default: /tmp/cache
+define('KANOPI_FIREWALL_CACHE_TTL', 7200);                   // Default: 3600 (1 hour)
+define('KANOPI_FIREWALL_CACHE_TIMEOUT', 10.0);               // Default: 5.0 seconds
+
+\Kanopi\Firewall\Firewall::create([__DIR__ . '/config.yml'])->evaluate();
+```
 
 **Example**
 
@@ -442,10 +466,80 @@ All plugins share these configuration options:
 ```yaml
 PluginNamespace:
   enable: true              # Whether the plugin is active
-  priority: 0              # Execution order (-100 runs before 100)
-  metadata: {}             # Plugin-specific configuration
-  config: []               # Rules or conditions for the plugin
+  priority: 0               # Execution order (-100 runs before 100)
+  metadata: {}              # Plugin-specific configuration
+  config: []                # Rules or conditions for the plugin
 ```
+
+### Plugin Priority and Execution Order
+
+Plugins execute in order based on their `priority` value (lower numbers run first):
+
+- **-200 to -100**: Early filters (IP whitelists, trusted networks)
+- **-99 to -1**: Security checks (geo-blocking, ASN filtering)
+- **0**: Default priority (URL rules, user agent checks)
+- **1 to 100**: Post-evaluation (rate limiting, logging)
+
+**Important**: Bypass plugins run before block plugins. If any bypass plugin returns `true`, the request is allowed immediately without evaluating block plugins.
+
+**Example: Layered Security**
+
+```yaml
+bypass:
+  # Run first - whitelist office IPs
+  \Kanopi\Firewall\Plugins\IpAddress:
+    enable: true
+    priority: -200
+    config:
+      - 192.168.1.0/24
+
+block:
+  # Run early - geographic blocking
+  \Kanopi\Firewall\Plugins\GeoLocation:
+    enable: true
+    priority: -100
+    config:
+      - "country:CN"
+
+  # Run after geo - vulnerability scoring
+  \Kanopi\Firewall\Plugins\VulnerabilityScore:
+    enable: true
+    priority: -50
+    config:
+      # ... scoring config ...
+
+  # Run last - rate limiting
+  \Kanopi\Firewall\Plugins\RateLimit:
+    enable: true
+    priority: 100
+    metadata:
+      # ... rate limit config ...
+```
+
+### Loading External Plugin Configuration
+
+Plugins can load rules from external files (local or remote) using the `metadata.config` option. This is useful for managing large rule sets separately:
+
+```yaml
+block:
+  \Kanopi\Firewall\Plugins\VulnerabilityScore:
+    enable: true
+    priority: -50
+    metadata:
+      # Load scoring rules from external file(s)
+      config:
+        - vulnerability-score-rules.yml
+        # Can also load from remote URLs
+        - https://cdn.example.com/firewall/vuln-patterns.yml
+    # Inline config is merged with loaded files
+    config:
+      risk_levels:
+        critical:
+          threshold: 100
+          block: true
+```
+
+The external files use the same structure as the inline `config` section. Multiple files can be specified and will be merged in order. Both local file paths (relative or absolute) and remote URLs are supported.
 
 ## Available Plugins
 
