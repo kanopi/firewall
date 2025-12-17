@@ -519,5 +519,4 @@ final class TokenSubstitute
 
         return Path::isAbsolute($value) ? $value : $baseDir . DIRECTORY_SEPARATOR . $value;
     }
-
 }
