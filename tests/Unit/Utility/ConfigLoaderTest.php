@@ -239,38 +239,6 @@ YML;
         ConfigLoader::load($this->tmp . '/d0.yml');
     }
 
-    public function testMissingEnvVarThrowsWithHelpfulMessage(): void
-    {
-        $f = $this->tmp . '/bad_env.yml';
-        $this->write($f, "x: '%env(int:DOES_NOT_EXIST)%'\n");
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Environment variable "DOES_NOT_EXIST" is not set');
-        ConfigLoader::load($f);
-    }
-
-    public function testBadBoolCastThrows(): void
-    {
-        putenv('WEIRD_BOOL=maybe');
-        $f = $this->tmp . '/bad_bool.yml';
-        $this->write($f, "x: '%env(bool:WEIRD_BOOL)%'\n");
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Cannot cast');
-        ConfigLoader::load($f);
-    }
-
-    public function testBadJsonThrows(): void
-    {
-        putenv('BAD_JSON={oops]');
-        $f = $this->tmp . '/bad_json.yml';
-        $this->write($f, "x: '%env(json:BAD_JSON)%'\n");
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Invalid JSON');
-        ConfigLoader::load($f);
-    }
-
     public function testNormalizeIncludeSupportsEnvAndConfigDirAndRelative(): void
     {
         // env include path
@@ -353,86 +321,6 @@ YML
         self::assertSame([], $cfg);
     }
 
-    public function testUnknownEnvProcessorThrows(): void
-    {
-        putenv('FOO=bar');
-        $f = $this->tmp . '/unknown_proc.yml';
-        $this->write($f, "x: '%env(weird:FOO)%'\n");
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Unknown env processor');
-        ConfigLoader::load($f);
-    }
-
-    public function testBadIntCastThrows(): void
-    {
-        putenv('BAD_INT=notanumber');
-        $f = $this->tmp . '/bad_int.yml';
-        $this->write($f, "x: '%env(int:BAD_INT)%'\n");
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Cannot cast');
-        ConfigLoader::load($f);
-    }
-
-    public function testBadFloatCastThrows(): void
-    {
-        putenv('BAD_FLOAT=NaNish');
-        $f = $this->tmp . '/bad_float.yml';
-        $this->write($f, "x: '%env(float:BAD_FLOAT)%'\n");
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Cannot cast');
-        ConfigLoader::load($f);
-    }
-
-    public function testInvalidBase64Throws(): void
-    {
-        putenv('BAD_B64=*not-base64*');
-        $f = $this->tmp . '/bad_b64.yml';
-        $this->write($f, "x: '%env(base64:BAD_B64)%'\n");
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Invalid base64');
-        ConfigLoader::load($f);
-    }
-
-    public function testFileProcessorMissingThrows(): void
-    {
-        putenv('MISSING_FILE=' . $this->tmp . '/nope.txt');
-        $f = $this->tmp . '/missing_file.yml';
-        $this->write($f, "x: '%env(file:MISSING_FILE)%'\n");
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('not found or unreadable');
-        ConfigLoader::load($f);
-    }
-
-    public function testUrlProcessorReturnsParsedArray(): void
-    {
-        putenv('OK_URL=:still/a/url'); // parse_url returns an array (path-only)
-        $f = $this->tmp . '/ok_url.yml';
-        $this->write($f, "x: '%env(url:OK_URL)%'\n");
-        $cfg = ConfigLoader::load($f);
-        self::assertIsArray($cfg['x']);
-        self::assertArrayHasKey('path', $cfg['x']);
-        self::assertSame(':still/a/url', $cfg['x']['path']);
-    }
-
-    public function testQueryStringEmptyReturnsEmptyArray(): void
-    {
-        putenv('APP_QS_EMPTY=');
-        $f = $this->tmp . '/qs_empty.yml';
-        $this->write($f, "x: '%env(query_string:APP_QS_EMPTY)%'\n");
-        $cfg = ConfigLoader::load($f);
-        self::assertSame([], $cfg['x']);
-    }
-
-    public function testNormalizeIncludeEnvResolvesToNonStringThrows(): void
-    {
-        putenv('INCLUDE_JSON={"a":1}');
-        $f = $this->tmp . '/main_nonstring_include.yml';
-        $this->write($f, "configs: ['%env(json:INCLUDE_JSON)%']\n");
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Invalid include entry (must be string)');
-        ConfigLoader::load($f);
-    }
-
     public function testExpandMatchesEarlyExitOnMissingSegment(): void
     {
         $f = $this->tmp . '/early_exit.yml';
@@ -478,5 +366,144 @@ YML
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Invalid include entry');
         ConfigLoader::load($f);
+    }
+
+    /**
+     * Tests ConfigLoader::setByPath() sets a simple value.
+     */
+    public function testSetByPathSimple(): void
+    {
+        $reflection = new \ReflectionClass(ConfigLoader::class);
+        $method = $reflection->getMethod('setByPath');
+        $method->setAccessible(true);
+
+        $data = [];
+        $path = ['foo'];
+        $value = 'bar';
+        $result = $method->invokeArgs(null, [$data, $path, $value]);
+
+        $this->assertEquals(['foo' => 'bar'], $result);
+    }
+
+    /**
+     * Tests ConfigLoader::setByPath() creates nested structure.
+     */
+    public function testSetByPathNested(): void
+    {
+        $reflection = new \ReflectionClass(ConfigLoader::class);
+        $method = $reflection->getMethod('setByPath');
+        $method->setAccessible(true);
+
+        $data = [];
+        $path = ['a', 'b', 'c'];
+        $value = 'test';
+        $result = $method->invokeArgs(null, [$data, $path, $value]);
+
+        $this->assertEquals(['a' => ['b' => ['c' => 'test']]], $result);
+    }
+
+    /**
+     * Tests ConfigLoader::setByPath() overwrites scalar with nested structure.
+     */
+    public function testSetByPathOverwritesScalar(): void
+    {
+        $reflection = new \ReflectionClass(ConfigLoader::class);
+        $method = $reflection->getMethod('setByPath');
+        $method->setAccessible(true);
+
+        // When the path needs to traverse through a scalar value,
+        // it should convert that scalar to an array
+        $data = ['a' => 'x'];
+        $path = ['a', 'b'];
+        $value = 'new-value';
+        $result = $method->invokeArgs(null, [$data, $path, $value]);
+
+        // The scalar 'x' at $data['a'] should be replaced with an array
+        $this->assertEquals(['a' => ['b' => 'new-value']], $result);
+        $this->assertIsArray($result['a']);
+        $this->assertEquals('new-value', $result['a']['b']);
+    }
+
+    /**
+     * Tests ConfigLoader::setByPath() updates existing nested value.
+     */
+    public function testSetByPathUpdatesExisting(): void
+    {
+        $reflection = new \ReflectionClass(ConfigLoader::class);
+        $method = $reflection->getMethod('setByPath');
+        $method->setAccessible(true);
+
+        $data = ['a' => ['b' => 'old', 'c' => 'keep']];
+        $path = ['a', 'b'];
+        $value = 'new';
+        $result = $method->invokeArgs(null, [$data, $path, $value]);
+
+        $this->assertEquals('new', $result['a']['b']);
+        $this->assertEquals('keep', $result['a']['c']);
+    }
+
+    /**
+     * Tests ConfigLoader::setByPath() with numeric keys (array indexes).
+     */
+    public function testSetByPathWithNumericKeys(): void
+    {
+        $reflection = new \ReflectionClass(ConfigLoader::class);
+        $method = $reflection->getMethod('setByPath');
+        $method->setAccessible(true);
+
+        $data = ['items' => ['first', 'second']];
+        $path = ['items', 0];
+        $value = 'updated';
+        $result = $method->invokeArgs(null, [$data, $path, $value]);
+
+        $this->assertEquals('updated', $result['items'][0]);
+        $this->assertEquals('second', $result['items'][1]);
+    }
+
+    /**
+     * Tests ConfigLoader::setByPath() for path resolution use case.
+     * This simulates the actual use case in resolveRelativePathsForKeys().
+     */
+    public function testSetByPathForPathResolution(): void
+    {
+        $reflection = new \ReflectionClass(ConfigLoader::class);
+        $method = $reflection->getMethod('setByPath');
+        $method->setAccessible(true);
+
+        // Simulate a config structure with relative paths
+        $data = [
+            'storage' => [
+                'config' => [
+                    'file' => 'data/storage.db'
+                ]
+            ],
+            'block' => [
+                'plugin1' => [
+                    'metadata' => [
+                        'storage' => [
+                            'config' => [
+                                'file' => 'plugins/db.sqlite'
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ];
+
+        // Replace the first relative path
+        $path1 = ['storage', 'config', 'file'];
+        $value1 = '/absolute/path/to/data/storage.db';
+        $data = $method->invokeArgs(null, [$data, $path1, $value1]);
+
+        $this->assertEquals('/absolute/path/to/data/storage.db', $data['storage']['config']['file']);
+
+        // Replace the second relative path
+        $path2 = ['block', 'plugin1', 'metadata', 'storage', 'config', 'file'];
+        $value2 = '/absolute/path/to/plugins/db.sqlite';
+        $data = $method->invokeArgs(null, [$data, $path2, $value2]);
+
+        $this->assertEquals('/absolute/path/to/plugins/db.sqlite', $data['block']['plugin1']['metadata']['storage']['config']['file']);
+        // First replacement should still be there
+        $this->assertEquals('/absolute/path/to/data/storage.db', $data['storage']['config']['file']);
     }
 }

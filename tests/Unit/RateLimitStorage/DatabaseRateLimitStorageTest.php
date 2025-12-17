@@ -38,7 +38,6 @@ class DatabaseRateLimitStorageTest extends AbstractTestCase
                 // Change the storage table to trigger not found exceptions.
                 $this->config['storage_table'] = 'firewall_rate_limit_storage_notfound';
             }
-
         };
     }
 
@@ -132,5 +131,23 @@ class DatabaseRateLimitStorageTest extends AbstractTestCase
         } catch (\Throwable $e) {
             $this->fail('Exception should not bubble during insert failure');
         }
+    }
+
+    /**
+     * Tests DatabaseRateLimitStorage::__construct().
+     *
+     * Confirms port is turned into an integer.
+     */
+    public function testConstructorHandlingPort(): void
+    {
+        $config = ['connection' => ['dsn' => 'sqlite3:///:memory:', 'port' => '3306']];
+        $plugin = new class ($config) extends DatabaseRateLimitStorage
+        {
+            public function getConfig(): array
+            {
+                return $this->config;
+            }
+        };
+        $this->assertIsInt($plugin->getConfig()['connection']['port']);
     }
 }

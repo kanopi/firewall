@@ -4,6 +4,8 @@ namespace Kanopi\Firewall\Tests\Unit\Utility;
 
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\Config;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use Symfony\Component\Yaml\Yaml;
 
 class ConfigTest extends AbstractTestCase
@@ -656,9 +658,9 @@ class ConfigTest extends AbstractTestCase
      *
      * Tests line 99-100: Cache exists and is fresh
      *
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
      */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testFileGetContentsCacheHit(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_hit_' . uniqid();
@@ -708,10 +710,9 @@ class ConfigTest extends AbstractTestCase
      * Test fileGetContents() with successful remote fetch and cache creation
      *
      * Tests lines 104-114: Fetch from URL and save to cache
-     *
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
      */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testFileGetContentsSuccessfulFetchAndCacheCreation(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_fetch_success_' . uniqid();
@@ -746,7 +747,7 @@ class ConfigTest extends AbstractTestCase
     /**
      * Test fileGetContents() successful fetch IN SAME PROCESS (for code coverage)
      *
-     * This test runs without @runInSeparateProcess to ensure code coverage tracks lines 113-114
+     * This test runs without RunInSeparateProcess to ensure code coverage tracks lines 113-114
      */
     public function testFileGetContentsSuccessSameProcess(): void
     {
@@ -820,10 +821,9 @@ class ConfigTest extends AbstractTestCase
      * Test fileGetContents() respects KANOPI_FIREWALL_CACHE_DIR constant
      *
      * Tests line 81-83: Constant overrides default cache directory
-     *
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
      */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testFileGetContentsRespectsCustomCacheDir(): void
     {
         // Note: If constant is already defined, we test with provided parameter
@@ -849,10 +849,9 @@ class ConfigTest extends AbstractTestCase
      * Test fileGetContents() with custom TTL parameter
      *
      * Tests that custom TTL is used for cache expiration check
-     *
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
      */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testFileGetContentsCustomTTL(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_custom_ttl_' . uniqid();
@@ -911,10 +910,9 @@ class ConfigTest extends AbstractTestCase
      * Test fileGetContents() creates cache directory if it doesn't exist
      *
      * Tests line 93-95: Auto-creation of cache directory
-     *
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
      */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testFileGetContentsAutoCreatesCacheDirectory(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_auto_create_' . uniqid();
@@ -945,10 +943,9 @@ class ConfigTest extends AbstractTestCase
      * Test fileGetContents() with cache file MD5 naming
      *
      * Tests line 97: Cache file is named using MD5 hash of URL
-     *
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
      */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testFileGetContentsCacheFileNaming(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_md5_naming_' . uniqid();
@@ -977,10 +974,9 @@ class ConfigTest extends AbstractTestCase
      * Test fileGetContents() strips trailing slash from cache directory
      *
      * Tests line 97: rtrim() removes trailing slash
-     *
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
      */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testFileGetContentsStripsCacheDirTrailingSlash(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_trailing_slash_' . uniqid();
