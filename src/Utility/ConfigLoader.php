@@ -67,7 +67,7 @@ final class ConfigLoader
      */
     public static function parse(string $yaml, string $configFilePath, array $relativePathKeys = []): array
     {
-        $absOrigin = self::looksLikeUrl($configFilePath) ? $configFilePath : self::realOrGiven($configFilePath);
+        $absOrigin = Path::looksLikeUrl($configFilePath) ? $configFilePath : Path::realOrGiven($configFilePath);
         $baseDir = \dirname($absOrigin);
         $data      = Yaml::parse($yaml) ?? [];
 
@@ -114,7 +114,7 @@ final class ConfigLoader
      */
     private static function loadInternal(string $filePath, array $relativePathKeys, int $depth): array
     {
-        $abs = self::realOrGiven($filePath);
+        $abs = Path::realOrGiven($filePath);
 
         if ($depth > self::MAX_DEPTH) {
             throw new \RuntimeException("Include depth exceeded at " . $abs);
@@ -165,7 +165,7 @@ final class ConfigLoader
     private static function postProcess(array $data, string $baseDir, array $relativePathKeys, string $origin, int $depth): array
     {
         // 1) %env()% substitution
-        $data = self::resolvePlaceholders($data);
+        $data = TokenSubstitute::substitute($data);
 
         // 2) Includes: configs:
         if (!empty($data['configs']) && \is_array($data['configs'])) {
@@ -177,7 +177,7 @@ final class ConfigLoader
                     throw new \RuntimeException("Invalid include entry (must be string) in " . $origin);
                 }
 
-                $norm = self::normalizeInclude($include, $baseDir);
+                $norm = TokenSubstitute::normalizeInclude($include, $baseDir);
                 $matches = \glob($norm) ?: [$norm];
                 \sort($matches, \SORT_STRING);
 
@@ -194,228 +194,6 @@ final class ConfigLoader
         }
 
         return $data;
-    }
-
-    /**
-     * Recursively resolves %env(...)% placeholders inside arrays and strings.
-     *
-     * Behavior:
-     *  - If a YAML scalar is exactly one %env(...)% token, the return value is a native PHP type
-     *    based on processors (e.g., bool/int/float/array/string).
-     *  - If %env(...)% appears within a larger string, it is interpolated as text (string cast).
-     *
-     * Supported processors (chained left-to-right):
-     *  string, int, float, bool, json, base64, file, trim, lower, upper, csv, query_string, url
-     *
-     * @param mixed $value
-     *   The node to process (array/scalar).
-     *
-     * @return mixed
-     *   The node with %env(...)% placeholders resolved.
-     *
-     * @throws \RuntimeException
-     *   On missing env variables, invalid casts, or malformed processor input.
-     */
-    private static function resolvePlaceholders(mixed $value): mixed
-    {
-        if (\is_array($value)) {
-            foreach ($value as $k => $v) {
-                $value[$k] = self::resolvePlaceholders($v);
-            }
-
-            return $value;
-        }
-
-        if (!\is_string($value)) {
-            return $value;
-        }
-
-          // Entire scalar is a single token → typed return
-        if (\preg_match('/^%env\(([^)]+)\)%$/', $value, $m)) {
-            return self::resolveEnvTokenTyped($m[1]);
-        }
-
-         // Interpolate within string → cast to string
-        return \preg_replace_callback(
-            '/%env\(([^)]+)\)%/',
-            fn(array $m): string => (string) self::resolveEnvTokenTyped($m[1]),
-            $value
-        );
-    }
-
-    /**
-     * Resolve a single %env(...)% token and return a native PHP type when appropriate.
-     *
-     * Example tokens:
-     *  - "MY_VAR"            → string
-     *  - "int:MY_PORT"       → int
-     *  - "bool:DEBUG"        → bool
-     *  - "json:CFG"          → array (decoded JSON)
-     *  - "file:SECRET_PATH"  → string (file contents)
-     *
-     * @param string $token
-     *   The inside of %env(...), optionally with processors (e.g., "int:PORT").
-     *
-     * @return mixed
-     *   A native value: bool|int|float|string|array depending on processors and data.
-     *
-     * @throws \RuntimeException
-     *   If the env var is missing, processors are unknown, or data cannot be cast/decoded.
-     */
-    private static function resolveEnvTokenTyped(string $token): mixed
-    {
-        $parts = \explode(':', $token);
-        $var   = \array_pop($parts);
-
-        $raw = \getenv($var);
-        if ($raw === false) {
-            throw new \RuntimeException(\sprintf('Environment variable "%s" is not set', $var));
-        }
-
-        $val = $raw;
-
-        foreach ($parts as $part) {
-            $part = \strtolower(\trim($part));
-            switch ($part) {
-                case 'string':
-                    $val = (string) $val;
-                    break;
-
-                case 'int':
-                    if (!\is_numeric($val)) {
-                        throw new \RuntimeException(self::badCast('int', $var, $val));
-                    }
-
-                    $val = (int) $val;
-                    break;
-
-                case 'float':
-                    if (!\is_numeric($val)) {
-                        throw new \RuntimeException(self::badCast('float', $var, $val));
-                    }
-
-                    $val = (float) $val;
-                    break;
-
-                case 'bool':
-                    $l = \strtolower((string) $val);
-                    $truthy = ['1','true','yes','on'];
-                    $falsey = ['0','false','no','off',''];
-                    if (\in_array($l, $truthy, true)) {
-                        $val = true;
-                    } elseif (\in_array($l, $falsey, true)) {
-                        $val = false;
-                    } else {
-                        throw new \RuntimeException(self::badCast('bool', $var, $val));
-                    }
-
-                    break;
-
-                case 'json':
-                    $d = \json_decode((string) $val, true);
-                    if (\json_last_error() !== JSON_ERROR_NONE) {
-                        throw new \RuntimeException(\sprintf('Invalid JSON in %s: %s', $var, \json_last_error_msg()));
-                    }
-
-                    $val = $d; // native array
-                    break;
-
-                case 'base64':
-                    $d = \base64_decode((string) $val, true);
-                    if ($d === false) {
-                        throw new \RuntimeException(\sprintf('Invalid base64 in %s', $var));
-                    }
-
-                    $val = $d;
-                    break;
-
-                case 'file':
-                    $p = (string) $val;
-                    if (!\is_file($p) || !\is_readable($p)) {
-                        throw new \RuntimeException(\sprintf('file:%s not found or unreadable (from %s)', $p, $var));
-                    }
-
-                    $c = \file_get_contents($p);
-                    if ($c === false) {
-                        throw new \RuntimeException(\sprintf('Failed reading file for %s', $var));
-                    }
-
-                    $val = $c;
-                    break;
-
-                case 'trim':
-                    $val = \is_string($val) ? \trim($val) : $val;
-                    break;
-
-                case 'lower':
-                    $val = \strtolower((string) $val);
-                    break;
-
-                case 'upper':
-                    $val = \strtoupper((string) $val);
-                    break;
-
-                case 'csv':
-                    $items = \array_map(trim(...), \array_filter(\explode(',', (string) $val), strlen(...)));
-                    $val = \array_values($items); // native list
-                    break;
-
-                case 'query_string':
-                    // Preserve duplicate keys by aggregating values into arrays, e.g.
-                    // "foo=1&bar=2&bar=3" → ["foo" => "1", "bar" => ["2","3"]]
-                    $val = self::parseQueryPreserveDuplicates((string) $val);
-                    break;
-
-                case 'url':
-                    $u = \parse_url((string) $val);
-                    if ($u === false) {
-                        throw new \RuntimeException(\sprintf('Invalid URL in %s', $var));
-                    }
-
-                    $val = $u; // native array
-                    break;
-
-                default:
-                    throw new \RuntimeException(\sprintf('Unknown env processor "%s" in token "%s"', $part, $token));
-            }
-        }
-
-        return $val;
-    }
-
-    /**
-     * Normalize a single include entry:
-     *  - Expands "{config_dir}" to the provided base directory.
-     *  - Resolves a single-token %env(...)% to a string path.
-     *  - If the result is not absolute and not a URL, it is joined with $baseDir.
-     *
-     * @param string $value
-     *   The include entry from YAML.
-     * @param string $baseDir
-     *   The directory used for relative resolution.
-     *
-     * @return string
-     *   Absolute (or URL/stream) path for inclusion; may contain glob patterns.
-     *
-     * @throws \RuntimeException
-     *   If %env(...)% resolves to a non-string value.
-     */
-    private static function normalizeInclude(string $value, string $baseDir): string
-    {
-        if (\str_contains($value, '{config_dir}')) {
-            $value = \str_replace('{config_dir}', $baseDir, $value);
-        }
-
-        if (\preg_match('/^%env\(([^)]+)\)%$/', $value, $m)) {
-            $resolved = self::resolveEnvTokenTyped($m[1]);
-            if (!\is_string($resolved)) {
-                throw new \RuntimeException('%env(...)% for include must resolve to a string path');
-            }
-
-            $value = $resolved;
-        }
-
-        return self::isAbsolute($value) ? $value : $baseDir . DIRECTORY_SEPARATOR . $value;
     }
 
     /**
@@ -440,11 +218,11 @@ final class ConfigLoader
     {
         foreach ($dotKeys as $dotKey) {
             foreach (self::expandMatches($data, $dotKey) as [$path, $value]) {
-                if (\is_string($value) && !self::isAbsolute($value) && !self::looksLikeUrl($value)) {
+                if (\is_string($value) && !Path::isAbsolute($value) && !Path::looksLikeUrl($value)) {
                     $candidate = $baseDir . DIRECTORY_SEPARATOR . $value;
                     if (\file_exists($candidate)) {
-                        $data = self::setByPath($data, $path, self::realOrGiven($candidate));
-                    } elseif (self::looksLikeUrl($baseDir)) {
+                        $data = self::setByPath($data, $path, Path::realOrGiven($candidate));
+                    } elseif (Path::looksLikeUrl($baseDir)) {
                         if (str_contains($candidate, '{config_dir}')) {
                             $candidate = str_ireplace(['{config_dir}/','{config_dir}'], '', $candidate);
                         }
@@ -597,82 +375,6 @@ final class ConfigLoader
     }
 
     /**
-     * Return a real path if available; otherwise ensure the path exists and return the original.
-     *
-     * Use this to gracefully handle paths where realpath() may fail (streams, zip, permissions) but the file exists.
-     *
-     * @param string $path
-     *   The path to normalize.
-     *
-     * @return string
-     *   Real path or the original if realpath() fails but the file exists.
-     *
-     * @throws \RuntimeException
-     *   If the file does not exist.
-     */
-    private static function realOrGiven(string $path): string
-    {
-        $real = \realpath($path);
-        if ($real !== false) {
-            return $real;
-        }
-
-        if (!\file_exists($path)) {
-            throw new \RuntimeException("Config not found: " . $path);
-        }
-
-        return $path; // exists but realpath failed (e.g., stream/zip/permission)
-    }
-
-    /**
-     * Determine whether a path is absolute (POSIX, Windows drive, UNC) or a URL.
-     *
-     * @param string $p
-     *   The path string to test.
-     *
-     * @return bool
-     *   True if the path is absolute (or a URL/stream); false if it's a relative filesystem path.
-     */
-    private static function isAbsolute(string $p): bool
-    {
-        return \str_starts_with($p, '/')
-        || \preg_match('~^[A-Za-z]:[\\\\/]~', $p) === 1      // Windows C:\ or C:/
-        || \str_starts_with($p, '\\\\')                       // UNC \\server\share
-        || \preg_match('~^[a-z][a-z0-9+.-]*://~i', $p) === 1; // scheme://
-    }
-
-    /**
-     * Heuristic to decide if a string looks like a URL or stream wrapper.
-     *
-     * @param string $s
-     *   The string to check.
-     *
-     * @return bool
-     *   True if it looks like "scheme://..."; false otherwise.
-     */
-    public static function looksLikeUrl(string $s): bool
-    {
-        return \preg_match('~^[a-z][a-z0-9+.-]*://~i', $s) === 1;
-    }
-
-    /**
-     * Build a consistent error message for bad type casts in env processing.
-     *
-     * @param string $type
-     *   Target type name ("int", "float", "bool").
-     * @param string $var
-     *   Environment variable name.
-     * @param mixed  $val
-     *   The original value that failed to cast.
-     *
-     * @return string Human-friendly error string.
-     */
-    private static function badCast(string $type, string $var, mixed $val): string
-    {
-        return \sprintf('Cannot cast %s value "%s" from %s to %s', \gettype($val), (string) $val, $var, $type);
-    }
-
-    /**
      * Convert a segment token into a list of alternatives.
      * Examples:
      *   "*"                => ["*"]
@@ -715,42 +417,4 @@ final class ConfigLoader
         return \array_values(\array_filter(\array_map(trim(...), \explode(',', $csv)), strlen(...)));
     }
 
-    /**
-     * Parse a URL query string while preserving duplicate keys.
-     * Example: "foo=1&bar=2&bar=3" becomes ["foo" => "1", "bar" => ["2","3"]]
-     *
-     * @param string $qs
-     *   Raw query string without the leading '?'.
-     *
-     * @return array<string, mixed>
-     *   Associative array where repeated keys are collected into arrays.
-     */
-    private static function parseQueryPreserveDuplicates(string $qs): array
-    {
-        $result = [];
-        if ($qs === '') {
-            return $result;
-        }
-
-        foreach (explode('&', $qs) as $pair) {
-            if ($pair === '') {
-                continue;
-            }
-
-            [$k, $v] = array_pad(explode('=', $pair, 2), 2, '');
-            $key = urldecode($k);
-            $value = urldecode($v);
-            if (array_key_exists($key, $result)) {
-                if (is_array($result[$key])) {
-                    $result[$key][] = $value;
-                } else {
-                    $result[$key] = [$result[$key], $value];
-                }
-            } else {
-                $result[$key] = $value;
-            }
-        }
-
-        return $result;
-    }
 }

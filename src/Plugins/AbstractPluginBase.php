@@ -13,7 +13,7 @@ namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Utility\Config;
-use Kanopi\Firewall\Utility\ConfigLoader;
+use Kanopi\Firewall\Utility\Path;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -22,6 +22,13 @@ use Symfony\Component\HttpFoundation\Request;
 abstract class AbstractPluginBase implements PluginInterface
 {
     use LoggingTrait;
+
+    /**
+     * List of all the files being loaded.
+     *
+     * @var string[]
+     */
+    protected array $files = [];
 
     /**
      * Constructs a new plugin.
@@ -37,9 +44,9 @@ abstract class AbstractPluginBase implements PluginInterface
         if (isset($metadata['config'])) {
             $files = $metadata['config'];
             if (!is_array($files)) {
-                if (is_string($files) && !ConfigLoader::looksLikeUrl($files)) {
+                if (is_string($files) && !Path::looksLikeUrl($files)) {
                     $files = [@realpath($files)];
-                } elseif (is_string($files) && ConfigLoader::looksLikeUrl($files)) {
+                } elseif (is_string($files) && Path::looksLikeUrl($files)) {
                     $files = [$files];
                 } else {
                     $files = [];
@@ -51,11 +58,12 @@ abstract class AbstractPluginBase implements PluginInterface
             $files = array_filter($files);
 
             foreach ($files as &$file) {
-                if (is_string($file) && !ConfigLoader::looksLikeUrl($file)) {
+                if (is_string($file) && !Path::looksLikeUrl($file)) {
                     $file = realpath($file);
                 }
             }
 
+            $this->files = $files;
             $this->config = Config::load($files);
 
             $this->getLogger()->debug('Plugin initialized with config files', [

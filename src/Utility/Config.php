@@ -134,7 +134,7 @@ class Config
             '(allow|block).*.metadata.(asn_reader|reader|country_reader).db',
         ];
 
-        if (ConfigLoader::looksLikeUrl($file)) {
+        if (Path::looksLikeUrl($file)) {
             try {
                 $contents = self::fileGetContents($file);
                 if ($contents === false) {

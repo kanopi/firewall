@@ -345,12 +345,8 @@ class NestedArray
     {
         $result = [];
         foreach ($arrays as $array) {
+            /** @var int|string $key */
             foreach ($array as $key => $value) {
-                // Skip invalid key types - PHP arrays only accept int|string keys
-                if (!is_int($key) && !is_string($key)) {
-                    continue;
-                }
-
                 // Renumber integer keys as array_merge_recursive() does unless
                 // $preserve_integer_keys is set to TRUE. Note that PHP automatically
                 // converts array keys that are integer strings (e.g., '1') to integers.
