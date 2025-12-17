@@ -719,6 +719,117 @@ class TokenSubstituteTest extends AbstractTestCase
         TokenSubstitute::substitute('%env(json:key:baz:KEY_VAR)%');
     }
 
+    public function testKeyProcessorWithDefaultOnMissingKey(): void
+    {
+        putenv('KEY_VAR={"foo":"bar"}');
+        $result = TokenSubstitute::substitute('%env(json:key:baz:fallback:KEY_VAR)%');
+        $this->assertEquals('fallback', $result);
+    }
+
+    public function testKeyProcessorWithDefaultOnNonArray(): void
+    {
+        putenv('KEY_VAR=string');
+        $result = TokenSubstitute::substitute('%env(key:foo:fallback:KEY_VAR)%');
+        $this->assertEquals('fallback', $result);
+    }
+
+    public function testKeyProcessorWithDefaultChained(): void
+    {
+        putenv('KEY_VAR={"databases":{"default":{}}}');
+        $result = TokenSubstitute::substitute('%env(json:key:databases:empty:key:default:empty:key:database:fallback_db:KEY_VAR)%');
+        $this->assertEquals('fallback_db', $result);
+    }
+
+    public function testKeyProcessorDefaultNotUsedWhenKeyExists(): void
+    {
+        putenv('KEY_VAR={"foo":"actual"}');
+        $result = TokenSubstitute::substitute('%env(json:key:foo:fallback:KEY_VAR)%');
+        $this->assertEquals('actual', $result);
+    }
+
+    public function testKeyProcessorWithPressflowSettingsSimple(): void
+    {
+        // Test with PRESSFLOW_SETTINGS set - extracting nested database value
+        $json = '{"databases":{"default":{"default":{"database":"pantheon"}}}}';
+        putenv("PRESSFLOW_SETTINGS={$json}");
+        $result = TokenSubstitute::substitute('%env(json:key:databases:key:default:key:default:key:database:db:string:PRESSFLOW_SETTINGS)%');
+        $this->assertEquals('pantheon', $result);
+
+        // Test with PRESSFLOW_SETTINGS missing nested 'default' key - use default on that step
+        $partialJson = '{"databases":{"default":{"default":{}}}}';
+        putenv("PRESSFLOW_SETTINGS={$partialJson}");
+        $result = TokenSubstitute::substitute('%env(json:key:databases:key:default:key:default:key:database:db:string:PRESSFLOW_SETTINGS)%');
+        $this->assertEquals('db', $result);
+    }
+
+    // =====================================================================
+    // Safe Processor Tests
+    // =====================================================================
+
+    public function testSafeProcessorReturnsValueWhenSuccessful(): void
+    {
+        $json = '{"databases":{"default":{"default":{"username":"testuser"}}}}';
+        putenv("SAFE_VAR={$json}");
+        $result = TokenSubstitute::substitute('%env(safe:fallback:json:key:databases:key:default:key:default:key:username:SAFE_VAR)%');
+        $this->assertEquals('testuser', $result);
+    }
+
+    public function testSafeProcessorReturnsFallbackWhenVarNotSet(): void
+    {
+        putenv('SAFE_VAR');
+        $result = TokenSubstitute::substitute('%env(safe:db:json:key:databases:key:default:key:default:key:username:SAFE_VAR)%');
+        $this->assertEquals('db', $result);
+    }
+
+    public function testSafeProcessorReturnsFallbackOnInvalidJson(): void
+    {
+        putenv('SAFE_VAR=not valid json');
+        $result = TokenSubstitute::substitute('%env(safe:fallback:json:key:database:SAFE_VAR)%');
+        $this->assertEquals('fallback', $result);
+    }
+
+    public function testSafeProcessorReturnsFallbackOnMissingKey(): void
+    {
+        putenv('SAFE_VAR={"foo":"bar"}');
+        $result = TokenSubstitute::substitute('%env(safe:default_value:json:key:missing:SAFE_VAR)%');
+        $this->assertEquals('default_value', $result);
+    }
+
+    public function testSafeProcessorReturnsFallbackOnNonArrayValue(): void
+    {
+        putenv('SAFE_VAR=string value');
+        $result = TokenSubstitute::substitute('%env(safe:fallback:key:foo:SAFE_VAR)%');
+        $this->assertEquals('fallback', $result);
+    }
+
+    public function testSafeProcessorWithPressflowSettings(): void
+    {
+        // Test with full structure
+        $json = '{"databases":{"default":{"default":{"username":"testuser"}}}}';
+        putenv("SAFE_PRESSFLOW={$json}");
+        $result = TokenSubstitute::substitute('%env(safe:db:json:key:databases:key:default:key:default:key:username:SAFE_PRESSFLOW)%');
+        $this->assertEquals('testuser', $result);
+
+        // Test with variable not set
+        putenv('SAFE_PRESSFLOW');
+        $result = TokenSubstitute::substitute('%env(safe:db:json:key:databases:key:default:key:default:key:username:SAFE_PRESSFLOW)%');
+        $this->assertEquals('db', $result);
+
+        // Test with missing intermediate keys
+        $partialJson = '{"databases":{}}';
+        putenv("SAFE_PRESSFLOW={$partialJson}");
+        $result = TokenSubstitute::substitute('%env(safe:db:json:key:databases:key:default:key:default:key:username:SAFE_PRESSFLOW)%');
+        $this->assertEquals('db', $result);
+    }
+
+    public function testSafeProcessorThrowsWhenMissingFallback(): void
+    {
+        putenv('SAFE_VAR=test');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('safe processor requires a fallback value');
+        TokenSubstitute::substitute('%env(safe:SAFE_VAR)%');
+    }
+
     // =====================================================================
     // Raw Key Processor Tests
     // =====================================================================

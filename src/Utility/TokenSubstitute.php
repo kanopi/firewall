@@ -18,7 +18,7 @@ namespace Kanopi\Firewall\Utility;
  * Supported processors (chained left-to-right):
  *  string, int, float, bool, not, json, base64, file, resolve, require,
  *  trim, lower, upper, urlencode, urldecode, csv, shuffle, query_string,
- *  url, key, raw_key, enum, default, defined, const
+ *  url, key, raw_key, enum, default, defined, const, safe
  *
  * Typical usage:
  *
@@ -26,9 +26,19 @@ namespace Kanopi\Firewall\Utility;
  *       'debug' => '%env(bool:DEBUG)%',
  *       'port' => '%env(int:PORT)%',
  *       'url' => 'https://example.com:%env(PORT)%',
+ *       'db' => '%env(json:key:databases:fallback_db:key:default:fallback_array:SETTINGS)%',
  *   ];
  *
  *   $resolved = TokenSubstitute::substitute($config);
+ *
+ * Key processor with optional defaults:
+ *  - key:keyname - Navigate to array key (throws if missing or not an array)
+ *  - key:keyname:default_value - Navigate to key, use default if missing or not an array
+ *
+ * Safe processor (try-catch wrapper):
+ *  - safe:fallback_value - Wraps remaining processors; returns fallback if any error occurs
+ *  - Example: %env(safe:db:json:key:database:SETTINGS)% returns "db" if SETTINGS is missing,
+ *    invalid JSON, or doesn't have a "database" key
  */
 final class TokenSubstitute
 {
@@ -131,6 +141,51 @@ final class TokenSubstitute
             return \constant($var);
         }
 
+        // Handle 'safe' processor - wraps remaining processors in try-catch
+        $hasSafe = false;
+        $safeValue = null;
+        $safeIndex = -1;
+        $counter = \count($parts);
+
+        for ($i = 0; $i < $counter; $i++) {
+            if (\strtolower(\trim($parts[$i])) === 'safe') {
+                if ($i + 1 >= \count($parts)) {
+                    throw new \RuntimeException(\sprintf('safe processor requires a fallback value in token "%s"', $token));
+                }
+
+                $hasSafe = true;
+                $safeValue = $parts[$i + 1];
+                $safeIndex = $i;
+                break;
+            }
+        }
+
+        // If we have a safe wrapper, process everything in try-catch
+        if ($hasSafe) {
+            // Remove the safe processor and its value from parts
+            array_splice($parts, $safeIndex, 2);
+
+            try {
+                // Get the initial value - check getenv() first, then $_SERVER
+                $raw = \getenv($var);
+                if ($raw === false && isset($_SERVER[$var])) {
+                    $raw = $_SERVER[$var];
+                }
+
+                if ($raw === false) {
+                    throw new \RuntimeException(\sprintf('Environment variable "%s" is not set', $var));
+                }
+
+                $val = $raw;
+
+                // Process all remaining parts - this is copied from below
+                return self::processRemainingParts($parts, $val, $var, $token);
+            } catch (\Throwable) {
+                // Any error during processing returns the safe fallback value
+                return $safeValue;
+            }
+        }
+
         // Get the initial value - check getenv() first, then $_SERVER
         $raw = \getenv($var);
         if ($raw === false && isset($_SERVER[$var])) {
@@ -167,6 +222,21 @@ final class TokenSubstitute
             $val = $raw;
         }
 
+        return self::processRemainingParts($parts, $val, $var, $token);
+    }
+
+    /**
+     * Process remaining processor parts after initial value is obtained
+     *
+     * @param array<int, string> $parts Processor parts to process
+     * @param mixed $val Current value being processed
+     * @param string $var Variable name (for error messages)
+     * @param string $token Original token (for error messages)
+     * @return mixed Processed value
+     * @throws \RuntimeException On processing errors
+     */
+    private static function processRemainingParts(array $parts, mixed $val, string $var, string $token): mixed
+    {
         $counter = \count($parts);
 
         // Process each part
@@ -343,15 +413,30 @@ final class TokenSubstitute
 
                     $key = $parts[++$i]; // Don't lowercase the key value
 
+                    // Check for optional default value (next part that's not a processor)
+                    $hasKeyDefault = false;
+                    $keyDefault = null;
+                    if ($i + 1 < \count($parts) && !self::isProcessor($parts[$i + 1])) {
+                        $keyDefault = $parts[++$i];
+                        $hasKeyDefault = true;
+                    }
+
                     if (!\is_array($val)) {
-                        throw new \RuntimeException(\sprintf('key processor requires an array value in %s, got %s', $var, \gettype($val)));
+                        if ($hasKeyDefault) {
+                            $val = $keyDefault;
+                        } else {
+                            throw new \RuntimeException(\sprintf('key processor requires an array value in %s, got %s', $var, \gettype($val)));
+                        }
+                    } elseif (!\array_key_exists($key, $val)) {
+                        if ($hasKeyDefault) {
+                            $val = $keyDefault;
+                        } else {
+                            throw new \RuntimeException(\sprintf('Key "%s" not found in %s', $key, $var));
+                        }
+                    } else {
+                        $val = $val[$key];
                     }
 
-                    if (!\array_key_exists($key, $val)) {
-                        throw new \RuntimeException(\sprintf('Key "%s" not found in %s', $key, $var));
-                    }
-
-                    $val = $val[$key];
                     break;
 
                 case 'raw_key':
@@ -444,7 +529,7 @@ final class TokenSubstitute
             'string', 'int', 'float', 'bool', 'not', 'json', 'base64',
             'file', 'resolve', 'require', 'trim', 'lower', 'upper',
             'urlencode', 'urldecode', 'csv', 'shuffle', 'query_string',
-            'url', 'key', 'raw_key', 'enum', 'default', 'defined', 'const'
+            'url', 'key', 'raw_key', 'enum', 'default', 'defined', 'const', 'safe'
         ];
 
         return \in_array(\strtolower(\trim($str)), $processors, true);
