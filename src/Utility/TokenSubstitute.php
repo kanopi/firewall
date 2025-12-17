@@ -373,6 +373,7 @@ final class TokenSubstitute
                         throw new \RuntimeException(\sprintf('enum processor requires an enum class in token "%s"', $token));
                     }
 
+                    /** @var class-string<\BackedEnum> $enumClass */
                     $enumClass = $parts[++$i]; // Keep original case for class name
 
                     if (!\enum_exists($enumClass)) {

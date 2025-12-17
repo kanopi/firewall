@@ -26,7 +26,7 @@ abstract class AbstractPluginBase implements PluginInterface
     /**
      * List of all the files being loaded.
      *
-     * @var string[]
+     * @var array
      */
     protected array $files = [];
 
