@@ -541,4 +541,22 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $this->assertEquals('not found', $storage->get($request->getClientIp(), 'not found'));
     }
+
+    /**
+     * Tests DatabaseStorage::__construct().
+     *
+     * Confirms port is turned into an integer.
+     */
+    public function testConstructorHandlingPort(): void
+    {
+        $config = ['connection' => ['dsn' => 'sqlite3:///:memory:', 'port' => '3306']];
+        $plugin = new class ($config) extends DatabaseStorage
+        {
+            public function getConfig(): array
+            {
+                return $this->config;
+            }
+        };
+        $this->assertIsInt($plugin->getConfig()['connection']['port']);
+    }
 }

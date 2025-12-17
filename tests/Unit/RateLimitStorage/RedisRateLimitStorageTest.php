@@ -101,4 +101,28 @@ class RedisRateLimitStorageTest extends AbstractTestCase
 
         $this->assertSame(5, $storage->countRequests('test-key', 1000, 2000));
     }
+
+    /**
+     * Tests RedisRateLimitStorage::__construct().
+     *
+     * Confirms turns port into integer if sent over as a string int.
+     */
+    public function testConstructorPortReturnsInt(): void
+    {
+        $config = [
+            'redis' => [
+                'port' => '5679'
+            ],
+            'ttl' => 3600
+        ];
+        $storage = new class ($config) extends RedisRateLimitStorage
+        {
+            public function getConfig(): array
+            {
+                return $this->config;
+            }
+        };
+
+        $this->assertIsInt($storage->getConfig()['redis']['port']);
+    }
 }

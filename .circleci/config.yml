@@ -110,7 +110,7 @@ jobs:
             sudo pecl install xdebug
             printf "no\nno\n" | sudo pecl install redis
             sudo docker-php-ext-install pdo_mysql mysqli pdo_pgsql
-            #sudo cp .circleci/config/xdebug.ini /etc/php.d/xdebug.ini
+            #sudo cp .circleci/config/*.ini /etc/php.d/
             # Install Xidel
             curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
             chmod +x /tmp/xidel && sudo mv /tmp/xidel /usr/sbin/
@@ -140,7 +140,7 @@ jobs:
             echo "Percent: ${PERCENTAGE}" | tee -a /tmp/report.md
             echo "Passing: ${PASSING}" | tee -a /tmp/report.md
             echo "" | tee -a /tmp/report.md
-            echo "[Report](https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/~/project/reports/index.html)" | tee -a /tmp/report.md
+            echo "[Report](https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/reports/index.html)" | tee -a /tmp/report.md
 #            if [[ "${OUTCOME}" == "1" ]]; then
 #              echo "Percentage does not pass threshold."
 #              exit 1

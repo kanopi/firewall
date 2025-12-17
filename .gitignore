@@ -12,3 +12,4 @@ firewall.zip
 .env
 .env.local
 .env.*.local
+coverage-report
