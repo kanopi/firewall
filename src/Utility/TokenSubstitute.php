@@ -119,7 +119,7 @@ final class TokenSubstitute
 
         // Handle 'defined' processor - special case that just checks existence
         if (count($parts) === 1 && strtolower($parts[0]) === 'defined') {
-            return \getenv($var) !== false;
+            return \getenv($var) !== false || isset($_SERVER[$var]);
         }
 
         // Handle 'const' processor - gets PHP constant instead of env var
@@ -131,8 +131,11 @@ final class TokenSubstitute
             return \constant($var);
         }
 
-        // Get the initial value
+        // Get the initial value - check getenv() first, then $_SERVER
         $raw = \getenv($var);
+        if ($raw === false && isset($_SERVER[$var])) {
+            $raw = $_SERVER[$var];
+        }
 
         // Handle 'default' processor with special logic
         $hasDefault = false;
@@ -159,7 +162,7 @@ final class TokenSubstitute
             // Remove the default processor and its value from parts
             array_splice($parts, $defaultIndex, 2);
         } elseif ($raw === false) {
-            throw new \RuntimeException(\sprintf('Environment variable "%s" is not set', $var));
+            throw new \RuntimeException(\sprintf('Environment variable "%s" is not set (checked both getenv() and $_SERVER)', $var));
         } else {
             $val = $raw;
         }

@@ -887,7 +887,7 @@ class TokenSubstituteTest extends AbstractTestCase
     {
         putenv('DOES_NOT_EXIST');
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Environment variable "DOES_NOT_EXIST" is not set');
+        $this->expectExceptionMessage('Environment variable "DOES_NOT_EXIST" is not set (checked both getenv() and $_SERVER)');
         TokenSubstitute::substitute('%env(int:DOES_NOT_EXIST)%');
     }
 
@@ -897,6 +897,98 @@ class TokenSubstituteTest extends AbstractTestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Unknown env processor "unknown"');
         TokenSubstitute::substitute('%env(unknown:VAR)%');
+    }
+
+    // =====================================================================
+    // $_SERVER Fallback Tests
+    // =====================================================================
+
+    public function testServerFallbackWhenEnvNotSet(): void
+    {
+        // Make sure it's not in getenv()
+        putenv('SERVER_ONLY');
+
+        // Set in $_SERVER only
+        $_SERVER['SERVER_ONLY'] = 'from_server';
+
+        $result = TokenSubstitute::substitute('%env(SERVER_ONLY)%');
+        $this->assertEquals('from_server', $result);
+
+        // Cleanup
+        unset($_SERVER['SERVER_ONLY']);
+    }
+
+    public function testGetenvTakesPrecedenceOverServer(): void
+    {
+        // Set in both places
+        putenv('BOTH_VAR=from_getenv');
+        $_SERVER['BOTH_VAR'] = 'from_server';
+
+        $result = TokenSubstitute::substitute('%env(BOTH_VAR)%');
+        $this->assertEquals('from_getenv', $result);
+
+        // Cleanup
+        putenv('BOTH_VAR');
+        unset($_SERVER['BOTH_VAR']);
+    }
+
+    public function testServerFallbackWithJsonProcessor(): void
+    {
+        // Make sure it's not in getenv()
+        putenv('JSON_SERVER_VAR');
+
+        // Set JSON in $_SERVER
+        $_SERVER['JSON_SERVER_VAR'] = '{"key":"value","nested":{"item":"data"}}';
+
+        $result = TokenSubstitute::substitute('%env(json:JSON_SERVER_VAR)%');
+        $this->assertIsArray($result);
+        $this->assertEquals('value', $result['key']);
+        $this->assertEquals('data', $result['nested']['item']);
+
+        // Cleanup
+        unset($_SERVER['JSON_SERVER_VAR']);
+    }
+
+    public function testServerFallbackWithNestedKeys(): void
+    {
+        // Make sure it's not in getenv()
+        putenv('NESTED_SERVER_VAR');
+
+        // Set JSON in $_SERVER
+        $_SERVER['NESTED_SERVER_VAR'] = '{"databases":{"default":{"username":"testuser"}}}';
+
+        $result = TokenSubstitute::substitute('%env(json:key:databases:key:default:key:username:NESTED_SERVER_VAR)%');
+        $this->assertEquals('testuser', $result);
+
+        // Cleanup
+        unset($_SERVER['NESTED_SERVER_VAR']);
+    }
+
+    public function testDefinedProcessorChecksServerFallback(): void
+    {
+        // Make sure it's not in getenv()
+        putenv('DEFINED_TEST');
+
+        // Set in $_SERVER only
+        $_SERVER['DEFINED_TEST'] = 'exists';
+
+        $result = TokenSubstitute::substitute('%env(defined:DEFINED_TEST)%');
+        $this->assertTrue($result);
+
+        // Cleanup
+        unset($_SERVER['DEFINED_TEST']);
+    }
+
+    public function testDefinedProcessorReturnsFalseWhenNotInEither(): void
+    {
+        // Make sure it's not in either place
+        putenv('NOT_DEFINED');
+        if (isset($_SERVER['NOT_DEFINED'])) {
+            unset($_SERVER['NOT_DEFINED']);
+        }
+
+        $result = TokenSubstitute::substitute('%env(defined:NOT_DEFINED)%');
+        $this->assertFalse($result);
     }
 
     // =====================================================================
