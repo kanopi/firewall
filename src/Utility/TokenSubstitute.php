@@ -127,6 +127,7 @@ final class TokenSubstitute
             if (!\defined($var)) {
                 throw new \RuntimeException(\sprintf('Constant "%s" is not defined', $var));
             }
+
             return \constant($var);
         }
 
@@ -137,12 +138,14 @@ final class TokenSubstitute
         $hasDefault = false;
         $defaultValue = null;
         $defaultIndex = -1;
+        $counter = \count($parts);
 
-        for ($i = 0; $i < \count($parts); $i++) {
+        for ($i = 0; $i < $counter; $i++) {
             if (\strtolower(\trim($parts[$i])) === 'default') {
                 if ($i + 1 >= \count($parts)) {
                     throw new \RuntimeException(\sprintf('default processor requires a value in token "%s"', $token));
                 }
+
                 $hasDefault = true;
                 $defaultValue = $parts[$i + 1];
                 $defaultIndex = $i;
@@ -155,14 +158,16 @@ final class TokenSubstitute
             $val = $defaultValue;
             // Remove the default processor and its value from parts
             array_splice($parts, $defaultIndex, 2);
-        } else if ($raw === false) {
+        } elseif ($raw === false) {
             throw new \RuntimeException(\sprintf('Environment variable "%s" is not set', $var));
         } else {
             $val = $raw;
         }
 
+        $counter = \count($parts);
+
         // Process each part
-        for ($i = 0; $i < \count($parts); $i++) {
+        for ($i = 0; $i < $counter; $i++) {
             $part = \strtolower(\trim($parts[$i]));
 
             switch ($part) {
@@ -174,6 +179,7 @@ final class TokenSubstitute
                     if (!\is_numeric($val)) {
                         throw new \RuntimeException(self::badCast('int', $var, $val));
                     }
+
                     $val = (int) $val;
                     break;
 
@@ -181,6 +187,7 @@ final class TokenSubstitute
                     if (!\is_numeric($val)) {
                         throw new \RuntimeException(self::badCast('float', $var, $val));
                     }
+
                     $val = (float) $val;
                     break;
 
@@ -195,17 +202,15 @@ final class TokenSubstitute
                     } else {
                         throw new \RuntimeException(self::badCast('bool', $var, $val));
                     }
+
                     break;
 
                 case 'not':
                     // Logical NOT - converts to bool first, then negates
                     $l = \strtolower((string) $val);
                     $truthy = ['1','true','yes','on'];
-                    if (\in_array($l, $truthy, true) || (\is_numeric($val) && $val > 0)) {
-                        $val = false;
-                    } else {
-                        $val = true;
-                    }
+                    $val = \in_array($l, $truthy, true) || \is_numeric($val) && $val > 0 ? false : true;
+
                     break;
 
                 case 'json':
@@ -221,8 +226,10 @@ final class TokenSubstitute
                         if (\json_last_error() !== JSON_ERROR_NONE) {
                             throw new \RuntimeException(\sprintf('Invalid JSON in %s: %s', $var, \json_last_error_msg()));
                         }
+
                         $val = $d;
                     }
+
                     break;
 
                 case 'base64':
@@ -237,6 +244,7 @@ final class TokenSubstitute
                         // Encode to base64
                         $val = \base64_encode((string) $val);
                     }
+
                     break;
 
                 case 'file':
@@ -244,10 +252,12 @@ final class TokenSubstitute
                     if (!\is_file($p) || !\is_readable($p)) {
                         throw new \RuntimeException(\sprintf('file:%s not found or unreadable (from %s)', $p, $var));
                     }
+
                     $c = \file_get_contents($p);
                     if ($c === false) {
                         throw new \RuntimeException(\sprintf('Failed reading file for %s', $var));
                     }
+
                     $val = $c;
                     break;
 
@@ -257,6 +267,7 @@ final class TokenSubstitute
                     if ($val === false) {
                         throw new \RuntimeException(\sprintf('Could not resolve path for %s', $var));
                     }
+
                     break;
 
                 case 'require':
@@ -265,6 +276,7 @@ final class TokenSubstitute
                     if (!\is_file($p) || !\is_readable($p)) {
                         throw new \RuntimeException(\sprintf('require:%s not found or unreadable (from %s)', $p, $var));
                     }
+
                     $val = require $p;
                     break;
 
@@ -291,18 +303,20 @@ final class TokenSubstitute
                 case 'csv':
                     if (\is_string($val)) {
                         // Convert CSV string to array
-                        $items = \array_map('trim', \array_filter(\explode(',', $val), 'strlen'));
+                        $items = \array_map(trim(...), \array_filter(\explode(',', $val), strlen(...)));
                         $val = \array_values($items);
-                    } else if (\is_array($val)) {
+                    } elseif (\is_array($val)) {
                         // Convert array to CSV string
                         $val = \implode(',', $val);
                     }
+
                     break;
 
                 case 'shuffle':
                     if (!\is_array($val)) {
                         throw new \RuntimeException(\sprintf('shuffle processor requires an array in %s', $var));
                     }
+
                     \shuffle($val);
                     break;
 
@@ -315,6 +329,7 @@ final class TokenSubstitute
                     if ($u === false) {
                         throw new \RuntimeException(\sprintf('Invalid URL in %s', $var));
                     }
+
                     $val = $u;
                     break;
 
@@ -350,7 +365,7 @@ final class TokenSubstitute
                         $j++;
                     }
 
-                    if (empty($keyParts)) {
+                    if ($keyParts === []) {
                         throw new \RuntimeException(\sprintf('raw_key processor requires a key name in token "%s"', $token));
                     }
 
@@ -384,7 +399,7 @@ final class TokenSubstitute
                     try {
                         // First try by name
                         $val = $enumClass::tryFrom($val) ?? $enumClass::from($val);
-                    } catch (\ValueError $e) {
+                    } catch (\ValueError) {
                         // Try by case name if it's a backed enum
                         $reflection = new \ReflectionEnum($enumClass);
                         foreach ($reflection->getCases() as $case) {
@@ -398,6 +413,7 @@ final class TokenSubstitute
                             throw new \RuntimeException(\sprintf('Invalid enum value "%s" for %s', $val, $enumClass));
                         }
                     }
+
                     break;
 
                 case 'default':
@@ -405,6 +421,7 @@ final class TokenSubstitute
                     if ($i + 1 < \count($parts)) {
                         $i++; // Skip the default value
                     }
+
                     break;
 
                 default:
