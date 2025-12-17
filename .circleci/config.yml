@@ -110,7 +110,7 @@ jobs:
             sudo pecl install xdebug
             printf "no\nno\n" | sudo pecl install redis
             sudo docker-php-ext-install pdo_mysql mysqli pdo_pgsql
-            #sudo cp .circleci/config/xdebug.ini /etc/php.d/xdebug.ini
+            #sudo cp .circleci/config/*.ini /etc/php.d/
             # Install Xidel
             curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
             chmod +x /tmp/xidel && sudo mv /tmp/xidel /usr/sbin/
