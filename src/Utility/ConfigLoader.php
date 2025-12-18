@@ -127,7 +127,7 @@ final class ConfigLoader
         self::$includeStack[$abs] = true;
         try {
             $baseDir = \dirname($abs);
-            $data    = Yaml::parseFile($abs) ?? [];
+            $data = Yaml::parseFile($abs) ?? [];
 
             if (!is_array($data)) {
                 return [];
@@ -243,28 +243,106 @@ final class ConfigLoader
      * - If both sides are lists (0..N integer keys in order), the right list REPLACES the left list entirely.
      * - Otherwise, the right value overwrites the left value.
      *
+     * Special handling for plugin configurations (block/bypass sections):
+     * - If a plugin has enable:false in the override, skip merging that plugin entirely
+     * - The 'priority' key is preserved from the base config (not overridden)
+     * - The 'config' array is appended (not replaced)
+     *
      * @param array<string,mixed> $base
      *   Left-hand/base configuration.
      * @param array<string,mixed> $over
      *   Right-hand/override configuration.
+     * @param array<string> $path
+     *   Current path in the config tree (for detecting plugin configs).
      *
      * @return array<string,mixed>
      *   Merged configuration.
      */
-    private static function mergeConfigs(array $base, array $over): array
+    private static function mergeConfigs(array $base, array $over, array $path = []): array
     {
         foreach ($over as $k => $v) {
+            $currentPath = array_merge($path, [$k]);
+
             if (!\array_key_exists($k, $base)) {
                 $base[$k] = $v;
                 continue;
             }
 
             if (\is_array($v) && \is_array($base[$k])) {
-                $baseIsList = \array_keys($base[$k]) === \range(0, \count($base[$k]) - 1);
-                $overIsList = \array_keys($v) === \range(0, \count($v) - 1);
-                $base[$k] = ($baseIsList && $overIsList)
-                ? $v
-                : self::mergeConfigs($base[$k], $v);
+                // Detect plugin configuration: path is [block|bypass][PluginClassName]
+                $isPluginConfig = count($currentPath) === 2
+                    && in_array($currentPath[0], ['block', 'bypass'], true)
+                    && str_contains($currentPath[1], '\\');
+
+                if ($isPluginConfig) {
+                    $baseEnabled = $base[$k]['enable'] ?? true;
+                    $overEnabled = $v['enable'] ?? true;
+
+                    // If both are disabled, remove the plugin
+                    if (!$baseEnabled && !$overEnabled) {
+                        unset($base[$k]);
+                        continue;
+                    }
+
+                    // If base is disabled but override is enabled, replace entirely
+                    if (!$baseEnabled && $overEnabled) {
+                        $base[$k] = $v;
+                        continue;
+                    }
+
+                    // If override is disabled, ignore it completely (don't modify base)
+                    if (!$overEnabled) {
+                        continue;
+                    }
+
+                    // Both enabled: merge with special rules
+                    $base[$k] = self::mergePluginConfig($base[$k], $v);
+                } else {
+                    $baseIsList = \array_keys($base[$k]) === \range(0, \count($base[$k]) - 1);
+                    $overIsList = \array_keys($v) === \range(0, \count($v) - 1);
+                    $base[$k] = ($baseIsList && $overIsList)
+                        ? $v
+                        : self::mergeConfigs($base[$k], $v, $currentPath);
+                }
+            } else {
+                $base[$k] = $v;
+            }
+        }
+
+        return $base;
+    }
+
+    /**
+     * Merge plugin configuration with special rules:
+     * - Preserve 'priority' from base config
+     * - Append 'config' arrays instead of replacing
+     * - Other keys follow normal merge rules
+     *
+     * @param array<string,mixed> $base
+     *   Base plugin configuration.
+     * @param array<string,mixed> $over
+     *   Override plugin configuration.
+     *
+     * @return array<string,mixed>
+     *   Merged plugin configuration.
+     */
+    private static function mergePluginConfig(array $base, array $over): array
+    {
+        foreach ($over as $k => $v) {
+            // Preserve priority from base
+            if ($k === 'priority' && isset($base['priority'])) {
+                continue;
+            }
+
+            // Append config arrays
+            if ($k === 'config' && isset($base['config']) && is_array($base['config']) && is_array($v)) {
+                $base['config'] = array_merge($base['config'], $v);
+                continue;
+            }
+
+            // Normal merge for other keys
+            if (is_array($v) && isset($base[$k]) && is_array($base[$k])) {
+                $base[$k] = self::mergeConfigs($base[$k], $v);
             } else {
                 $base[$k] = $v;
             }

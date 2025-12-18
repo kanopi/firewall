@@ -506,4 +506,224 @@ YML
         // First replacement should still be there
         $this->assertEquals('/absolute/path/to/data/storage.db', $data['storage']['config']['file']);
     }
+
+    public function testPluginConfigMergePreservesPriorityAndAppendsConfig(): void
+    {
+        $file1 = $this->tmp . '/plugin1.yml';
+        $file2 = $this->tmp . '/plugin2.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -100
+    enable: true
+    config:
+      - path:/admin
+      - path:/login
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -50
+    enable: true
+    config:
+      - path:/custom
+      - path:/api/dangerous
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - plugin1.yml
+  - plugin2.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Priority should be preserved from first config
+        $this->assertEquals(-100, $result['block']['Kanopi\Firewall\Plugins\Url']['priority']);
+
+        // Config arrays should be merged (appended)
+        $this->assertCount(4, $result['block']['Kanopi\Firewall\Plugins\Url']['config']);
+        $this->assertEquals('path:/admin', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][0]);
+        $this->assertEquals('path:/login', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][1]);
+        $this->assertEquals('path:/custom', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][2]);
+        $this->assertEquals('path:/api/dangerous', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][3]);
+    }
+
+    public function testPluginConfigWithEnableFalseIsSkipped(): void
+    {
+        $file1 = $this->tmp . '/plugin1.yml';
+        $file2 = $this->tmp . '/plugin2_disabled.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -100
+    enable: true
+    config:
+      - path:/admin
+      - path:/login
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -50
+    enable: false
+    config:
+      - path:/custom
+      - path:/api/dangerous
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - plugin1.yml
+  - plugin2_disabled.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Should only have config from file1 since file2 has enable:false
+        $this->assertEquals(-100, $result['block']['Kanopi\Firewall\Plugins\Url']['priority']);
+        $this->assertTrue($result['block']['Kanopi\Firewall\Plugins\Url']['enable']);
+        $this->assertCount(2, $result['block']['Kanopi\Firewall\Plugins\Url']['config']);
+        $this->assertEquals('path:/admin', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][0]);
+        $this->assertEquals('path:/login', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][1]);
+    }
+
+    public function testPluginConfigMergeWorksForBypassSection(): void
+    {
+        $file1 = $this->tmp . '/bypass1.yml';
+        $file2 = $this->tmp . '/bypass2.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+bypass:
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: -200
+    enable: true
+    config:
+      - 192.168.1.0/24
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+bypass:
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: -150
+    enable: true
+    config:
+      - 10.0.0.0/8
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - bypass1.yml
+  - bypass2.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Priority should be preserved from first config
+        $this->assertEquals(-200, $result['bypass']['Kanopi\Firewall\Plugins\IpAddress']['priority']);
+
+        // Config arrays should be merged
+        $this->assertCount(2, $result['bypass']['Kanopi\Firewall\Plugins\IpAddress']['config']);
+        $this->assertEquals('192.168.1.0/24', $result['bypass']['Kanopi\Firewall\Plugins\IpAddress']['config'][0]);
+        $this->assertEquals('10.0.0.0/8', $result['bypass']['Kanopi\Firewall\Plugins\IpAddress']['config'][1]);
+    }
+
+    public function testPluginConfigBothDisabledRemovesPlugin(): void
+    {
+        $file1 = $this->tmp . '/plugin1.yml';
+        $file2 = $this->tmp . '/plugin2.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -100
+    enable: false
+    config:
+      - path:/admin
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -50
+    enable: false
+    config:
+      - path:/custom
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - plugin1.yml
+  - plugin2.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Plugin should not exist in config when both are disabled
+        $this->assertArrayNotHasKey('Kanopi\Firewall\Plugins\Url', $result['block'] ?? []);
+    }
+
+    public function testPluginConfigDisabledBaseEnabledOverrideReplacesBase(): void
+    {
+        $file1 = $this->tmp . '/plugin1.yml';
+        $file2 = $this->tmp . '/plugin2.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -100
+    enable: false
+    config:
+      - path:/admin
+      - path:/login
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -50
+    enable: true
+    config:
+      - path:/custom
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - plugin1.yml
+  - plugin2.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Base should be completely replaced by override
+        $this->assertEquals(-50, $result['block']['Kanopi\Firewall\Plugins\Url']['priority']);
+        $this->assertTrue($result['block']['Kanopi\Firewall\Plugins\Url']['enable']);
+        $this->assertCount(1, $result['block']['Kanopi\Firewall\Plugins\Url']['config']);
+        $this->assertEquals('path:/custom', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][0]);
+    }
+
 }
