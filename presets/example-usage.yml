@@ -1,0 +1,141 @@
+# Example: Using Firewall Presets
+#
+# This example shows how to use multiple presets together with custom
+# bypass rules and additional configuration.
+
+# =====================================================================
+# Include Presets
+# =====================================================================
+configs:
+  - presets/wordpress.yml         # WordPress-specific blocking
+  - presets/malicious-urls.yml    # Generic malicious file blocking
+
+# =====================================================================
+# Storage Configuration
+# =====================================================================
+storage:
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    file: /tmp/firewall-blocked-ips.data
+
+# =====================================================================
+# Bypass Rules (Whitelist)
+# =====================================================================
+bypass:
+  # Allow admin access from office/VPN IPs
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: -200
+    enable: true
+    config:
+      # Office IP
+      - 203.0.113.100/32
+      # VPN subnet
+      - 10.0.0.0/8
+      # Home office
+      - 198.51.100.50/32
+
+  # Allow legitimate PHP files that would be blocked by generic rule
+  Kanopi\Firewall\Plugins\Url:
+    priority: -200
+    enable: true
+    config:
+      # Custom contact form
+      - path:/contact.php
+
+      # REST API endpoint
+      - path:/api.php
+
+      # Webhook handler
+      - path:/webhook.php
+
+      # Allow all PHP files in /api/ directory
+      - path@starts_with:/api/
+
+      # Allow WordPress REST API (if needed)
+      - path@starts_with:/wp-json/
+
+# =====================================================================
+# Additional Blocking Rules
+# =====================================================================
+block:
+  # Rate limiting for login attempts
+  Kanopi\Firewall\Plugins\RateLimit:
+    enable: true
+    priority: -90
+    metadata:
+      default_rate: 5              # Max 5 requests
+      default_sample: 60           # Per 60 seconds
+      default_expiration_time: 300 # Block for 5 minutes
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
+        config:
+          file: /tmp/firewall-ratelimit.data
+    config:
+      # Rate limit WordPress login
+      - type: AND
+        rules:
+          - path:/wp-login.php
+          - method:POST
+
+      # Rate limit custom login
+      - type: AND
+        rules:
+          - path:/login
+          - method:POST
+
+  # Optional: Block specific countries (requires GeoLocation plugin + GeoIP database)
+  # Kanopi\Firewall\Plugins\GeoLocation:
+  #   priority: -50
+  #   enable: true
+  #   metadata:
+  #     reader:
+  #       type: reader
+  #       db: /path/to/GeoLite2-Country.mmdb
+  #   config:
+  #     # Block these countries
+  #     - country:CN
+  #     - country:RU
+  #     - country:KP
+
+  # Optional: Block specific ASNs (requires ASN plugin + GeoIP database)
+  # Kanopi\Firewall\Plugins\Asn:
+  #   priority: -50
+  #   enable: true
+  #   metadata:
+  #     reader:
+  #       type: reader
+  #       db: /path/to/GeoLite2-ASN.mmdb
+  #   config:
+  #     # Block known malicious ASNs
+  #     - asn:12345
+  #     - asn:67890
+
+# =====================================================================
+# Logging Configuration
+# =====================================================================
+logger:
+  # File logging
+  - class: Monolog\Handler\StreamHandler
+    args:
+      - /var/log/firewall/blocked-requests.log
+      - Monolog\Level::Warning
+    formatter:
+      class: Monolog\Formatter\LineFormatter
+      args:
+        - "[%datetime%] %level_name%: %message% | IP: %context.ip% | Path: %context.path% | UA: %context.user_agent%\n"
+        - "Y-m-d H:i:s"
+
+  # Optional: Email alerts for blocked requests (configure carefully to avoid spam)
+  # - class: Monolog\Handler\NativeMailerHandler
+  #   args:
+  #     - security@yourdomain.com
+  #     - "Firewall Alert - Blocked Request"
+  #     - from@yourdomain.com
+  #     - Monolog\Level::Error
+
+  # Optional: Syslog logging
+  # - class: Monolog\Handler\SyslogHandler
+  #   args:
+  #     - firewall
+  #     - LOG_USER
+  #     - Monolog\Level::Warning

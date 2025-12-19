@@ -1327,4 +1327,12 @@ class TokenSubstituteTest extends AbstractTestCase
         $this->expectExceptionMessage('Invalid URL in TEST_URL');
         TokenSubstitute::substitute('%env(url:TEST_URL)%');
     }
+
+    public function testResolveEnvTokenTypedProcessorServerFallback(): void
+    {
+        $_SERVER['TRIM_VAR'] = '[1,2,3]';
+        $result = TokenSubstitute::substitute('%env(safe:fallback:json:trim:TRIM_VAR)%');
+        $this->assertIsArray($result);
+        $this->assertEquals([1, 2, 3], $result);
+    }
 }

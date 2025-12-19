@@ -1,0 +1,371 @@
+# Rate Limiting Preset
+#
+# Production-ready rate limiting configuration to protect against:
+# - DDoS attacks
+# - Brute force attacks (login, password reset)
+# - API abuse
+# - Excessive resource consumption
+# - Aggressive crawlers/bots
+#
+# USAGE:
+# Include this preset in your main config.yml:
+#
+#   configs:
+#     - presets/rate-limiting.yml
+#
+# STORAGE REQUIREMENT:
+# Rate limiting requires persistent storage. Configure one of:
+# - Redis (recommended for production/distributed systems)
+# - Database (MySQL/PostgreSQL)
+# - File (simple deployments)
+# - Cache (PSR-6 compatible cache)
+#
+# See configuration examples below.
+
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    priority: 100
+    enable: true
+
+    metadata:
+      # Default limits for paths not explicitly configured
+      # 60 requests per minute for general traffic
+      default_rate: 60
+      default_sample: 60
+      default_expiration_time: 300
+
+      # =================================================================
+      # STORAGE CONFIGURATION
+      # =================================================================
+      # Choose ONE storage backend based on your infrastructure
+
+      # OPTION 1: Redis (RECOMMENDED for production)
+      # Fast, distributed, scalable - ideal for load-balanced environments
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        config:
+          redis:
+            host: localhost
+            port: 6379
+            # Optional authentication
+            # auth: "password"                    # Simple password
+            # auth: ["username", "password"]      # ACL auth (Redis 6+)
+
+      # OPTION 2: Database Storage
+      # Good for existing database infrastructure
+      # storage:
+      #   type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
+      #   config:
+      #     storage-table: firewall_ratelimit
+      #     connection:
+      #       # Using DSN
+      #       dsn: "pdo-mysql://user:password@localhost:3306/firewall?serverVersion=8.0"
+      #
+      #       # OR using connection details
+      #       # dbname: firewall
+      #       # user: firewall_user
+      #       # password: secure_password
+      #       # host: localhost
+      #       # port: 3306
+      #       # driver: pdo_mysql
+
+      # OPTION 3: File Storage
+      # Simple deployments, single server only
+      # storage:
+      #   type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
+      #   config:
+      #     file: /tmp/firewall-ratelimit.data
+
+      # OPTION 4: PSR-6 Cache Storage
+      # Use existing PSR-6 compatible cache (Symfony Cache, etc.)
+      # storage:
+      #   type: Kanopi\Firewall\RateLimitStorage\CacheRateLimitStorage
+      #   config:
+      #     cache: '@cache.app'  # Your PSR-6 cache service
+
+    # =================================================================
+    # RATE LIMIT RULES
+    # =================================================================
+    # Rules are evaluated in order. First match wins.
+    # Each rule can specify:
+    #   - path: URL path pattern (exact, wildcard *, or regex /pattern/)
+    #   - rate: Max requests allowed
+    #   - sample: Time window in seconds
+    config:
+      # -----------------------------------------------------------------
+      # AUTHENTICATION ENDPOINTS (Strict Limits)
+      # -----------------------------------------------------------------
+      # Protect against brute force attacks on login/password reset
+
+      # WordPress login - 5 attempts per 5 minutes
+      - path: /wp-login.php
+        rate: 5
+        sample: 300
+
+      # WordPress password reset - 3 attempts per 10 minutes
+      - path: /wp-login.php?action=lostpassword
+        rate: 3
+        sample: 600
+
+      # General login endpoints - 10 attempts per 5 minutes
+      - path: /login
+        rate: 10
+        sample: 300
+
+      - path: /signin
+        rate: 10
+        sample: 300
+
+      - path: /auth/login
+        rate: 10
+        sample: 300
+
+      # Password reset endpoints - 5 attempts per 10 minutes
+      - path: /password/reset
+        rate: 5
+        sample: 600
+
+      - path: /forgot-password
+        rate: 5
+        sample: 600
+
+      # Registration endpoints - 10 per hour
+      - path: /register
+        rate: 10
+        sample: 3600
+
+      - path: /signup
+        rate: 10
+        sample: 3600
+
+      # -----------------------------------------------------------------
+      # API ENDPOINTS
+      # -----------------------------------------------------------------
+      # Protect API resources from abuse
+
+      # Public API - 100 requests per minute
+      - path: /api/*
+        rate: 100
+        sample: 60
+
+      # API authentication - 20 per minute
+      - path: /api/auth/*
+        rate: 20
+        sample: 60
+
+      # API write operations - 30 per minute
+      - path: /api/v1/post
+        rate: 30
+        sample: 60
+
+      - path: /api/v1/put
+        rate: 30
+        sample: 60
+
+      - path: /api/v1/delete
+        rate: 20
+        sample: 60
+
+      # GraphQL endpoint - 50 queries per minute
+      - path: /graphql
+        rate: 50
+        sample: 60
+
+      # REST API root - 200 per minute
+      - path: /wp-json/*
+        rate: 200
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # WORDPRESS SPECIFIC
+      # -----------------------------------------------------------------
+
+      # XML-RPC (common DDoS target) - 10 per minute
+      - path: /xmlrpc.php
+        rate: 10
+        sample: 60
+
+      # WordPress admin - 120 per minute
+      - path: /wp-admin/*
+        rate: 120
+        sample: 60
+
+      # WordPress AJAX - 200 per minute
+      - path: /wp-admin/admin-ajax.php
+        rate: 200
+        sample: 60
+
+      # WordPress Cron - 5 per minute
+      - path: /wp-cron.php
+        rate: 5
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # SEARCH & FORM ENDPOINTS
+      # -----------------------------------------------------------------
+
+      # Search functionality - 30 per minute
+      - path: /search
+        rate: 30
+        sample: 60
+
+      - path: /?s=*
+        rate: 30
+        sample: 60
+
+      # Contact forms - 5 per 10 minutes
+      - path: /contact
+        rate: 5
+        sample: 600
+
+      - path: /contact-us
+        rate: 5
+        sample: 600
+
+      # Comment submission - 10 per 10 minutes
+      - path: /wp-comments-post.php
+        rate: 10
+        sample: 600
+
+      # -----------------------------------------------------------------
+      # ADMIN & MANAGEMENT
+      # -----------------------------------------------------------------
+
+      # Admin areas - 180 per minute
+      - path: /admin/*
+        rate: 180
+        sample: 60
+
+      # Setup/install pages - 3 per hour (should be disabled in production)
+      - path: /install.php
+        rate: 3
+        sample: 3600
+
+      - path: /setup
+        rate: 3
+        sample: 3600
+
+      # -----------------------------------------------------------------
+      # FILE UPLOADS
+      # -----------------------------------------------------------------
+
+      # Upload endpoints - 20 per 5 minutes
+      - path: /upload
+        rate: 20
+        sample: 300
+
+      - path: /wp-admin/async-upload.php
+        rate: 20
+        sample: 300
+
+      # -----------------------------------------------------------------
+      # STATIC ASSETS (Relaxed)
+      # -----------------------------------------------------------------
+
+      # CSS/JS assets - 500 per minute
+      - path: /\.css$
+        rate: 500
+        sample: 60
+
+      - path: /\.js$
+        rate: 500
+        sample: 60
+
+      # Images - 500 per minute
+      - path: /\.(?:jpg|jpeg|png|gif|webp|svg|ico)$
+        rate: 500
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # WEBHOOKS
+      # -----------------------------------------------------------------
+
+      # Webhook endpoints - 100 per minute
+      - path: /webhook/*
+        rate: 100
+        sample: 60
+
+      - path: /api/webhook/*
+        rate: 100
+        sample: 60
+
+      # Payment webhooks (Stripe, PayPal, etc.) - 200 per minute
+      - path: /webhook/stripe
+        rate: 200
+        sample: 60
+
+      - path: /webhook/paypal
+        rate: 200
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # HEALTH CHECKS & MONITORING
+      # -----------------------------------------------------------------
+
+      # Health check endpoints - unlimited (or very high)
+      - path: /health
+        rate: 1000
+        sample: 60
+
+      - path: /healthz
+        rate: 1000
+        sample: 60
+
+      - path: /ping
+        rate: 1000
+        sample: 60
+
+      - path: /status
+        rate: 1000
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # RSS & FEEDS
+      # -----------------------------------------------------------------
+
+      # RSS feeds - 10 per minute
+      - path: /feed
+        rate: 10
+        sample: 60
+
+      - path: /rss
+        rate: 10
+        sample: 60
+
+      - path: /\.xml$
+        rate: 10
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # SITEMAP
+      # -----------------------------------------------------------------
+
+      # Sitemap - 10 per minute
+      - path: /sitemap.xml
+        rate: 10
+        sample: 60
+
+      - path: /sitemap_index.xml
+        rate: 10
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # ROBOTS & CRAWLERS
+      # -----------------------------------------------------------------
+
+      # robots.txt - 30 per minute
+      - path: /robots.txt
+        rate: 30
+        sample: 60
+
+      # -----------------------------------------------------------------
+      # SPECIAL PATHS
+      # -----------------------------------------------------------------
+
+      # Homepage - 120 per minute
+      - path: /
+        rate: 120
+        sample: 60
+
+      # All other paths use default_rate and default_sample (60 req/min)
+      # No need to explicitly define, handled by plugin defaults

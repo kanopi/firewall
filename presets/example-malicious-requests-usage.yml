@@ -1,0 +1,149 @@
+# Example: Using malicious-requests.yml preset
+#
+# This example shows how to deploy the malicious-requests.yml preset
+# in a production environment with custom overrides.
+#
+# USAGE:
+# 1. Copy this file to your project (e.g., config/firewall.yml)
+# 2. Adjust paths and settings as needed
+# 3. Load in your application bootstrap:
+#    Firewall::create(['config/firewall.yml'])->evaluate();
+
+# Include the malicious requests preset
+configs:
+  - presets/malicious-requests.yml
+
+# Configure storage for blocked IPs
+storage:
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    file: /tmp/firewall-blocked-ips.data
+
+# Optional: Configure logging
+logging:
+  level: info  # Use 'debug' to see vulnerability scores
+  handlers:
+    - type: stream
+      path: /var/log/firewall/blocks.log
+      level: warning
+    - type: rotating_file
+      path: /var/log/firewall/firewall.log
+      level: info
+      max_files: 7
+
+# Optional: Override specific risk thresholds
+# Uncomment and adjust based on your false positive tolerance
+# block:
+#   Kanopi\Firewall\Plugins\VulnerabilityScore:
+#     config:
+#       risk_levels:
+#         # More aggressive blocking (lower thresholds)
+#         high:
+#           threshold: 35      # Block at 35 points instead of 40
+#           block: true
+#           status_code: 403
+#           expiration_time: 7200  # 2 hour ban
+#
+#         critical:
+#           threshold: 55      # Block at 55 points instead of 60
+#           block: true
+#           status_code: 403
+#           expiration_time: 86400  # 24 hour ban
+
+# Optional: Enable GeoIP scoring for enhanced detection
+# Requires GeoIP databases - see example/README.md for setup
+# block:
+#   Kanopi\Firewall\Plugins\VulnerabilityScore:
+#     metadata:
+#       country_reader:
+#         type: reader
+#         db: /usr/local/share/GeoIP/GeoLite2-Country.mmdb
+#       asn_reader:
+#         type: reader
+#         db: /usr/local/share/GeoIP/GeoLite2-ASN.mmdb
+#     config:
+#       scoring:
+#         countries:
+#           # Trusted countries (no additional score)
+#           US: 0
+#           CA: 0
+#           GB: 0
+#           DE: 0
+#           FR: 0
+#           AU: 0
+#           JP: 0
+#
+#           # Higher risk countries
+#           CN: 15
+#           RU: 15
+#           IR: 20
+#           KP: 30
+#
+#           # Unknown country
+#           XX: 25
+#
+#         asn:
+#           # Trusted CDN/Cloud providers
+#           "13335": 0   # Cloudflare
+#           "15169": 0   # Google
+#           "16509": 0   # Amazon AWS
+#           "8075": 0    # Microsoft Azure
+#
+#           # Known problematic networks
+#           "4134": 20   # Chinanet
+#           "45102": 15  # Alibaba Cloud
+#
+#         asn_patterns:
+#           vpn: 20
+#           proxy: 20
+#           hosting: 5
+
+# Optional: Add bypass rules for trusted IPs or specific paths
+# bypass:
+#   # Bypass for internal/trusted IPs
+#   Kanopi\Firewall\Plugins\IpAddress:
+#     priority: -200  # Run before blocking rules
+#     enable: true
+#     config:
+#       - 192.168.1.0/24      # Internal network
+#       - 10.0.0.0/8          # Private network
+#       - 127.0.0.1           # Localhost
+#       - 203.0.113.50        # Office IP
+#
+#   # Bypass for specific paths (e.g., webhooks, APIs)
+#   Kanopi\Firewall\Plugins\Url:
+#     priority: -200
+#     enable: true
+#     config:
+#       - path:/api/webhook
+#       - path@starts_with:/health
+#       - path@starts_with:/.well-known/
+
+# Optional: Add additional blocking rules
+# block:
+#   # Block specific countries (requires GeoIP)
+#   Kanopi\Firewall\Plugins\GeoLocation:
+#     priority: 10
+#     enable: false  # Set to true if using
+#     metadata:
+#       reader:
+#         type: reader
+#         db: /usr/local/share/GeoIP/GeoLite2-City.mmdb
+#     config:
+#       - country:CN
+#       - country:RU
+#
+#   # Rate limiting
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     priority: 100
+#     enable: false  # Set to true if using
+#     metadata:
+#       storage:
+#         type: redis
+#         config:
+#           host: localhost
+#           port: 6379
+#     config:
+#       - limit: 100
+#         window: 60
+#         key: ip

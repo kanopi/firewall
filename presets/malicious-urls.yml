@@ -1,0 +1,170 @@
+# Malicious and Suspicious URL Blocking Configuration
+#
+# This preset blocks common malicious PHP files, attack patterns, and suspicious
+# URLs that are frequently used by hackers, malware, and vulnerability scanners.
+#
+# Note: This is a complement to the WordPress blocking configuration and can be
+# used with any PHP application (WordPress, Drupal, Laravel, etc.)
+
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -100
+    enable: true
+    config:
+      # =====================================================================
+      # Well-Known Directory (ACME/LetsEncrypt, security.txt, etc.)
+      # Allow .well-known but can be restricted if needed
+      # =====================================================================
+      # Uncomment to block (not recommended - breaks SSL cert validation)
+      - path@starts_with:/.well-known
+
+      # =====================================================================
+      # Environment and Configuration Files
+      # =====================================================================
+      - path:/.env
+      - path@contains:/.env
+      - path@ends_with:/config.php
+      - path:/config.php
+
+      # =====================================================================
+      # Common Malicious PHP Files
+      # Known backdoor, shell, and malware file names
+      # =====================================================================
+      - path:/aab.php
+      - path:/lyda.php
+      - path:/chosen.php
+      - path:/dropdown.php
+      - path@ends_with:/aab.php
+      - path@ends_with:/lyda.php
+      - path@ends_with:/chosen.php
+      - path@ends_with:/dropdown.php
+
+      # =====================================================================
+      # Generic Attack File Names (Root Level)
+      # These files should never exist at document root
+      # =====================================================================
+      - path@regex:#^/s\.php(\?.*)?$#
+      - path@regex:#^/radio\.php(\?.*)?$#
+      - path@regex:#^/css\.php(\?.*)?$#
+      - path@regex:#^/autoload_classmap\.php(\?.*)?$#
+      - path@regex:#^/admin\.php(\?.*)?$#
+      - path@regex:#^/simple\.php(\?.*)?$#
+      - path@regex:#^/install\.php(\?.*)?$#
+      - path@regex:#^/wp-configs\.php(\?.*)?$#
+      - path@regex:#^/test\.php(\?.*)?$#
+      - path@regex:#^/files\.php(\?.*)?$#
+      - path@regex:#^/goods\.php(\?.*)?$#
+      - path@regex:#^/config\.php(\?.*)?$#
+      - path@regex:#^/readme\.php(\?.*)?$#
+      - path@regex:#^/function\.php(\?.*)?$#
+      - path@regex:#^/go\.php(\?.*)?$#
+      - path@regex:#^/x\.php(\?.*)?$#
+      - path@regex:#^/ini\.php(\?.*)?$#
+      - path@regex:#^/about\.php(\?.*)?$#
+      - path@regex:#^/404\.php(\?.*)?$#
+      - path@regex:#^/content\.php(\?.*)?$#
+      - path@regex:#^/new\.php(\?.*)?$#
+      - path@regex:#^/gecko-new\.php(\?.*)?$#
+      - path@regex:#^/k\.php(\?.*)?$#
+      - path@regex:#^/log\.php(\?.*)?$#
+      - path@regex:#^/edit\.php(\?.*)?$#
+      - path@regex:#^/loxi-o\.php(\?.*)?$#
+      - path@regex:#^/alfa\.php(\?.*)?$#
+
+      # =====================================================================
+      # Specific Attack Paths
+      # =====================================================================
+      - path@starts_with:/index/function.php
+
+      # CSS directory at root (suspicious - CSS should be in assets/themes)
+      - path@regex:#^/css/#
+
+      # Setup endpoints (should not be accessible in production)
+      - path@starts_with:/setup
+      - path:/setup.php
+      - path@ends_with:/setup.php
+
+      # =====================================================================
+      # Generic PHP File Blocking (Except index.php)
+      # Block any PHP file that is not index.php in root or subdirectories
+      # This is a catch-all for unknown malicious PHP files
+      # =====================================================================
+      # Note: This regex uses negative lookbehind to exclude index.php
+      - path@regex:#(?<!index)\.php(\?.*)?$#
+
+      # =====================================================================
+      # Additional Suspicious Patterns
+      # =====================================================================
+      # Common shell/backdoor patterns
+      - path@contains:/shell
+      - path@contains:/backdoor
+      - path@contains:/webshell
+      - path@contains:/c99
+      - path@contains:/r57
+      - path@contains:/c100
+      - path@contains:/WSO
+      - path@regex:#/[a-z]{1,2}\.php$#  # Single or two-letter PHP files
+
+      # Common malware/exploit file extensions
+      - path@ends_with:.suspected
+      - path@ends_with:.exe
+      - path@ends_with:.bat
+      - path@ends_with:.cmd
+      - path@ends_with:.sh
+
+      # =====================================================================
+      # Query String Attack Patterns
+      # =====================================================================
+      # Block attempts to execute code via query parameters
+      - query@contains:eval(
+      - query@contains:base64_decode
+      - query@contains:gzinflate
+      - query@contains:system(
+      - query@contains:exec(
+      - query@contains:passthru(
+      - query@contains:shell_exec
+      - query@contains:assert(
+      - query@contains:str_rot13
+      - query@contains:move_uploaded_file
+
+      # =====================================================================
+      # POST Data Attack Patterns
+      # =====================================================================
+      # Block malicious patterns in POST data
+      - post@contains:eval(
+      - post@contains:base64_decode
+      - post@contains:gzinflate
+      - post@contains:system(
+      - post@contains:exec(
+
+# =====================================================================
+# Notes and Usage
+# =====================================================================
+#
+# This configuration is designed to be highly restrictive and should be
+# tested thoroughly before deploying to production.
+#
+# To use this preset, include it in your main configuration:
+#
+#   configs:
+#     - presets/malicious-urls.yml
+#
+# Important Considerations:
+#
+# 1. The generic PHP blocking rule ((?<!index)\.php$) is aggressive and may
+#    block legitimate PHP files. Consider adjusting based on your application.
+#
+# 2. If you have custom PHP files at the root level (like contact.php, api.php),
+#    you'll need to add bypass rules:
+#
+#    bypass:
+#      Kanopi\Firewall\Plugins\Url:
+#        priority: -200
+#        config:
+#          - path:/contact.php
+#          - path:/api.php
+#
+# 3. The .well-known directory is NOT blocked by default as it's required for
+#    ACME/Let's Encrypt SSL certificate validation and other standards.
+#
+# 4. Test in a staging environment first and monitor logs for false positives.

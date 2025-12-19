@@ -1,0 +1,665 @@
+# Firewall Presets
+
+This directory contains pre-configured firewall rule sets (presets) that can be included in your main configuration to block common attack patterns and malicious requests.
+
+## Available Presets
+
+### `malicious-requests.yml` (Recommended)
+
+**Advanced vulnerability scoring system** that detects and blocks malicious requests based on multiple risk factors. This is the most comprehensive preset and provides protection against:
+
+- **SQL Injection**: All major variants including union-based, time-based, and error-based attacks
+- **Cross-Site Scripting (XSS)**: Script tags, event handlers, protocol handlers, and HTML injection
+- **Command Injection**: Shell operators, system commands, and code execution patterns
+- **Path Traversal**: Directory traversal, sensitive file access, and null byte injection
+- **Remote Code Execution (RCE)**: PHP execution, obfuscated code, and eval patterns
+- **Web Shells**: Detection of common backdoor files and signatures
+- **File Upload Exploits**: Dangerous file extensions and upload bypass attempts
+- **XXE Injection**: XML external entity attacks
+- **SSRF Attacks**: Server-side request forgery attempts
+- **Template Injection**: Detection of template engine exploitation
+- **Attack Tools**: Automated scanners (SQLMap, Nikto, Nmap, etc.)
+- **Geographic Patterns**: Optional country/ASN-based scoring (requires GeoIP)
+
+**Features**:
+- Multi-factor risk scoring system
+- Configurable thresholds (low, medium, high, critical, extreme)
+- Progressive ban durations (1 hour to 7 days)
+- 50+ attack pattern signatures
+- Support for GeoIP-based country and ASN scoring
+
+**Requirements**: None (GeoIP optional for enhanced detection)
+
+### `rate-limiting.yml`
+
+**Production-ready rate limiting** configuration to protect against abuse and resource exhaustion:
+
+- **Authentication Protection**: Brute force prevention for login, password reset, and registration
+- **API Rate Limits**: Graduated limits for public, authenticated, and admin API endpoints
+- **WordPress Specific**: XML-RPC, wp-admin, wp-cron, and AJAX endpoint protection
+- **Form Protection**: Contact forms, comments, search, and upload limits
+- **Static Assets**: Relaxed limits for CSS, JS, and images
+- **Webhooks**: Optimized limits for payment processors and integrations
+- **Health Checks**: High limits for monitoring endpoints
+- **Smart Defaults**: 60 requests/minute for general traffic
+
+**Storage Options**:
+- Redis (recommended for production/distributed)
+- Database (MySQL/PostgreSQL)
+- File (single server)
+- PSR-6 Cache (Symfony, etc.)
+
+**Rate Limits Include**:
+- Login: 5 attempts per 5 minutes
+- Password Reset: 3 attempts per 10 minutes
+- API: 100 requests per minute
+- Homepage: 120 requests per minute
+- XML-RPC: 10 requests per minute
+- Static Assets: 500 requests per minute
+
+**Requirements**: Redis, Database, or File storage configured
+
+### `wordpress.yml`
+
+WordPress-specific blocking rules including:
+
+- **Admin & Login**: `/wp-admin/*`, `/wp-login.php`
+- **XML-RPC**: `/xmlrpc.php` (DDoS target)
+- **Core Files**: Direct access to WordPress system files
+- **Sensitive Files**: `wp-config.php`, logs, backups
+- **Uploads**: PHP execution in uploads directory
+- **Security**: Version control files, debug logs, attack patterns
+
+**Note**: REST API (`/wp-json/`) is commented out by default.
+
+### `malicious-urls.yml`
+
+Blocks common malicious PHP files, attack patterns, and suspicious URLs including:
+
+- **Environment Files**: `.env`, `wp-config.php`, configuration files
+- **Malicious PHP Files**: Known backdoor and shell file names (alfa.php, c99.php, etc.)
+- **Generic Attack Files**: Common exploit file names at root level
+- **WordPress Paths**: Comprehensive WordPress endpoint blocking
+- **Shell/Backdoor Patterns**: Known webshell file names and patterns
+- **Code Execution**: Query and POST parameter injection attempts
+- **Suspicious Extensions**: `.exe`, `.bat`, `.cmd`, `.sh` files
+
+**Note**: `.well-known` directory is NOT blocked by default (required for SSL cert validation).
+
+## Usage
+
+### Quick Start with Malicious Request Detection
+
+For comprehensive protection, start with the `malicious-requests.yml` preset:
+
+```yaml
+# firewall-config.yml
+configs:
+  - presets/malicious-requests.yml
+
+storage:
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    file: /tmp/firewall-blocked.data
+```
+
+This provides immediate protection without requiring GeoIP databases. For enhanced detection with geographic scoring, see [Enabling GeoIP Scoring](#enabling-geoip-scoring) below.
+
+### Quick Start with Rate Limiting
+
+For rate limiting protection, start with the `rate-limiting.yml` preset:
+
+```yaml
+# firewall-config.yml
+configs:
+  - presets/rate-limiting.yml
+
+# Rate limiting requires storage - configure Redis (recommended)
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    metadata:
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        config:
+          redis:
+            host: redis
+            port: 6379
+```
+
+See [Rate Limiting Storage Options](#rate-limiting-storage-options) for other storage backends.
+
+### Include in Main Configuration
+
+```yaml
+# firewall-config.yml
+configs:
+  - presets/malicious-urls.yml
+
+storage:
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    file: /tmp/firewall-blocked.data
+```
+
+### Combine Multiple Presets
+
+```yaml
+configs:
+  - presets/malicious-urls.yml
+  - example/config.wordpress-simple.yml
+  - custom/my-rules.yml
+```
+
+### Override or Add Bypass Rules
+
+```yaml
+configs:
+  - presets/malicious-urls.yml
+
+# Allow specific files that would otherwise be blocked
+bypass:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -200
+    enable: true
+    config:
+      # Allow custom API endpoint
+      - path:/api.php
+      # Allow custom admin file
+      - path:/admin.php
+      # Allow specific IP to access setup
+      - type: AND
+        rules:
+          - path@starts_with:/setup
+          - header.x-forwarded-for:203.0.113.100
+```
+
+### Enabling GeoIP Scoring
+
+To enable country and ASN-based scoring in `malicious-requests.yml`:
+
+1. **Download GeoIP databases** (see [example/README.md](../example/README.md#geoip-database-setup))
+
+2. **Create an override config** to enable GeoIP:
+
+```yaml
+# firewall-config.yml
+configs:
+  - presets/malicious-requests.yml
+
+# Override to enable GeoIP
+block:
+  Kanopi\Firewall\Plugins\VulnerabilityScore:
+    metadata:
+      country_reader:
+        type: reader
+        db: /usr/local/share/GeoIP/GeoLite2-Country.mmdb
+      asn_reader:
+        type: reader
+        db: /usr/local/share/GeoIP/GeoLite2-ASN.mmdb
+    config:
+      scoring:
+        # Uncomment the countries and asn sections in the preset
+        # or define your own scoring here
+        countries:
+          US: 0
+          CN: 15
+          RU: 15
+          XX: 25  # Unknown
+        asn:
+          "13335": 0   # Cloudflare
+          "4134": 20   # Chinanet
+```
+
+### Customizing Risk Thresholds
+
+Adjust blocking sensitivity by modifying risk level thresholds:
+
+```yaml
+configs:
+  - presets/malicious-requests.yml
+
+block:
+  Kanopi\Firewall\Plugins\VulnerabilityScore:
+    config:
+      risk_levels:
+        # More aggressive: Lower thresholds
+        high:
+          threshold: 30      # Block at 30 points (default: 40)
+          block: true
+          expiration_time: 7200  # 2 hour ban
+
+        # More lenient: Higher thresholds
+        high:
+          threshold: 50      # Block at 50 points (default: 40)
+          block: true
+          expiration_time: 1800  # 30 minute ban
+```
+
+### Layered Security Approach
+
+For maximum protection, combine multiple presets:
+
+```yaml
+configs:
+  - presets/malicious-requests.yml    # Advanced scoring
+  - presets/malicious-urls.yml        # URL pattern blocking
+  - presets/rate-limiting.yml         # Rate limiting
+  - presets/wordpress.yml             # WordPress-specific rules
+
+storage:
+  type: Kanopi\Firewall\Storage\DatabaseStorage
+  config:
+    type: mysql
+    host: localhost
+    database: firewall
+    username: firewall_user
+    password: secure_password
+```
+
+### Rate Limiting Storage Options
+
+The rate limiting preset requires persistent storage. Choose based on your infrastructure:
+
+#### Redis (Recommended for Production)
+
+```yaml
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    metadata:
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        config:
+          redis:
+            host: localhost
+            port: 6379
+            # Optional authentication
+            auth: "password"
+            # Or for Redis 6+ ACL:
+            # auth: ["username", "password"]
+```
+
+**Benefits**: Fast, distributed, scales horizontally, automatic expiration
+
+#### Database Storage
+
+```yaml
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    metadata:
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
+        config:
+          storage-table: firewall_ratelimit
+          connection:
+            dsn: "pdo-mysql://user:pass@localhost:3306/db"
+            # Or use connection details:
+            # dbname: firewall
+            # user: firewall_user
+            # password: secure_password
+            # host: localhost
+            # driver: pdo_mysql
+```
+
+**Benefits**: Uses existing database infrastructure, persistent across restarts
+
+#### File Storage (Simple Deployments)
+
+```yaml
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    metadata:
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
+        config:
+          file: /var/lib/firewall/ratelimit.data
+```
+
+**Benefits**: No external dependencies, easy setup
+**Limitations**: Single server only, slower than Redis
+
+#### PSR-6 Cache
+
+```yaml
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    metadata:
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\CacheRateLimitStorage
+        config:
+          cache: '@cache.app'  # Your PSR-6 service
+```
+
+**Benefits**: Integrates with existing cache infrastructure
+
+### Customizing Rate Limits
+
+Override specific endpoints while keeping preset defaults:
+
+```yaml
+configs:
+  - presets/rate-limiting.yml
+
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    config:
+      # More strict login limits
+      - path: /login
+        rate: 3
+        sample: 600  # 3 attempts per 10 minutes
+
+      # Higher API limits for paid tier
+      - path: /api/premium/*
+        rate: 500
+        sample: 60
+
+      # Custom endpoint
+      - path: /my-custom-endpoint
+        rate: 50
+        sample: 60
+```
+
+## Understanding Regex Patterns
+
+### Regex Delimiter Requirement
+
+**IMPORTANT**: All regex patterns MUST include delimiters. The firewall validates regex patterns and will reject patterns without proper delimiters.
+
+**Valid patterns:**
+```yaml
+- path@regex:#^/test\.php$#        # Using # delimiter
+- path@regex:/test\.php$/          # Using / delimiter
+- path@regex:@test\.php$@          # Using @ delimiter
+- path@regex:~test\.php$~          # Using ~ delimiter
+```
+
+**Invalid patterns (will be rejected):**
+```yaml
+- path@regex:^/test\.php$          # Missing delimiters - INVALID
+- path@regex:test\.php             # Missing delimiters - INVALID
+```
+
+### Choosing Delimiters
+
+Choose a delimiter that doesn't appear in your pattern to avoid excessive escaping:
+- Use `#` for paths with slashes: `#^/test/#`
+- Use `/` for simple patterns: `/test/`
+- Use `@` if pattern contains `/` and `#`: `@test@`
+
+## Understanding the Generic PHP Block
+
+The `malicious-urls.yml` preset includes this powerful catch-all rule:
+
+```yaml
+- path@regex:#(?<!index)\.php(\?.*)?$#
+```
+
+This blocks **any PHP file except index.php**. This is useful for:
+- Preventing execution of uploaded malicious PHP files
+- Blocking common backdoor file names
+- Stopping unknown exploits
+
+### When to Use This Rule
+
+**Use when:**
+- Running a CMS (WordPress, Drupal) where all requests go through index.php
+- You have a front-controller pattern (Laravel, Symfony)
+- Maximum security is required
+
+**Don't use when:**
+- You have legitimate PHP files at root level (contact.php, api.php)
+- Your application doesn't use a front-controller pattern
+- You need to access various PHP files directly
+
+### Adapting the Generic PHP Block
+
+If you need to allow specific PHP files, add them to your bypass rules:
+
+```yaml
+bypass:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -200
+    config:
+      - path:/contact.php
+      - path:/api.php
+      - path:/webhook.php
+      - path@regex:^/api/.*\.php$  # Allow all files in /api/ directory
+```
+
+Or modify the preset to exclude specific patterns:
+
+```yaml
+# Allow PHP files in /api/ and /public/ directories
+- type: AND
+  rules:
+    - path@regex:(?<!index)\.php(\?.*)?$
+    - path@not_contains:/api/
+    - path@not_contains:/public/
+```
+
+## Testing Your Configuration
+
+### Testing malicious-requests.yml (Vulnerability Scoring)
+
+Test various attack patterns to verify scoring and blocking:
+
+```bash
+# Test SQL Injection (should score 40+ and block)
+curl "http://localhost:8080/?id=1' UNION SELECT * FROM users--"
+curl "http://localhost:8080/?search=admin' OR '1'='1"
+
+# Test XSS (should score 35+ and block)
+curl "http://localhost:8080/?name=<script>alert(1)</script>"
+curl "http://localhost:8080/?redirect=javascript:alert(1)"
+
+# Test Command Injection (should score 35+ and block)
+curl "http://localhost:8080/?cmd=ls;cat /etc/passwd"
+curl "http://localhost:8080/?file=test|whoami"
+
+# Test Path Traversal (should score 30+ and block)
+curl "http://localhost:8080/../../../etc/passwd"
+curl "http://localhost:8080/?file=../../wp-config.php"
+
+# Test Web Shell Detection (should score 50+ and block)
+curl "http://localhost:8080/c99.php"
+curl "http://localhost:8080/shell.php"
+
+# Test with attack tools user agent (should score 50+ and block)
+curl -A "sqlmap/1.0" http://localhost:8080/
+curl -A "Nikto/2.1.5" http://localhost:8080/
+
+# Test legitimate requests (should allow)
+curl http://localhost:8080/
+curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" http://localhost:8080/
+```
+
+### Testing malicious-urls.yml
+
+```bash
+# Should be blocked (403)
+curl -I https://yoursite.com/alfa.php
+curl -I https://yoursite.com/shell.php
+curl -I https://yoursite.com/wp-config.php
+curl -I https://yoursite.com/.env
+
+# Should work (200)
+curl -I https://yoursite.com/
+curl -I https://yoursite.com/index.php
+```
+
+### Testing wordpress.yml
+
+```bash
+# Should be blocked (403)
+curl -I https://yoursite.com/test.php
+curl -I https://yoursite.com/random.php
+
+# Should work if in bypass rules
+curl -I https://yoursite.com/contact.php
+```
+
+### Testing rate-limiting.yml
+
+Test rate limiting by making rapid requests:
+
+```bash
+# Test homepage rate limit (120 requests per minute)
+# Make 125 requests rapidly - last 5 should return 429
+for i in {1..125}; do
+  curl -I http://localhost:8080/ 2>&1 | grep "HTTP/"
+  sleep 0.1
+done
+
+# Test login rate limit (5 attempts per 5 minutes)
+# Make 6 requests - 6th should return 429
+for i in {1..6}; do
+  curl -I http://localhost:8080/login
+  echo "Request $i"
+done
+
+# Test API rate limit (100 per minute)
+for i in {1..105}; do
+  curl -I http://localhost:8080/api/endpoint 2>&1 | grep "HTTP/"
+done
+
+# Test with different IPs using X-Forwarded-For
+# Each IP gets its own rate limit
+curl -H "X-Forwarded-For: 1.2.3.4" http://localhost:8080/login
+curl -H "X-Forwarded-For: 5.6.7.8" http://localhost:8080/login
+
+# Verify rate limiting is working
+# Look for 429 status code
+curl -I http://localhost:8080/login | grep "429 Too Many Requests"
+
+# Wait for rate limit window to expire, then try again
+sleep 300  # Wait 5 minutes for login rate limit to reset
+curl -I http://localhost:8080/login  # Should work again
+```
+
+### Monitor Logs and Scoring
+
+```bash
+# Check what's being blocked
+tail -f /var/log/firewall/blocked-requests.log
+
+# Look for false positives
+grep "403" /var/log/nginx/access.log | grep -v "alfa.php\|shell.php"
+
+# For VulnerabilityScore plugin, enable debug logging to see scores:
+# Add to your config:
+# logging:
+#   level: debug
+#   handlers:
+#     - type: stream
+#       path: /var/log/firewall-debug.log
+#
+# Then watch scores in real-time:
+tail -f /var/log/firewall-debug.log | grep "Total vulnerability score"
+```
+
+## Common False Positives
+
+### Legitimate PHP Files Blocked
+
+**Problem**: Your application has legitimate PHP files that are blocked.
+
+**Solution**: Add bypass rules for those specific files:
+
+```yaml
+bypass:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -200
+    config:
+      - path:/my-file.php
+```
+
+### WordPress Plugin/Theme Files Blocked
+
+**Problem**: WordPress plugins or themes have PHP files that are being blocked.
+
+**Solution**: The preset already allows `/wp-content/plugins/` and `/wp-content/themes/`. If you're still having issues:
+
+```yaml
+bypass:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -200
+    config:
+      - path@starts_with:/wp-content/plugins/
+      - path@starts_with:/wp-content/themes/
+```
+
+### API Endpoints Blocked
+
+**Problem**: Your REST API endpoints are being blocked.
+
+**Solution**: Add specific bypasses for API routes:
+
+```yaml
+bypass:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -200
+    config:
+      - path@starts_with:/api/
+      - path@starts_with:/wp-json/
+```
+
+## Creating Custom Presets
+
+You can create your own presets by following the same structure:
+
+```yaml
+# presets/my-custom-rules.yml
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -100
+    enable: true
+    config:
+      - path:/my-blocked-path
+      - path@contains:/sensitive
+
+bypass:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -200
+    enable: true
+    config:
+      - path:/my-allowed-path
+```
+
+Then include it in your main config:
+
+```yaml
+configs:
+  - presets/my-custom-rules.yml
+```
+
+## Security Recommendations
+
+1. **Start Conservative**: Begin with `config.wordpress-simple.yml` before adding `malicious-urls.yml`
+2. **Test Thoroughly**: Always test in staging before production
+3. **Monitor Logs**: Watch for false positives in the first week
+4. **Keep Updated**: Review and update presets as new threats emerge
+5. **Layer Security**: Use these presets alongside other security measures (WAF, SSL, etc.)
+
+## Performance Impact
+
+- **Minimal**: URL pattern matching is very fast
+- **Regex Rules**: Slightly slower than simple string matching, but still negligible
+- **Rule Count**: Having 100+ rules has minimal performance impact
+- **Plugin Priority**: URL plugin runs early (-100) to block bad requests quickly
+
+## Contributing
+
+To contribute new presets or improvements:
+
+1. Create a new preset file in this directory
+2. Document the use case and rules clearly
+3. Include usage examples
+4. Test thoroughly
+5. Submit a pull request
+
+## Support
+
+For questions or issues:
+
+- Check the main [documentation](../docs/)
+- Review [example configurations](../example/)
+- Open an issue on GitHub

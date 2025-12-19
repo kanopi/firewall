@@ -1,0 +1,124 @@
+# WordPress Endpoint Blocking Configuration
+#
+# Blocks common WordPress admin pages, sensitive files, and attack vectors
+# while allowing normal website functionality.
+
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -100
+    enable: true
+    config:
+      # =====================================================================
+      # WordPress Admin Access
+      # Block all wp-admin and wp-login access
+      # =====================================================================
+      - path@starts_with:/wp-admin
+      - path@starts_with:/wp-login
+      - path:/wp-login.php
+
+      # =====================================================================
+      # XML-RPC Endpoint
+      # Frequently abused for DDoS and brute force attacks
+      # =====================================================================
+      - path:/xmlrpc.php
+
+      # =====================================================================
+      # WordPress REST API
+      # Block all REST API access (uncomment if you need to block it)
+      # =====================================================================
+      - path@starts_with:/wp-json/
+      - path:/wp-json
+
+      # =====================================================================
+      # WordPress Configuration Files
+      # Prevent direct access to sensitive configuration files
+      # =====================================================================
+      - path@contains:/wp-config
+      - path:/readme.html
+      - path:/license.txt
+
+      # =====================================================================
+      # WordPress Core PHP Files
+      # Block direct access to WordPress core files
+      # =====================================================================
+      - path:/wp-activate.php
+      - path:/wp-blog-header.php
+      - path:/wp-comments-post.php
+      - path:/wp-cron.php
+      - path:/wp-links-opml.php
+      - path:/wp-load.php
+      - path:/wp-mail.php
+      - path:/wp-settings.php
+      - path:/wp-signup.php
+      - path:/wp-trackback.php
+
+      # =====================================================================
+      # WordPress Includes Directory
+      # Block direct access to wp-includes PHP files
+      # =====================================================================
+      - type: AND
+        rules:
+          - path@starts_with:/wp-includes/
+          - path@ends_with:.php
+
+      # =====================================================================
+      # Uploaded File PHP Execution
+      # Prevent PHP execution in uploads directory
+      # =====================================================================
+      - type: AND
+        rules:
+          - path@starts_with:/wp-content/uploads/
+          - path@ends_with:.php
+
+      # =====================================================================
+      # Debug and Error Logs
+      # Prevent access to log files
+      # =====================================================================
+      - path@ends_with:/debug.log
+      - path@ends_with:/error_log
+      - path@contains:/error_log
+
+      # =====================================================================
+      # Common Attack Patterns in URLs
+      # Block obvious malicious patterns
+      # =====================================================================
+      - path@contains:../
+      - path@contains:..%2F
+      - path@contains:.env
+      - path@contains:/phpMyAdmin
+      - path@contains:/phpmyadmin
+
+      # =====================================================================
+      # SQL Injection and Code Execution in Query Strings
+      # Block common attack patterns in URL parameters
+      # =====================================================================
+      - query@contains:UNION
+      - query@contains:SELECT
+      - query@contains:base64_decode
+      - query@contains:eval(
+      - query@contains:system(
+      - query@contains:exec(
+      - query@contains:shell_exec
+
+      # =====================================================================
+      # WordPress Vulnerability Scanners
+      # Block known WordPress vulnerability scanners by User-Agent
+      # =====================================================================
+      - header.user-agent@contains:WPScan
+      - header.user-agent@regex:/wp[_-]?(scan|vuln|exploit)/i
+
+# =====================================================================
+# Optional: Bypass Rules
+# =====================================================================
+# Uncomment and configure if you need to allow specific IPs to access
+# WordPress admin or other blocked endpoints
+#
+# bypass:
+#   Kanopi\Firewall\Plugins\IpAddress:
+#     priority: -200
+#     enable: true
+#     config:
+#       # Allow office IP
+#       - 192.168.1.100/32
+#       # Allow VPN subnet
+#       - 10.0.0.0/8

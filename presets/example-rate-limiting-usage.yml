@@ -1,0 +1,287 @@
+# Rate Limiting Usage Examples
+#
+# This file shows various ways to use and customize the rate-limiting.yml preset
+# for different deployment scenarios and requirements.
+
+# =============================================================================
+# EXAMPLE 1: Basic Usage with Redis (Recommended)
+# =============================================================================
+# For production environments with Redis available
+configs:
+  - presets/rate-limiting.yml
+
+# Override to use your Redis configuration
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    metadata:
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        config:
+          redis:
+            host: redis  # Or your Redis host
+            port: 6379
+            # Optional: Redis password
+            # auth: "your-redis-password"
+
+# =============================================================================
+# EXAMPLE 2: Using Database Storage
+# =============================================================================
+# For environments without Redis, using existing database
+# configs:
+#   - presets/rate-limiting.yml
+#
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     metadata:
+#       storage:
+#         type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
+#         config:
+#           storage-table: firewall_ratelimit
+#           connection:
+#             dbname: myapp
+#             user: firewall_user
+#             password: secure_password
+#             host: localhost
+#             port: 3306
+#             driver: pdo_mysql
+
+# =============================================================================
+# EXAMPLE 3: Customizing Specific Endpoints
+# =============================================================================
+# Override specific rate limits while keeping preset defaults
+# configs:
+#   - presets/rate-limiting.yml
+#
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     config:
+#       # More strict API limits
+#       - path: /api/*
+#         rate: 50      # 50 instead of default 100
+#         sample: 60
+#
+#       # Allow more login attempts for internal network
+#       # (Use with IP bypass rules)
+#       - path: /login
+#         rate: 20      # 20 instead of default 10
+#         sample: 300
+
+# =============================================================================
+# EXAMPLE 4: Development Environment (Relaxed Limits)
+# =============================================================================
+# Disable rate limiting or use very high limits for development
+# configs:
+#   - presets/rate-limiting.yml
+#
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     enable: false  # Completely disable in dev
+#
+# OR use very high limits:
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     metadata:
+#       default_rate: 10000
+#       default_sample: 60
+
+# =============================================================================
+# EXAMPLE 5: API-Only Application
+# =============================================================================
+# Simplified rate limiting for API-only apps
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     priority: 100
+#     enable: true
+#     metadata:
+#       default_rate: 100
+#       default_sample: 60
+#       storage:
+#         type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+#         config:
+#           redis:
+#             host: redis
+#             port: 6379
+#     config:
+#       # Public endpoints - strict
+#       - path: /api/v1/public/*
+#         rate: 60
+#         sample: 60
+#
+#       # Authenticated endpoints - moderate
+#       - path: /api/v1/auth/*
+#         rate: 200
+#         sample: 60
+#
+#       # Write operations - strict
+#       - path: /api/v1/*/create
+#         rate: 30
+#         sample: 60
+#
+#       - path: /api/v1/*/update
+#         rate: 30
+#         sample: 60
+#
+#       - path: /api/v1/*/delete
+#         rate: 20
+#         sample: 60
+#
+#       # Admin endpoints - very strict
+#       - path: /api/v1/admin/*
+#         rate: 50
+#         sample: 60
+
+# =============================================================================
+# EXAMPLE 6: Multi-Tier Rate Limiting
+# =============================================================================
+# Different limits based on user tier (requires custom key building)
+# Note: This requires extending the RateLimit plugin
+# configs:
+#   - presets/rate-limiting.yml
+#
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     config:
+#       # Free tier
+#       - path: /api/free/*
+#         rate: 100
+#         sample: 86400  # Per day
+#
+#       # Pro tier
+#       - path: /api/pro/*
+#         rate: 1000
+#         sample: 86400  # Per day
+#
+#       # Enterprise tier
+#       - path: /api/enterprise/*
+#         rate: 10000
+#         sample: 86400  # Per day
+
+# =============================================================================
+# EXAMPLE 7: WordPress Site with Custom Limits
+# =============================================================================
+# Optimize for WordPress-specific traffic patterns
+# configs:
+#   - presets/rate-limiting.yml
+#   - presets/wordpress.yml  # Combine with WordPress preset
+#
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     metadata:
+#       default_rate: 100
+#       default_sample: 60
+#       storage:
+#         type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+#         config:
+#           redis:
+#             host: redis
+#             port: 6379
+#     config:
+#       # Very strict on login
+#       - path: /wp-login.php
+#         rate: 3
+#         sample: 600  # 3 attempts per 10 minutes
+#
+#       # Block XML-RPC completely (or rate limit severely)
+#       - path: /xmlrpc.php
+#         rate: 1
+#         sample: 60
+#
+#       # Allow more for logged-in admin users
+#       - path: /wp-admin/*
+#         rate: 300
+#         sample: 60
+#
+#       # Front-end pages
+#       - path: /*
+#         rate: 100
+#         sample: 60
+
+# =============================================================================
+# EXAMPLE 8: E-Commerce Site
+# =============================================================================
+# Rate limits optimized for online stores
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     priority: 100
+#     enable: true
+#     metadata:
+#       default_rate: 120
+#       default_sample: 60
+#       storage:
+#         type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+#         config:
+#           redis:
+#             host: redis
+#             port: 6379
+#     config:
+#       # Product browsing - relaxed
+#       - path: /shop/*
+#         rate: 200
+#         sample: 60
+#
+#       - path: /product/*
+#         rate: 200
+#         sample: 60
+#
+#       # Search - moderate
+#       - path: /shop/?s=*
+#         rate: 50
+#         sample: 60
+#
+#       # Add to cart - moderate
+#       - path: /?add-to-cart=*
+#         rate: 100
+#         sample: 60
+#
+#       # Checkout - strict (prevent abuse)
+#       - path: /checkout
+#         rate: 30
+#         sample: 300  # 30 per 5 minutes
+#
+#       # Payment processing - very strict
+#       - path: /checkout/payment
+#         rate: 10
+#         sample: 600  # 10 per 10 minutes
+#
+#       # Account login - strict
+#       - path: /my-account
+#         rate: 10
+#         sample: 300
+
+# =============================================================================
+# EXAMPLE 9: Bypass Rate Limits for Trusted IPs
+# =============================================================================
+# Combine rate limiting with IP bypass rules
+configs:
+  - presets/rate-limiting.yml
+
+bypass:
+  # Bypass ALL checks for trusted IPs (including rate limits)
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: -200  # Execute before rate limiting
+    enable: true
+    config:
+      - 192.168.1.0/24  # Internal network
+      - 10.0.0.0/8      # Office network
+      - 203.0.113.50    # Monitoring server
+
+# =============================================================================
+# EXAMPLE 10: File Storage (Simple Deployment)
+# =============================================================================
+# For single-server deployments without Redis
+# configs:
+#   - presets/rate-limiting.yml
+#
+# block:
+#   Kanopi\Firewall\Plugins\RateLimit:
+#     metadata:
+#       storage:
+#         type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
+#         config:
+#           file: /var/lib/firewall/ratelimit.data
+#
+# IMPORTANT: Ensure the file location is:
+# - Writable by the web server user
+# - Outside the web root for security
+# - On fast storage (SSD recommended)
+# - Regularly cleaned up (old entries)

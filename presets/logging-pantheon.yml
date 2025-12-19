@@ -1,0 +1,5 @@
+logger:
+  - class: "\\Monolog\\Handler\\StreamHandler"
+    args:
+      - "/files/private/firewall.log"
+      - "Monolog\\Level::INFO"

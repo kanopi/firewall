@@ -1,0 +1,3 @@
+config:
+  - ./malicious-urls.yml
+  - ./wordpress.yml

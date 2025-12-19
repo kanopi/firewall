@@ -1,46 +1,51 @@
 DB_DSN: &DB_DSN "pdo-mysql://root:password@mariadb:3306/firewall_test?serverVersion=10.6"
-REDIS_CONNECTION: &REDIS_CONNECTION
-  redis:
-    host: redis
 
+# Example: Config Includes and Merging
+#
+# This demonstrates how config files can include other configs,
+# including those with their own metadata.config URLs
+
+# =====================================================================
+# Top-Level Includes
+# =====================================================================
+configs:
+  # Include presets (which may have their own includes)
+  - ../presets/wordpress.yml
+  - ../presets/malicious-urls.yml
+
+# =====================================================================
+# Storage Configuration
+# =====================================================================
 storage:
-  type: Kanopi\Firewall\Storage\DatabaseStorage
+  type: "Kanopi\\Firewall\\Storage\\DatabaseStorage"
   config:
     connection:
       dsn: *DB_DSN
 
+# =====================================================================
+# Block Configuration with Plugin-Specific Config Includes
+# =====================================================================
 block:
+  # IP Address blocking with external config file
   Kanopi\Firewall\Plugins\IpAddress:
     priority: -100
     enable: true
     metadata:
+      # This plugin loads its config from an external file
+      # The file can be local or a remote URL
       config:
-        - "config.ip.yml"
-    config: ~
+        - config.ip.yml
+        # Remote URL example (uncomment if you have a remote config):
+        # - https://example.com/firewall/blocked-ips.yml
+    config: ~ # Plugin config comes from the files above
 
-  Kanopi\Firewall\Plugins\GeoLocation:
-    priority: -50
-    enable: true
-    metadata:
-      reader:
-        type: reader
-        db: GeoLite2-City.mmdb
-    config:
-      - 'country:US'
-      - 'country:CA'
-
-  Kanopi\Firewall\Plugins\Url:
-    priority: -10
-    enable: true
-    config:
-      - '!method:GET'
-
+  # Vulnerability Score with external config
   Kanopi\Firewall\Plugins\VulnerabilityScore:
     priority: -75
     enable: true
     metadata:
       config:
-        - "config.vulnerability-score.yml"
+        - config.vulnerability-score.yml
       default_expiration_time: 3600
       status_code: 403
       country_reader:
@@ -51,36 +56,65 @@ block:
         db: GeoLite2-ASN.mmdb
     config: ~
 
+  # URL plugin with inline config (merges with preset rules)
+  Kanopi\Firewall\Plugins\Url:
+    priority: -10
+    enable: true
+    config:
+      # These rules will REPLACE the preset rules because config is a list
+      # If you want to ADD to preset rules, use bypass or separate plugin instance
+      - path:/custom-blocked-path
+      - query@contains:malicious-param
+
   Kanopi\Firewall\Plugins\RateLimit:
+    priority: 0
     enable: true
     metadata:
-      default_rate: 10
-      default_sample: 20
-      default_expiration_time: 300
       storage:
-        #        type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
-        #        config:
-        #          file: /tmp/firewall.rate.data
-
-        #        type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
-        #        config:
-        #          connection:
-        #            dsn: *DB_DSN
-
         type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
         config:
-          <<: *REDIS_CONNECTION
+          redis:
+            host: "%env(safe:redis:string:CACHE_HOST)%"
+            port: "%env(safe:6379:int:CACHE_PORT)%"
+#            auth: "%env(safe::string:CACHE_PASSWORD)%"
+    config:
+      - path: /login
+        rate: 20      # 20 instead of default 10
+        sample: 300
 
-    config: ~
+# =====================================================================
+# Bypass Configuration
+# =====================================================================
+bypass:
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: -200
+    enable: true
+    config:
+      - 203.0.113.100/32
+
+# =====================================================================
+# How Merging Works
+# =====================================================================
+#
+# 1. Top-level configs are loaded in order:
+#    - presets/wordpress.yml (contains Url plugin with block rules)
+#    - presets/malicious-urls.yml (contains Url plugin with more block rules)
+#
+# 2. Each preset's Url plugin config (a list) REPLACES the previous one
+#    (because lists are replaced, not merged)
+#
+# 3. This file's Url plugin config REPLACES all preset configs
+#
+# 4. Plugin metadata.config files are loaded by the plugin itself
+#    (not by ConfigLoader), so they work differently
+#
+# To ADD rules instead of REPLACE:
+#   - Use bypass rules
+#   - Create separate plugin instances with different priorities
+#   - Or combine all rules in a single config file
 
 logger:
-  # File logging
-  - class: Monolog\Handler\StreamHandler
+  - class: "\\Monolog\\Handler\\StreamHandler"
     args:
-      - /var/www/html/example/data/firewall.log
-      - Monolog\Level::Warning
-    formatter:
-      class: Monolog\Formatter\LineFormatter
-      args:
-        - "[%datetime%] [%level_name%] [%context.plugin%] %message% %context% %extra%\n"
-        - "Y-m-d H:i:s"
+      - "logs/firewall.log"
+      - "Monolog\\Level::INFO"

@@ -222,4 +222,130 @@ class UrlTest extends AbstractTestCase
         $this->assertNull($plugin->getRequestValueWrapper($request, ''));
         $this->assertNull($plugin->getValueWrapper($request, ''));
     }
+
+    /**
+     * Tests regex patterns with commas are not split incorrectly
+     * Regex patterns can contain commas in quantifiers like {1,2}
+     */
+    public function testRegexPatternsWithCommas(): void
+    {
+        // Test pattern with comma in quantifier {1,2}
+        $plugin = $this->createPlugin([
+            'path@regex:#^/[a-z]{1,2}\.php$#',
+        ]);
+
+        // Should match: 1-2 letter filenames
+        $this->assertTrue($plugin->evaluate(Request::create('/a.php')));
+        $this->assertTrue($plugin->evaluate(Request::create('/ab.php')));
+
+        // Should NOT match: 3+ letter filenames
+        $this->assertFalse($plugin->evaluate(Request::create('/abc.php')));
+        $this->assertFalse($plugin->evaluate(Request::create('/test.php')));
+    }
+
+    /**
+     * Tests regex patterns with multiple commas work correctly
+     */
+    public function testRegexPatternsWithMultipleCommas(): void
+    {
+        // Pattern with multiple comma-separated quantifiers
+        $plugin = $this->createPlugin([
+            'path@regex:#/test-[0-9]{2,4}\.html$#',
+        ]);
+
+        // Should match: 2-4 digits
+        $this->assertTrue($plugin->evaluate(Request::create('/test-12.html')));
+        $this->assertTrue($plugin->evaluate(Request::create('/test-123.html')));
+        $this->assertTrue($plugin->evaluate(Request::create('/test-1234.html')));
+
+        // Should NOT match: 1 digit or 5+ digits
+        $this->assertFalse($plugin->evaluate(Request::create('/test-1.html')));
+        $this->assertFalse($plugin->evaluate(Request::create('/test-12345.html')));
+    }
+
+    /**
+     * Tests that invalid regex patterns are handled gracefully
+     */
+    public function testInvalidRegexPatternsAreHandled(): void
+    {
+        // Missing delimiters - should not match (returns false)
+        $plugin = $this->createPlugin([
+            'path@regex:test',
+        ]);
+        $this->assertFalse($plugin->evaluate(Request::create('/test')));
+
+        // Mismatched delimiters - should not match (returns false)
+        $plugin = $this->createPlugin([
+            'path@regex:/test#',
+        ]);
+        $this->assertFalse($plugin->evaluate(Request::create('/test')));
+
+        // Empty pattern - should not match (returns false)
+        $plugin = $this->createPlugin([
+            'path@regex:',
+        ]);
+        $this->assertFalse($plugin->evaluate(Request::create('/test')));
+
+        // Too short pattern - should not match (returns false)
+        $plugin = $this->createPlugin([
+            'path@regex://',
+        ]);
+        $this->assertFalse($plugin->evaluate(Request::create('/test')));
+    }
+
+    /**
+     * Tests that valid regex patterns with different delimiters work
+     */
+    public function testRegexWithDifferentDelimiters(): void
+    {
+        // Using / delimiter
+        $plugin = $this->createPlugin([
+            'path@regex:/^\/test/',
+        ]);
+        $this->assertTrue($plugin->evaluate(Request::create('/test.php')));
+        $this->assertFalse($plugin->evaluate(Request::create('/other.php')));
+
+        // Using # delimiter
+        $plugin = $this->createPlugin([
+            'path@regex:#^/test#',
+        ]);
+        $this->assertTrue($plugin->evaluate(Request::create('/test.php')));
+        $this->assertFalse($plugin->evaluate(Request::create('/other.php')));
+
+        // Using @ delimiter
+        $plugin = $this->createPlugin([
+            'path@regex:@^/test@',
+        ]);
+        $this->assertTrue($plugin->evaluate(Request::create('/test.php')));
+        $this->assertFalse($plugin->evaluate(Request::create('/other.php')));
+
+        // Using ~ delimiter
+        $plugin = $this->createPlugin([
+            'path@regex:~^/test~',
+        ]);
+        $this->assertTrue($plugin->evaluate(Request::create('/test.php')));
+        $this->assertFalse($plugin->evaluate(Request::create('/other.php')));
+    }
+
+    /**
+     * Tests regex patterns with modifiers work correctly
+     */
+    public function testRegexWithModifiers(): void
+    {
+        // Case-insensitive modifier
+        $plugin = $this->createPlugin([
+            'path@regex:/test/i',
+        ]);
+        $this->assertTrue($plugin->evaluate(Request::create('/TEST.php')));
+        $this->assertTrue($plugin->evaluate(Request::create('/Test.php')));
+        $this->assertTrue($plugin->evaluate(Request::create('/test.php')));
+
+        // Multiline and case-insensitive modifiers combined
+        $plugin = $this->createPlugin([
+            'path@regex:/TEST/im',
+        ]);
+        $this->assertTrue($plugin->evaluate(Request::create('/test.php')));
+        $this->assertFalse($plugin->evaluate(Request::create('/other.php')));
+    }
+
 }

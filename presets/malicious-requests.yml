@@ -1,0 +1,495 @@
+# Malicious Request Detection Preset
+#
+# This preset uses the VulnerabilityScore plugin to detect and block potentially
+# malicious requests based on multiple risk factors. It provides production-ready
+# protection against common web attacks including:
+#
+# - SQL Injection
+# - Cross-Site Scripting (XSS)
+# - Command Injection
+# - Path Traversal
+# - Remote Code Execution
+# - Web Shell Access
+# - Credential Stuffing
+# - Automated Attack Tools
+# - Suspicious Geographic Patterns
+# - Known Malicious Networks
+#
+# USAGE:
+# Include this preset in your main config.yml:
+#
+#   configs:
+#     - presets/malicious-requests.yml
+#
+# CUSTOMIZATION:
+# Adjust thresholds in risk_levels section based on your tolerance for false positives.
+# Lower thresholds = more aggressive blocking, higher = more permissive.
+#
+# GEOIP REQUIREMENT:
+# For country and ASN scoring, you must configure GeoIP databases.
+# See example/README.md for setup instructions.
+
+block:
+  Kanopi\Firewall\Plugins\VulnerabilityScore:
+    priority: 50
+    enable: true
+
+    metadata:
+      # Configure GeoIP database paths
+      # Uncomment and set paths to your GeoIP databases
+      # country_reader:
+      #   type: reader
+      #   db: /usr/local/share/GeoIP/GeoLite2-Country.mmdb
+      #
+      # asn_reader:
+      #   type: reader
+      #   db: /usr/local/share/GeoIP/GeoLite2-ASN.mmdb
+
+    config:
+      scoring:
+        # ============================================================
+        # HTTP METHOD SCORING
+        # ============================================================
+        # Elevated scores for methods that modify data or pose security risks
+        methods:
+          GET: 0
+          HEAD: 0
+          POST: 1
+          PUT: 5
+          PATCH: 5
+          DELETE: 25
+          OPTIONS: 2
+          TRACE: 30        # Security vulnerability (XST attacks)
+          CONNECT: 30      # Proxy tunneling attempts
+
+        # ============================================================
+        # COUNTRY-BASED SCORING
+        # ============================================================
+        # Adjust based on your traffic patterns and risk tolerance
+        # Comment out this section if GeoIP is not configured
+        # countries:
+        #   # Trusted regions (low score)
+        #   US: 0
+        #   CA: 0
+        #   GB: 0
+        #   DE: 0
+        #   FR: 0
+        #   NL: 0
+        #   AU: 0
+        #   NZ: 0
+        #   JP: 0
+        #   KR: 0
+        #   SG: 0
+        #
+        #   # Moderate risk regions
+        #   BR: 3
+        #   IN: 3
+        #   MX: 3
+        #   PL: 2
+        #   ES: 1
+        #   IT: 1
+        #
+        #   # High-risk regions (known for automated attacks)
+        #   CN: 15
+        #   RU: 15
+        #   UA: 10
+        #   VN: 10
+        #   ID: 8
+        #
+        #   # Very high-risk regions
+        #   KP: 30           # North Korea
+        #   IR: 20           # Iran
+        #   SY: 20           # Syria
+        #
+        #   # Unknown/anonymous
+        #   XX: 25           # Unknown country code
+
+        # ============================================================
+        # ASN (NETWORK) SCORING
+        # ============================================================
+        # Score based on hosting providers and networks
+        # Comment out this section if GeoIP ASN is not configured
+        # asn:
+        #   # Trusted CDN/Cloud providers (low score)
+        #   "13335": 0       # Cloudflare
+        #   "15169": 0       # Google
+        #   "16509": 0       # Amazon AWS
+        #   "8075": 0        # Microsoft Azure
+        #   "2906": 0        # Netflix
+        #
+        #   # Moderate scoring for budget hosting
+        #   "16276": 5       # OVH
+        #   "24940": 5       # Hetzner
+        #   "14061": 5       # DigitalOcean
+        #
+        #   # Known problematic networks
+        #   "4134": 20       # Chinanet
+        #   "45102": 15      # Alibaba Cloud
+        #   "4837": 15       # China Unicom
+        #   "9829": 15       # BSNL India
+        #
+        # asn_patterns:
+        #   vpn: 20
+        #   proxy: 20
+        #   tor: 30
+        #   bulletproof: 40
+        #   hosting: 5
+        #   dedicated: 8
+        #   colocation: 8
+        #   cloud: 3
+
+        # ============================================================
+        # ATTACK PATTERN DETECTION
+        # ============================================================
+        patterns:
+          # SQL Injection Attacks (High Priority)
+          - pattern: /(union\s+(all\s+)?select|select\s+.*\s+from|insert\s+into|update\s+.*\s+set|delete\s+from|drop\s+(table|database)|exec(ute)?\s*\(|benchmark\s*\(|sleep\s*\(|waitfor\s+delay|load_file\s*\(|into\s+outfile)/i
+            score: 40
+            type: regex
+            locations: [uri, query_string, body]
+            description: "SQL Injection attempt"
+
+          # Advanced SQL Injection
+          - pattern: /(information_schema|mysql\.user|pg_sleep|extractvalue|updatexml|concat_ws|group_concat|0x[0-9a-f]+|char\(|ascii\(|substring\(|mid\()/i
+            score: 35
+            type: regex
+            locations: [uri, query_string, body]
+            description: "Advanced SQL Injection patterns"
+
+          # SQL Comment Sequences
+          - pattern: /(--|#|\/\*|\*\/|;--)/
+            score: 25
+            type: regex
+            locations: [query_string, body]
+            description: "SQL comment sequences"
+
+          # Cross-Site Scripting (XSS)
+          - pattern: /<script[^>]*>.*?<\/script>/i
+            score: 35
+            type: regex
+            locations: [uri, query_string, body]
+            description: "XSS script tags"
+
+          - pattern: /(javascript:|data:text\/html|vbscript:|livescript:)/i
+            score: 30
+            type: regex
+            locations: [uri, query_string, body]
+            description: "XSS protocol handlers"
+
+          - pattern: /(on(load|error|click|mouseover|mouseout|focus|blur|change|submit|keypress|keydown|keyup)\s*=)/i
+            score: 28
+            type: regex
+            locations: [uri, query_string, body]
+            description: "XSS event handlers"
+
+          - pattern: /(<iframe|<object|<embed|<applet|<meta|<link|<style)/i
+            score: 25
+            type: regex
+            locations: [uri, query_string, body]
+            description: "XSS HTML injection"
+
+          # Command Injection
+          - pattern: /(;|\||&&|`|\$\(|\$\{|<\(|>\(|%0a|%0d)/i
+            score: 35
+            type: regex
+            locations: [uri, query_string, body]
+            description: "Command injection operators"
+
+          - pattern: /(\/bin\/|\/usr\/bin\/|cmd\.exe|powershell|bash|sh\s|nc\s|netcat|wget\s|curl\s)/i
+            score: 30
+            type: regex
+            locations: [uri, query_string, body]
+            description: "System command execution"
+
+          # Path Traversal / Directory Traversal
+          - pattern: /(\.\.[\/\\]){2,}/
+            score: 30
+            type: regex
+            locations: [uri, query_string]
+            description: "Path traversal attack"
+
+          - pattern: /(\/etc\/passwd|\/etc\/shadow|\/proc\/self|\/var\/log|\/windows\/|\/winnt\/|\/system32\/)/i
+            score: 35
+            type: regex
+            locations: [uri, query_string]
+            description: "Sensitive file access attempt"
+
+          # Remote Code Execution (RCE)
+          - pattern: /(<\?php|<\?=|eval\s*\(|assert\s*\(|system\s*\(|passthru\s*\(|shell_exec\s*\(|exec\s*\(|popen\s*\(|proc_open\s*\()/i
+            score: 45
+            type: regex
+            locations: [uri, query_string, body]
+            description: "PHP code execution"
+
+          - pattern: /(base64_decode|gzinflate|str_rot13|gzuncompress|rawurldecode)\s*\(/i
+            score: 35
+            type: regex
+            locations: [uri, query_string, body]
+            description: "Obfuscated code execution"
+
+          # Web Shells and Backdoors
+          - pattern: /(c99|r57|b374k|wso|c100|shell|backdoor|webshell|phpshell|rootshell|cmd\.php|shell\.php)/i
+            score: 50
+            type: regex
+            locations: [uri, query_string, body]
+            description: "Web shell signature"
+
+          # File Upload Exploits
+          - pattern: /\.(php|phtml|php3|php4|php5|php7|pht|phar|phps|cgi|pl|py|jsp|asp|aspx|cer|asa|shtml|shtm|cfm)(\.|$)/i
+            score: 20
+            type: regex
+            locations: [uri]
+            description: "Executable file extension in URI"
+
+          # XML External Entity (XXE) Injection
+          - pattern: /(<!ENTITY|<!DOCTYPE|SYSTEM\s+["']|PUBLIC\s+["'])/i
+            score: 35
+            type: regex
+            locations: [body]
+            description: "XXE injection attempt"
+
+          # Server-Side Request Forgery (SSRF)
+          - pattern: /(file:\/\/|gopher:\/\/|dict:\/\/|ftp:\/\/|tftp:\/\/|ldap:\/\/|localhost|127\.0\.0\.|0\.0\.0\.0|169\.254\.169\.254|metadata)/i
+            score: 30
+            type: regex
+            locations: [query_string, body]
+            description: "SSRF attempt"
+
+          # Template Injection
+          - pattern: /(\{\{|\}\}|\{%|%\}|\$\{|<%|%>|#\{)/
+            score: 25
+            type: regex
+            locations: [uri, query_string, body]
+            description: "Template injection markers"
+
+          # Sensitive File Access
+          - pattern: /.env
+            score: 30
+            type: contains
+            locations: [uri]
+            description: "Environment file access"
+
+          - pattern: /.git
+            score: 25
+            type: contains
+            locations: [uri]
+            description: "Git repository access"
+
+          - pattern: /.svn
+            score: 25
+            type: contains
+            locations: [uri]
+            description: "SVN repository access"
+
+          - pattern: /wp-config.php
+            score: 30
+            type: contains
+            locations: [uri]
+            description: "WordPress config access"
+
+          - pattern: /config.php
+            score: 20
+            type: contains
+            locations: [uri]
+            description: "Config file access"
+
+          - pattern: /.backup
+            score: 20
+            type: contains
+            locations: [uri]
+            description: "Backup file access"
+
+          # Admin Panel Probing
+          - pattern: /(\/admin|\/administrator|\/wp-admin|\/phpmyadmin|\/cpanel|\/plesk)/i
+            score: 10
+            type: regex
+            locations: [uri]
+            description: "Admin panel access"
+
+          # API Key/Token Patterns
+          - pattern: /(api[_-]?key|auth[_-]?token|access[_-]?token|secret[_-]?key)=/i
+            score: 15
+            type: regex
+            locations: [query_string]
+            description: "API credentials in query string"
+
+          # Null Byte Injection
+          - pattern: /%00/
+            score: 30
+            type: contains
+            locations: [uri, query_string]
+            description: "Null byte injection"
+
+          # LDAP Injection
+          - pattern: /(\*\)|\(\||\)\(|%2A%29|\%28\%7C)/i
+            score: 25
+            type: regex
+            locations: [query_string, body]
+            description: "LDAP injection"
+
+          # NoSQL Injection
+          - pattern: /(\$ne|\$gt|\$lt|\$where|\$regex|\$in|\$nin|\$or|\$and)/i
+            score: 25
+            type: regex
+            locations: [query_string, body]
+            description: "NoSQL injection"
+
+          # HTTP Response Splitting
+          - pattern: /(%0d%0a|%0a%0d|\\r\\n|\\n\\r)/i
+            score: 30
+            type: regex
+            locations: [uri, query_string]
+            description: "HTTP response splitting"
+
+        # ============================================================
+        # USER AGENT SCORING
+        # ============================================================
+        user_agents:
+          # Known Attack Tools (Immediate High Score)
+          - pattern: sqlmap
+            score: 50
+            type: contains
+            description: "SQLMap scanner"
+
+          - pattern: nikto
+            score: 50
+            type: contains
+            description: "Nikto scanner"
+
+          - pattern: nmap
+            score: 45
+            type: contains
+            description: "Nmap scanner"
+
+          - pattern: masscan
+            score: 45
+            type: contains
+            description: "Masscan scanner"
+
+          - pattern: wpscan
+            score: 40
+            type: contains
+            description: "WordPress scanner"
+
+          - pattern: metasploit
+            score: 50
+            type: contains
+            description: "Metasploit framework"
+
+          - pattern: /burp|acunetix|netsparker|appscan|w3af|havij|sqlninja|bsqlbf/i
+            score: 45
+            type: regex
+            description: "Security testing tools"
+
+          - pattern: /dirbuster|dirb|gobuster|wfuzz|ffuf|feroxbuster/i
+            score: 40
+            type: regex
+            description: "Directory brute force tools"
+
+          - pattern: /hydra|medusa|ncrack|john|hashcat/i
+            score: 45
+            type: regex
+            description: "Password cracking tools"
+
+          # Automation Tools (Moderate Score)
+          - pattern: python-requests
+            score: 15
+            type: contains
+            description: "Python requests library"
+
+          - pattern: /^curl\//
+            score: 12
+            type: regex
+            description: "cURL utility"
+
+          - pattern: /^wget\//
+            score: 12
+            type: regex
+            description: "wget utility"
+
+          - pattern: /perl|libwww|mechanize|scrapy/i
+            score: 15
+            type: regex
+            description: "Scripting HTTP clients"
+
+          # Headless Browsers (Used in scraping/automation)
+          - pattern: /headless|phantom|selenium|puppeteer/i
+            score: 10
+            type: regex
+            description: "Headless browser automation"
+
+          # Empty or Suspicious User Agents
+          - pattern: /^$/
+            score: 20
+            type: regex
+            description: "Empty user agent"
+
+          - pattern: /^-$/
+            score: 20
+            type: regex
+            description: "Dash user agent"
+
+          - pattern: /^mozilla\/[45]\.0$/i
+            score: 18
+            type: regex
+            description: "Generic Mozilla user agent"
+
+          # Known Bad Bots
+          - pattern: /semrush|ahrefs|majestic|moz\.com|dotbot|blexbot/i
+            score: 8
+            type: regex
+            description: "SEO crawlers (adjust if legitimate)"
+
+          - pattern: /zgrab|censys|shodan|masscan|internetmeasurement/i
+            score: 35
+            type: regex
+            description: "Internet scanning projects"
+
+          # Generic Bot Patterns (Low Score - Many Legitimate)
+          - pattern: /bot|crawl|spider|scrape/i
+            score: 3
+            type: regex
+            description: "Generic bot pattern"
+
+      # ============================================================
+      # RISK LEVEL THRESHOLDS
+      # ============================================================
+      # Adjust these based on your environment and false positive tolerance
+      risk_levels:
+        # Low Risk: 0-19 points
+        # Legitimate traffic with minimal suspicious indicators
+        low:
+          threshold: 0
+          block: false
+          status_code: 200
+
+        # Medium Risk: 20-39 points
+        # Monitor but allow - may want to enable logging
+        medium:
+          threshold: 20
+          block: false
+          status_code: 200
+
+        # High Risk: 40-59 points
+        # Block and track - definite attack patterns detected
+        high:
+          threshold: 40
+          block: true
+          status_code: 403
+          expiration_time: 3600      # 1 hour ban
+
+        # Critical Risk: 60-79 points
+        # Multiple attack indicators, longer ban
+        critical:
+          threshold: 60
+          block: true
+          status_code: 403
+          expiration_time: 86400     # 24 hour ban
+
+        # Extreme Risk: 80+ points
+        # Automated attacks or multiple severe patterns
+        extreme:
+          threshold: 80
+          block: true
+          status_code: 403
+          expiration_time: 604800    # 7 day ban

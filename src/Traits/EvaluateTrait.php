@@ -224,12 +224,10 @@ trait EvaluateTrait
         $matches = null;
 
         // Extract optional #matches mode from the end (e.g., #any, #all)
-        if (str_contains($rule, '#')) {
-            [$rule, $matches] = explode('#', $rule, 2);
-            $matches = trim(strtolower($matches));
-            if (!in_array($matches, ['any', 'all', 'none', 'some'], true)) {
-                $matches = null; // fallback if invalid
-            }
+        // Only split on # if it's followed by a valid matches mode
+        if (preg_match('/#(any|all|none|some)$/i', $rule, $matchesMatch)) {
+            $matches = strtolower($matchesMatch[1]);
+            $rule = substr($rule, 0, -strlen($matchesMatch[0]));
         }
 
         // Operator map for shorthand comparisons
@@ -255,7 +253,8 @@ trait EvaluateTrait
         }
 
         // Handle multi-value splitting
-        $multiValueOps = ['in', 'matches_any', 'equals', 'contains', 'starts_with', 'ends_with', 'regex'];
+        // Note: 'regex' is NOT included because regex patterns can contain commas (e.g., {1,2})
+        $multiValueOps = ['in', 'matches_any', 'equals', 'contains', 'starts_with', 'ends_with'];
         $value = trim($value);
         if (str_contains($value, ',') && in_array($operator, $multiValueOps, true)) {
             $value = array_map(trim(...), explode(',', $value));
@@ -346,6 +345,79 @@ trait EvaluateTrait
     }
 
     /**
+     * Validate and execute a regex pattern match safely.
+     *
+     * @param string $pattern
+     *   The regex pattern to match.
+     * @param string $subject
+     *   The string to match against.
+     *
+     * @return bool
+     *   True if pattern matches, false otherwise or if pattern is invalid.
+     */
+    protected function isValidRegexMatch(string $pattern, string $subject): bool
+    {
+        // Validate that pattern has delimiters
+        // Check if pattern is at least 3 chars and starts/ends with same non-alphanumeric char
+        if (strlen($pattern) < 3) {
+            $this->getLogger()->warning('Invalid regex pattern: too short', [
+                'pattern' => $pattern,
+            ]);
+            return false;
+        }
+
+        // Extract first character as potential delimiter
+        $delimiter = $pattern[0];
+
+        // Delimiter must be non-alphanumeric and not backslash or whitespace
+        if (ctype_alnum($delimiter) || $delimiter === '\\' || ctype_space($delimiter)) {
+            $this->getLogger()->warning('Invalid regex pattern: invalid delimiter', [
+                'pattern' => $pattern,
+                'delimiter' => $delimiter,
+            ]);
+            return false;
+        }
+
+        // Find matching closing delimiter (accounting for modifiers)
+        $lastDelimiterPos = strrpos($pattern, $delimiter);
+        if ($lastDelimiterPos === 0 || $lastDelimiterPos === false) {
+            $this->getLogger()->warning('Invalid regex pattern: missing closing delimiter', [
+                'pattern' => $pattern,
+                'delimiter' => $delimiter,
+            ]);
+            return false;
+        }
+
+        // Attempt to match - suppress errors and check for validity
+        $prevErrorReporting = error_reporting(0);
+        $result = preg_match($pattern, $subject);
+        $lastError = preg_last_error();
+        error_reporting($prevErrorReporting);
+
+        // Check for preg_match errors
+        if ($lastError !== PREG_NO_ERROR) {
+            $errorMessages = [
+                PREG_INTERNAL_ERROR => 'Internal PCRE error',
+                PREG_BACKTRACK_LIMIT_ERROR => 'Backtrack limit exhausted',
+                PREG_RECURSION_LIMIT_ERROR => 'Recursion limit exhausted',
+                PREG_BAD_UTF8_ERROR => 'Malformed UTF-8 data',
+                PREG_BAD_UTF8_OFFSET_ERROR => 'Bad UTF-8 offset',
+                PREG_JIT_STACKLIMIT_ERROR => 'JIT stack limit exhausted',
+            ];
+
+            $this->getLogger()->warning('Regex pattern match error', [
+                'pattern' => $pattern,
+                'error_code' => $lastError,
+                'error_message' => $errorMessages[$lastError] ?? 'Unknown error',
+            ]);
+            return false;
+        }
+
+        // preg_match returns 1 for match, 0 for no match, false for error
+        return $result === 1;
+    }
+
+    /**
      * Perform the actual comparison between the request value and rule value
      * based on the operator.
      *
@@ -386,7 +458,7 @@ trait EvaluateTrait
             'starts_with' => str_starts_with((string) $requestValue, (string) $value),
             'ends_with' => str_ends_with((string) $requestValue, (string) $value),
             'contains' => str_contains((string) $requestValue, (string) $value),
-            'regex' => @preg_match($value, (string) $requestValue) === 1,
+            'regex' => $this->isValidRegexMatch((string) $value, (string) $requestValue),
             'in' => is_array($value) && in_array($requestValue, $value, true),
             'greater_than' => is_numeric($requestValue) && is_numeric($value) && $requestValue > $value,
             'less_than' => is_numeric($requestValue) && is_numeric($value) && $requestValue < $value,

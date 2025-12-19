@@ -1,0 +1,10 @@
+storage:
+  type: "\\Kanopi\\Firewall\\Storage\\DatabaseStorage"
+  config:
+    connection:
+      dbname: "%env(safe:db:json:key:databases:key:default:key:default:key:database:string:PRESSFLOW_SETTINGS)%"
+      user: "%env(safe:db:key:databases:key:default:key:default:key:username:PRESSFLOW_SETTINGS)%"
+      password: "%env(safe:db:key:databases:key:default:key:default:key:password:PRESSFLOW_SETTINGS)%"
+      host: "%env(safe:db:key:databases:key:default:key:default:key:host:PRESSFLOW_SETTINGS)%"
+      port: "%env(safe:3306:key:databases:key:default:key:default:key:port:int:PRESSFLOW_SETTINGS)%"
+      driver: 'pdo_mysql'
