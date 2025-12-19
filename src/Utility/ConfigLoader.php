@@ -223,10 +223,6 @@ final class ConfigLoader
                     if (\file_exists($candidate)) {
                         $data = self::setByPath($data, $path, Path::realOrGiven($candidate));
                     } elseif (Path::looksLikeUrl($baseDir)) {
-                        if (str_contains($candidate, '{config_dir}')) {
-                            $candidate = str_ireplace(['{config_dir}/','{config_dir}'], '', $candidate);
-                        }
-
                         $data = self::setByPath($data, $path, $candidate);
                     }
                 }
