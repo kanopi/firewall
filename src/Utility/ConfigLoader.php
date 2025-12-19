@@ -284,8 +284,8 @@ final class ConfigLoader
                         continue;
                     }
 
-                    // If base is disabled but override is enabled, replace entirely
-                    if (!$baseEnabled && $overEnabled) {
+                    // If base is disabled (and override is enabled, which must be true here), replace entirely
+                    if (!$baseEnabled) {
                         $base[$k] = $v;
                         continue;
                     }
@@ -341,11 +341,7 @@ final class ConfigLoader
             }
 
             // Normal merge for other keys
-            if (is_array($v) && isset($base[$k]) && is_array($base[$k])) {
-                $base[$k] = self::mergeConfigs($base[$k], $v);
-            } else {
-                $base[$k] = $v;
-            }
+            $base[$k] = is_array($v) && isset($base[$k]) && is_array($base[$k]) ? self::mergeConfigs($base[$k], $v) : $v;
         }
 
         return $base;
