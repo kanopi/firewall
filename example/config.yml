@@ -10,8 +10,8 @@ DB_DSN: &DB_DSN "pdo-mysql://root:password@mariadb:3306/firewall_test?serverVers
 # =====================================================================
 configs:
   # Include presets (which may have their own includes)
-  - ../presets/wordpress.yml
-  - ../presets/malicious-urls.yml
+  - "{presets_dir}/wordpress.yml"
+  - "{presets_dir}/malicious-urls.yml"
 
 # =====================================================================
 # Storage Configuration

@@ -67,4 +67,15 @@ final class Path
 
         return $path; // exists but realpath failed (e.g., stream/zip/permission)
     }
+
+    /**
+     * Return the directory of the presets.
+     *
+     * @return string
+     *   Returns the path to the presets directory.
+     */
+    public static function getPresetsDirectory(): string
+    {
+        return @realpath(__DIR__ . '/../../presets');
+    }
 }

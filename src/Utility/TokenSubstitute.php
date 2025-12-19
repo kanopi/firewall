@@ -610,8 +610,16 @@ final class TokenSubstitute
      */
     public static function normalizeInclude(string $value, string $baseDir): string
     {
-        if (\str_contains($value, '{config_dir}')) {
-            $value = \str_replace('{config_dir}', $baseDir, $value);
+        $tokens = [
+            '{config_dir}' => $baseDir,
+            '{presets_dir}' => Path::getPresetsDirectory(),
+        ];
+
+        foreach ($tokens as $token => $path) {
+            if (\str_contains($value, $token)) {
+                $value = \str_replace($token, $path, $value);
+                $value = \str_ireplace([$token . '/', $token], '', $value);
+            }
         }
 
         if (\preg_match('/^%env\(([^)]+)\)%$/', $value, $m)) {
