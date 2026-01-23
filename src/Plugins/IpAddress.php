@@ -42,13 +42,10 @@ class IpAddress extends AbstractPluginBase
         $clientIp = $request->getClientIp();
         $result = $this->inList($clientIp, $this->config);
 
-        $this->getLogger()->debug('IP Address evaluation', [
-            'plugin' => $this->getName(),
-            'client_ip' => $clientIp,
-            'request_id' => $request->attributes->get('x-request-id'),
+        $this->getLogger()->debug('IP Address evaluation started', $this->getContext($request, [
             'result' => $result ? 'matched' : 'not_matched',
-            'checked_against' => count($this->config) . ' IP patterns',
-        ]);
+            'checked_patterns_count' => count($this->config),
+        ]));
 
         return $result;
     }

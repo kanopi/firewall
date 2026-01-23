@@ -45,7 +45,7 @@ final class Firewall
             'storage_type' => $storage::class,
             'blocking_plugins_count' => count($blockingPluginManager->getPlugins()),
             'bypass_plugins_count' => count($bypassPluginManager->getPlugins()),
-            'config' => $config,
+            'config_keys' => array_keys($config), // Log keys instead of full config to avoid sensitive data
         ]);
         $this->storage->expire();
     }
@@ -96,11 +96,11 @@ final class Firewall
         );
 
         $firewall->getLogger()->debug('Firewall initialized', [
-            'logger_config' => $config['logger'],
-            'storage_config' => $config['storage'],
+            'logger_config_keys' => array_keys($config['logger']),
+            'storage_config_keys' => array_keys($config['storage']),
             'block_plugins' => array_keys($config['block']),
             'bypass_plugins' => array_keys($config['bypass']),
-            'global_config' => $config['global'],
+            'global_config_keys' => array_keys($config['global']),
         ]);
 
         return $firewall;
@@ -134,22 +134,14 @@ final class Firewall
         if (!$request->attributes->has('x-request-id')) {
             $requestId = $this->generateId($request);
             $request->attributes->set('x-request-id', $requestId);
-            $this->getLogger()->debug('Request evaluation started', [
-                'request_id' => $requestId,
-                'client_ip' => $request->getClientIp(),
-                'method' => $request->getMethod(),
-                'path' => $request->getPathInfo(),
-                'user_agent' => $request->headers->get('User-Agent'),
-            ]);
+            $this->getLogger()->debug('Request evaluation started', $this->getContext($request));
         }
 
         if (($plugin = $this->bypassPluginManager->evaluate($request)) !== false) {
-            $this->getLogger()->info('Request bypassed', [
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'path' => $request->getPathInfo(),
-                'plugin' => $plugin->getName(),
-            ]);
+            $this->getLogger()->info('Request bypassed', $this->getContext($request, [
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+            ]));
             return true;
         }
 
@@ -167,11 +159,7 @@ final class Firewall
             $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
         }
 
-        $this->getLogger()->debug('Request allowed', [
-            'request_id' => $request->attributes->get('x-request-id'),
-            'client_ip' => $request->getClientIp(),
-            'path' => $request->getPathInfo(),
-        ]);
+        $this->getLogger()->debug('Request allowed', $this->getContext($request));
 
         return true;
     }
@@ -191,11 +179,7 @@ final class Firewall
 
         $this->storage->recordOffense($this->storage->getKey($request));
 
-        $this->getLogger()->debug('Repeat Offender', [
-            'request_id' => $request->attributes->get('x-request-id'),
-            'client_ip' => $request->getClientIp(),
-            'path' => $request->getPathInfo(),
-        ]);
+        $this->getLogger()->debug('Repeat Offender', $this->getContext($request));
     }
 
     /**
@@ -235,11 +219,9 @@ final class Firewall
             $statusCode = 400;
         }
 
-        $this->getLogger()->notice('Sending blocking response', [
-            'request_id' => $request->attributes->get('x-request-id'),
+        $this->getLogger()->notice('Sending blocking response', $this->getContext($request, [
             'status_code' => $statusCode,
-            'client_ip' => $request->getClientIp(),
-        ]);
+        ]));
 
         // Replace variables in the custom message.
         $banningMessage = $this->interpolateTemplate(
@@ -366,15 +348,11 @@ final class Firewall
      */
     protected function block(Request $request, PluginInterface $plugin): bool
     {
-        $this->getLogger()->warning('Request blocked by plugin', [
-            'request_id' => $request->attributes->get('x-request-id'),
-            'client_ip' => $request->getClientIp(),
-            'plugin' => $plugin->getName(),
+        $this->getLogger()->warning('Request blocked by plugin', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
             'status_code' => $plugin->getStatusCode($request),
-            'path' => $request->getPathInfo(),
-            'query' => $request->query->all(),
-            'user_agent' => $request->headers->get('User-Agent') ?? 'unknown',
-        ]);
+        ]));
 
         $expirationTime = $this->determineExpirationTime(
             $request,
@@ -390,18 +368,17 @@ final class Firewall
         );
 
         if ($success) {
-            $this->getLogger()->info('IP blocked successfully', [
-                'request_id' => $request->attributes->get('x-request-id'),
+            $this->getLogger()->info('IP blocked successfully', $this->getContext($request, [
                 'key' => $key,
-                'plugin' => $plugin->getName(),
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
                 'expiration_time' => $expirationTime,
-            ]);
+            ]));
         } else {
-            $this->getLogger()->error('Failed to block IP', [
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'plugin' => $plugin->getName(),
-            ]);
+            $this->getLogger()->error('Failed to block IP', $this->getContext($request, [
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+            ]));
         }
 
         return $success;

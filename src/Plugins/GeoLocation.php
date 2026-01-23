@@ -64,26 +64,16 @@ class GeoLocation extends AbstractPluginBase
     public function evaluate(Request $request): bool
     {
         if ($this->reader === null) {
-            $this->getLogger()->debug('GeoLocation evaluation skipped - no reader available', [
-                'request_id' => $request->attributes->get('x-request-id'),
-            ]);
+            $this->getLogger()->debug('GeoLocation evaluation skipped - no reader available', $this->getContext($request));
             return false;
         }
 
-        $this->getLogger()->debug('GeoLocation evaluation started', [
-            'plugin' => $this->getName(),
-            'request_id' => $request->attributes->get('x-request-id'),
-            'client_ip' => $request->getClientIp(),
-        ]);
+        $this->getLogger()->debug('GeoLocation evaluation started', $this->getContext($request));
 
         $result = $this->evaluateRequest($request, $this->config);
 
         if ($result) {
-            $this->getLogger()->info('GeoLocation matched blocking rule', [
-                'plugin' => $this->getName(),
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-            ]);
+            $this->getLogger()->info('GeoLocation matched blocking rule', $this->getContext($request));
         }
 
         return $result;
@@ -116,9 +106,9 @@ class GeoLocation extends AbstractPluginBase
         $parts = $this->splitQuery($variable);
 
         if ($parts === []) {
-            $this->getLogger()->warning('Empty variable provided for GeoLocation evaluation', [
+            $this->getLogger()->warning('Empty variable provided for GeoLocation evaluation', $this->getContext($request, [
                 'variable' => $variable,
-            ]);
+            ]));
             return null;
         }
 
@@ -126,18 +116,16 @@ class GeoLocation extends AbstractPluginBase
             $clientIp = $request->getClientIp();
             $record = $this->reader->city($clientIp);
 
-            $this->getLogger()->debug('GeoLocation lookup successful', [
-                'client_ip' => $clientIp,
+            $this->getLogger()->debug('GeoLocation lookup successful', $this->getContext($request, [
                 'country' => $record->country->isoCode ?? 'unknown',
                 'city' => $record->city->name ?? 'unknown',
                 'variable' => $variable,
-            ]);
+            ]));
         } catch (\Exception $exception) {
-            $this->getLogger()->warning('GeoLocation lookup failed', [
-                'client_ip' => $request->getClientIp(),
+            $this->getLogger()->warning('GeoLocation lookup failed', $this->getContext($request, [
                 'variable' => $variable,
                 'error' => $exception->getMessage(),
-            ]);
+            ]));
             return null;
         }
 

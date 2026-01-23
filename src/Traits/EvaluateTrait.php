@@ -50,26 +50,23 @@ trait EvaluateTrait
      */
     protected function evaluateRequest(Request $request, array $data = []): bool
     {
-        $this->getLogger()->debug('Starting request evaluation', [
-            'plugin' => $this->getName(),
+        $this->getLogger()->debug('Starting request evaluation', $this->getContext($request, [
             'rules_count' => count($data),
-        ]);
+        ]));
 
         foreach ($data as $index => $rule) {
             if ($this->evaluateRule($request, $rule)) {
-                $this->getLogger()->debug('Rule matched', [
-                    'plugin' => $this->getName(),
+                $this->getLogger()->debug('Rule matched', $this->getContext($request, [
                     'rule_index' => $index,
                     'rule' => is_string($rule) ? $rule : (is_array($rule) ? array_keys($rule) : 'complex'),
-                ]);
+                ]));
                 return true;
             }
         }
 
-        $this->getLogger()->debug('No rules matched', [
-            'plugin' => $this->getName(),
+        $this->getLogger()->debug('No rules matched', $this->getContext($request, [
             'rules_evaluated' => count($data),
-        ]);
+        ]));
 
         return false;
     }
@@ -124,17 +121,17 @@ trait EvaluateTrait
         $type = strtoupper((string) $rule['type']);
         $rulesCount = is_array($rule['rules']) ? count($rule['rules']) : 0;
 
-        $this->getLogger()->debug('Evaluating rule group', [
+        $this->getLogger()->debug('Evaluating rule group', $this->getContext($request, [
             'type' => $type,
             'rules_count' => $rulesCount,
-        ]);
+        ]));
 
         if ($type === 'AND') {
             foreach ($rule['rules'] as $index => $subRule) {
                 if (!$this->evaluateRule($request, $subRule)) {
-                    $this->getLogger()->debug('AND group failed at rule', [
+                    $this->getLogger()->debug('AND group failed at rule', $this->getContext($request, [
                         'rule_index' => $index,
-                    ]);
+                    ]));
                     return false;
                 }
             }
@@ -145,9 +142,9 @@ trait EvaluateTrait
         if ($type === 'OR') {
             foreach ($rule['rules'] as $index => $subRule) {
                 if ($this->evaluateRule($request, $subRule)) {
-                    $this->getLogger()->debug('OR group succeeded at rule', [
+                    $this->getLogger()->debug('OR group succeeded at rule', $this->getContext($request, [
                         'rule_index' => $index,
-                    ]);
+                    ]));
                     return true;
                 }
             }

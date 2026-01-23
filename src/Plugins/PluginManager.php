@@ -128,22 +128,20 @@ class PluginManager
             ];
 
             if ($status) {
-                $this->getLogger()->debug('Plugin evaluation matched', [
+                $this->getLogger()->debug('Plugin evaluation matched', $this->getContext($request, [
                     'plugin' => $pluginName,
-                    'request_id' => $request->attributes->get('x-request-id'),
                     'evaluation_time_ms' => $evaluationTime,
                     'evaluated_plugins' => $evaluatedPlugins,
-                ]);
+                ]));
 
                 return $plugin;
             }
         }
 
-        $this->getLogger()->debug('No plugins matched', [
-            'request_id' => $request->attributes->get('x-request-id'),
+        $this->getLogger()->debug('No plugins matched', $this->getContext($request, [
             'evaluated_plugins' => $evaluatedPlugins,
             'total_plugins' => count($evaluatedPlugins),
-        ]);
+        ]));
 
         return false;
     }
