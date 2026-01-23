@@ -277,7 +277,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         // Verify URL context
         $this->assertNotNull($urlEntry, 'Should have URL log entry');
-        $this->assertEquals('delete', $urlEntry['context']['query']['action'] ?? null);
+        $this->assertEquals('delete', $urlEntry['context']['query_params']['action'] ?? null);
         
         // Verify User Agent context
         $this->assertNotNull($uaEntry, 'Should have User Agent log entry');
@@ -540,7 +540,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
     protected function findLogEntry(array $entries, string $pluginName, string $message): ?array
     {
         foreach ($entries as $entry) {
-            if (($entry['context']['plugin'] ?? '') === $pluginName && ($entry['message'] ?? '') === $message) {
+            if (($entry['context']['plugin_name'] ?? '') === $pluginName && ($entry['message'] ?? '') === $message) {
                 return $entry;
             }
         }
@@ -550,7 +550,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
     protected function findLogEntries(array $entries, string $pluginName): array
     {
         return array_filter($entries, function ($entry) use ($pluginName) {
-            return ($entry['context']['plugin'] ?? '') === $pluginName;
+            return ($entry['context']['plugin_name'] ?? '') === $pluginName;
         });
     }
 }
