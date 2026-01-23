@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Integration;
 
+use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Traits\FileTrait;
 use PHPUnit\Framework\TestCase;
 use Kanopi\Firewall\Firewall;
@@ -34,7 +35,6 @@ class FirewallRequestFlowTest extends TestCase
         parent::setUp();
 
         putenv('FIREWALL_BYPASS_CLI=1');
-        putenv('FIREWALL_TEST=1');
 
         // Create unique temp directory for this test run
         $this->tempDir = sys_get_temp_dir() . '/firewall_test_' . uniqid();
@@ -96,7 +96,7 @@ class FirewallRequestFlowTest extends TestCase
         try {
             $firewall->evaluate($request);
             $this->fail('Expected firewall to block the request');
-        } catch (\Exception $e) {
+        } catch (FirewallBlockedException $e) {
             $responseSent = true;
             $statusCode = $e->getCode();
         }
@@ -222,7 +222,7 @@ class FirewallRequestFlowTest extends TestCase
         try {
             $firewall->evaluate($request);
             $this->fail('Request to /wp-* should have been blocked');
-        } catch (\Exception $e) {
+        } catch (FirewallBlockedException $e) {
             $this->assertEquals(400, $e->getCode());
         }
         
@@ -239,7 +239,7 @@ class FirewallRequestFlowTest extends TestCase
         try {
             $firewall->evaluate($request2);
             $this->fail('Request from 10.0.0.0/8 should have been blocked');
-        } catch (\Exception $e) {
+        } catch (FirewallBlockedException $e) {
             $this->assertEquals(400, $e->getCode());
         }
         
@@ -287,7 +287,7 @@ class FirewallRequestFlowTest extends TestCase
         try {
             $firewall1->evaluate($request1);
             $this->fail('First request should have been blocked');
-        } catch (\Exception $e) {
+        } catch (FirewallBlockedException $e) {
             $this->assertEquals(400, $e->getCode());
         }
         
@@ -305,7 +305,7 @@ class FirewallRequestFlowTest extends TestCase
         try {
             $firewall2->evaluate($request2);
             $this->fail('Second request should have been blocked due to persistence');
-        } catch (\Exception $e) {
+        } catch (FirewallBlockedException $e) {
             $this->assertEquals(400, $e->getCode());
         }
         
@@ -368,7 +368,7 @@ class FirewallRequestFlowTest extends TestCase
         try {
             $firewall->evaluate($request);
             $this->fail('IP should have been blocked');
-        } catch (\Exception $e) {
+        } catch (FirewallBlockedException $e) {
             // Expected
         }
         
@@ -385,7 +385,7 @@ class FirewallRequestFlowTest extends TestCase
             try {
                 $firewall->evaluate($request);
                 $this->fail("IP $ip should have been blocked");
-            } catch (\Exception $e) {
+            } catch (FirewallBlockedException $e) {
                 $this->assertEquals(400, $e->getCode(), "IP $ip should return 400");
             }
         }
@@ -443,7 +443,7 @@ class FirewallRequestFlowTest extends TestCase
         try {
             $firewall->evaluate($request);
             $this->fail('Overridden IP should have been blocked');
-        } catch (\Exception $e) {
+        } catch (FirewallBlockedException $e) {
             $this->assertEquals(400, $e->getCode());
         }
         
@@ -461,13 +461,17 @@ class FirewallRequestFlowTest extends TestCase
      */
     private function createTestConfig(array $config, string $filename = 'test_config.yml'): string
     {
+        if (!isset($config['global']['mode'])) {
+            $config['global']['mode'] = 'exception';
+        }
+
         $configFile = $this->tempDir . '/' . $filename;
         $yaml = Yaml::dump($config, 4, 2);
-        
+
         if (file_put_contents($configFile, $yaml) === false) {
             throw new \RuntimeException('Failed to create config file: ' . $configFile);
         }
-        
+
         return $configFile;
     }
     

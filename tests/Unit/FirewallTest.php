@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit;
 
+use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
@@ -48,7 +49,7 @@ class FirewallTest extends AbstractTestCase
         $plugin = $this->createMock(PluginInterface::class);
         $plugin->method('getName')->willReturn('TestPlugin');
         $this->bypassManager->method('evaluate')->willReturn($plugin);
-        $firewall = $this->createFirewall();
+        $firewall = $this->createFirewall(['mode' => 'exception']);
         $this->assertTrue($firewall->evaluate($request));
     }
 
@@ -63,8 +64,8 @@ class FirewallTest extends AbstractTestCase
         $this->bypassManager->method('evaluate')->willReturn(false);
         $this->storage->method('isBlocked')->willReturn(['event_id' => 'mock-blocked']);
 
-        $firewall = $this->createFirewall();
-        $this->expectException(\Exception::class);
+        $firewall = $this->createFirewall(['mode' => 'exception']);
+        $this->expectException(FirewallBlockedException::class);
         $this->expectExceptionMessage('mock-blocked Request Banned');
         $this->expectExceptionCode(400);
         $firewall->evaluate($request);
@@ -81,8 +82,8 @@ class FirewallTest extends AbstractTestCase
         $this->bypassManager->method('evaluate')->willReturn(false);
         $this->storage->method('isBlocked')->willReturn([]);
 
-        $firewall = $this->createFirewall(['banning_status_code' => 429, 'banning_message' => 'You are banned']);
-        $this->expectException(\Exception::class);
+        $firewall = $this->createFirewall(['mode' => 'exception', 'banning_status_code' => 429, 'banning_message' => 'You are banned']);
+        $this->expectException(FirewallBlockedException::class);
         $this->expectExceptionMessage('You are banned');
         $this->expectExceptionCode(429);
         $firewall->evaluate($request);
@@ -106,9 +107,9 @@ class FirewallTest extends AbstractTestCase
 
         $this->blockManager->expects($this->once())->method('evaluate')->willReturn($plugin);
 
-        $firewall = $this->createFirewall();
+        $firewall = $this->createFirewall(['mode' => 'exception']);
 
-        $this->expectException(\Exception::class);
+        $this->expectException(FirewallBlockedException::class);
         $this->expectExceptionMessage('plugin-id Request Banned');
         $this->expectExceptionCode(403);
         $firewall->evaluate($request);
@@ -132,9 +133,9 @@ class FirewallTest extends AbstractTestCase
 
         $this->blockManager->expects($this->once())->method('evaluate')->willReturn($plugin);
 
-        $firewall = $this->createFirewall(['banning_status_code' => 429, 'banning_message' => 'You are banned']);
+        $firewall = $this->createFirewall(['mode' => 'exception', 'banning_status_code' => 429, 'banning_message' => 'You are banned']);
 
-        $this->expectException(\Exception::class);
+        $this->expectException(FirewallBlockedException::class);
         $this->expectExceptionMessage('You are banned');
         $this->expectExceptionCode(429);
         $firewall->evaluate($request);
@@ -158,9 +159,9 @@ class FirewallTest extends AbstractTestCase
 
         $this->blockManager->expects($this->once())->method('evaluate')->willReturn($plugin);
 
-        $firewall = $this->createFirewall();
+        $firewall = $this->createFirewall(['mode' => 'exception']);
 
-        $this->expectException(\Exception::class);
+        $this->expectException(FirewallBlockedException::class);
         $this->expectExceptionMessage('plugin-id Request Banned');
         $this->expectExceptionCode(400);
         $firewall->evaluate($request);
@@ -175,7 +176,7 @@ class FirewallTest extends AbstractTestCase
         $this->bypassManager->method('evaluate')->willReturn(false);
         $this->storage->method('isBlocked')->willReturn(false);
         $this->blockManager->method('evaluate')->willReturn(false);
-        $firewall = $this->createFirewall();
+        $firewall = $this->createFirewall(['mode' => 'exception']);
         $this->assertTrue($firewall->evaluate($request));
     }
 
@@ -207,7 +208,7 @@ class FirewallTest extends AbstractTestCase
      */
     public function testEvaluate(): void
     {
-        $firewall = Firewall::create();
+        $firewall = Firewall::create([], ['[global][mode]' => 'exception']);
         $response = $firewall->evaluate();
         $this->assertTrue($response);
     }

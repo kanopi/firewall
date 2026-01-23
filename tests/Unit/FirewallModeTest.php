@@ -113,67 +113,30 @@ class FirewallModeTest extends AbstractTestCase
         }
     }
 
-    public function testBlockModeDefaultBehavior(): void
+    public function testBlockModeSkipsEvaluationInCli(): void
     {
-        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
-        $request->attributes->set('x-request-id', 'block-test');
-
-        $plugin = $this->createMock(PluginInterface::class);
-        $plugin->method('getName')->willReturn('Blocker');
-        $plugin->method('getExpirationTime')->willReturn(600);
-        $plugin->method('getStatusCode')->willReturn(403);
-
-        $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('isBlocked')->willReturn(false);
-        $this->blockManager->method('evaluate')->willReturn($plugin);
+        $this->bypassManager->expects($this->never())->method('evaluate');
+        $this->blockManager->expects($this->never())->method('evaluate');
 
         $firewall = $this->createFirewall(['mode' => 'block']);
-
-        $this->expectException(FirewallBlockedException::class);
-        $this->expectExceptionCode(403);
-        $firewall->evaluate($request);
+        $request = Request::create('/');
+        $this->assertTrue($firewall->evaluate($request));
     }
 
     public function testInvalidModeDefaultsToBlock(): void
     {
-        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
-        $request->attributes->set('x-request-id', 'invalid-test');
-
-        $plugin = $this->createMock(PluginInterface::class);
-        $plugin->method('getName')->willReturn('Blocker');
-        $plugin->method('getExpirationTime')->willReturn(600);
-        $plugin->method('getStatusCode')->willReturn(403);
-
-        $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('isBlocked')->willReturn(false);
-        $this->blockManager->method('evaluate')->willReturn($plugin);
-
         $firewall = $this->createFirewall(['mode' => 'invalid_mode']);
-
-        $this->expectException(FirewallBlockedException::class);
-        $this->expectExceptionCode(403);
-        $firewall->evaluate($request);
+        $ref = new \ReflectionClass($firewall);
+        $prop = $ref->getProperty('firewallMode');
+        $this->assertSame(FirewallMode::Block, $prop->getValue($firewall));
     }
 
     public function testNoModeConfigDefaultsToBlock(): void
     {
-        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
-        $request->attributes->set('x-request-id', 'default-test');
-
-        $plugin = $this->createMock(PluginInterface::class);
-        $plugin->method('getName')->willReturn('Blocker');
-        $plugin->method('getExpirationTime')->willReturn(600);
-        $plugin->method('getStatusCode')->willReturn(403);
-
-        $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->storage->method('isBlocked')->willReturn(false);
-        $this->blockManager->method('evaluate')->willReturn($plugin);
-
         $firewall = $this->createFirewall([]);
-
-        $this->expectException(FirewallBlockedException::class);
-        $this->expectExceptionCode(403);
-        $firewall->evaluate($request);
+        $ref = new \ReflectionClass($firewall);
+        $prop = $ref->getProperty('firewallMode');
+        $this->assertSame(FirewallMode::Block, $prop->getValue($firewall));
     }
 
     public function testFirewallModeEnum(): void

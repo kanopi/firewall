@@ -127,9 +127,9 @@ final class Firewall
      */
     public function evaluate(?Request $request = null): bool
     {
-        // If PHP is running on cli mode skip.
+        // Skip in CLI (Drush, cron, WP-CLI) unless mode is 'exception' (PHPUnit/framework use).
         // @codeCoverageIgnoreStart
-        if (PHP_SAPI === 'cli' && getenv('FIREWALL_TEST') !== '1') {
+        if (PHP_SAPI === 'cli' && $this->firewallMode !== FirewallMode::Exception) {
             $this->getLogger()->debug('CLI mode detected, bypassing firewall');
             return true;
         }
@@ -259,7 +259,7 @@ final class Firewall
             $request
         );
 
-        if ($this->firewallMode === FirewallMode::Exception || getenv('FIREWALL_TEST') === '1') {
+        if ($this->firewallMode === FirewallMode::Exception) {
             throw new FirewallBlockedException($banningMessage, $statusCode);
         }
 

@@ -135,11 +135,8 @@ try {
     }
     
     // Create and evaluate firewall
-    $firewall = Firewall::create([$config]);
-    
-    // Set test mode to catch exceptions instead of exit
-    putenv('FIREWALL_TEST=1');
-    
+    $firewall = Firewall::create([$config, [ 'global' => [ 'mode' => 'exception' ] ]]);
+
     // Evaluate the request
     $firewall->evaluate($request);
     
