@@ -30,8 +30,6 @@ final class Firewall
 
     /**
      * Firewall Mode.
-     *
-     * @var \Kanopi\Firewall\FirewallMode
      */
     private FirewallMode $firewallMode;
 

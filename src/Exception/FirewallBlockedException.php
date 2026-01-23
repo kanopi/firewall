@@ -17,6 +17,14 @@ namespace Kanopi\Firewall\Exception;
 class FirewallBlockedException extends \RuntimeException
 {
     /**
+     * Constructs a new FirewallBlockedException object.
+     */
+    public function __construct(string $message, int $statusCode = 400, ?\Throwable $previous = null)
+    {
+        parent::__construct($message, $statusCode, $previous);
+    }
+
+    /**
      * Get the HTTP status code associated with this block.
      */
     public function getStatusCode(): int

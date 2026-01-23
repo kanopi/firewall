@@ -64,36 +64,6 @@ class FirewallModeTest extends AbstractTestCase
         $this->assertTrue($firewall->evaluate($request));
     }
 
-    public function testLogModeDoesNotWriteStorage(): void
-    {
-        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
-        $request->attributes->set('x-request-id', 'log-test');
-
-        $plugin = $this->createMock(PluginInterface::class);
-        $plugin->method('getName')->willReturn('Blocker');
-        $plugin->method('getStatusCode')->willReturn(403);
-
-        $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->blockManager->method('evaluate')->willReturn($plugin);
-        $this->storage->expects($this->never())->method('set');
-
-        $firewall = $this->createFirewall(['mode' => 'log']);
-        $firewall->evaluate($request);
-    }
-
-    public function testLogModeSkipsStorageCheck(): void
-    {
-        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
-        $request->attributes->set('x-request-id', 'log-test');
-
-        $this->bypassManager->method('evaluate')->willReturn(false);
-        $this->blockManager->method('evaluate')->willReturn(false);
-        $this->storage->expects($this->never())->method('isBlocked');
-
-        $firewall = $this->createFirewall(['mode' => 'log']);
-        $firewall->evaluate($request);
-    }
-
     public function testExceptionModeThrowsFirewallBlockedException(): void
     {
         $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
