@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall;
 
+use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Plugins\PluginInterface;
@@ -28,6 +29,13 @@ final class Firewall
     use LoggingTrait;
 
     /**
+     * Firewall Mode.
+     *
+     * @var \Kanopi\Firewall\FirewallMode
+     */
+    private FirewallMode $firewallMode;
+
+    /**
      * Create a new Firewall Object.
      *
      * @param StorageInterface $storage
@@ -41,11 +49,14 @@ final class Firewall
      */
     protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager, private array $config)
     {
+        $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
+
         $this->getLogger()->debug('Firewall instance created', [
             'storage_type' => $storage::class,
             'blocking_plugins_count' => count($blockingPluginManager->getPlugins()),
             'bypass_plugins_count' => count($bypassPluginManager->getPlugins()),
             'config_keys' => array_keys($config), // Log keys instead of full config to avoid sensitive data
+            'mode' => $this->firewallMode->value,
         ]);
         $this->storage->expire();
     }
@@ -127,6 +138,11 @@ final class Firewall
 
         // @codeCoverageIgnoreEnd
 
+        if ($this->firewallMode === FirewallMode::Disabled) {
+            $this->getLogger()->debug('Firewall disabled, skipping evaluation');
+            return true;
+        }
+
         if (is_null($request)) {
             $request = Request::createFromGlobals();
         }
@@ -155,6 +171,15 @@ final class Firewall
         }
 
         if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {
+            if ($this->firewallMode === FirewallMode::Log) {
+                $this->getLogger()->warning('Request would be blocked (log mode)', $this->getContext($request, [
+                    'mode' => 'log',
+                    'plugin_name' => $plugin->getName(),
+                    'plugin_type' => $plugin::class,
+                ]));
+                return true;
+            }
+
             $this->block($request, $plugin);
             $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
         }
@@ -236,9 +261,8 @@ final class Firewall
             $request
         );
 
-        // Used for testing.
-        if (getenv('FIREWALL_TEST') === '1') {
-            throw new \Exception($banningMessage, $statusCode);
+        if ($this->firewallMode === FirewallMode::Exception || getenv('FIREWALL_TEST') === '1') {
+            throw new FirewallBlockedException($banningMessage, $statusCode);
         }
 
         // @codeCoverageIgnoreStart
