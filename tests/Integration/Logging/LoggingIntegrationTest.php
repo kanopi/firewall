@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Integration\Logging;
 
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\FirewallMode;
 use Kanopi\Firewall\Tests\Integration\IntegrationTestCase;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\TestHandler;
@@ -39,6 +40,9 @@ class LoggingIntegrationTest extends IntegrationTestCase
         $logFile = $this->tempDir . '/firewall.log';
         
         $config = [
+            'global' => [
+                'mode' => FirewallMode::Exception,
+            ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
             ],
@@ -109,6 +113,9 @@ class LoggingIntegrationTest extends IntegrationTestCase
         $jsonLog = $this->tempDir . '/json.log';
         
         $config = [
+            'global' => [
+                'mode' => FirewallMode::Exception,
+            ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
             ],
@@ -193,6 +200,9 @@ class LoggingIntegrationTest extends IntegrationTestCase
         $logFile = $this->tempDir . '/context.log';
         
         $config = [
+            'global' => [
+                'mode' => FirewallMode::Exception,
+            ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
             ],
@@ -303,6 +313,9 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         // Test with RotatingFileHandler
         $config = [
+            'global' => [
+                'mode' => FirewallMode::Exception,
+            ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
             ],
@@ -362,6 +375,9 @@ class LoggingIntegrationTest extends IntegrationTestCase
         $iterations = (int) self::getEnv('PERF_TEST_ITERATIONS', 100);
         
         $config = [
+            'global' => [
+                'mode' => FirewallMode::Exception,
+            ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
             ],
