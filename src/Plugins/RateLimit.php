@@ -94,28 +94,20 @@ class RateLimit extends AbstractPluginBase
 
         $count = $this->storage?->countRequests($key, $windowStart, $now) ?? 0;
 
-        $this->getLogger()->debug('Rate limit check', [
-            'plugin' => $this->getName(),
-            'request_id' => $request->attributes->get('x-request-id'),
-            'client_ip' => $request->getClientIp(),
-            'path' => $path,
+        $this->getLogger()->debug('Rate limit check', $this->getContext($request, [
             'matched_rule' => $matchedRule['path'],
             'rate_limit' => intval($matchedRule['rate']),
             'window_seconds' => intval($matchedRule['sample']),
             'current_count' => $count,
             'key' => $key,
-        ]);
+        ]));
 
         if ($count >= intval($matchedRule['rate'])) {
-            $this->getLogger()->warning('Rate limit exceeded', [
-                'plugin' => $this->getName(),
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-                'path' => $path,
+            $this->getLogger()->warning('Rate limit exceeded', $this->getContext($request, [
                 'rate_limit' => intval($matchedRule['rate']),
                 'window_seconds' => intval($matchedRule['sample']),
                 'request_count' => $count,
-            ]);
+            ]));
             return true;
         }
 

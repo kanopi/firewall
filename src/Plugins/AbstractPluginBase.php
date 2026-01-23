@@ -29,6 +29,20 @@ abstract class AbstractPluginBase implements PluginInterface
     protected array $files = [];
 
     /**
+     * Return logging context for the plugin.
+     *
+     * @return array
+     *   Return additional logging context.
+     */
+    protected function getLoggingContext(): array
+    {
+        return [
+            'plugin_name' => $this->getName(),
+            'plugin_type' => self::class,
+        ];
+    }
+
+    /**
      * Constructs a new plugin.
      *
      * @param array<int|string, mixed> $metadata

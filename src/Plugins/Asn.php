@@ -70,20 +70,12 @@ class Asn extends AbstractPluginBase
             return false;
         }
 
-        $this->getLogger()->debug('ASN evaluation started', [
-            'plugin' => $this->getName(),
-            'request_id' => $request->attributes->get('x-request-id'),
-            'client_ip' => $request->getClientIp(),
-        ]);
+        $this->getLogger()->debug('ASN evaluation started', $this->getContext($request));
 
         $result = $this->evaluateRequest($request, $this->config);
 
         if ($result) {
-            $this->getLogger()->info('ASN matched blocking rule', [
-                'plugin' => $this->getName(),
-                'request_id' => $request->attributes->get('x-request-id'),
-                'client_ip' => $request->getClientIp(),
-            ]);
+            $this->getLogger()->info('ASN matched blocking rule', $this->getContext($request));
         }
 
         return $result;
@@ -121,20 +113,18 @@ class Asn extends AbstractPluginBase
             $clientIp = $request->getClientIp();
             $record = $this->reader->asn($clientIp);
 
-            $this->getLogger()->debug('ASN lookup successful', [
-                'client_ip' => $clientIp,
+            $this->getLogger()->debug('ASN lookup successful', $this->getContext($request, [
                 /** @phpstan-ignore-next-line  */
                 'asn' => $record->autonomousSystemNumber ?? 'unknown',
                 /** @phpstan-ignore-next-line  */
                 'asn_org' => $record->autonomousSystemOrganization ?? 'unknown',
                 'variable' => $variable,
-            ]);
+            ]));
         } catch (\Exception $exception) {
-            $this->getLogger()->warning('ASN lookup failed', [
-                'client_ip' => $request->getClientIp(),
+            $this->getLogger()->warning('ASN lookup failed', $this->getContext($request, [
                 'variable' => $variable,
                 'error' => $exception->getMessage(),
-            ]);
+            ]));
             return null;
         }
 
