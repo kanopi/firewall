@@ -41,7 +41,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         $config = [
             'global' => [
-                'mode' => FirewallMode::Exception,
+                'mode' => 'exception',
             ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
@@ -114,7 +114,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         $config = [
             'global' => [
-                'mode' => FirewallMode::Exception,
+                'mode' => 'exception',
             ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
@@ -201,7 +201,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         $config = [
             'global' => [
-                'mode' => FirewallMode::Exception,
+                'mode' => 'exception',
             ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
@@ -314,7 +314,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
         // Test with RotatingFileHandler
         $config = [
             'global' => [
-                'mode' => FirewallMode::Exception,
+                'mode' => 'exception',
             ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
@@ -376,7 +376,7 @@ class LoggingIntegrationTest extends IntegrationTestCase
         
         $config = [
             'global' => [
-                'mode' => FirewallMode::Exception,
+                'mode' => 'exception',
             ],
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
