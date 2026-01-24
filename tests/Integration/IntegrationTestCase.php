@@ -58,7 +58,6 @@ abstract class IntegrationTestCase extends TestCase
             throw new \RuntimeException('Failed to create temp directory: ' . $this->tempDir);
         }
 
-        putenv('FIREWALL_TEST=1');
         putenv('FIREWALL_BYPASS_CLI=1');
     }
     

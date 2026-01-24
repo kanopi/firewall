@@ -383,6 +383,7 @@ configured. More options to come.
 
 ```yaml
 global:
+  mode: block
   banning_status_code: 429
   banning_message: '{{request.id}} Request Banned'
   blocking_escalation:
@@ -398,6 +399,22 @@ global:
       offense: 3
       duration: 0
 ```
+
+### Mode
+
+The `mode` setting controls how the firewall responds when a request is matched by a blocking plugin. Defaults to `block` if not specified.
+
+| Mode | Evaluates plugins? | Writes to storage? | Terminates request? |
+|------|--------------------|--------------------|---------------------|
+| `block` | Yes | Yes | Yes (sends HTTP response and exits) |
+| `log` | Yes | No | No (logs a warning and allows the request) |
+| `exception` | Yes | Yes | No (throws `FirewallBlockedException`) |
+| `disabled` | No | No | No (skips all evaluation) |
+
+- **`block`** — Default production behavior. Blocked requests receive an HTTP error response and the script exits.
+- **`log`** — Useful for dry-run/audit deployments. Plugins are evaluated normally, but blocks are only logged (at `warning` level) without stopping the request or recording offenses in storage.
+- **`exception`** — Throws a `Kanopi\Firewall\Exception\FirewallBlockedException` instead of calling `exit()`. The exception carries the status code (via `getStatusCode()`) and banning message, allowing host frameworks (Laravel, Symfony, etc.) to catch and handle it with their own error responses.
+- **`disabled`** — Bypasses the firewall entirely. No plugins are evaluated and the request is immediately allowed. Useful for maintenance or feature-flag toggling.
 
 ### Status Code
 

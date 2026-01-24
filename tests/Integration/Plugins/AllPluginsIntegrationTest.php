@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Integration\Plugins;
 
+use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Tests\Integration\IntegrationTestCase;
 use Kanopi\Firewall\Traits\FileTrait;
@@ -32,7 +33,6 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
     {
         parent::setUp();
         putenv('FIREWALL_BYPASS_CLI=1');
-        putenv('FIREWALL_TEST=1');
     }
 
     /**
@@ -873,6 +873,10 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
      */
     protected function createFirewall(array $config): Firewall
     {
+        if (!isset($config['global']['mode'])) {
+            $config['global']['mode'] = 'exception';
+        }
+
         $configFile = $this->tempDir . '/config.yml';
         file_put_contents($configFile, Yaml::dump($config, 4, 2));
         return Firewall::create([$configFile]);
@@ -913,12 +917,12 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
     protected function assertRequestBlocked(Firewall $firewall, string $ip, string $message, array $options = []): void
     {
         $request = $this->createRequest($ip, $options);
-        
+
         try {
             $firewall->evaluate($request);
             $this->fail($message . ' - Expected request to be blocked');
-        } catch (\Exception $e) {
-            $this->assertContains($e->getCode(), [400, 403, 429], 'Expected 400, 403, or 429 status code');
+        } catch (FirewallBlockedException $e) {
+            $this->assertContains($e->getStatusCode(), [400, 403, 429], 'Expected 400, 403, or 429 status code');
         }
     }
 }

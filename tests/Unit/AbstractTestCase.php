@@ -22,7 +22,6 @@ abstract class AbstractTestCase extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        putenv('FIREWALL_TEST=1');
         LoggingFactory::setLogger(LoggingFactory::create([]));
     }
 
