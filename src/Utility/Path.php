@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Utility;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
+
 /**
  * Path utility class.
  */
@@ -51,7 +53,7 @@ final class Path
      * @return string
      *   Real path or the original if realpath() fails but the file exists.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   If the file does not exist.
      */
     public static function realOrGiven(string $path): string
@@ -62,7 +64,7 @@ final class Path
         }
 
         if (!\file_exists($path)) {
-            throw new \RuntimeException("Config not found: " . $path);
+            throw new ConfigurationException("Config not found: " . $path);
         }
 
         return $path; // exists but realpath failed (e.g., stream/zip/permission)

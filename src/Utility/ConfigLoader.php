@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Utility;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Symfony\Component\Yaml\Yaml;
 
 /**
@@ -62,7 +63,7 @@ final class ConfigLoader
      * @return array<string,mixed>
      *   The parsed configuration array after env substitution, includes, and relative-path resolution.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   If the configFilePath does not exist, includes cause circular references, or %env(...)% fails.
      */
     public static function parse(string $yaml, string $configFilePath, array $relativePathKeys = []): array
@@ -88,7 +89,7 @@ final class ConfigLoader
      * @return array<string,mixed>
      *   The parsed configuration array after env substitution, includes, and relative-path resolution.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   If the file is missing/unreadable, circular includes occur, or %env(...)% fails.
      */
     public static function load(string $filePath, array $relativePathKeys = []): array
@@ -109,7 +110,7 @@ final class ConfigLoader
      * @return array<string,mixed>
      *   Fully post-processed configuration.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   On missing file, exceeded depth, circular include, or YAML/placeholder issues.
      */
     private static function loadInternal(string $filePath, array $relativePathKeys, int $depth): array
@@ -117,11 +118,11 @@ final class ConfigLoader
         $abs = Path::realOrGiven($filePath);
 
         if ($depth > self::MAX_DEPTH) {
-            throw new \RuntimeException("Include depth exceeded at " . $abs);
+            throw new ConfigurationException("Include depth exceeded at " . $abs);
         }
 
         if (isset(self::$includeStack[$abs])) {
-            throw new \RuntimeException("Circular include detected at " . $abs);
+            throw new ConfigurationException("Circular include detected at " . $abs);
         }
 
         self::$includeStack[$abs] = true;
@@ -159,7 +160,7 @@ final class ConfigLoader
      * @return array<string,mixed>
      *   Post-processed configuration array.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   On invalid include entries, circular includes, depth overflow, or env resolution issues.
      */
     private static function postProcess(array $data, string $baseDir, array $relativePathKeys, string $origin, int $depth): array
@@ -174,7 +175,7 @@ final class ConfigLoader
 
             foreach ($includes as $include) {
                 if (!\is_string($include)) {
-                    throw new \RuntimeException("Invalid include entry (must be string) in " . $origin);
+                    throw new ConfigurationException("Invalid include entry (must be string) in " . $origin);
                 }
 
                 $norm = TokenSubstitute::normalizeInclude($include, $baseDir);

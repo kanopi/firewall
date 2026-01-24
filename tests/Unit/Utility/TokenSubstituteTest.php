@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\TokenSubstitute;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -134,7 +135,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testIntProcessorThrowsOnNonNumeric(): void
     {
         putenv('NOT_INT=abc');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Cannot cast');
         TokenSubstitute::substitute('%env(int:NOT_INT)%');
     }
@@ -160,7 +161,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testFloatProcessorThrowsOnNonNumeric(): void
     {
         putenv('NOT_FLOAT=xyz');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Cannot cast');
         TokenSubstitute::substitute('%env(float:NOT_FLOAT)%');
     }
@@ -215,7 +216,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testBoolProcessorThrowsOnInvalidValue(): void
     {
         putenv('WEIRD_BOOL=maybe');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Cannot cast');
         TokenSubstitute::substitute('%env(bool:WEIRD_BOOL)%');
     }
@@ -276,7 +277,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testJsonProcessorThrowsOnInvalidJson(): void
     {
         putenv('BAD_JSON={oops]');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Invalid JSON');
         TokenSubstitute::substitute('%env(json:BAD_JSON)%');
     }
@@ -305,7 +306,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
         try {
             putenv("JSON_VAR={$tempFile}");
-            $this->expectException(\RuntimeException::class);
+            $this->expectException(ConfigurationException::class);
             $this->expectExceptionMessage('Failed to encode array to JSON');
             // This will require the file, get an array, then try to json:encode it
             TokenSubstitute::substitute('%env(require:json:JSON_VAR)%');
@@ -356,7 +357,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testBase64ProcessorThrowsOnInvalidBase64(): void
     {
         putenv('B64_VAR=!!!invalid!!!');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Failed to base64 decode');
         TokenSubstitute::substitute('%env(base64:B64_VAR)%');
     }
@@ -374,7 +375,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
         if ($decoded === false) {
             // Will fail the first check and throw exception
-            $this->expectException(\RuntimeException::class);
+            $this->expectException(ConfigurationException::class);
             TokenSubstitute::substitute('%env(base64:B64_VAR)%');
         } else {
             // Passes first check, now check if it's valid base64 (line 233-234)
@@ -405,7 +406,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testFileProcessorThrowsOnNonExistentFile(): void
     {
         putenv('FILE_VAR=/nonexistent/file.txt');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('not found or unreadable');
         TokenSubstitute::substitute('%env(file:FILE_VAR)%');
     }
@@ -419,7 +420,7 @@ class TokenSubstituteTest extends AbstractTestCase
         putenv("FILE_VAR={$unreadable}");
 
         try {
-            $this->expectException(\RuntimeException::class);
+            $this->expectException(ConfigurationException::class);
             $this->expectExceptionMessageMatches('/not found or unreadable|Failed reading file/');
             TokenSubstitute::substitute('%env(file:FILE_VAR)%');
         } finally {
@@ -447,7 +448,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testResolveProcessorThrowsOnInvalidPath(): void
     {
         putenv('RESOLVE_VAR=/nonexistent/path');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Could not resolve path');
         TokenSubstitute::substitute('%env(resolve:RESOLVE_VAR)%');
     }
@@ -467,7 +468,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testRequireProcessorThrowsOnNonExistentFile(): void
     {
         putenv('REQUIRE_VAR=/nonexistent/file.php');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('not found or unreadable');
         TokenSubstitute::substitute('%env(require:REQUIRE_VAR)%');
     }
@@ -591,7 +592,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testShuffleProcessorThrowsOnNonArray(): void
     {
         putenv('SHUFFLE_VAR=string');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('shuffle processor requires an array');
         TokenSubstitute::substitute('%env(shuffle:SHUFFLE_VAR)%');
     }
@@ -672,7 +673,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testUrlProcessorThrowsOnInvalidUrl(): void
     {
         putenv('URL_VAR=http://');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Invalid URL');
         TokenSubstitute::substitute('%env(url:URL_VAR)%');
     }
@@ -698,7 +699,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testKeyProcessorThrowsOnMissingKeyParameter(): void
     {
         putenv('KEY_VAR={"foo":"bar"}');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('key processor requires a key name');
         TokenSubstitute::substitute('%env(json:key:KEY_VAR)%');
     }
@@ -706,7 +707,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testKeyProcessorThrowsOnNonArray(): void
     {
         putenv('KEY_VAR=string');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('key processor requires an array value');
         TokenSubstitute::substitute('%env(key:foo:KEY_VAR)%');
     }
@@ -714,7 +715,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testKeyProcessorThrowsOnMissingKey(): void
     {
         putenv('KEY_VAR={"foo":"bar"}');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Key "baz" not found');
         TokenSubstitute::substitute('%env(json:key:baz:KEY_VAR)%');
     }
@@ -825,7 +826,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testSafeProcessorThrowsWhenMissingFallback(): void
     {
         putenv('SAFE_VAR=test');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('safe processor requires a fallback value');
         TokenSubstitute::substitute('%env(safe:SAFE_VAR)%');
     }
@@ -851,7 +852,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testRawKeyProcessorThrowsOnMissingParameter(): void
     {
         putenv('RAW_KEY_VAR={"foo":"bar"}');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('raw_key processor requires a key name');
         TokenSubstitute::substitute('%env(json:raw_key:RAW_KEY_VAR)%');
     }
@@ -859,7 +860,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testRawKeyProcessorThrowsOnNonArray(): void
     {
         putenv('RAW_KEY_VAR=string');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('raw_key processor requires an array value');
         TokenSubstitute::substitute('%env(raw_key:foo:RAW_KEY_VAR)%');
     }
@@ -867,7 +868,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testRawKeyProcessorThrowsOnMissingKey(): void
     {
         putenv('RAW_KEY_VAR={"foo":"bar"}');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Key "baz:qux" not found');
         TokenSubstitute::substitute('%env(json:raw_key:baz:qux:RAW_KEY_VAR)%');
     }
@@ -888,7 +889,7 @@ class TokenSubstituteTest extends AbstractTestCase
         // We need to construct a token where after raw_key, the next part is a processor
         // Example: %env(json:raw_key:string:VAR)% - 'string' is a processor, so keyParts is empty
         putenv('RAW_KEY_VAR={"foo":"bar"}');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('raw_key processor requires a key name');
         // Use a chained processor where the part after raw_key is itself a processor
         TokenSubstitute::substitute('%env(json:raw_key:trim:RAW_KEY_VAR)%');
@@ -927,7 +928,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testConstProcessorThrowsOnUndefinedConstant(): void
     {
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Constant "UNDEFINED_CONSTANT_XYZ" is not defined');
         TokenSubstitute::substitute('%env(const:UNDEFINED_CONSTANT_XYZ)%');
     }
@@ -960,7 +961,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testDefaultProcessorThrowsWhenMissingValue(): void
     {
         putenv('MISSING_VAR');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('default processor requires a value');
         TokenSubstitute::substitute('%env(default:MISSING_VAR)%');
     }
@@ -997,7 +998,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testMissingEnvVarThrowsWithHelpfulMessage(): void
     {
         putenv('DOES_NOT_EXIST');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Environment variable "DOES_NOT_EXIST" is not set (checked both getenv() and $_SERVER)');
         TokenSubstitute::substitute('%env(int:DOES_NOT_EXIST)%');
     }
@@ -1005,7 +1006,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testUnknownProcessorThrows(): void
     {
         putenv('VAR=value');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Unknown env processor "unknown"');
         TokenSubstitute::substitute('%env(unknown:VAR)%');
     }
@@ -1141,7 +1142,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testNormalizeIncludeThrowsWhenEnvVarMissing(): void
     {
         putenv('FAIL_ONE');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Environment variable "FAIL_ONE" is not set');
         TokenSubstitute::normalizeInclude('%env(string:FAIL_ONE)%', '/base/dir');
     }
@@ -1149,7 +1150,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testNormalizeIncludeThrowsWhenEnvVarNotString(): void
     {
         putenv('INT_VAL=1');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('%env(...)% for include must resolve to a string path');
         TokenSubstitute::normalizeInclude('%env(int:INT_VAL)%', '/base/dir');
     }
@@ -1256,7 +1257,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testEnumProcessorThrowsOnNonExistentEnum(): void
     {
         putenv('ENUM_VAR=value');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Enum class "NonExistentEnum" does not exist');
         TokenSubstitute::substitute('%env(enum:NonExistentEnum:ENUM_VAR)%');
     }
@@ -1264,7 +1265,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testEnumProcessorThrowsOnMissingEnumParameter(): void
     {
         putenv('ENUM_VAR=value');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('enum processor requires an enum class');
         TokenSubstitute::substitute('%env(enum:ENUM_VAR)%');
     }
@@ -1277,7 +1278,7 @@ class TokenSubstituteTest extends AbstractTestCase
         }
 
         putenv('STATUS_VAR=invalid_value');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Invalid enum value');
         TokenSubstitute::substitute('%env(enum:TestStatusForInvalid:STATUS_VAR)%');
     }
@@ -1315,7 +1316,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testResolveEnvTokenTypedExceptionFile(): void
     {
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Environment variable " " is not set');
         TokenSubstitute::substitute('%env( )%');
     }
@@ -1323,7 +1324,7 @@ class TokenSubstituteTest extends AbstractTestCase
     public function testResolveEnvTokenTypedExceptionUrl(): void
     {
         putenv('TEST_URL=http:///example.com');
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Invalid URL in TEST_URL');
         TokenSubstitute::substitute('%env(url:TEST_URL)%');
     }

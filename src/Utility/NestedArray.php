@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Utility;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
+
 /**
  * Provides methods for working with nested arrays of variable depth.
  *
@@ -163,7 +165,7 @@ class NestedArray
             // $ref is NULL, but throws an error if $ref is set, but not an array.
             if (isset($ref) && !is_array($ref)) {
                 if (!$force) {
-                    throw new \LogicException('Cannot create key "' . $parent . '" on non-array value.');
+                    throw new ConfigurationException('Cannot create key "' . $parent . '" on non-array value.');
                 }
 
                 $ref = [];

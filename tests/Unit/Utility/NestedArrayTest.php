@@ -6,7 +6,7 @@ namespace Kanopi\Firewall\Tests\Unit\Utility;
 
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\NestedArray;
-use LogicException;
+use Kanopi\Firewall\Exception\ConfigurationException;
 
 class NestedArrayTest extends AbstractTestCase
 {
@@ -56,7 +56,7 @@ class NestedArrayTest extends AbstractTestCase
      */
     public function testSetValueThrowsWithoutForceOnNonArray(): void
     {
-        $this->expectException(LogicException::class);
+        $this->expectException(ConfigurationException::class);
         $array = ['a' => 'not-an-array'];
 
         NestedArray::setValue($array, ['a', 'b'], 'value');
