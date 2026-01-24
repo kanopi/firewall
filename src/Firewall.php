@@ -79,7 +79,7 @@ final class Firewall
      * @return self
      *   A new instance of the class initialized with the merged config.
      *
-     * @throws \Exception
+     * @throws FirewallBlockedException
      *   If a string argument does not reference an existing file,
      *   or if an argument is not string, array, or null.
      */
@@ -123,7 +123,7 @@ final class Firewall
      *
      * @return bool
      *   Return TRUE if allowed to pass. FALSE
-     * @throws \Exception
+     * @throws FirewallBlockedException
      */
     public function evaluate(?Request $request = null): bool
     {
@@ -227,7 +227,7 @@ final class Firewall
      * @param int $statusCode
      *   Status code to return for the request.
      *
-     * @throws \Exception
+     * @throws FirewallBlockedException
      *   When env variable is used for testing.
      */
     protected function sendBlockingResponse(Request $request, int $statusCode = 0): void

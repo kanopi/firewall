@@ -2,6 +2,7 @@
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\ConfigLoader;
 
@@ -212,7 +213,7 @@ YML;
         $this->write($a, "configs: [\"b.yml\"]\n");
         $this->write($b, "configs: [\"a.yml\"]\n");
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Circular include detected');
         ConfigLoader::load($a);
     }
@@ -234,7 +235,7 @@ YML;
             $prev = $f;
         }
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Include depth exceeded');
         ConfigLoader::load($this->tmp . '/d0.yml');
     }
@@ -363,7 +364,7 @@ YML
     {
         $f = $this->tmp . '/invalid_inc.yml';
         $this->write($f, "configs:\n  - { bad: type }\n");
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Invalid include entry');
         ConfigLoader::load($f);
     }

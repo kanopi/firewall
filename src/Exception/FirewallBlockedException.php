@@ -14,7 +14,7 @@ namespace Kanopi\Firewall\Exception;
 /**
  * Exception thrown when the firewall blocks a request in exception mode.
  */
-class FirewallBlockedException extends \RuntimeException
+class FirewallBlockedException extends FirewallException
 {
     /**
      * Constructs a new FirewallBlockedException object.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\Path;
 
@@ -146,7 +147,7 @@ class PathTest extends AbstractTestCase
     {
         $nonExistentPath = '/nonexistent/path/to/file.txt';
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Config not found: ' . $nonExistentPath);
 
         Path::realOrGiven($nonExistentPath);
@@ -161,7 +162,7 @@ class PathTest extends AbstractTestCase
     {
         $nonExistentPath = 'does/not/exist.yml';
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('Config not found: ' . $nonExistentPath);
 
         Path::realOrGiven($nonExistentPath);

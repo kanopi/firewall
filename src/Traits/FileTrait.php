@@ -12,7 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Traits;
 
 use Kanopi\Firewall\Logging\LoggingTrait;
-use RuntimeException;
+use Kanopi\Firewall\Exception\StorageException;
 
 /**
  * Used for loading items from a file.
@@ -100,17 +100,17 @@ trait FileTrait
     {
         if (!file_exists($filePath) && !@touch($filePath)) {
             $this->getLogger()->error('Unable to create storage file', ['file' => $filePath]);
-            throw new RuntimeException(sprintf("Unable to create file at '%s'", $filePath));
+            throw new StorageException(sprintf("Unable to create file at '%s'", $filePath));
         }
 
         if (!is_readable($filePath)) {
             $this->getLogger()->error('Storage file not readable', ['file' => $filePath]);
-            throw new RuntimeException(sprintf("File '%s' must be readable.", $filePath));
+            throw new StorageException(sprintf("File '%s' must be readable.", $filePath));
         }
 
         if (!is_writable($filePath)) {
             $this->getLogger()->error('Storage file not writable', ['file' => $filePath]);
-            throw new RuntimeException(sprintf("File '%s' must be writeable.", $filePath));
+            throw new StorageException(sprintf("File '%s' must be writeable.", $filePath));
         }
 
         return strval(realpath($filePath));

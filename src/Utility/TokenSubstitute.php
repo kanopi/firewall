@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Utility;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
+
 /**
  * Token Substitution
  *
@@ -51,7 +53,7 @@ final class TokenSubstitute
      * @return mixed
      *   The value with placeholders resolved.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   On missing env variables, invalid casts, or malformed processor input.
      */
     public static function substitute(mixed $value): mixed
@@ -73,7 +75,7 @@ final class TokenSubstitute
      * @return mixed
      *   The node with %env(...)% placeholders resolved.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   On missing env variables, invalid casts, or malformed processor input.
      */
     private static function resolvePlaceholders(mixed $value): mixed
@@ -119,7 +121,7 @@ final class TokenSubstitute
      * @return mixed
      *   A native value: bool|int|float|string|array depending on processors and data.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   If the env var is missing, processors are unknown, or data cannot be cast/decoded.
      */
     private static function resolveEnvTokenTyped(string $token): mixed
@@ -135,7 +137,7 @@ final class TokenSubstitute
         // Handle 'const' processor - gets PHP constant instead of env var
         if (count($parts) === 1 && strtolower($parts[0]) === 'const') {
             if (!\defined($var)) {
-                throw new \RuntimeException(\sprintf('Constant "%s" is not defined', $var));
+                throw new ConfigurationException(\sprintf('Constant "%s" is not defined', $var));
             }
 
             return \constant($var);
@@ -150,7 +152,7 @@ final class TokenSubstitute
         for ($i = 0; $i < $counter; $i++) {
             if (\strtolower(\trim($parts[$i])) === 'safe') {
                 if ($i + 1 >= \count($parts)) {
-                    throw new \RuntimeException(\sprintf('safe processor requires a fallback value in token "%s"', $token));
+                    throw new ConfigurationException(\sprintf('safe processor requires a fallback value in token "%s"', $token));
                 }
 
                 $hasSafe = true;
@@ -173,7 +175,7 @@ final class TokenSubstitute
                 }
 
                 if ($raw === false) {
-                    throw new \RuntimeException(\sprintf('Environment variable "%s" is not set', $var));
+                    throw new ConfigurationException(\sprintf('Environment variable "%s" is not set', $var));
                 }
 
                 $val = $raw;
@@ -201,7 +203,7 @@ final class TokenSubstitute
         for ($i = 0; $i < $counter; $i++) {
             if (\strtolower(\trim($parts[$i])) === 'default') {
                 if ($i + 1 >= \count($parts)) {
-                    throw new \RuntimeException(\sprintf('default processor requires a value in token "%s"', $token));
+                    throw new ConfigurationException(\sprintf('default processor requires a value in token "%s"', $token));
                 }
 
                 $hasDefault = true;
@@ -217,7 +219,7 @@ final class TokenSubstitute
             // Remove the default processor and its value from parts
             array_splice($parts, $defaultIndex, 2);
         } elseif ($raw === false) {
-            throw new \RuntimeException(\sprintf('Environment variable "%s" is not set (checked both getenv() and $_SERVER)', $var));
+            throw new ConfigurationException(\sprintf('Environment variable "%s" is not set (checked both getenv() and $_SERVER)', $var));
         } else {
             $val = $raw;
         }
@@ -233,7 +235,7 @@ final class TokenSubstitute
      * @param string $var Variable name (for error messages)
      * @param string $token Original token (for error messages)
      * @return mixed Processed value
-     * @throws \RuntimeException On processing errors
+     * @throws ConfigurationException On processing errors
      */
     private static function processRemainingParts(array $parts, mixed $val, string $var, string $token): mixed
     {
@@ -250,7 +252,7 @@ final class TokenSubstitute
 
                 case 'int':
                     if (!\is_numeric($val)) {
-                        throw new \RuntimeException(self::badCast('int', $var, $val));
+                        throw new ConfigurationException(self::badCast('int', $var, $val));
                     }
 
                     $val = (int) $val;
@@ -258,7 +260,7 @@ final class TokenSubstitute
 
                 case 'float':
                     if (!\is_numeric($val)) {
-                        throw new \RuntimeException(self::badCast('float', $var, $val));
+                        throw new ConfigurationException(self::badCast('float', $var, $val));
                     }
 
                     $val = (float) $val;
@@ -273,7 +275,7 @@ final class TokenSubstitute
                     } elseif (\in_array($l, $falsey, true)) {
                         $val = false;
                     } else {
-                        throw new \RuntimeException(self::badCast('bool', $var, $val));
+                        throw new ConfigurationException(self::badCast('bool', $var, $val));
                     }
 
                     break;
@@ -291,13 +293,13 @@ final class TokenSubstitute
                         // Convert array to JSON string
                         $val = \json_encode($val);
                         if ($val === false) {
-                            throw new \RuntimeException(\sprintf('Failed to encode array to JSON for %s', $var));
+                            throw new ConfigurationException(\sprintf('Failed to encode array to JSON for %s', $var));
                         }
                     } else {
                         // Parse JSON string to array
                         $d = \json_decode((string) $val, true);
                         if (\json_last_error() !== JSON_ERROR_NONE) {
-                            throw new \RuntimeException(\sprintf('Invalid JSON in %s: %s', $var, \json_last_error_msg()));
+                            throw new ConfigurationException(\sprintf('Invalid JSON in %s: %s', $var, \json_last_error_msg()));
                         }
 
                         $val = $d;
@@ -307,7 +309,7 @@ final class TokenSubstitute
 
                 case 'base64':
                     if (\is_string($val) && \base64_decode($val, true) === false) {
-                        throw new \RuntimeException(\sprintf('Failed to base64 decode string to %s', $var));
+                        throw new ConfigurationException(\sprintf('Failed to base64 decode string to %s', $var));
                     }
 
                     if (\is_string($val) && \base64_encode(\base64_decode($val, true)) === $val) {
@@ -323,12 +325,12 @@ final class TokenSubstitute
                 case 'file':
                     $p = (string) $val;
                     if (!\is_file($p) || !\is_readable($p)) {
-                        throw new \RuntimeException(\sprintf('file:%s not found or unreadable (from %s)', $p, $var));
+                        throw new ConfigurationException(\sprintf('file:%s not found or unreadable (from %s)', $p, $var));
                     }
 
                     $c = \file_get_contents($p);
                     if ($c === false) {
-                        throw new \RuntimeException(\sprintf('Failed reading file for %s', $var));
+                        throw new ConfigurationException(\sprintf('Failed reading file for %s', $var));
                     }
 
                     $val = $c;
@@ -338,7 +340,7 @@ final class TokenSubstitute
                     // Resolve relative paths to absolute
                     $val = \realpath((string) $val);
                     if ($val === false) {
-                        throw new \RuntimeException(\sprintf('Could not resolve path for %s', $var));
+                        throw new ConfigurationException(\sprintf('Could not resolve path for %s', $var));
                     }
 
                     break;
@@ -347,7 +349,7 @@ final class TokenSubstitute
                     // Include a PHP file and capture its return value
                     $p = (string) $val;
                     if (!\is_file($p) || !\is_readable($p)) {
-                        throw new \RuntimeException(\sprintf('require:%s not found or unreadable (from %s)', $p, $var));
+                        throw new ConfigurationException(\sprintf('require:%s not found or unreadable (from %s)', $p, $var));
                     }
 
                     $val = require $p;
@@ -387,7 +389,7 @@ final class TokenSubstitute
 
                 case 'shuffle':
                     if (!\is_array($val)) {
-                        throw new \RuntimeException(\sprintf('shuffle processor requires an array in %s', $var));
+                        throw new ConfigurationException(\sprintf('shuffle processor requires an array in %s', $var));
                     }
 
                     \shuffle($val);
@@ -400,7 +402,7 @@ final class TokenSubstitute
                 case 'url':
                     $u = \parse_url((string) $val);
                     if ($u === false) {
-                        throw new \RuntimeException(\sprintf('Invalid URL in %s', $var));
+                        throw new ConfigurationException(\sprintf('Invalid URL in %s', $var));
                     }
 
                     $val = $u;
@@ -408,7 +410,7 @@ final class TokenSubstitute
 
                 case 'key':
                     if ($i + 1 >= \count($parts)) {
-                        throw new \RuntimeException(\sprintf('key processor requires a key name in token "%s"', $token));
+                        throw new ConfigurationException(\sprintf('key processor requires a key name in token "%s"', $token));
                     }
 
                     $key = $parts[++$i]; // Don't lowercase the key value
@@ -425,13 +427,13 @@ final class TokenSubstitute
                         if ($hasKeyDefault) {
                             $val = $keyDefault;
                         } else {
-                            throw new \RuntimeException(\sprintf('key processor requires an array value in %s, got %s', $var, \gettype($val)));
+                            throw new ConfigurationException(\sprintf('key processor requires an array value in %s, got %s', $var, \gettype($val)));
                         }
                     } elseif (!\array_key_exists($key, $val)) {
                         if ($hasKeyDefault) {
                             $val = $keyDefault;
                         } else {
-                            throw new \RuntimeException(\sprintf('Key "%s" not found in %s', $key, $var));
+                            throw new ConfigurationException(\sprintf('Key "%s" not found in %s', $key, $var));
                         }
                     } else {
                         $val = $val[$key];
@@ -442,7 +444,7 @@ final class TokenSubstitute
                 case 'raw_key':
                     // Like 'key' but doesn't process the key name (for when key contains colons)
                     if ($i + 1 >= \count($parts)) {
-                        throw new \RuntimeException(\sprintf('raw_key processor requires a key name in token "%s"', $token));
+                        throw new ConfigurationException(\sprintf('raw_key processor requires a key name in token "%s"', $token));
                     }
 
                     // Grab everything after raw_key up to the next processor or end
@@ -454,18 +456,18 @@ final class TokenSubstitute
                     }
 
                     if ($keyParts === []) {
-                        throw new \RuntimeException(\sprintf('raw_key processor requires a key name in token "%s"', $token));
+                        throw new ConfigurationException(\sprintf('raw_key processor requires a key name in token "%s"', $token));
                     }
 
                     $key = \implode(':', $keyParts);
                     $i = $j - 1; // Update index
 
                     if (!\is_array($val)) {
-                        throw new \RuntimeException(\sprintf('raw_key processor requires an array value in %s, got %s', $var, \gettype($val)));
+                        throw new ConfigurationException(\sprintf('raw_key processor requires an array value in %s, got %s', $var, \gettype($val)));
                     }
 
                     if (!\array_key_exists($key, $val)) {
-                        throw new \RuntimeException(\sprintf('Key "%s" not found in %s', $key, $var));
+                        throw new ConfigurationException(\sprintf('Key "%s" not found in %s', $key, $var));
                     }
 
                     $val = $val[$key];
@@ -473,14 +475,14 @@ final class TokenSubstitute
 
                 case 'enum':
                     if ($i + 1 >= \count($parts)) {
-                        throw new \RuntimeException(\sprintf('enum processor requires an enum class in token "%s"', $token));
+                        throw new ConfigurationException(\sprintf('enum processor requires an enum class in token "%s"', $token));
                     }
 
                     /** @var class-string<\BackedEnum> $enumClass */
                     $enumClass = $parts[++$i]; // Keep original case for class name
 
                     if (!\enum_exists($enumClass)) {
-                        throw new \RuntimeException(\sprintf('Enum class "%s" does not exist', $enumClass));
+                        throw new ConfigurationException(\sprintf('Enum class "%s" does not exist', $enumClass));
                     }
 
                     // Try to get enum by name or value
@@ -498,7 +500,7 @@ final class TokenSubstitute
                         }
 
                         if (!\is_object($val) || !($val instanceof $enumClass)) {
-                            throw new \RuntimeException(\sprintf('Invalid enum value "%s" for %s', $val, $enumClass));
+                            throw new ConfigurationException(\sprintf('Invalid enum value "%s" for %s', $val, $enumClass));
                         }
                     }
 
@@ -513,7 +515,7 @@ final class TokenSubstitute
                     break;
 
                 default:
-                    throw new \RuntimeException(\sprintf('Unknown env processor "%s" in token "%s"', $part, $token));
+                    throw new ConfigurationException(\sprintf('Unknown env processor "%s" in token "%s"', $part, $token));
             }
         }
 
@@ -605,7 +607,7 @@ final class TokenSubstitute
      * @return string
      *   Absolute (or URL/stream) path for inclusion; may contain glob patterns.
      *
-     * @throws \RuntimeException
+     * @throws ConfigurationException
      *   If %env(...)% resolves to a non-string value.
      */
     public static function normalizeInclude(string $value, string $baseDir): string
@@ -625,7 +627,7 @@ final class TokenSubstitute
         if (\preg_match('/^%env\(([^)]+)\)%$/', $value, $m)) {
             $resolved = self::resolveEnvTokenTyped($m[1]);
             if (!\is_string($resolved)) {
-                throw new \RuntimeException('%env(...)% for include must resolve to a string path');
+                throw new ConfigurationException('%env(...)% for include must resolve to a string path');
             }
 
             $value = $resolved;
