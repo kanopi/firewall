@@ -30,6 +30,10 @@ class RateLimit extends AbstractPluginBase
      */
     public function __construct(array $metadata = [], array $config = [])
     {
+        // Set 10 requests as the default.
+        $metadata['default_rate'] = $metadata['default_rate'] ?? 10;
+        // Set 10 seconds as the default sample size.
+        $metadata['default_sample'] = $metadata['default_sample'] ?? 10;
         parent::__construct($metadata, $config);
 
         if (isset($this->metadata['storage'])) {
