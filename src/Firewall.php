@@ -102,6 +102,14 @@ final class Firewall
         // Partition plugins by response type and sort by weight.
         $partitioned = PluginConfigNormalizer::partitionAndSort($config['plugins'] ?? []);
 
+        LoggingFactory::logger()->debug('Starting Firewall', [
+            'logger_config_keys' => array_keys($config['logger']),
+            'storage_config_keys' => array_keys($config['storage']),
+            'allow_plugins_count' => count($partitioned['allow']),
+            'block_plugins_count' => count($partitioned['block']),
+            'global_config_keys' => array_keys($config['global']),
+        ]);
+
         $firewall = new self(
             StorageFactory::create($config['storage']),
             PluginManager::createFromPluginsArray($partitioned['block']),
@@ -109,7 +117,7 @@ final class Firewall
             $config['global']
         );
 
-        $firewall->getLogger()->debug('Firewall initialized', [
+        LoggingFactory::logger()->debug('Firewall initialized', [
             'logger_config_keys' => array_keys($config['logger']),
             'storage_config_keys' => array_keys($config['storage']),
             'allow_plugins_count' => count($partitioned['allow']),
