@@ -19,6 +19,7 @@ use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -91,24 +92,36 @@ final class Firewall
         // Set the default values.
         $config['logger'] = isset($config['logger']) && is_array($config['logger']) ? array_filter($config['logger']) : [];
         $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
-        $config['block'] = isset($config['block']) && is_array($config['block']) ? array_filter($config['block']) : [];
-        $config['bypass'] = isset($config['bypass']) && is_array($config['bypass']) ? array_filter($config['bypass']) : [];
         $config['global'] = isset($config['global']) && is_array($config['global']) ? array_filter($config['global']) : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 
+        // Normalize configuration to the new plugins: array format.
+        $config = PluginConfigNormalizer::normalize($config);
+
+        // Partition plugins by response type and sort by weight.
+        $partitioned = PluginConfigNormalizer::partitionAndSort($config['plugins'] ?? []);
+
+        LoggingFactory::logger()->debug('Starting Firewall', [
+            'logger_config_keys' => array_keys($config['logger']),
+            'storage_config_keys' => array_keys($config['storage']),
+            'allow_plugins_count' => count($partitioned['allow']),
+            'block_plugins_count' => count($partitioned['block']),
+            'global_config_keys' => array_keys($config['global']),
+        ]);
+
         $firewall = new self(
             StorageFactory::create($config['storage']),
-            PluginManager::create($config['block']),
-            PluginManager::create($config['bypass']),
+            PluginManager::createFromPluginsArray($partitioned['block']),
+            PluginManager::createFromPluginsArray($partitioned['allow']),
             $config['global']
         );
 
-        $firewall->getLogger()->debug('Firewall initialized', [
+        LoggingFactory::logger()->debug('Firewall initialized', [
             'logger_config_keys' => array_keys($config['logger']),
             'storage_config_keys' => array_keys($config['storage']),
-            'block_plugins' => array_keys($config['block']),
-            'bypass_plugins' => array_keys($config['bypass']),
+            'allow_plugins_count' => count($partitioned['allow']),
+            'block_plugins_count' => count($partitioned['block']),
             'global_config_keys' => array_keys($config['global']),
         ]);
 

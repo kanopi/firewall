@@ -727,4 +727,174 @@ YAML
         $this->assertEquals('path:/custom', $result['block']['Kanopi\Firewall\Plugins\Url']['config'][0]);
     }
 
+    public function testPluginsArrayMergingAppendsEntries(): void
+    {
+        $file1 = $this->tmp . '/plugins1.yml';
+        $file2 = $this->tmp . '/plugins2.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+plugins:
+  - plugin: Kanopi\Firewall\Plugins\IpAddress
+    response: allow
+    weight: -200
+    enable: true
+    config:
+      - 127.0.0.1
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+plugins:
+  - plugin: Kanopi\Firewall\Plugins\Url
+    response: block
+    weight: -100
+    enable: true
+    config:
+      - path:/admin
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - plugins1.yml
+  - plugins2.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Both plugins should be present (appended, not replaced)
+        $this->assertArrayHasKey('plugins', $result);
+        $this->assertCount(2, $result['plugins']);
+
+        // First plugin from file1
+        $this->assertEquals('Kanopi\Firewall\Plugins\IpAddress', $result['plugins'][0]['plugin']);
+        $this->assertEquals('allow', $result['plugins'][0]['response']);
+        $this->assertEquals(-200, $result['plugins'][0]['weight']);
+
+        // Second plugin from file2
+        $this->assertEquals('Kanopi\Firewall\Plugins\Url', $result['plugins'][1]['plugin']);
+        $this->assertEquals('block', $result['plugins'][1]['response']);
+        $this->assertEquals(-100, $result['plugins'][1]['weight']);
+    }
+
+    public function testPluginsArrayMergingWithExistingPlugins(): void
+    {
+        $file1 = $this->tmp . '/plugins1.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+plugins:
+  - plugin: Kanopi\Firewall\Plugins\RateLimit
+    response: block
+    weight: 100
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+plugins:
+  - plugin: Kanopi\Firewall\Plugins\IpAddress
+    response: allow
+    weight: -200
+
+configs:
+  - plugins1.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Both plugins should be present (main + included)
+        $this->assertCount(2, $result['plugins']);
+        $this->assertEquals('Kanopi\Firewall\Plugins\IpAddress', $result['plugins'][0]['plugin']);
+        $this->assertEquals('Kanopi\Firewall\Plugins\RateLimit', $result['plugins'][1]['plugin']);
+    }
+
+    public function testPluginsArrayMergingWithMultipleInstances(): void
+    {
+        $file1 = $this->tmp . '/plugins1.yml';
+        $file2 = $this->tmp . '/plugins2.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+plugins:
+  - plugin: Kanopi\Firewall\Plugins\IpAddress
+    response: allow
+    weight: -200
+    config:
+      - 127.0.0.1
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+plugins:
+  - plugin: Kanopi\Firewall\Plugins\IpAddress
+    response: block
+    weight: -100
+    config:
+      - 192.168.1.100
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - plugins1.yml
+  - plugins2.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Both instances of IpAddress should be present
+        $this->assertCount(2, $result['plugins']);
+        $this->assertEquals('Kanopi\Firewall\Plugins\IpAddress', $result['plugins'][0]['plugin']);
+        $this->assertEquals('allow', $result['plugins'][0]['response']);
+        $this->assertEquals('Kanopi\Firewall\Plugins\IpAddress', $result['plugins'][1]['plugin']);
+        $this->assertEquals('block', $result['plugins'][1]['response']);
+    }
+
+    public function testMixedOldAndNewFormatMerging(): void
+    {
+        $file1 = $this->tmp . '/old_format.yml';
+        $file2 = $this->tmp . '/new_format.yml';
+        $main = $this->tmp . '/main.yml';
+
+        file_put_contents($file1, <<<YAML
+bypass:
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: -200
+    enable: true
+    config:
+      - 127.0.0.1
+YAML
+        );
+
+        file_put_contents($file2, <<<YAML
+plugins:
+  - plugin: Kanopi\Firewall\Plugins\Url
+    response: block
+    weight: -100
+    enable: true
+    config:
+      - path:/admin
+YAML
+        );
+
+        file_put_contents($main, <<<YAML
+configs:
+  - old_format.yml
+  - new_format.yml
+YAML
+        );
+
+        $result = ConfigLoader::load($main);
+
+        // Both formats should be present
+        $this->assertArrayHasKey('bypass', $result);
+        $this->assertArrayHasKey('plugins', $result);
+        $this->assertArrayHasKey('Kanopi\Firewall\Plugins\IpAddress', $result['bypass']);
+        $this->assertCount(1, $result['plugins']);
+    }
+
 }

@@ -13,6 +13,9 @@ configs:
   - "{presets_dir}/wordpress.yml"
   - "{presets_dir}/malicious-urls.yml"
 
+global:
+  mode: exception
+
 # =====================================================================
 # Storage Configuration
 # =====================================================================
@@ -23,12 +26,32 @@ storage:
       dsn: *DB_DSN
 
 # =====================================================================
-# Block Configuration with Plugin-Specific Config Includes
+# Plugin Configuration (Preferred Format)
+#
+# The plugins: array is the canonical format. Each plugin specifies:
+#   - plugin: The fully qualified class name
+#   - response: 'allow' (bypass) or 'block'
+#   - weight: Execution order (lower runs first)
+#   - enable: Whether the plugin is active
+#   - metadata: Plugin-specific configuration
+#   - config: Rules or conditions
+#
+# Evaluation order: All 'allow' plugins run first (sorted by weight),
+# then all 'block' plugins (sorted by weight).
 # =====================================================================
-block:
+plugins:
+  # Bypass trusted IPs (response: allow)
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
+    enable: true
+    config:
+      - 203.0.113.100/32
+
   # IP Address blocking with external config file
-  Kanopi\Firewall\Plugins\IpAddress:
-    priority: -100
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
+    weight: -100
     enable: true
     metadata:
       # This plugin loads its config from an external file
@@ -37,11 +60,12 @@ block:
         - config.ip.yml
         # Remote URL example (uncomment if you have a remote config):
         # - https://example.com/firewall/blocked-ips.yml
-    config: ~ # Plugin config comes from the files above
+    config: [] # Plugin config comes from the files above
 
   # Vulnerability Score with external config
-  Kanopi\Firewall\Plugins\VulnerabilityScore:
-    priority: -75
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -75
     enable: true
     metadata:
       config:
@@ -54,43 +78,104 @@ block:
       asn_reader:
         type: reader
         db: GeoLite2-ASN.mmdb
-    config: ~
+    config: []
 
-  # URL plugin with inline config (merges with preset rules)
-  Kanopi\Firewall\Plugins\Url:
-    priority: -10
+  # URL plugin with inline config
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -10
     enable: true
     config:
-      # These rules will REPLACE the preset rules because config is a list
-      # If you want to ADD to preset rules, use bypass or separate plugin instance
       - path:/custom-blocked-path
       - query@contains:malicious-param
 
-  Kanopi\Firewall\Plugins\RateLimit:
-    priority: 0
+  # Rate limiting
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
     enable: true
     metadata:
       storage:
-        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        type: "Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage"
         config:
           redis:
             host: "%env(safe:redis:string:CACHE_HOST)%"
             port: "%env(safe:6379:int:CACHE_PORT)%"
-#            auth: "%env(safe::string:CACHE_PASSWORD)%"
+            # auth: "%env(safe::string:CACHE_PASSWORD)%"
     config:
       - path: /login
         rate: 20      # 20 instead of default 10
         sample: 300
 
 # =====================================================================
-# Bypass Configuration
+# Block Configuration with Plugin-Specific Config Includes (Legacy Format)
 # =====================================================================
-bypass:
-  Kanopi\Firewall\Plugins\IpAddress:
-    priority: -200
-    enable: true
-    config:
-      - 203.0.113.100/32
+#block:
+#  # IP Address blocking with external config file
+#  Kanopi\Firewall\Plugins\IpAddress:
+#    priority: -100
+#    enable: true
+#    metadata:
+#      # This plugin loads its config from an external file
+#      # The file can be local or a remote URL
+#      config:
+#        - config.ip.yml
+#        # Remote URL example (uncomment if you have a remote config):
+#        # - https://example.com/firewall/blocked-ips.yml
+#    config: ~ # Plugin config comes from the files above
+#
+#  # Vulnerability Score with external config
+#  Kanopi\Firewall\Plugins\VulnerabilityScore:
+#    priority: -75
+#    enable: true
+#    metadata:
+#      config:
+#        - config.vulnerability-score.yml
+#      default_expiration_time: 3600
+#      status_code: 403
+#      country_reader:
+#        type: reader
+#        db: GeoLite2-Country.mmdb
+#      asn_reader:
+#        type: reader
+#        db: GeoLite2-ASN.mmdb
+#    config: ~
+#
+#  # URL plugin with inline config (merges with preset rules)
+#  Kanopi\Firewall\Plugins\Url:
+#    priority: -10
+#    enable: true
+#    config:
+#      # These rules will REPLACE the preset rules because config is a list
+#      # If you want to ADD to preset rules, use bypass or separate plugin instance
+#      - path:/custom-blocked-path
+#      - query@contains:malicious-param
+#
+#  Kanopi\Firewall\Plugins\RateLimit:
+#    priority: 0
+#    enable: true
+#    metadata:
+#      storage:
+#        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+#        config:
+#          redis:
+#            host: "%env(safe:redis:string:CACHE_HOST)%"
+#            port: "%env(safe:6379:int:CACHE_PORT)%"
+#            #auth: "%env(safe::string:CACHE_PASSWORD)%"
+#    config:
+#      - path: /login
+#        rate: 20      # 20 instead of default 10
+#        sample: 300
+
+# =====================================================================
+# Bypass Configuration (Legacy Format)
+# =====================================================================
+#bypass:
+#  Kanopi\Firewall\Plugins\IpAddress:
+#    priority: -200
+#    enable: true
+#    config:
+#      - 203.0.113.100/32
 
 # =====================================================================
 # How Merging Works
@@ -100,21 +185,24 @@ bypass:
 #    - presets/wordpress.yml (contains Url plugin with block rules)
 #    - presets/malicious-urls.yml (contains Url plugin with more block rules)
 #
-# 2. Each preset's Url plugin config (a list) REPLACES the previous one
-#    (because lists are replaced, not merged)
+# 2. For the new plugins: array format:
+#    - Plugins arrays are APPENDED (not replaced) when merging configs
+#    - This allows multiple config files to each add plugins
 #
-# 3. This file's Url plugin config REPLACES all preset configs
+# 3. For legacy block:/bypass: format:
+#    - Plugin config lists are REPLACED by later files
+#    - Objects (associative arrays) are merged deeply
 #
 # 4. Plugin metadata.config files are loaded by the plugin itself
 #    (not by ConfigLoader), so they work differently
 #
-# To ADD rules instead of REPLACE:
-#   - Use bypass rules
-#   - Create separate plugin instances with different priorities
+# To ADD rules instead of REPLACE (legacy format):
+#   - Use multiple config files with plugins: array format (recommended)
+#   - Create separate plugin instances with different weights
 #   - Or combine all rules in a single config file
 
 logger:
   - class: "\\Monolog\\Handler\\StreamHandler"
     args:
       - "logs/firewall.log"
-      - "Monolog\\Level::INFO"
+      - "Monolog\\Level::Debug"

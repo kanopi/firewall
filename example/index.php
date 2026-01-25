@@ -1,10 +1,14 @@
 <?php
 
+use Monolog\Formatter\JsonFormatter;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
+
 require_once __DIR__ . '/../vendor/autoload.php';
 
-// Put in test mode so throws an exception.
-putenv('FIREWALL_TEST=1');
-
+/**
+ * Print the headers to the screen.
+ */
 function print_headers()
 {
     global $start, $mem_start, $end, $mem_end;
@@ -12,10 +16,10 @@ function print_headers()
     $headers = [
         'start' => $start,
         'end' => $end,
-        'time' => $end - $start,
+        'time' => ($end - $start),
         'memory_start' => $mem_start,
         'memory_end' => $mem_end,
-        'memory' => $mem_end - $mem_start,
+        'memory' => ($mem_end - $mem_start),
     ];
 
     foreach ($headers as $header => $value) {
@@ -23,9 +27,14 @@ function print_headers()
     }
 }
 
-// Start
+// Start Recording.
 $start = microtime(true);
 $mem_start = memory_get_usage(true);
+
+// Test Handler used for getting log records.
+$testHandler = new TestHandler();
+$testHandler->setLevel(\Monolog\Level::Info);
+$formatter = new \Monolog\Formatter\LineFormatter();
 
 $status = 200;
 // Check to see if class loads.
@@ -39,11 +48,16 @@ if (class_exists('\Kanopi\Firewall\Firewall')) {
                 \Symfony\Component\HttpFoundation\Request::HEADER_X_FORWARDED_FOR
             );
         }
-        \Kanopi\Firewall\Firewall::create(
+
+        // Evaluate the request.
+        \Kanopi\Firewall\Firewall::create([
+            __DIR__ . '/config.yml',
             [
-                __DIR__ . '/config.yml'
+                'logger' => [
+                    ['class' => $testHandler],
+                ],
             ]
-        )->evaluate();
+        ])->evaluate();
 
         ob_start();
         echo "<pre>";
@@ -59,6 +73,13 @@ if (class_exists('\Kanopi\Firewall\Firewall')) {
         $mem_end = memory_get_usage(true);
         http_response_code($status);
         print_headers();
+
+        $content .= "<br/><h2>Logs</h2>";
+        $content .= "<pre>";
+        foreach ($testHandler->getRecords() as $record) {
+            $content .= htmlspecialchars($formatter->format($record));
+        }
+        $content .= "</pre>";
     }
 
     echo $content;

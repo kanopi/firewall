@@ -1,5 +1,7 @@
 global: ~
 storage: ~
+plugins: []
+# Legacy format (deprecated, auto-converted to plugins:)
 bypass: ~
 block: ~
 logger: ~

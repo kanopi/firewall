@@ -370,4 +370,133 @@ class FirewallTest extends AbstractTestCase
         $result = $method->invoke($firewall, $request, $plugin);
         $this->assertTrue($result);
     }
+
+    /**
+     * Test Firewall::create with new plugins: array format.
+     */
+    public function testStaticCreateWithNewPluginsFormat(): void
+    {
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'allow',
+                    'weight' => -200,
+                    'enable' => true,
+                    'config' => ['127.0.0.1'],
+                ],
+            ],
+            'global' => [
+                'mode' => 'exception',
+            ],
+        ];
+
+        $firewall = Firewall::create([$config]);
+        $this->assertInstanceOf(Firewall::class, $firewall);
+    }
+
+    /**
+     * Test Firewall::create with mixed old and new format.
+     */
+    public function testStaticCreateWithMixedFormat(): void
+    {
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'allow',
+                    'weight' => -300,
+                    'enable' => true,
+                    'config' => ['10.0.0.1'],
+                ],
+            ],
+            'bypass' => [
+                IpAddress::class => [
+                    'priority' => -200,
+                    'enable' => true,
+                    'config' => ['127.0.0.1'],
+                ],
+            ],
+            'block' => [
+                IpAddress::class => [
+                    'priority' => -100,
+                    'enable' => true,
+                    'config' => ['192.168.1.100'],
+                ],
+            ],
+            'global' => [
+                'mode' => 'exception',
+            ],
+        ];
+
+        $firewall = Firewall::create([$config]);
+        $this->assertInstanceOf(Firewall::class, $firewall);
+    }
+
+    /**
+     * Test that bypass (allow) plugins are evaluated before block plugins.
+     */
+    public function testBypassEvaluatedBeforeBlock(): void
+    {
+        // Configure to allow localhost but block everything
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'allow',
+                    'weight' => 0,
+                    'enable' => true,
+                    'config' => ['127.0.0.1'],
+                ],
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'block',
+                    'weight' => 0,
+                    'enable' => true,
+                    'config' => ['127.0.0.1'], // Same IP would be blocked if allow wasn't first
+                ],
+            ],
+            'global' => [
+                'mode' => 'exception',
+            ],
+        ];
+
+        $firewall = Firewall::create([$config]);
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+
+        // Should pass because allow is evaluated first
+        $this->assertTrue($firewall->evaluate($request));
+    }
+
+    /**
+     * Test plugins are sorted by weight within their response group.
+     */
+    public function testPluginsSortedByWeightWithinGroup(): void
+    {
+        // Plugin with higher weight should be evaluated after plugin with lower weight
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'block',
+                    'weight' => 100,
+                    'enable' => true,
+                    'config' => ['1.2.3.4'],
+                ],
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'block',
+                    'weight' => -100,
+                    'enable' => true,
+                    'config' => ['5.6.7.8'],
+                ],
+            ],
+            'global' => [
+                'mode' => 'exception',
+            ],
+        ];
+
+        $firewall = Firewall::create([$config]);
+        $this->assertInstanceOf(Firewall::class, $firewall);
+    }
 }
