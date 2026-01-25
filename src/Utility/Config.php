@@ -129,9 +129,14 @@ class Config
 
         $replacementPaths = [
             'storage.config.(storage_file|offense_file)',
+            // Legacy format paths
             '(allow|block).*.metadata.storage.config.file',
             '(allow|block).*.metadata.config.*',
             '(allow|block).*.metadata.(asn_reader|reader|country_reader).db',
+            // New plugins: array format paths
+            'plugins.*.metadata.storage.config.file',
+            'plugins.*.metadata.config.*',
+            'plugins.*.metadata.(asn_reader|reader|country_reader).db',
         ];
 
         if (Path::looksLikeUrl($file)) {

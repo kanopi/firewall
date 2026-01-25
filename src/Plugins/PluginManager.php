@@ -39,7 +39,7 @@ class PluginManager
      * Initialize the plugins and return the resulting array.
      *
      * @param array $config
-     *   Configuration for the plugins.
+     *   Configuration for the plugins (legacy format keyed by plugin class).
      *
      * @return self
      *   Return a new instance of self.
@@ -92,6 +92,83 @@ class PluginManager
 
         if ($skippedPlugins !== []) {
             $manager->getLogger()->debug('Plugins skipped', [
+                'skipped_plugins' => $skippedPlugins,
+                'skipped_count' => count($skippedPlugins),
+            ]);
+        }
+
+        return $manager;
+    }
+
+    /**
+     * Create a plugin manager from the new plugins array format.
+     *
+     * Each plugin entry should have:
+     *   - plugin: The fully qualified class name
+     *   - weight: Priority/weight for ordering (lower executes first)
+     *   - enable: Whether the plugin is enabled (defaults to true)
+     *   - metadata: Plugin-specific configuration
+     *   - config: Plugin rules/patterns
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   Array of plugin definitions in the new format.
+     *
+     * @return self
+     *   A new PluginManager instance.
+     */
+    public static function createFromPluginsArray(array $plugins): self
+    {
+        $lazyObjectRegistry = new LazyObjectRegistry();
+        $enabledPlugins = [];
+        $skippedPlugins = [];
+
+        foreach ($plugins as $index => $pluginDef) {
+            $class = $pluginDef['plugin'] ?? '';
+
+            if ($class === '') {
+                $skippedPlugins[] = ['plugin' => 'index:' . $index, 'reason' => 'missing_plugin_class'];
+                continue;
+            }
+
+            if (!class_exists($class)) {
+                $skippedPlugins[] = ['plugin' => $class, 'reason' => 'class_not_found'];
+                continue;
+            }
+
+            if (!in_array(PluginInterface::class, class_implements($class), true)) {
+                $skippedPlugins[] = ['plugin' => $class, 'reason' => 'invalid_interface'];
+                continue;
+            }
+
+            $weight = $pluginDef['weight'] ?? 0;
+            $weight = is_int($weight) ? $weight : 0;
+
+            // Use class:index as unique ID to support multiple instances of the same plugin
+            $uniqueId = $class . ':' . $index;
+
+            $lazyObjectRegistry->add(
+                $uniqueId,
+                fn(): object => new $class($pluginDef['metadata'] ?? [], $pluginDef['config'] ?? []),
+                $weight
+            );
+
+            $enabledPlugins[] = [
+                'plugin' => $class,
+                'weight' => $weight,
+            ];
+        }
+
+        $manager = new self($lazyObjectRegistry);
+
+        if ($enabledPlugins !== []) {
+            $manager->getLogger()->debug('Plugins loaded from array', [
+                'enabled_plugins' => $enabledPlugins,
+                'enabled_count' => count($enabledPlugins),
+            ]);
+        }
+
+        if ($skippedPlugins !== []) {
+            $manager->getLogger()->debug('Plugins skipped from array', [
                 'skipped_plugins' => $skippedPlugins,
                 'skipped_count' => count($skippedPlugins),
             ]);

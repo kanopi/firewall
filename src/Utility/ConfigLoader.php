@@ -245,6 +245,9 @@ final class ConfigLoader
      * - The 'priority' key is preserved from the base config (not overridden)
      * - The 'config' array is appended (not replaced)
      *
+     * Special handling for plugins: array (new format):
+     * - Entries are APPENDED (not replaced) to support multiple plugin files
+     *
      * @param array<string,mixed> $base
      *   Left-hand/base configuration.
      * @param array<string,mixed> $over
@@ -266,6 +269,17 @@ final class ConfigLoader
             }
 
             if (\is_array($v) && \is_array($base[$k])) {
+                // Special handling for 'plugins' array at root level: append entries
+                if ($k === 'plugins' && $path === []) {
+                    $baseIsList = $base[$k] === [] || \array_keys($base[$k]) === \range(0, \count($base[$k]) - 1);
+                    $overIsList = $v === [] || \array_keys($v) === \range(0, \count($v) - 1);
+
+                    if ($baseIsList && $overIsList) {
+                        $base[$k] = array_merge($base[$k], $v);
+                        continue;
+                    }
+                }
+
                 // Detect plugin configuration: path is [block|bypass][PluginClassName]
                 $isPluginConfig = count($currentPath) === 2
                     && in_array($currentPath[0], ['block', 'bypass'], true)
