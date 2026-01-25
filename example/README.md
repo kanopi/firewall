@@ -90,7 +90,23 @@ This tells the firewall to use the IP from `X-Forwarded-For` instead of the dire
 
 ### Testing IP-Based Blocking
 
-Create or modify `example/config.yml`:
+Create or modify `example/config.yml`.
+
+**New Format (Recommended):**
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - '192.168.1.0/24'      # Block entire subnet
+      - '10.0.0.1'            # Block specific IP
+      - '8.8.8.0-8.8.8.255'   # Block IP range
+```
+
+**Legacy Format:**
 
 ```yaml
 block:
@@ -161,6 +177,37 @@ The GeoLocation and ASN plugins require MaxMind GeoIP2 databases. You have two o
 4. **Configure the firewall to use the databases**:
 
    In your `config.yml`:
+
+   **New Format (Recommended):**
+   ```yaml
+   plugins:
+     - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+       response: block
+       weight: 0
+       enable: true
+       metadata:
+         reader:
+           type: reader
+           db: /usr/local/share/GeoIP/GeoLite2-City.mmdb
+       config:
+         - country:CN    # Block China
+         - country:RU    # Block Russia
+         - '!country:US' # Block everything except US
+
+     - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+       response: block
+       weight: 0
+       enable: true
+       metadata:
+         reader:
+           type: reader
+           db: /usr/local/share/GeoIP/GeoLite2-ASN.mmdb
+       config:
+         - asn:AS15169        # Block Google's ASN
+         - asn_org@contains:amazon  # Block Amazon ASNs
+   ```
+
+   **Legacy Format:**
    ```yaml
    block:
      Kanopi\Firewall\Plugins\GeoLocation:
@@ -319,6 +366,30 @@ done
 ```
 
 ### Example 4: Bypass Trusted IPs
+
+**New Format (Recommended):**
+
+```yaml
+plugins:
+  # Allow trusted IPs first (lower weight = runs first)
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -100
+    enable: true
+    config:
+      - '127.0.0.1'
+      - '192.168.0.0/16'
+
+  # Then apply blocking rules
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - '10.0.0.0/8'
+```
+
+**Legacy Format:**
 
 ```yaml
 bypass:
