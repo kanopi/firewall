@@ -144,9 +144,12 @@ trait FileTrait
             // Pre-existing file: only tighten if currently world- or group-
             // readable. Don't fight an operator who deliberately set 0640
             // for a specific log shipper, etc.
+            // Mask to the bottom 12 bits — `fileperms()` returns S_IFREG
+            // and friends too, and on some platforms (the CircleCI Docker
+            // base image, notably) chmod refuses modes carrying those.
             $perms = @fileperms($filePath);
             if ($perms !== false && ($perms & 0077) !== 0) {
-                @chmod($filePath, $perms & ~0077);
+                @chmod($filePath, ($perms & 07777) & ~0077);
             }
         }
 

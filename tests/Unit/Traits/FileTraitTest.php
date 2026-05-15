@@ -7,10 +7,19 @@ namespace Kanopi\Firewall\Tests\Unit\Traits;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Traits\FileTrait;
-use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
-#[CoversClass(FileTrait::class)]
+/**
+ * Coverage attribute intentionally omitted: `#[CoversTrait(FileTrait::class)]`
+ * and `#[CoversClass(FileTrait::class)]` both trigger loading of
+ * `SebastianBergmann\CodeUnit\TraitUnit`, which has a `final readonly`
+ * declaration that the `dg/bypass-finals` PHPUnit extension rewrites
+ * incompatibly on PHP 8.4, producing a fatal "non-readonly class extends
+ * readonly class" when the file storage tests run earlier in the suite
+ * and force the parent `CodeUnit` to be loaded with `readonly` intact.
+ * PHPUnit still attributes coverage to the trait via the lines it
+ * actually exercises.
+ */
 class FileTraitTest extends TestCase
 {
     private string $tempFile;
