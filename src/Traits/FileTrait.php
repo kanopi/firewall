@@ -119,12 +119,35 @@ trait FileTrait
 
     /**
      * Validate and confirm the file path.
+     *
+     * When the file does not yet exist, it is created with mode 0600 so the
+     * persisted firewall state (block list, rate-limit counters, request
+     * metadata) is not readable by other local users. Existing files have
+     * their permissions tightened to 0600 as well unless they're already
+     * more restrictive — this is best-effort and won't fail validation if
+     * the file's owner doesn't allow chmod.
      */
     protected function validateFilePath(string $filePath): string
     {
-        if (!file_exists($filePath) && !@touch($filePath)) {
+        $existed = file_exists($filePath);
+
+        if (!$existed && !@touch($filePath)) {
             $this->getLogger()->error('Unable to create storage file', ['file' => $filePath]);
             throw new StorageException(sprintf("Unable to create file at '%s'", $filePath));
+        }
+
+        if (!$existed) {
+            // Brand-new file: lock it down immediately, before any data is
+            // written. Other code paths in this trait will keep it at 0600.
+            @chmod($filePath, 0600);
+        } else {
+            // Pre-existing file: only tighten if currently world- or group-
+            // readable. Don't fight an operator who deliberately set 0640
+            // for a specific log shipper, etc.
+            $perms = @fileperms($filePath);
+            if ($perms !== false && ($perms & 0077) !== 0) {
+                @chmod($filePath, $perms & ~0077);
+            }
         }
 
         if (!is_readable($filePath)) {
@@ -138,5 +161,43 @@ trait FileTrait
         }
 
         return strval(realpath($filePath));
+    }
+
+    /**
+     * Return a per-install default storage path.
+     *
+     * The default sits in `sys_get_temp_dir()` (not hardcoded `/tmp`,
+     * which doesn't exist on every platform) inside a per-user, per-install
+     * subdirectory. Including the current uid and a hash of the install
+     * location keeps the filename from being trivially guessable across
+     * tenants on a shared host, and the subdirectory is created with mode
+     * 0700 so other local users can't list / replace files inside it.
+     *
+     * @param string $filename
+     *   The leaf filename, e.g. "storage_data.json".
+     *
+     * @return string
+     *   An absolute filesystem path safe to pass to validateFilePath().
+     */
+    protected function defaultStoragePath(string $filename): string
+    {
+        $fingerprint = substr(
+            hash(
+                'sha256',
+                (string) getmyuid() . '|' . __DIR__ . '|' . (string) phpversion()
+            ),
+            0,
+            16
+        );
+
+        $directory = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'kanopi-firewall-' . $fingerprint;
+
+        if (!is_dir($directory)) {
+            // Mode 0700 so the directory listing isn't visible to other users
+            // even if the temp directory itself is world-readable.
+            @mkdir($directory, 0700, true);
+        }
+
+        return $directory . DIRECTORY_SEPARATOR . $filename;
     }
 }

@@ -223,4 +223,97 @@ class FileTraitTest extends TestCase
             'A JSON encoding failure should be logged at error level'
         );
     }
+
+    /**
+     * Security regression: a freshly-created storage file must not be
+     * readable by group or other. Prior to the fix, files were created via
+     * `touch()` under the process umask — typically 022, producing 0644
+     * files that leaked block-list and rate-limit state to any local user.
+     */
+    public function testNewlyCreatedFileIsChmod0600(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('POSIX file permissions are meaningless on Windows.');
+        }
+
+        $target = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'filetrait_perms_' . uniqid() . '.json';
+        $this->assertFileDoesNotExist($target);
+
+        try {
+            $this->subject->validate($target);
+
+            $this->assertFileExists($target);
+            $perms = fileperms($target) & 0777;
+            $this->assertSame(
+                0600,
+                $perms,
+                sprintf('Expected new storage file to be 0600, got 0%o', $perms)
+            );
+        } finally {
+            @chmod($target, 0600);
+            @unlink($target);
+        }
+    }
+
+    /**
+     * Existing files that are group- or world-readable are tightened to
+     * remove those bits. Defense in depth for installs upgrading from a
+     * version that created `0644` files.
+     */
+    public function testExistingFileWithLoosePermsIsTightened(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('POSIX file permissions are meaningless on Windows.');
+        }
+
+        chmod($this->tempFile, 0644);
+        $before = fileperms($this->tempFile) & 0777;
+        $this->assertSame(0644, $before);
+
+        $this->subject->validate($this->tempFile);
+
+        $after = fileperms($this->tempFile) & 0777;
+        $this->assertSame(
+            0,
+            $after & 0077,
+            sprintf('Group/other bits should be stripped, got 0%o', $after)
+        );
+    }
+
+    /**
+     * `defaultStoragePath()` must:
+     *   * not return a path under bare `/tmp` (predictable filename),
+     *   * include a per-install fingerprint segment,
+     *   * create a 0700-mode subdirectory when first invoked.
+     */
+    public function testDefaultStoragePathLandsInPerInstallSubdirectory(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('POSIX file permissions are meaningless on Windows.');
+        }
+
+        $defaultRef = new \ReflectionMethod($this->subject, 'defaultStoragePath');
+        $defaultRef->setAccessible(true);
+
+        $path = $defaultRef->invoke($this->subject, 'storage_data.json');
+
+        $this->assertIsString($path);
+        $this->assertStringStartsWith(sys_get_temp_dir(), $path);
+        $this->assertStringContainsString('kanopi-firewall-', $path);
+        $this->assertStringEndsWith('storage_data.json', $path);
+
+        // The pre-fix default of '/tmp/storage_data.data' is no longer in use.
+        $this->assertNotSame('/tmp/storage_data.data', $path);
+        $this->assertNotSame('/tmp/storage_data.json', $path);
+
+        $directory = dirname($path);
+        $this->assertDirectoryExists($directory);
+
+        $dirPerms = fileperms($directory) & 0777;
+        $this->assertSame(
+            0,
+            $dirPerms & 0077,
+            sprintf('Default storage directory should be 0700, got 0%o', $dirPerms)
+        );
+    }
 }
