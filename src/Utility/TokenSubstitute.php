@@ -45,6 +45,80 @@ use Kanopi\Firewall\Exception\ConfigurationException;
 final class TokenSubstitute
 {
     /**
+     * Processors that can read or execute filesystem content and are therefore
+     * disabled by default. Operators that need them must call
+     * {@see self::enableUnsafeProcessors()} before any config is loaded.
+     *
+     * @var array<string, bool>
+     */
+    private static array $enabledUnsafeProcessors = [
+        'file' => false,
+        'require' => false,
+    ];
+
+    /**
+     * Absolute base directories that `file:`/`require:` may read from.
+     * Empty means "no restriction beyond is_file()+is_readable()" — only
+     * safe to use if the operator vets every path their env vars can
+     * produce. Populated via {@see self::enableUnsafeProcessors()}.
+     *
+     * @var list<string>
+     */
+    private static array $unsafeProcessorAllowedBaseDirs = [];
+
+    /**
+     * Opt in to the filesystem-touching processors.
+     *
+     * The `file` and `require` processors turn any env-var injection into
+     * LFI / RCE because they read or execute arbitrary paths. They are
+     * disabled by default; operators that need them must call this method
+     * explicitly during bootstrap and ideally constrain reads to a small
+     * set of base directories.
+     *
+     * @param list<string> $processors
+     *   Names of processors to enable. Only "file" and "require" are valid.
+     * @param list<string> $allowedBaseDirs
+     *   Absolute directories that the resolved path must live under via
+     *   `realpath()` prefix check. An empty list disables the prefix check
+     *   (not recommended in production).
+     */
+    public static function enableUnsafeProcessors(array $processors, array $allowedBaseDirs = []): void
+    {
+        foreach ($processors as $processor) {
+            $normalized = strtolower(trim((string) $processor));
+            if (!array_key_exists($normalized, self::$enabledUnsafeProcessors)) {
+                throw new ConfigurationException(sprintf('Unknown unsafe processor "%s"', $processor));
+            }
+
+            self::$enabledUnsafeProcessors[$normalized] = true;
+        }
+
+        $resolved = [];
+        foreach ($allowedBaseDirs as $dir) {
+            $real = realpath((string) $dir);
+            if ($real === false) {
+                throw new ConfigurationException(sprintf('Allowed base directory "%s" does not resolve', $dir));
+            }
+
+            $resolved[] = rtrim($real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        }
+
+        self::$unsafeProcessorAllowedBaseDirs = $resolved;
+    }
+
+    /**
+     * Reset the unsafe-processor configuration. Intended for tests.
+     */
+    public static function resetUnsafeProcessors(): void
+    {
+        foreach (array_keys(self::$enabledUnsafeProcessors) as $key) {
+            self::$enabledUnsafeProcessors[$key] = false;
+        }
+
+        self::$unsafeProcessorAllowedBaseDirs = [];
+    }
+
+    /**
      * Substitute %env(...)% placeholders in a value.
      *
      * @param mixed $value
@@ -59,6 +133,45 @@ final class TokenSubstitute
     public static function substitute(mixed $value): mixed
     {
         return self::resolvePlaceholders($value);
+    }
+
+    /**
+     * Validate that an unsafe processor is enabled and the resolved path
+     * sits under the operator-configured allowlist.
+     *
+     * @throws ConfigurationException
+     *   When the processor is disabled or the path escapes the allowlist.
+     */
+    private static function assertUnsafePathAllowed(string $processor, string $path): void
+    {
+        if ((self::$enabledUnsafeProcessors[$processor] ?? false) !== true) {
+            throw new ConfigurationException(sprintf(
+                'The "%s" env processor is disabled. Call TokenSubstitute::enableUnsafeProcessors([\'%s\']) during bootstrap to opt in.',
+                $processor,
+                $processor
+            ));
+        }
+
+        if (self::$unsafeProcessorAllowedBaseDirs === []) {
+            return;
+        }
+
+        $real = realpath($path);
+        if ($real === false) {
+            throw new ConfigurationException(sprintf('Path for %s processor does not resolve: %s', $processor, $path));
+        }
+
+        foreach (self::$unsafeProcessorAllowedBaseDirs as $base) {
+            if (str_starts_with($real . DIRECTORY_SEPARATOR, $base)) {
+                return;
+            }
+        }
+
+        throw new ConfigurationException(sprintf(
+            'Path for %s processor escapes the configured allowlist: %s',
+            $processor,
+            $real
+        ));
     }
 
     /**
@@ -324,6 +437,7 @@ final class TokenSubstitute
 
                 case 'file':
                     $p = (string) $val;
+                    self::assertUnsafePathAllowed('file', $p);
                     if (!\is_file($p) || !\is_readable($p)) {
                         throw new ConfigurationException(\sprintf('file:%s not found or unreadable (from %s)', $p, $var));
                     }
@@ -348,6 +462,7 @@ final class TokenSubstitute
                 case 'require':
                     // Include a PHP file and capture its return value
                     $p = (string) $val;
+                    self::assertUnsafePathAllowed('require', $p);
                     if (!\is_file($p) || !\is_readable($p)) {
                         throw new ConfigurationException(\sprintf('require:%s not found or unreadable (from %s)', $p, $var));
                     }

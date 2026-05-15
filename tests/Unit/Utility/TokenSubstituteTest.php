@@ -35,8 +35,18 @@ class TokenSubstituteTest extends AbstractTestCase
     protected function tearDown(): void
     {
         parent::tearDown();
+        TokenSubstitute::resetUnsafeProcessors();
         @unlink($this->tempFile);
         @unlink($this->tempPhpFile);
+    }
+
+    /**
+     * Enable the filesystem-touching processors for tests that need them.
+     * Mirrors the explicit opt-in operators must perform in production.
+     */
+    private function enableUnsafeProcessors(): void
+    {
+        TokenSubstitute::enableUnsafeProcessors(['file', 'require']);
     }
 
     // =====================================================================
@@ -305,6 +315,7 @@ class TokenSubstituteTest extends AbstractTestCase
         file_put_contents($tempFile, $phpCode);
 
         try {
+            $this->enableUnsafeProcessors();
             putenv("JSON_VAR={$tempFile}");
             $this->expectException(ConfigurationException::class);
             $this->expectExceptionMessage('Failed to encode array to JSON');
@@ -398,6 +409,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testFileProcessor(): void
     {
+        $this->enableUnsafeProcessors();
         putenv("FILE_VAR={$this->tempFile}");
         $result = TokenSubstitute::substitute('%env(file:FILE_VAR)%');
         $this->assertEquals('file content', $result);
@@ -405,6 +417,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testFileProcessorThrowsOnNonExistentFile(): void
     {
+        $this->enableUnsafeProcessors();
         putenv('FILE_VAR=/nonexistent/file.txt');
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('not found or unreadable');
@@ -413,6 +426,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testFileProcessorThrowsOnUnreadableFile(): void
     {
+        $this->enableUnsafeProcessors();
         $unreadable = tempnam(sys_get_temp_dir(), 'unreadable_');
         file_put_contents($unreadable, 'content');
         chmod($unreadable, 0000);
@@ -427,6 +441,81 @@ class TokenSubstituteTest extends AbstractTestCase
             chmod($unreadable, 0644);
             @unlink($unreadable);
         }
+    }
+
+    /**
+     * Security regression: with default config, the `file:` processor
+     * must throw rather than silently reading arbitrary paths.
+     */
+    public function testFileProcessorDisabledByDefault(): void
+    {
+        putenv("FILE_VAR={$this->tempFile}");
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('"file" env processor is disabled');
+        TokenSubstitute::substitute('%env(file:FILE_VAR)%');
+    }
+
+    /**
+     * Enabling the processor with an allowlist must reject paths that
+     * resolve outside that allowlist, even if the env var points to a
+     * readable file.
+     */
+    public function testFileProcessorRejectsPathOutsideAllowlist(): void
+    {
+        $allowedDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'allowlist_' . uniqid();
+        mkdir($allowedDir, 0700);
+
+        // tempFile sits in sys_get_temp_dir() directly, not under $allowedDir.
+        TokenSubstitute::enableUnsafeProcessors(['file'], [$allowedDir]);
+
+        putenv("FILE_VAR={$this->tempFile}");
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            $this->expectExceptionMessage('escapes the configured allowlist');
+            TokenSubstitute::substitute('%env(file:FILE_VAR)%');
+        } finally {
+            @rmdir($allowedDir);
+        }
+    }
+
+    /**
+     * Enabling with an allowlist must let through paths that ARE under
+     * one of the allowed base directories — proving the allowlist isn't
+     * over-broad.
+     */
+    public function testFileProcessorAllowsPathInsideAllowlist(): void
+    {
+        $allowedDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'allowlist_ok_' . uniqid();
+        mkdir($allowedDir, 0700);
+        $allowedFile = $allowedDir . DIRECTORY_SEPARATOR . 'secret.txt';
+        file_put_contents($allowedFile, 'allowed content');
+
+        TokenSubstitute::enableUnsafeProcessors(['file'], [$allowedDir]);
+
+        putenv("FILE_VAR={$allowedFile}");
+
+        try {
+            $result = TokenSubstitute::substitute('%env(file:FILE_VAR)%');
+            $this->assertSame('allowed content', $result);
+        } finally {
+            @unlink($allowedFile);
+            @rmdir($allowedDir);
+        }
+    }
+
+    public function testEnableUnsafeProcessorsRejectsUnknownProcessor(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('Unknown unsafe processor');
+        TokenSubstitute::enableUnsafeProcessors(['eval']);
+    }
+
+    public function testEnableUnsafeProcessorsRejectsUnresolvableBaseDir(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('does not resolve');
+        TokenSubstitute::enableUnsafeProcessors(['file'], ['/nonexistent/' . uniqid()]);
     }
 
     // =====================================================================
@@ -459,6 +548,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testRequireProcessor(): void
     {
+        $this->enableUnsafeProcessors();
         putenv("REQUIRE_VAR={$this->tempPhpFile}");
         $result = TokenSubstitute::substitute('%env(require:REQUIRE_VAR)%');
         $this->assertIsArray($result);
@@ -467,6 +557,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testRequireProcessorThrowsOnNonExistentFile(): void
     {
+        $this->enableUnsafeProcessors();
         putenv('REQUIRE_VAR=/nonexistent/file.php');
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('not found or unreadable');
@@ -475,6 +566,7 @@ class TokenSubstituteTest extends AbstractTestCase
 
     public function testRequireProcessorThrowsOnUnreadableFile(): void
     {
+        $this->enableUnsafeProcessors();
         $unreadable = tempnam(sys_get_temp_dir(), 'unreadable_php_');
         file_put_contents($unreadable, '<?php return [];');
         chmod($unreadable, 0000);
@@ -488,6 +580,39 @@ class TokenSubstituteTest extends AbstractTestCase
         } finally {
             chmod($unreadable, 0644);
             @unlink($unreadable);
+        }
+    }
+
+    /**
+     * Security regression: with default config, the `require:` processor
+     * must throw rather than executing arbitrary PHP files. Pre-fix any
+     * env-var injection became immediate RCE.
+     */
+    public function testRequireProcessorDisabledByDefault(): void
+    {
+        putenv("REQUIRE_VAR={$this->tempPhpFile}");
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('"require" env processor is disabled');
+        TokenSubstitute::substitute('%env(require:REQUIRE_VAR)%');
+    }
+
+    public function testRequireProcessorRespectsAllowlist(): void
+    {
+        $allowedDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'req_allowlist_' . uniqid();
+        mkdir($allowedDir, 0700);
+
+        // The pre-existing tempPhpFile is in sys_get_temp_dir() directly,
+        // not under the allowlisted subdir, so the prefix check fails.
+        TokenSubstitute::enableUnsafeProcessors(['require'], [$allowedDir]);
+
+        putenv("REQUIRE_VAR={$this->tempPhpFile}");
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            $this->expectExceptionMessage('escapes the configured allowlist');
+            TokenSubstitute::substitute('%env(require:REQUIRE_VAR)%');
+        } finally {
+            @rmdir($allowedDir);
         }
     }
 
