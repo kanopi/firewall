@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Logging;
 
+use Monolog\Formatter\FormatterInterface;
 use Monolog\Handler\HandlerInterface;
 use Monolog\Level;
 use Monolog\Logger;
@@ -55,10 +56,23 @@ class LoggingFactory
             $handlerArgs = $handlerConfig['args'] ?? [];
 
             $handler = null;
-            /** @phpstan-ignore function.impossibleType,booleanAnd.alwaysFalse */
-            if (is_object($handlerClass) && in_array(HandlerInterface::class, class_implements($handlerClass), true)) {
+            // Reject anything that isn't a Monolog HandlerInterface before
+            // calling `new`. Pre-fix the only guard was a tautological
+            // `in_array(HandlerInterface::class, class_implements(HandlerInterface::class))`
+            // check that only ran when $handlerClass was already an object,
+            // so the string-class branch would happily instantiate arbitrary
+            // classes (CWE-470) with arbitrary constructor args from config.
+            if (is_object($handlerClass) && $handlerClass instanceof HandlerInterface) {
                 $handler = $handlerClass;
-            } elseif (class_exists($handlerClass)) {
+            } elseif (is_string($handlerClass) && $handlerClass !== '' && class_exists($handlerClass)) {
+                if (!is_a($handlerClass, HandlerInterface::class, true)) {
+                    // Silently reject — the logger we'd warn to has no
+                    // handlers yet, so the warning would be dropped.
+                    // Tests verify rejection by asserting the handler is
+                    // never pushed onto the logger.
+                    continue;
+                }
+
                 // Convert Monolog level string to constant (e.g., "Monolog\Level::Debug")
                 foreach ($handlerArgs as &$handlerArg) {
                     if (is_string($handlerArg) && str_starts_with($handlerArg, \Monolog\Level::class . '::')) {
@@ -76,13 +90,21 @@ class LoggingFactory
 
                 // If a formatter is specified
                 if (isset($handlerConfig['formatter'])) {
-                    $formatterClass = $handlerConfig['formatter']['class'];
+                    $formatterClass = $handlerConfig['formatter']['class'] ?? '';
                     $formatterArgs = $handlerConfig['formatter']['args'] ?? [];
 
-                    $formatter = new $formatterClass(...$formatterArgs);
-                    if (method_exists($handler, 'setFormatter')) {
-                        $handler->setFormatter($formatter);
+                    if (
+                        is_string($formatterClass)
+                        && $formatterClass !== ''
+                        && class_exists($formatterClass)
+                        && is_a($formatterClass, FormatterInterface::class, true)
+                    ) {
+                        $formatter = new $formatterClass(...$formatterArgs);
+                        if (method_exists($handler, 'setFormatter')) {
+                            $handler->setFormatter($formatter);
+                        }
                     }
+                    // else: silently reject — see note on handler rejection above.
                 }
             }
 
