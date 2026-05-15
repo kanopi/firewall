@@ -76,6 +76,23 @@ if (class_exists('\Kanopi\Firewall\Firewall')) {
 }
 ```
 
+> **⚠️ Important: Configure trusted proxies before calling `Firewall::create()`**
+>
+> Every plugin in this library evaluates `$request->getClientIp()`. Symfony only honors `X-Forwarded-For` / `Forwarded` / `X-Real-IP` when the integrator has called `Symfony\Component\HttpFoundation\Request::setTrustedProxies(...)`. If your application sits behind a load balancer, CDN, or reverse proxy and you skip this step, **attackers can spoof their source IP via `X-Forwarded-For` and bypass IP/CIDR allow-lists, block-lists, and per-IP rate limits**.
+>
+> ```php
+> use Symfony\Component\HttpFoundation\Request;
+>
+> Request::setTrustedProxies(
+>     ['10.0.0.0/8', '192.168.0.0/16'],                  // YOUR proxy CIDRs
+>     Request::HEADER_X_FORWARDED_FOR | Request::HEADER_X_FORWARDED_PROTO
+> );
+>
+> \Kanopi\Firewall\Firewall::create([__DIR__ . '/config/firewall.yml'])->evaluate();
+> ```
+>
+> When trusted proxies are not configured, `Firewall::create()` logs a warning to the configured logger. To make a missing trusted-proxies setup a hard startup failure instead, set `global.require_trusted_proxies: true` in your config — the library will then throw `ConfigurationException` rather than start in a spoofable state.
+
 ### Minimal Configuration Example
 
 Create a `config/firewall.yml` file:
@@ -386,6 +403,7 @@ global:
   mode: block
   banning_status_code: 429
   banning_message: '{{request.id}} Request Banned'
+  require_trusted_proxies: false
   blocking_escalation:
     - window: 300
       offense: 0
@@ -399,6 +417,17 @@ global:
       offense: 3
       duration: 0
 ```
+
+### Trusted Proxies
+
+`require_trusted_proxies` controls how `Firewall::create()` reacts when `Symfony\Component\HttpFoundation\Request::getTrustedProxies()` is empty:
+
+| Value | Behaviour |
+|-------|-----------|
+| `false` (default) | Logs a `warning` and continues. Suitable for development or when the application is reachable only directly. |
+| `true` | Throws `Kanopi\Firewall\Exception\ConfigurationException` and refuses to start. Recommended for production deployments behind a load balancer / CDN / reverse proxy. |
+
+See the trusted-proxies note in [Basic Implementation](#basic-implementation) for the `Request::setTrustedProxies(...)` call you need to add before `Firewall::create()`.
 
 ### Mode
 
