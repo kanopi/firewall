@@ -93,10 +93,12 @@ class FileStorage extends InMemoryStorage
      */
     public function recordOffense(string $key): bool
     {
-        $this->loadOffenseFile();
-        parent::recordOffense($key);
-        $this->persistOffenseFile();
-        return true;
+        return (bool) $this->withExclusiveLock($this->offensesFilePath, function () use ($key): bool {
+            $this->loadOffenseFile();
+            parent::recordOffense($key);
+            $this->persistOffenseFile();
+            return true;
+        });
     }
 
     /**
@@ -104,18 +106,20 @@ class FileStorage extends InMemoryStorage
      */
     public function set(string $key, array $value, int $expire = 0): bool
     {
-        $this->loadStorageFile();
-        $result = parent::set($key, $value, $expire);
-        if ($result) {
-            $this->getLogger()->debug('Value set in file storage', [
-                'key' => $key,
-                'expire' => $expire,
-                'file' => $this->filePath,
-            ]);
-            $this->persistStorageFile();
-        }
+        return (bool) $this->withExclusiveLock($this->filePath, function () use ($key, $value, $expire): bool {
+            $this->loadStorageFile();
+            $result = parent::set($key, $value, $expire);
+            if ($result) {
+                $this->getLogger()->debug('Value set in file storage', [
+                    'key' => $key,
+                    'expire' => $expire,
+                    'file' => $this->filePath,
+                ]);
+                $this->persistStorageFile();
+            }
 
-        return $result;
+            return $result;
+        });
     }
 
     /**
@@ -132,17 +136,19 @@ class FileStorage extends InMemoryStorage
      */
     public function delete(string $key): bool
     {
-        $this->loadStorageFile();
-        $result = parent::delete($key);
-        if ($result) {
-            $this->getLogger()->debug('Key deleted from file storage', [
-                'key' => $key,
-                'file' => $this->filePath,
-            ]);
-            $this->persistStorageFile();
-        }
+        return (bool) $this->withExclusiveLock($this->filePath, function () use ($key): bool {
+            $this->loadStorageFile();
+            $result = parent::delete($key);
+            if ($result) {
+                $this->getLogger()->debug('Key deleted from file storage', [
+                    'key' => $key,
+                    'file' => $this->filePath,
+                ]);
+                $this->persistStorageFile();
+            }
 
-        return $result;
+            return $result;
+        });
     }
 
     /**
@@ -150,17 +156,19 @@ class FileStorage extends InMemoryStorage
      */
     public function reset(): bool
     {
-        $previousCount = count($this->store);
-        $result = parent::reset();
-        if ($result) {
-            $this->getLogger()->info('File storage reset', [
-                'file' => $this->filePath,
-                'entries_cleared' => $previousCount,
-            ]);
-            $this->persistStorageFile();
-        }
+        return (bool) $this->withExclusiveLock($this->filePath, function (): bool {
+            $previousCount = count($this->store);
+            $result = parent::reset();
+            if ($result) {
+                $this->getLogger()->info('File storage reset', [
+                    'file' => $this->filePath,
+                    'entries_cleared' => $previousCount,
+                ]);
+                $this->persistStorageFile();
+            }
 
-        return $result;
+            return $result;
+        });
     }
 
     /**
@@ -168,13 +176,15 @@ class FileStorage extends InMemoryStorage
      */
     public function addToExpire(string $key, int $amount): bool
     {
-        $this->loadStorageFile();
-        $return = parent::addToExpire($key, $amount);
-        if ($return) {
-            $this->persistStorageFile();
-        }
+        return (bool) $this->withExclusiveLock($this->filePath, function () use ($key, $amount): bool {
+            $this->loadStorageFile();
+            $return = parent::addToExpire($key, $amount);
+            if ($return) {
+                $this->persistStorageFile();
+            }
 
-        return $return;
+            return $return;
+        });
     }
 
     /**

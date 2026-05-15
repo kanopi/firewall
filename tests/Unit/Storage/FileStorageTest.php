@@ -37,6 +37,8 @@ class FileStorageTest extends AbstractTestCase
         // Restore permissions so it can be cleaned up after test
         @chmod($this->tempFile, 0600);
         @unlink($this->tempFile);
+        // Lock sidecar from any flock-using write path
+        @unlink($this->tempFile . '.lock');
     }
 
     /**
@@ -233,5 +235,64 @@ class FileStorageTest extends AbstractTestCase
 
         @unlink($tempStorageFile);
         @unlink($tempOffenseFile);
+    }
+
+    /**
+     * Regression for #59: a sidecar `.lock` file should exist next to the
+     * data file after any write path. Pre-fix the read-modify-write
+     * sequence didn't lock at all, so concurrent writers could lose data.
+     */
+    public function testSetCreatesSidecarLockFile(): void
+    {
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, null));
+
+        $this->assertFileExists($this->tempFile . '.lock');
+    }
+
+    /**
+     * Regression for #59: when `flock()` itself fails (e.g. NFS without lock
+     * daemon support), the call must not throw — fall back to running the
+     * action and log a warning. We simulate the failure via the namespace
+     * override and verify the write still lands.
+     */
+    public function testSetFallsBackWhenFlockFails(): void
+    {
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+
+        $GLOBALS['simulate_flock_failure'] = true;
+        try {
+            $this->assertTrue(
+                $storage->set($request->getClientIp(), $storage->getStorageData($request, null))
+            );
+        } finally {
+            $GLOBALS['simulate_flock_failure'] = false;
+        }
+
+        // Even without a lock, the write still has to persist.
+        $reloaded = new FileStorage(['storage_file' => $this->tempFile]);
+        $this->assertSame('abc', $reloaded->get($request->getClientIp())['event_id']);
+    }
+
+    /**
+     * Regression for #59: when the lock file itself can't be opened, the
+     * call must not throw. Use the fopen-failure shim from
+     * NamespaceOverrides.
+     */
+    public function testSetFallsBackWhenLockFileCannotBeOpened(): void
+    {
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+
+        $GLOBALS['simulate_fopen_failure'] = true;
+        try {
+            $this->assertTrue(
+                $storage->set($request->getClientIp(), $storage->getStorageData($request, null))
+            );
+        } finally {
+            $GLOBALS['simulate_fopen_failure'] = false;
+        }
     }
 }
