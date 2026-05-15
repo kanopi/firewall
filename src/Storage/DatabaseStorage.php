@@ -304,12 +304,19 @@ class DatabaseStorage extends AbstractStorageBase
     public function addToExpire(string $key, int $amount): bool
     {
         try {
+            // Pre-fix this string-concatenated a `' u'` alias onto the
+            // table name to satisfy `u.expire` qualified column references.
+            // That route bypasses DBAL's identifier-quoting path (the
+            // `@phpstan-ignore-next-line` was masking the type complaint),
+            // which is fine for the safe table names we ship but breaks
+            // on reserved words, schema-qualified names, or any identifier
+            // that needs quoting. DBAL handles unqualified column names
+            // in `set()` and `where()` without the alias.
             $result = $this->connection->createQueryBuilder()
-                /** @phpstan-ignore-next-line  */
-                ->update($this->config['storage_table'] . ' u')
-                ->set('u.expire', 'u.expire + :expire')
+                ->update($this->config['storage_table'])
+                ->set('expire', 'expire + :expire')
                 ->where('remote_address = :remote_address')
-                ->andWhere('u.expire > 0')
+                ->andWhere('expire > 0')
                 ->setParameter('remote_address', $key)
                 ->setParameter('expire', $amount)
                 ->executeQuery()

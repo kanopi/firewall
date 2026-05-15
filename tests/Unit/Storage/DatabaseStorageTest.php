@@ -282,11 +282,44 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('andWhere')->willReturnSelf();
         $this->mockBuilder->method('setParameter')->willReturnSelf();
 
-        // ✅ Ensure executeQuery returns a valid Result mock
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
 
         $request = $this->getRequest('1.2.3.4');
         $this->assertTrue($this->storage->addToExpire($request->getClientIp(), 300));
+    }
+
+    /**
+     * Regression for #61: addToExpire() must pass the bare table name to
+     * QueryBuilder::update(), not a string-concatenated alias. The pre-fix
+     * code did `->update($table . ' u')` and qualified column refs as
+     * `u.expire`, sidestepping DBAL's identifier-quoting path entirely.
+     * Asserting on the arguments protects against a regression to the
+     * alias style on a table name that needs quoting.
+     */
+    public function testAddToExpirePassesUnqualifiedTableAndColumns(): void
+    {
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+
+        $this->mockBuilder->expects($this->once())
+            ->method('update')
+            ->with('firewall_storage')
+            ->willReturnSelf();
+        $this->mockBuilder->expects($this->once())
+            ->method('set')
+            ->with('expire', 'expire + :expire')
+            ->willReturnSelf();
+        $this->mockBuilder->expects($this->once())
+            ->method('where')
+            ->with('remote_address = :remote_address')
+            ->willReturnSelf();
+        $this->mockBuilder->expects($this->once())
+            ->method('andWhere')
+            ->with('expire > 0')
+            ->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+
+        $this->assertTrue($this->storage->addToExpire('1.2.3.4', 60));
     }
 
     /**
