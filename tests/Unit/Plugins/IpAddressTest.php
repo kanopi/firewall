@@ -324,5 +324,68 @@ class IpAddressTest extends AbstractTestCase
 
         $this->assertFalse($method->invoke($plugin, '192.168.1.5', '192.168.1.1-0'));
     }
+
+    /**
+     * Regression for #63: out-of-range and non-numeric IPv4 prefix lengths.
+     *
+     * Pre-fix `isInBlock` did `(int) $prefixLength` and trusted the result,
+     * so `/33`, `/-1`, and `/abc` produced nonsense byte/bit math and could
+     * either trivially match or trivially not match — a wrong-allowlist
+     * configuration adjacency.
+     */
+    public function testIsInBlockRejectsOutOfRangeIpv4Prefix(): void
+    {
+        $ref = new \ReflectionClass(\Kanopi\Firewall\Plugins\IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $plugin = new \Kanopi\Firewall\Plugins\IpAddress();
+
+        // /33 is out of range for IPv4 (max 32).
+        $this->assertFalse($method->invoke($plugin, '10.0.0.5', '10.0.0.0/33'));
+        // /300 — pre-fix produced odd matches via integer overflow into byte math.
+        $this->assertFalse($method->invoke($plugin, '10.0.0.5', '10.0.0.0/300'));
+        // Negative — ctype_digit on "-1" is false (leading sign).
+        $this->assertFalse($method->invoke($plugin, '10.0.0.5', '10.0.0.0/-1'));
+        // Non-numeric.
+        $this->assertFalse($method->invoke($plugin, '10.0.0.5', '10.0.0.0/abc'));
+        // Empty prefix after the slash.
+        $this->assertFalse($method->invoke($plugin, '10.0.0.5', '10.0.0.0/'));
+        // Decimal prefix length.
+        $this->assertFalse($method->invoke($plugin, '10.0.0.5', '10.0.0.0/24.5'));
+    }
+
+    /**
+     * Regression for #63: IPv6 prefix length must be 0..128.
+     */
+    public function testIsInBlockRejectsOutOfRangeIpv6Prefix(): void
+    {
+        $ref = new \ReflectionClass(\Kanopi\Firewall\Plugins\IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $plugin = new \Kanopi\Firewall\Plugins\IpAddress();
+
+        // /129 exceeds the IPv6 maximum (128).
+        $this->assertFalse($method->invoke($plugin, '2001:db8::1', '2001:db8::/129'));
+        // /200 also above max.
+        $this->assertFalse($method->invoke($plugin, '2001:db8::1', '2001:db8::/200'));
+    }
+
+    /**
+     * Regression for #63: boundary prefix lengths (/32 and /128) still work.
+     */
+    public function testIsInBlockAcceptsBoundaryPrefixLengths(): void
+    {
+        $ref = new \ReflectionClass(\Kanopi\Firewall\Plugins\IpAddress::class);
+        $method = $ref->getMethod('isInBlock');
+        $method->setAccessible(true);
+        $plugin = new \Kanopi\Firewall\Plugins\IpAddress();
+
+        // /32 is the single-host case for IPv4.
+        $this->assertTrue($method->invoke($plugin, '10.0.0.5', '10.0.0.5/32'));
+        $this->assertFalse($method->invoke($plugin, '10.0.0.6', '10.0.0.5/32'));
+        // /128 is the single-host case for IPv6.
+        $this->assertTrue($method->invoke($plugin, '2001:db8::1', '2001:db8::1/128'));
+        $this->assertFalse($method->invoke($plugin, '2001:db8::2', '2001:db8::1/128'));
+    }
 }
 
