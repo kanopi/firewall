@@ -111,7 +111,18 @@ class DatabaseStorage extends AbstractStorageBase
     public function set(string $key, array $value, int $expire = 0): bool
     {
         try {
-            $value['request'] = @serialize($value['request']);
+            // Pre-fix this used `@serialize(...)`, so any future caller who
+            // unserialize()'d the column would have a CWE-502 PHP Object
+            // Injection sink fed by the row's content. `serializeRequest()`
+            // returns a plain array (scalars + nested arrays + headers/
+            // cookies bags pre-flattened to arrays), which JSON round-trips
+            // cleanly. The `@` is dropped — json_encode failures should be
+            // logged and abort the write rather than store a "false" string
+            // silently.
+            $value['request'] = json_encode(
+                $value['request'],
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES
+            );
             $value['timestamp'] = strtotime((string) $value['timestamp']);
             $data = array_merge(
                 $value,

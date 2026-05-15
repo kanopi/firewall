@@ -96,6 +96,71 @@ class DatabaseStorageTest extends AbstractTestCase
     }
 
     /**
+     * Regression for #62: the `request` column must be JSON, not the
+     * output of `serialize()`. The previous behaviour was a latent
+     * CWE-502 footgun — any future caller who decided to `unserialize()`
+     * that column would be feeding row contents into PHP object
+     * instantiation.
+     */
+    public function testSetStoresRequestColumnAsJson(): void
+    {
+        // Capture only the insert into the storage table — set() also inserts
+        // into the offenses table via recordOffense(), which would otherwise
+        // clobber the captured payload.
+        $captured = null;
+        $this->mockConnection->method('insert')
+            ->willReturnCallback(function (string $table, array $data) use (&$captured): int {
+                if ($table === 'firewall_storage') {
+                    $captured = $data;
+                }
+
+                return 1;
+            });
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        // `exists()` runs first via fetchAllAssociative; return empty so set() takes the insert branch.
+        $this->mockResult->method('fetchAllAssociative')->willReturn([]);
+
+        // `enforceTableData()` filters $data against the column list returned
+        // by the schema manager. Return a stub-column map so the `request`
+        // key actually survives to the insert() call.
+        $stubColumn = $this->createMock(\Doctrine\DBAL\Schema\Column::class);
+        $this->mockSchema->method('listTableColumns')->willReturn([
+            'remote_address' => $stubColumn,
+            'plugin' => $stubColumn,
+            'event_id' => $stubColumn,
+            'timestamp' => $stubColumn,
+            'request' => $stubColumn,
+            'expire' => $stubColumn,
+            'metadata' => $stubColumn,
+        ]);
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('TestPlugin');
+
+        $request = $this->getRequest('1.2.3.4');
+        $this->assertTrue($this->storage->set($request->getClientIp(), $this->storage->getStorageData($request, $plugin)));
+
+        $this->assertIsArray($captured);
+        $this->assertArrayHasKey('request', $captured);
+        $stored = $captured['request'];
+        $this->assertIsString($stored);
+        // JSON must begin with `{` (associative) or `[` (list), never PHP's serialize() prefixes.
+        $this->assertTrue(in_array($stored[0] ?? '', ['{', '['], true), 'Stored request column is not JSON');
+        $this->assertStringStartsNotWith('a:', $stored, 'Stored request must not be serialize() array payload');
+        $this->assertStringStartsNotWith('O:', $stored, 'Stored request must not be serialize() object payload');
+
+        $decoded = json_decode($stored, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertIsArray($decoded);
+        $this->assertSame('GET', $decoded['method']);
+    }
+
+    /**
      * Tests delete() succeeds and returns true.
      */
     public function testDelete(): void
