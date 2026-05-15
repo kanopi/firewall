@@ -268,11 +268,31 @@ class FileTraitTest extends TestCase
      * Existing files that are group- or world-readable are tightened to
      * remove those bits. Defense in depth for installs upgrading from a
      * version that created `0644` files.
+     *
+     * Some sandboxed CI environments (notably the CircleCI cimg/php
+     * Docker images) silently no-op `chmod()` on files in `sys_get_temp_dir()`
+     * — `chmod()` itself returns true, but a subsequent `fileperms()`
+     * read still shows the old mode. We probe that behaviour up front
+     * and skip the test when the FS doesn't propagate the change; the
+     * security-relevant `validateFilePath()` code path still runs there
+     * but is exercised end-to-end on developer machines and any FS
+     * where chmod is honoured.
      */
     public function testExistingFileWithLoosePermsIsTightened(): void
     {
         if (DIRECTORY_SEPARATOR === '\\') {
             $this->markTestSkipped('POSIX file permissions are meaningless on Windows.');
+        }
+
+        $probe = tempnam(sys_get_temp_dir(), 'filetrait_chmod_probe_');
+        $probeOk = @chmod($probe, 0644) && (fileperms($probe) & 0777) === 0644
+            && @chmod($probe, 0600) && (fileperms($probe) & 0777) === 0600;
+        @unlink($probe);
+
+        if (!$probeOk) {
+            $this->markTestSkipped(
+                'chmod() is not honoured by the underlying filesystem; skipping the chmod-tightening assertion.'
+            );
         }
 
         chmod($this->tempFile, 0644);
@@ -294,6 +314,17 @@ class FileTraitTest extends TestCase
      *   * not return a path under bare `/tmp` (predictable filename),
      *   * include a per-install fingerprint segment,
      *   * create a 0700-mode subdirectory when first invoked.
+     *
+     * Note: an earlier version of this test wiped the per-install
+     * subdirectory beforehand so the mkdir branch ran on every test
+     * invocation. That triggered an order-dependent failure in
+     * `ConfigTest::testFileGetContents*` under coverage mode — PHPUnit's
+     * cached source-map (`tempnam(sys_get_temp_dir(), 'phpunit_')`)
+     * sits next to our `kanopi-firewall-*` subdir, and the rapid
+     * mkdir/rmdir cycle appears to invalidate the cached path on
+     * some filesystems. Rely on PHPUnit's lazily-created subdirectory
+     * persisting across runs; the mkdir branch is still exercised on
+     * the first ever run in any environment.
      */
     public function testDefaultStoragePathLandsInPerInstallSubdirectory(): void
     {
@@ -303,21 +334,6 @@ class FileTraitTest extends TestCase
 
         $defaultRef = new \ReflectionMethod($this->subject, 'defaultStoragePath');
         $defaultRef->setAccessible(true);
-
-        // Wipe the per-install subdirectory first so the test exercises
-        // the mkdir branch — otherwise repeat runs hit the "already
-        // exists" branch and leave the create path uncovered.
-        $probe = $defaultRef->invoke($this->subject, 'probe.json');
-        $directory = dirname($probe);
-        if (is_dir($directory)) {
-            foreach (glob($directory . '/*') ?: [] as $f) {
-                @unlink($f);
-            }
-
-            @rmdir($directory);
-        }
-
-        $this->assertDirectoryDoesNotExist($directory, 'precondition: dir must be absent so mkdir runs');
 
         $path = $defaultRef->invoke($this->subject, 'storage_data.json');
 
@@ -330,6 +346,7 @@ class FileTraitTest extends TestCase
         $this->assertNotSame('/tmp/storage_data.data', $path);
         $this->assertNotSame('/tmp/storage_data.json', $path);
 
+        $directory = dirname($path);
         $this->assertDirectoryExists($directory);
 
         $dirPerms = fileperms($directory) & 0777;
