@@ -24,16 +24,26 @@ class GeoLocation extends AbstractPluginBase
     use GeoLocationTrait;
 
     /**
+     * Whether the operator configured a reader at all (vs. an init failure).
+     */
+    private bool $readerConfigured;
+
+    /**
      * Constructs a new GeoLocation object.
      */
     public function __construct(array $metadata = [], array $config = [])
     {
         parent::__construct($metadata, $config);
+        $this->readerConfigured = isset($metadata['reader']);
         $this->reader = $this->createService($metadata['reader']['type'] ?? null, $metadata['reader'] ?? []);
 
         if ($this->reader === null) {
-            $this->getLogger()->warning('GeoLocation reader not configured or failed to initialize', [
+            // Init failure on a configured reader is a security-relevant
+            // event. See Asn::__construct for rationale.
+            $level = $this->readerConfigured ? 'error' : 'debug';
+            $this->getLogger()->log($level, 'GeoLocation reader not available', [
                 'reader_type' => $metadata['reader']['type'] ?? 'none',
+                'reader_configured' => $this->readerConfigured,
             ]);
         } else {
             $this->getLogger()->debug('GeoLocation reader initialized', [
@@ -64,8 +74,16 @@ class GeoLocation extends AbstractPluginBase
     public function evaluate(Request $request): bool
     {
         if ($this->reader === null) {
-            $this->getLogger()->debug('GeoLocation evaluation skipped - no reader available', $this->getContext($request));
-            return false;
+            if (!$this->readerConfigured) {
+                $this->getLogger()->debug('GeoLocation evaluation skipped - no reader configured', $this->getContext($request));
+                return false;
+            }
+
+            $failOpen = (bool) ($this->metadata['fail_open'] ?? false);
+            $this->getLogger()->error('GeoLocation reader unavailable - failing ' . ($failOpen ? 'open' : 'closed'), $this->getContext($request, [
+                'fail_open' => $failOpen,
+            ]));
+            return !$failOpen;
         }
 
         $this->getLogger()->debug('GeoLocation evaluation started', $this->getContext($request));

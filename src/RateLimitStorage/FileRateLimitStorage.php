@@ -28,7 +28,9 @@ class FileRateLimitStorage extends InMemoryRateLimitStorage
     public function __construct(array $config = [])
     {
         parent::__construct($config);
-        $this->filePath = $this->validateFilePath(strval($config['file'] ?? '/tmp/ratelimit_data.data'));
+        $this->filePath = $this->validateFilePath(
+            strval($config['file'] ?? $this->defaultStoragePath('ratelimit_data.json'))
+        );
 
         $this->getLogger()->debug('File rate limit storage initialized', [
             'file' => $this->filePath,

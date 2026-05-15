@@ -64,37 +64,44 @@ class Config
     /**
      * Get the contents of a file from a remote url.
      *
+     * Precedence for `$cacheDir` / `$ttl` / `$timeout`:
+     *   1. The explicit argument value, if the caller passed one (not null).
+     *   2. The `KANOPI_FIREWALL_CACHE_*` constant if defined.
+     *   3. The built-in default.
+     *
+     * Explicit args used to be silently overridden by the constants, which
+     * forced reflection-based tests to use `#[RunInSeparateProcess]` to get
+     * a constant-free environment. Now the production caller (`loadFile()`)
+     * still gets constant-driven configuration because it passes nothing,
+     * while reflection tests can exercise the explicit-argument paths
+     * without forking.
+     *
      * @param string $url
      *   URL to query and return the contents.
-     * @param string $cacheDir
-     *   Location to store the cached fie.
-     * @param int $ttl
-     *   How long to keep the cached file for.
-     * @param float $timeout
-     *   Timeout amount for remote connection.
+     * @param string|null $cacheDir
+     *   Location to store the cached file. Null falls back to
+     *   `KANOPI_FIREWALL_CACHE_DIR` or `/tmp/cache`.
+     * @param int|null $ttl
+     *   How long to keep the cached file for. Null falls back to
+     *   `KANOPI_FIREWALL_CACHE_TTL` or 3600.
+     * @param float|null $timeout
+     *   Timeout amount for remote connection. Null falls back to
+     *   `KANOPI_FIREWALL_CACHE_TIMEOUT` or 5.0.
      *
      * @return string|false
      *   Return file contents if allowed or false if ran into issues.
      */
-    private static function fileGetContents(string $url, string $cacheDir = '/tmp/cache', int $ttl = 3600, float $timeout = 5.0): string|false
+    private static function fileGetContents(string $url, ?string $cacheDir = null, ?int $ttl = null, ?float $timeout = null): string|false
     {
-        if (defined('KANOPI_FIREWALL_CACHE_DIR')) {
-            $cacheDir = KANOPI_FIREWALL_CACHE_DIR;
-        }
-
-        if (defined('KANOPI_FIREWALL_CACHE_TTL')) {
-            $ttl = intval(KANOPI_FIREWALL_CACHE_TTL);
-        }
-
-        if (defined('KANOPI_FIREWALL_CACHE_TIMEOUT')) {
-            $timeout = floatval(KANOPI_FIREWALL_CACHE_TIMEOUT);
-        }
+        $cacheDir ??= defined('KANOPI_FIREWALL_CACHE_DIR') ? (string) KANOPI_FIREWALL_CACHE_DIR : '/tmp/cache';
+        $ttl ??= defined('KANOPI_FIREWALL_CACHE_TTL') ? intval(KANOPI_FIREWALL_CACHE_TTL) : 3600;
+        $timeout ??= defined('KANOPI_FIREWALL_CACHE_TIMEOUT') ? floatval(KANOPI_FIREWALL_CACHE_TIMEOUT) : 5.0;
 
         if (!is_dir($cacheDir)) {
             mkdir($cacheDir, 0775, true);
         }
 
-        $cacheFile = rtrim((string) $cacheDir, '/') . '/' . md5($url) . '.cache';
+        $cacheFile = rtrim($cacheDir, '/') . '/' . md5($url) . '.cache';
 
         if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $ttl)) {
             return file_get_contents($cacheFile);

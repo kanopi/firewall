@@ -747,23 +747,15 @@ class ConfigTest extends AbstractTestCase
     /**
      * Test fileGetContents() successful fetch IN SAME PROCESS (for code coverage)
      *
-     * This test runs without RunInSeparateProcess to ensure code coverage tracks lines 113-114
+     * This test runs without RunInSeparateProcess to ensure code coverage tracks lines 113-114.
+     * With the explicit-arg precedence in `fileGetContents()`, the passed
+     * `$tempCacheDir` is used regardless of any constants other tests defined.
      */
     public function testFileGetContentsSuccessSameProcess(): void
     {
-        // Use a temp cache dir that might be overridden by constants
         $tempCacheDir = sys_get_temp_dir() . '/reflection_same_process_' . uniqid();
-
-        // If constants are defined, they will override our parameter
-        // But we need to clean up whichever directory gets used
-        if (defined('KANOPI_FIREWALL_CACHE_DIR')) {
-            $actualCacheDir = KANOPI_FIREWALL_CACHE_DIR;
-        } else {
-            $actualCacheDir = $tempCacheDir;
-            mkdir($actualCacheDir, 0775, true);
-        }
-
-        $this->tempCacheDir = $actualCacheDir;
+        mkdir($tempCacheDir, 0775, true);
+        $this->tempCacheDir = $tempCacheDir;
 
         // Use example.com with a unique query parameter to avoid cache hits from other tests
         $url = 'https://example.com/?testrun=' . uniqid();
@@ -777,7 +769,7 @@ class ConfigTest extends AbstractTestCase
         }
 
         // Delete cache file if it exists from previous runs
-        $cacheFile = $actualCacheDir . '/' . md5($url) . '.cache';
+        $cacheFile = $tempCacheDir . '/' . md5($url) . '.cache';
         if (file_exists($cacheFile)) {
             unlink($cacheFile);
         }
@@ -788,8 +780,7 @@ class ConfigTest extends AbstractTestCase
         // Should return content (not false) - THIS HITS LINE 114
         $this->assertNotFalse($result, 'Should successfully fetch from ' . $url);
 
-        // Cache file should exist - THIS VERIFIES LINE 113 WAS HIT
-        $cacheFile = $actualCacheDir . '/' . md5($url) . '.cache';
+        // Cache file should exist in the explicit cache dir we passed
         $this->assertFileExists($cacheFile);
 
         // Cache file should contain the fetched content
@@ -818,12 +809,12 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
-     * Test fileGetContents() respects KANOPI_FIREWALL_CACHE_DIR constant
+     * Test fileGetContents() respects an explicit custom cache directory.
      *
-     * Tests line 81-83: Constant overrides default cache directory
+     * Previously used `#[RunInSeparateProcess]` to escape constants that
+     * other tests had defined; with the explicit-arg precedence fix in
+     * `Config::fileGetContents()` it no longer needs to fork.
      */
-    #[RunInSeparateProcess]
-    #[PreserveGlobalState(false)]
     public function testFileGetContentsRespectsCustomCacheDir(): void
     {
         // Note: If constant is already defined, we test with provided parameter
@@ -846,12 +837,11 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
-     * Test fileGetContents() with custom TTL parameter
+     * Test fileGetContents() with custom TTL parameter.
      *
-     * Tests that custom TTL is used for cache expiration check
+     * No `#[RunInSeparateProcess]` needed — see the note on
+     * `testFileGetContentsRespectsCustomCacheDir`.
      */
-    #[RunInSeparateProcess]
-    #[PreserveGlobalState(false)]
     public function testFileGetContentsCustomTTL(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_custom_ttl_' . uniqid();
@@ -907,12 +897,11 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
-     * Test fileGetContents() creates cache directory if it doesn't exist
+     * Test fileGetContents() creates cache directory if it doesn't exist.
      *
-     * Tests line 93-95: Auto-creation of cache directory
+     * No `#[RunInSeparateProcess]` needed — see the note on
+     * `testFileGetContentsRespectsCustomCacheDir`.
      */
-    #[RunInSeparateProcess]
-    #[PreserveGlobalState(false)]
     public function testFileGetContentsAutoCreatesCacheDirectory(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_auto_create_' . uniqid();
@@ -940,12 +929,11 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
-     * Test fileGetContents() with cache file MD5 naming
+     * Test fileGetContents() with cache file MD5 naming.
      *
-     * Tests line 97: Cache file is named using MD5 hash of URL
+     * No `#[RunInSeparateProcess]` needed — see the note on
+     * `testFileGetContentsRespectsCustomCacheDir`.
      */
-    #[RunInSeparateProcess]
-    #[PreserveGlobalState(false)]
     public function testFileGetContentsCacheFileNaming(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_md5_naming_' . uniqid();
@@ -971,12 +959,11 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
-     * Test fileGetContents() strips trailing slash from cache directory
+     * Test fileGetContents() strips trailing slash from cache directory.
      *
-     * Tests line 97: rtrim() removes trailing slash
+     * No `#[RunInSeparateProcess]` needed — see the note on
+     * `testFileGetContentsRespectsCustomCacheDir`.
      */
-    #[RunInSeparateProcess]
-    #[PreserveGlobalState(false)]
     public function testFileGetContentsStripsCacheDirTrailingSlash(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_trailing_slash_' . uniqid();

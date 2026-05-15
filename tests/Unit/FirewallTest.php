@@ -263,6 +263,130 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Attacker-controlled header values must be HTML-escaped in the
+     * banning message body — otherwise an integrator who uses the
+     * documented {{request.header.*}} placeholder hands out reflected XSS.
+     */
+    public function testInterpolateEscapesHtmlInHeader(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+            'HTTP_USER_AGENT' => '<script>alert(1)</script>',
+        ]);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($firewall, 'Blocked: {{request.header.user-agent}}', $request);
+
+        $this->assertStringNotContainsString('<script>', $result);
+        $this->assertStringContainsString('&lt;script&gt;', $result);
+        $this->assertStringContainsString('alert(1)', $result);
+    }
+
+    /**
+     * Attacker-controlled query values must be HTML-escaped.
+     */
+    public function testInterpolateEscapesHtmlInQuery(): void
+    {
+        $request = Request::create('/', 'GET', ['q' => '"><img src=x onerror=alert(1)>'], [], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+        ]);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($firewall, '{{request.query.q}}', $request);
+
+        $this->assertStringNotContainsString('<img', $result);
+        $this->assertStringContainsString('&lt;img', $result);
+        $this->assertStringContainsString('&quot;', $result);
+    }
+
+    /**
+     * Attacker-controlled POST values must be HTML-escaped.
+     */
+    public function testInterpolateEscapesHtmlInPost(): void
+    {
+        $request = Request::create('/', 'POST', ['name' => '<b>x</b>'], [], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+        ]);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($firewall, '{{request.post.name}}', $request);
+
+        $this->assertSame('&lt;b&gt;x&lt;/b&gt;', $result);
+    }
+
+    /**
+     * Attacker-controlled cookie values must be HTML-escaped.
+     */
+    public function testInterpolateEscapesHtmlInCookie(): void
+    {
+        $request = Request::create('/', 'GET', [], ['session' => '<svg/onload=alert(1)>'], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+        ]);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($firewall, '{{request.cookie.session}}', $request);
+
+        $this->assertStringNotContainsString('<svg', $result);
+        $this->assertStringContainsString('&lt;svg', $result);
+    }
+
+    /**
+     * CR/LF in substituted values must be stripped so they cannot inject
+     * additional response headers / body lines.
+     */
+    public function testInterpolateStripsCrlfFromSubstitutions(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+            'HTTP_USER_AGENT' => "line1\r\nSet-Cookie: pwned=1\r\n\r\n<html>injected",
+        ]);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($firewall, '{{request.header.user-agent}}', $request);
+
+        $this->assertStringNotContainsString("\r", $result);
+        $this->assertStringNotContainsString("\n", $result);
+    }
+
+    /**
+     * Arbitrary context values are also untrusted (callers may pass user
+     * input) and must be escaped consistently with the request-derived
+     * placeholders.
+     */
+    public function testInterpolateEscapesArbitraryContextValues(): void
+    {
+        $request = Request::create('/');
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(
+            $firewall,
+            '{{user_input}}',
+            $request,
+            ['user_input' => '<script>alert(1)</script>']
+        );
+
+        $this->assertSame('&lt;script&gt;alert(1)&lt;/script&gt;', $result);
+    }
+
+    /**
      * Confirm that is blocked returns true.
      */
     public function testDetermineExpirationTime(): void

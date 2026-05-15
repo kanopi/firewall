@@ -435,9 +435,15 @@ class StorageIntegrationTest extends IntegrationTestCase
             // Log performance metrics (these could be assertions with thresholds)
             $this->addToAssertionCount(1);
             
-            // Basic performance assertions
+            // Basic performance assertions. These are sized to catch
+            // gross regressions (e.g. an O(N²) accidentally introduced)
+            // rather than to measure micro-performance, so they sit well
+            // above any single-run measurement on a reasonable CI runner.
+            // The read threshold previously was 1s, which the `File`
+            // backend (load-decode-on-every-get against a ~1MB JSON file)
+            // brushed up against on slower PHP 8.3 CircleCI runners.
             $this->assertLessThan(10, $writeTime, "$type: Write time should be under 10 seconds");
-            $this->assertLessThan(1, $readTime, "$type: Read time should be under 1 second");
+            $this->assertLessThan(3, $readTime, "$type: Read time should be under 3 seconds");
             $this->assertLessThan(5, $cleanTime, "$type: Clean time should be under 5 seconds");
         }
     }

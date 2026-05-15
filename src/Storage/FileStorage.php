@@ -41,11 +41,15 @@ class FileStorage extends InMemoryStorage
     {
         parent::__construct($config);
 
-        $this->filePath = $this->validateFilePath(strval($config['storage_file'] ?? '/tmp/storage_data.data'));
+        $this->filePath = $this->validateFilePath(
+            strval($config['storage_file'] ?? $this->defaultStoragePath('storage_data.json'))
+        );
         $this->loadStorageFile();
         $this->getLogger()->debug('FileStorage initialized', ['file' => $this->filePath]);
 
-        $this->offensesFilePath = $this->validateFilePath(strval($config['offense_file'] ?? (\dirname(\realpath($this->filePath)) . '/storage_data_offenses.data')));
+        $this->offensesFilePath = $this->validateFilePath(
+            strval($config['offense_file'] ?? (\dirname(\realpath($this->filePath)) . '/storage_data_offenses.json'))
+        );
         $this->loadOffenseFile();
         $this->getLogger()->debug('FileStorage offenses initialized', ['file' => $this->offensesFilePath]);
     }

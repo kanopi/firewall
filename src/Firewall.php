@@ -278,6 +278,16 @@ final class Firewall
 
         // @codeCoverageIgnoreStart
         http_response_code($statusCode);
+        // Force a non-HTML content type so any escaped placeholders that
+        // still slip into the body (e.g. attacker-supplied bytes inside a
+        // {{request.*}} substitution) cannot render as markup in the
+        // victim's browser. Belt-and-braces alongside the htmlspecialchars
+        // in interpolateTemplate().
+        if (!headers_sent()) {
+            header('Content-Type: text/plain; charset=utf-8');
+            header('X-Content-Type-Options: nosniff');
+        }
+
         exit($banningMessage);
         // @codeCoverageIgnoreEnd
     }
@@ -312,55 +322,66 @@ final class Firewall
      */
     protected function interpolateTemplate(string $template, Request $request, array $context = []): string
     {
+        // Values from the request (headers, query, post, cookies) are attacker-
+        // controlled. The interpolated output is written verbatim to the HTTP
+        // response by sendBlockingResponse(), so every substitution is HTML-
+        // escaped and stripped of CR/LF to prevent reflected XSS and response-
+        // splitting (CWE-79, CWE-113).
+        $sanitize = static function (mixed $value): string {
+            $string = is_scalar($value) || $value === null ? (string) $value : '';
+            $string = str_replace(["\r", "\n"], '', $string);
+            return htmlspecialchars($string, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        };
+
         return strval(preg_replace_callback(
             '/\{\{\s*([a-zA-Z0-9_\.\-]+)\s*\}\}/',
-            function (array $m) use ($request, $context) {
+            function (array $m) use ($request, $context, $sanitize): string {
                 $key = strtolower($m[1]);
 
                 // 1. Built-in request values ------------------------------------
                 switch ($key) {
                     case 'request.method':
-                        return $request->getMethod();
+                        return $sanitize($request->getMethod());
                     case 'request.scheme':
-                        return $request->getScheme();
+                        return $sanitize($request->getScheme());
                     case 'request.host':
-                        return $request->getHost();
+                        return $sanitize($request->getHost());
                     case 'request.path':
-                        return $request->getPathInfo();
+                        return $sanitize($request->getPathInfo());
                     case 'request.ip':
-                        return $request->getClientIp();
+                        return $sanitize($request->getClientIp());
                     case 'request.id':
-                        return $request->attributes->get('x-request-id');
+                        return $sanitize($request->attributes->get('x-request-id'));
                 }
 
                 // 2. request.header.<name>
                 if (str_starts_with($key, 'request.header.')) {
                     $header = substr($key, 15);          // after 'request.header.'
-                    return (string) $request->headers->get($header, '');
+                    return $sanitize($request->headers->get($header, ''));
                 }
 
                 // 3. request.query.<param>
                 if (str_starts_with($key, 'request.query.')) {
                     $param = substr($key, 14);
-                    return (string) $request->query->get($param, '');
+                    return $sanitize($request->query->get($param, ''));
                 }
 
                 // 4. request.post.<param>  (body fields)
                 if (str_starts_with($key, 'request.post.')) {
                     $param = substr($key, 13);
-                    return (string) $request->request->get($param, '');
+                    return $sanitize($request->request->get($param, ''));
                 }
 
                 // 5. request.cookie.<name>
                 if (str_starts_with($key, 'request.cookie.')) {
                     $param = substr($key, 15);
                     $cookies = array_change_key_case($request->cookies->all());
-                    return strval($cookies[$param] ?? '');
+                    return $sanitize($cookies[$param] ?? '');
                 }
 
                 // 6. Arbitrary context values ----------------------------------
                 if (array_key_exists($m[1], $context)) {
-                    return (string) $context[$m[1]];
+                    return $sanitize($context[$m[1]]);
                 }
 
                 // 7. Unknown placeholder – leave as-is so caller sees what was missing

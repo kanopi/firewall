@@ -5,6 +5,7 @@ namespace Kanopi\Firewall\Tests\Unit\Utility;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\ConfigLoader;
+use Kanopi\Firewall\Utility\TokenSubstitute;
 
 final class ConfigLoaderTest extends AbstractTestCase
 {
@@ -54,6 +55,7 @@ final class ConfigLoaderTest extends AbstractTestCase
      */
     protected function tearDown(): void
     {
+        TokenSubstitute::resetUnsafeProcessors();
         // Best-effort cleanup
         $this->rrmdir($this->tmp);
         parent::tearDown();
@@ -85,6 +87,10 @@ final class ConfigLoaderTest extends AbstractTestCase
 
     public function testLoadParsesEnvTypedInterpolationIncludesAndRelativePaths(): void
     {
+        // Test uses %env(file:APP_FILE)% which is disabled by default
+        // (see security fix #55). Opt in explicitly for the duration.
+        TokenSubstitute::enableUnsafeProcessors(['file']);
+
         // Sub-includes (glob + {config_dir} + explicit)
         $this->write($this->more . '/a.one.yml', "from_glob: one\n");
         $this->write($this->more . '/b.two.yml', "from_glob: two\n");

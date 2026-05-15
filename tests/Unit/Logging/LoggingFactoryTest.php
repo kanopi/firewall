@@ -184,4 +184,115 @@ final class LoggingFactoryTest extends TestCase
         $this->assertInstanceOf(TestHandler::class, $logger->getHandlers()[0]);
     }
 
+    /**
+     * Security regression: a class name in the logger config that does not
+     * implement HandlerInterface must not be instantiated. Pre-fix the
+     * factory would happily `new $handlerClass(...$handlerArgs)` with
+     * arbitrary classes (CWE-470) — a classic gadget-chain entry point if
+     * the config is reachable through an attacker-influenced channel.
+     *
+     * We use a canary class with an instantiation counter to prove the
+     * constructor was never reached, not just that no handler was pushed.
+     */
+    public function testCreateRejectsHandlerClassThatIsNotHandlerInterface(): void
+    {
+        if (!class_exists(LoggingFactoryCanaryNonHandler::class, false)) {
+            eval(<<<'PHP'
+                namespace Kanopi\Firewall\Tests\Unit\Logging;
+                class LoggingFactoryCanaryNonHandler {
+                    public static int $instantiations = 0;
+                    public function __construct(mixed ...$args) {
+                        self::$instantiations++;
+                    }
+                }
+                PHP);
+        }
+
+        LoggingFactoryCanaryNonHandler::$instantiations = 0;
+
+        $logger = LoggingFactory::create([
+            ['class' => LoggingFactoryCanaryNonHandler::class, 'args' => ['attacker-payload']],
+        ]);
+
+        $this->assertCount(0, $logger->getHandlers(), 'No handler should be pushed');
+        $this->assertSame(
+            0,
+            LoggingFactoryCanaryNonHandler::$instantiations,
+            'A non-HandlerInterface class must not be instantiated from config'
+        );
+    }
+
+    /**
+     * Security regression: a formatter class that does not implement
+     * FormatterInterface must be rejected. The handler is still created
+     * (the misconfiguration only affects formatting), but no arbitrary
+     * formatter class may be instantiated from config.
+     */
+    public function testCreateRejectsFormatterClassThatIsNotFormatterInterface(): void
+    {
+        if (!class_exists(LoggingFactoryCanaryNonFormatter::class, false)) {
+            eval(<<<'PHP'
+                namespace Kanopi\Firewall\Tests\Unit\Logging;
+                class LoggingFactoryCanaryNonFormatter {
+                    public static int $instantiations = 0;
+                    public function __construct(mixed ...$args) {
+                        self::$instantiations++;
+                    }
+                }
+                PHP);
+        }
+
+        LoggingFactoryCanaryNonFormatter::$instantiations = 0;
+
+        $logger = LoggingFactory::create([
+            [
+                'class' => TestHandler::class,
+                'formatter' => [
+                    'class' => LoggingFactoryCanaryNonFormatter::class,
+                    'args' => ['attacker-payload'],
+                ],
+            ],
+        ]);
+
+        $handlers = $logger->getHandlers();
+        $this->assertCount(1, $handlers, 'The legitimate handler should still be installed');
+        $this->assertInstanceOf(TestHandler::class, $handlers[0]);
+        $this->assertSame(
+            0,
+            LoggingFactoryCanaryNonFormatter::$instantiations,
+            'A non-FormatterInterface class must not be instantiated from config'
+        );
+    }
+
+    /**
+     * Empty / missing formatter class values are dropped silently and do
+     * not break the surrounding handler construction.
+     */
+    public function testCreateIgnoresEmptyFormatterClass(): void
+    {
+        $logger = LoggingFactory::create([
+            [
+                'class' => TestHandler::class,
+                'formatter' => [
+                    'class' => '',
+                    'args' => [],
+                ],
+            ],
+        ]);
+
+        $this->assertCount(1, $logger->getHandlers());
+    }
+
+    /**
+     * Empty / missing handler class strings should be rejected before
+     * `class_exists()` is called with an empty string.
+     */
+    public function testCreateIgnoresEmptyHandlerClass(): void
+    {
+        $logger = LoggingFactory::create([
+            ['class' => '', 'args' => []],
+        ]);
+
+        $this->assertCount(0, $logger->getHandlers());
+    }
 }

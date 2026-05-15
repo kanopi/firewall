@@ -24,16 +24,28 @@ class Asn extends AbstractPluginBase
     use GeoLocationTrait;
 
     /**
+     * Whether the operator configured a reader at all (vs. an init failure).
+     */
+    private bool $readerConfigured;
+
+    /**
      * Generates a new ASN Object.
      */
     public function __construct(array $metadata = [], array $config = [])
     {
         parent::__construct($metadata, $config);
+        $this->readerConfigured = isset($metadata['reader']);
         $this->reader = $this->createService($metadata['reader']['type'] ?? null, $metadata['reader'] ?? []);
 
         if ($this->reader === null) {
-            $this->getLogger()->warning('ASN reader not configured or failed to initialize', [
+            // Init failure on a configured reader is a security-relevant
+            // event: pre-fix we silently fail-open. Surface it loudly so
+            // ops notice; the evaluate() path now fails closed unless the
+            // operator explicitly opted in via metadata.fail_open.
+            $level = $this->readerConfigured ? 'error' : 'debug';
+            $this->getLogger()->log($level, 'ASN reader not available', [
                 'reader_type' => $metadata['reader']['type'] ?? 'none',
+                'reader_configured' => $this->readerConfigured,
             ]);
         } else {
             $this->getLogger()->debug('ASN reader initialized', [
@@ -64,10 +76,26 @@ class Asn extends AbstractPluginBase
     public function evaluate(Request $request): bool
     {
         if ($this->reader === null) {
-            $this->getLogger()->debug('ASN evaluation skipped - no reader available', [
-                'request_id' => $request->attributes->get('x-request-id'),
-            ]);
-            return false;
+            // Two cases:
+            //   1. Operator never configured a reader -> plugin is a no-op
+            //      and must allow the request through (returning true here
+            //      would block everything for an opt-out user).
+            //   2. Operator configured a reader but init failed -> the
+            //      block list is silently disabled. Fail closed by default;
+            //      operators that prefer availability over enforcement set
+            //      metadata.fail_open = true.
+            if (!$this->readerConfigured) {
+                $this->getLogger()->debug('ASN evaluation skipped - no reader configured', [
+                    'request_id' => $request->attributes->get('x-request-id'),
+                ]);
+                return false;
+            }
+
+            $failOpen = (bool) ($this->metadata['fail_open'] ?? false);
+            $this->getLogger()->error('ASN reader unavailable - failing ' . ($failOpen ? 'open' : 'closed'), $this->getContext($request, [
+                'fail_open' => $failOpen,
+            ]));
+            return !$failOpen;
         }
 
         $this->getLogger()->debug('ASN evaluation started', $this->getContext($request));

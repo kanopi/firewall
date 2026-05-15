@@ -53,8 +53,29 @@ class AsnTest extends AbstractTestCase
         $this->assertSame('Evaluate the GeoLocation Details', $plugin->getDescription());
     }
 
-    /** Tests evaluate() returns false when reader is null. */
-    public function testEvaluateReturnsFalseIfReaderIsNull(): void
+    /**
+     * Tests evaluate() returns false (allow) when no reader was ever
+     * configured — the plugin is a no-op for opt-out users.
+     */
+    public function testEvaluateAllowsWhenReaderNotConfigured(): void
+    {
+        $plugin = new class() extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return null;
+            }
+        };
+
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '1.1.1.1']);
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * Security regression: when the operator configured a reader but
+     * initialization failed, the plugin must fail closed (return true =
+     * block) by default. Pre-fix this returned false (allow), which
+     * silently disabled the block list on every transient init failure.
+     */
+    public function testEvaluateFailsClosedWhenConfiguredReaderInitFails(): void
     {
         $plugin = new class(['reader' => ['type' => 'mock', 'instance' => null]]) extends Asn {
             protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
@@ -63,7 +84,33 @@ class AsnTest extends AbstractTestCase
         };
 
         $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '1.1.1.1']);
-        $this->assertFalse($plugin->evaluate($request));
+        $this->assertTrue(
+            $plugin->evaluate($request),
+            'Configured-but-broken reader must fail closed (block) by default'
+        );
+    }
+
+    /**
+     * Operators that prefer availability over enforcement can opt back in
+     * to the pre-fix behaviour via metadata.fail_open = true. This is a
+     * deliberate, documented escape hatch — not the default.
+     */
+    public function testEvaluateRespectsExplicitFailOpenOptIn(): void
+    {
+        $plugin = new class([
+            'reader' => ['type' => 'mock', 'instance' => null],
+            'fail_open' => true,
+        ]) extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return null;
+            }
+        };
+
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '1.1.1.1']);
+        $this->assertFalse(
+            $plugin->evaluate($request),
+            'metadata.fail_open=true must restore pre-fix allow-on-failure semantics'
+        );
     }
 
     /** Tests getRequestValue returns false if the reader is null. */
