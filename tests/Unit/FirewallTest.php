@@ -195,6 +195,51 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Regression test for #60: two IDs generated back-to-back from the same
+     * client IP must differ. Pre-fix the ID was `md5($clientIp . time())`,
+     * so two calls from the same IP within the same second returned the
+     * same value — and an attacker who knew the IP and approximate time
+     * could brute-force IDs across a tiny key space.
+     */
+    public function testGenerateIdIsNotDerivableFromClientIpAndTime(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '8.8.8.8']);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('generateId');
+        $method->setAccessible(true);
+
+        $first = $method->invoke($firewall, $request);
+        $second = $method->invoke($firewall, $request);
+
+        $this->assertNotSame($first, $second, 'Two IDs from the same IP must not match (predictable ID regression).');
+        $this->assertNotSame(strtoupper(md5('8.8.8.8' . time())), $first, 'ID must not be derivable from md5(ip . time()).');
+    }
+
+    /**
+     * Regression test for #60: 1000 IDs from the same IP should all be
+     * distinct. A 128-bit CSPRNG output has birthday-collision odds at
+     * ~1 in 2^64 for this sample size — effectively zero. Pre-fix this
+     * would routinely collide whenever the loop completed inside one
+     * wall-clock second.
+     */
+    public function testGenerateIdProducesDistinctValuesUnderLoad(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '8.8.8.8']);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('generateId');
+        $method->setAccessible(true);
+
+        $ids = [];
+        for ($i = 0; $i < 1000; $i++) {
+            $ids[] = $method->invoke($firewall, $request);
+        }
+
+        $this->assertCount(1000, array_unique($ids));
+    }
+
+    /**
      * Test the Firewall::create method.
      */
     public function testStaticCreate(): void

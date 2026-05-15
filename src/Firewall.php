@@ -221,15 +221,31 @@ final class Firewall
     /**
      * Generate an ID for the following Request.
      *
+     * Pre-fix this returned `strtoupper(md5($clientIp . time()))`, which
+     * is predictable per-IP at 1-second resolution. The ID is reflected
+     * to clients via `{{request.id}}` in the default banning message and
+     * shipped to downstream logs, so a predictable ID lets an attacker
+     * brute-force IDs for nearby timestamps on a shared proxy IP and
+     * stitch log lines together. 128 bits from a CSPRNG removes both.
+     *
+     * The `$request` parameter is retained (unused) so callers and
+     * subclasses that depend on the signature don't break.
+     *
      * @param Request $request
-     *   Request to get information from.
+     *   Request to get information from (unused — kept for backwards
+     *   compatibility with subclasses overriding this method).
      *
      * @return string
-     *   Return the ID associated with the request.
+     *   Return the ID associated with the request: 32 uppercase hex
+     *   characters from `bin2hex(random_bytes(16))`.
      */
     protected function generateId(Request $request): string
     {
-        return strtoupper(md5($request->getClientIp() . time()));
+        // The Request is no longer used — the previous predictable ID was
+        // derived from $request->getClientIp() and time(). Kept on the
+        // signature so subclasses overriding this method still satisfy the
+        // contract.
+        return strtoupper(bin2hex(random_bytes(16)));
     }
 
     /**
