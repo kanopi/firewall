@@ -295,6 +295,21 @@ class FileTraitTest extends TestCase
         $defaultRef = new \ReflectionMethod($this->subject, 'defaultStoragePath');
         $defaultRef->setAccessible(true);
 
+        // Wipe the per-install subdirectory first so the test exercises
+        // the mkdir branch — otherwise repeat runs hit the "already
+        // exists" branch and leave the create path uncovered.
+        $probe = $defaultRef->invoke($this->subject, 'probe.json');
+        $directory = dirname($probe);
+        if (is_dir($directory)) {
+            foreach (glob($directory . '/*') ?: [] as $f) {
+                @unlink($f);
+            }
+
+            @rmdir($directory);
+        }
+
+        $this->assertDirectoryDoesNotExist($directory, 'precondition: dir must be absent so mkdir runs');
+
         $path = $defaultRef->invoke($this->subject, 'storage_data.json');
 
         $this->assertIsString($path);
@@ -306,7 +321,6 @@ class FileTraitTest extends TestCase
         $this->assertNotSame('/tmp/storage_data.data', $path);
         $this->assertNotSame('/tmp/storage_data.json', $path);
 
-        $directory = dirname($path);
         $this->assertDirectoryExists($directory);
 
         $dirPerms = fileperms($directory) & 0777;
@@ -315,5 +329,12 @@ class FileTraitTest extends TestCase
             $dirPerms & 0077,
             sprintf('Default storage directory should be 0700, got 0%o', $dirPerms)
         );
+
+        // Second call should hit the "directory already exists" branch
+        // without trying to mkdir again — verify by checking the path
+        // round-trips and the dir is still 0700.
+        $secondPath = $defaultRef->invoke($this->subject, 'storage_data.json');
+        $this->assertSame($path, $secondPath);
+        $this->assertSame($dirPerms, fileperms($directory) & 0777);
     }
 }

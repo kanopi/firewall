@@ -504,6 +504,29 @@ class TokenSubstituteTest extends AbstractTestCase
         }
     }
 
+    /**
+     * With an allowlist configured, a non-existent target file must be
+     * rejected via the "does not resolve" branch — not the disabled-by-
+     * default branch (since the processor is opted in here).
+     */
+    public function testFileProcessorWithAllowlistRejectsNonResolvablePath(): void
+    {
+        $allowedDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'allowlist_resolve_' . uniqid();
+        mkdir($allowedDir, 0700);
+
+        TokenSubstitute::enableUnsafeProcessors(['file'], [$allowedDir]);
+
+        putenv('FILE_VAR=' . $allowedDir . DIRECTORY_SEPARATOR . 'never-existed-' . uniqid());
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            $this->expectExceptionMessage('does not resolve');
+            TokenSubstitute::substitute('%env(file:FILE_VAR)%');
+        } finally {
+            @rmdir($allowedDir);
+        }
+    }
+
     public function testEnableUnsafeProcessorsRejectsUnknownProcessor(): void
     {
         $this->expectException(ConfigurationException::class);
