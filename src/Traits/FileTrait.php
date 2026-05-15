@@ -46,10 +46,10 @@ trait FileTrait
 
         try {
             $data = json_decode($contents, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
-        } catch (\JsonException $e) {
+        } catch (\JsonException $jsonException) {
             $this->getLogger()->warning('Failed to decode storage file as JSON, ignoring contents', [
                 'file' => $filePath,
-                'error' => $e->getMessage(),
+                'error' => $jsonException->getMessage(),
             ]);
             return $store;
         }
@@ -93,10 +93,10 @@ trait FileTrait
     {
         try {
             $encoded = json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        } catch (\JsonException $e) {
+        } catch (\JsonException $jsonException) {
             $this->getLogger()->error('Failed to encode data for storage file', [
                 'file' => $filePath,
-                'error' => $e->getMessage(),
+                'error' => $jsonException->getMessage(),
             ]);
             return false;
         }
@@ -184,7 +184,7 @@ trait FileTrait
         $fingerprint = substr(
             hash(
                 'sha256',
-                (string) getmyuid() . '|' . __DIR__ . '|' . (string) phpversion()
+                getmyuid() . '|' . __DIR__ . '|' . phpversion()
             ),
             0,
             16

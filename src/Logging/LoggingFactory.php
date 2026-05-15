@@ -26,15 +26,16 @@ class LoggingFactory
     /**
      * Create a new Logging Element.
      *
-     * @param array<int, array{
-     *   class: class-string,
-     *   args?: list<mixed>,
-     *   formatter?: array{
-     *     class: class-string,
-     *     args?: list<mixed>
-     *   }
-     * }> $config
-     *   Configuration for the Logging Element.
+     * The `class` entries are intentionally typed as `mixed`: the config
+     * is sourced from YAML / user input and can carry any value at
+     * runtime. The runtime guards on those values are what enforce the
+     * HandlerInterface / FormatterInterface contracts.
+     *
+     * @param array<int, mixed> $config
+     *   Configuration for the Logging Element. Each entry should be an
+     *   array with `class` (Monolog handler class or instance) plus
+     *   optional `args` and `formatter`. Non-array entries terminate
+     *   processing; non-conforming entries are silently dropped.
      * @param string $channel
      *   Channel name to use for the logger.
      */
@@ -46,12 +47,10 @@ class LoggingFactory
         ];
 
         foreach ($config as $handlerConfig) {
-            /** @phpstan-ignore function.alreadyNarrowedType  */
             if (!is_array($handlerConfig)) {
                 break;
             }
 
-            /** @phpstan-ignore nullCoalesce.offset */
             $handlerClass = $handlerConfig['class'] ?? '';
             $handlerArgs = $handlerConfig['args'] ?? [];
 
@@ -62,7 +61,7 @@ class LoggingFactory
             // check that only ran when $handlerClass was already an object,
             // so the string-class branch would happily instantiate arbitrary
             // classes (CWE-470) with arbitrary constructor args from config.
-            if (is_object($handlerClass) && $handlerClass instanceof HandlerInterface) {
+            if ($handlerClass instanceof HandlerInterface) {
                 $handler = $handlerClass;
             } elseif (is_string($handlerClass) && $handlerClass !== '' && class_exists($handlerClass)) {
                 if (!is_a($handlerClass, HandlerInterface::class, true)) {
@@ -85,7 +84,8 @@ class LoggingFactory
                     }
                 }
 
-                /** @var \Monolog\Handler\HandlerInterface $handler */
+                unset($handlerArg);
+
                 $handler = new $handlerClass(...$handlerArgs);
 
                 // If a formatter is specified
@@ -93,22 +93,23 @@ class LoggingFactory
                     $formatterClass = $handlerConfig['formatter']['class'] ?? '';
                     $formatterArgs = $handlerConfig['formatter']['args'] ?? [];
 
-                    if (
-                        is_string($formatterClass)
+                    $formatterIsValid = is_string($formatterClass)
                         && $formatterClass !== ''
                         && class_exists($formatterClass)
-                        && is_a($formatterClass, FormatterInterface::class, true)
-                    ) {
+                        && is_a($formatterClass, FormatterInterface::class, true);
+
+                    if ($formatterIsValid) {
                         $formatter = new $formatterClass(...$formatterArgs);
                         if (method_exists($handler, 'setFormatter')) {
                             $handler->setFormatter($formatter);
                         }
                     }
+
                     // else: silently reject — see note on handler rejection above.
                 }
             }
 
-            if ($handler !== null) {
+            if ($handler instanceof HandlerInterface) {
                 $logger->pushHandler($handler);
             }
         }

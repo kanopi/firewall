@@ -94,10 +94,10 @@ final class TokenSubstitute
         }
 
         $resolved = [];
-        foreach ($allowedBaseDirs as $dir) {
-            $real = realpath((string) $dir);
+        foreach ($allowedBaseDirs as $allowedBaseDir) {
+            $real = realpath((string) $allowedBaseDir);
             if ($real === false) {
-                throw new ConfigurationException(sprintf('Allowed base directory "%s" does not resolve', $dir));
+                throw new ConfigurationException(sprintf('Allowed base directory "%s" does not resolve', $allowedBaseDir));
             }
 
             $resolved[] = rtrim($real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
@@ -161,8 +161,8 @@ final class TokenSubstitute
             throw new ConfigurationException(sprintf('Path for %s processor does not resolve: %s', $processor, $path));
         }
 
-        foreach (self::$unsafeProcessorAllowedBaseDirs as $base) {
-            if (str_starts_with($real . DIRECTORY_SEPARATOR, $base)) {
+        foreach (self::$unsafeProcessorAllowedBaseDirs as $unsafeProcessorAllowedBaseDir) {
+            if (str_starts_with($real . DIRECTORY_SEPARATOR, $unsafeProcessorAllowedBaseDir)) {
                 return;
             }
         }

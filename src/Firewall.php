@@ -335,7 +335,7 @@ final class Firewall
 
         return strval(preg_replace_callback(
             '/\{\{\s*([a-zA-Z0-9_\.\-]+)\s*\}\}/',
-            function (array $m) use ($request, $context, $sanitize) {
+            function (array $m) use ($request, $context, $sanitize): string {
                 $key = strtolower($m[1]);
 
                 // 1. Built-in request values ------------------------------------
