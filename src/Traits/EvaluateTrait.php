@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Traits;
 
+use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -321,7 +322,7 @@ trait EvaluateTrait
 
         if (is_array($value) && in_array($matches, ['any', 'all', 'none', 'some'], true)) {
             $evaluations = array_map(
-                fn($val) => $this->evaluateComparison($requestValue, $operator, $val, $caseSensitive),
+                fn($val) => $this->evaluateComparison($requestValue, $operator, $val, $caseSensitive, $variable),
                 $value
             );
 
@@ -335,7 +336,7 @@ trait EvaluateTrait
                 'some'  => $passed > 0 && $passed < $total,
             };
         } else {
-            $result = $this->evaluateComparison($requestValue, $operator, $value, $caseSensitive);
+            $result = $this->evaluateComparison($requestValue, $operator, $value, $caseSensitive, $variable);
         }
 
         return $negate ? !$result : $result;
@@ -434,11 +435,17 @@ trait EvaluateTrait
      *   Value to compare against (string or array).
      * @param bool $caseSensitive
      *   Whether comparison is case-sensitive (default false).
+     * @param string|null $variable
+     *   Name of the variable being compared (e.g. `header.cookie`). Used
+     *   only for log redaction — when this matches the redacted-variables
+     *   list, `request_value` is replaced with `[REDACTED]` in the debug
+     *   log so secrets in cookies / authorization headers don't land in
+     *   firewall logs verbatim.
      *
      * @return bool
      *   Result of comparison.
      */
-    protected function evaluateComparison(mixed $requestValue, string $operator, mixed $value, bool $caseSensitive = false): bool
+    protected function evaluateComparison(mixed $requestValue, string $operator, mixed $value, bool $caseSensitive = false, ?string $variable = null): bool
     {
         if (!$caseSensitive && is_string($requestValue)) {
             $requestValue = strtolower($requestValue);
@@ -464,9 +471,12 @@ trait EvaluateTrait
             default => false,
         };
 
+        $shouldRedact = $variable !== null && LoggingFactory::shouldRedactVariable($variable);
+        $loggedValue = $shouldRedact ? '[REDACTED]' : $requestValue;
+
         $this->getLogger()->debug('Comparison matched', [
             'operator' => $operator,
-            'request_value' => $requestValue,
+            'request_value' => $loggedValue,
             'case_sensitive' => $caseSensitive,
         ]);
 
