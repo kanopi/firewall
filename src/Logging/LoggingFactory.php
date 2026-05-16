@@ -187,7 +187,7 @@ class LoggingFactory
     public static function setRedactedVariables(array $variables): void
     {
         static::$redactedVariables = array_values(array_map(
-            static fn ($name): string => strtolower((string) $name),
+            strtolower(...),
             $variables
         ));
     }
@@ -211,13 +211,13 @@ class LoggingFactory
     public static function shouldRedactVariable(string $variable): bool
     {
         $needle = strtolower($variable);
-        foreach (static::$redactedVariables as $pattern) {
-            if (str_ends_with($pattern, '.*')) {
-                $prefix = substr($pattern, 0, -1); // keep trailing `.`
+        foreach (static::$redactedVariables as $redactedVariable) {
+            if (str_ends_with($redactedVariable, '.*')) {
+                $prefix = substr($redactedVariable, 0, -1); // keep trailing `.`
                 if (str_starts_with($needle, $prefix)) {
                     return true;
                 }
-            } elseif ($needle === $pattern) {
+            } elseif ($needle === $redactedVariable) {
                 return true;
             }
         }

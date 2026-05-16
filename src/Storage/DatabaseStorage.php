@@ -305,13 +305,13 @@ class DatabaseStorage extends AbstractStorageBase
     {
         try {
             // Pre-fix this string-concatenated a `' u'` alias onto the
-            // table name to satisfy `u.expire` qualified column references.
-            // That route bypasses DBAL's identifier-quoting path (the
-            // `@phpstan-ignore-next-line` was masking the type complaint),
-            // which is fine for the safe table names we ship but breaks
-            // on reserved words, schema-qualified names, or any identifier
-            // that needs quoting. DBAL handles unqualified column names
-            // in `set()` and `where()` without the alias.
+            // table name to satisfy `u.expire` qualified column references
+            // and carried a phpstan-ignore comment to mask the type
+            // complaint. That route bypasses DBAL's identifier-quoting
+            // path, which is fine for the safe table names we ship but
+            // breaks on reserved words, schema-qualified names, or any
+            // identifier that needs quoting. DBAL handles unqualified
+            // column names in `set()` and `where()` without the alias.
             $result = $this->connection->createQueryBuilder()
                 ->update($this->config['storage_table'])
                 ->set('expire', 'expire + :expire')
