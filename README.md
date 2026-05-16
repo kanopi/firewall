@@ -1510,9 +1510,11 @@ logger:
   - class: Monolog\Handler\SyslogHandler
     args:
       - firewall                   # ident / tag
-      - LOG_USER                   # facility
+      - user                       # facility — see below
       - Monolog\Level::Warning
 ```
+
+> `SyslogHandler` accepts a facility *name* (string) such as `user`, `daemon`, `mail`, `auth`, `local0`–`local7`. The PHP `LOG_*` constants are integers that YAML cannot reference; passing the literal string `LOG_USER` triggers `UnexpectedValueException`. Stick to the lowercase names above.
 
 ### PHP error log
 
@@ -1666,7 +1668,7 @@ logger:
   - class: Monolog\Handler\SyslogHandler
     args:
       - firewall
-      - LOG_USER
+      - user
       - Monolog\Level::Warning
 
   # Critical events ping the on-call channel
