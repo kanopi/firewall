@@ -167,6 +167,63 @@ trait FileTrait
     }
 
     /**
+     * Run a callback with an exclusive lock on a sidecar lock file.
+     *
+     * File-backed storage classes do load → mutate → save sequences. Pre-fix
+     * those weren't serialised against concurrent writers: two racing
+     * requests would both `loadFromFile()`, both mutate their in-memory
+     * copy, then both `persistToFile()` — last-writer-wins, with the loser's
+     * state silently dropped. For block lists that meant an attacker
+     * bursting requests could avoid being added to the offender list at
+     * all; for rate-limit counters it meant two racing requests could both
+     * read N, both pass the limit check, both write N+1 — bursting through
+     * the configured rate.
+     *
+     * The lock lives on `$filePath.lock` rather than the data file itself,
+     * so the lock survives `file_put_contents()` replacing the data file's
+     * inode. If the lock file can't be created or the lock can't be taken
+     * (e.g. NFS without flock support, container with a read-only mount),
+     * we log a warning and run the callback anyway: degraded posture
+     * beats hanging the firewall.
+     *
+     * @template T
+     * @param string $filePath
+     *   Path to the data file being mutated.
+     * @param callable():T $action
+     *   The read-modify-write body to run under the lock.
+     *
+     * @return T
+     *   Whatever `$action` returns.
+     */
+    protected function withExclusiveLock(string $filePath, callable $action): mixed
+    {
+        $lockFile = $filePath . '.lock';
+        $handle = @fopen($lockFile, 'c');
+        if ($handle === false) {
+            $this->getLogger()->warning('Unable to open lock file, proceeding without lock', [
+                'lock_file' => $lockFile,
+            ]);
+            return $action();
+        }
+
+        @chmod($lockFile, 0600);
+        if (!@flock($handle, LOCK_EX)) {
+            $this->getLogger()->warning('Unable to acquire exclusive lock, proceeding without lock', [
+                'lock_file' => $lockFile,
+            ]);
+            @fclose($handle);
+            return $action();
+        }
+
+        try {
+            return $action();
+        } finally {
+            @flock($handle, LOCK_UN);
+            @fclose($handle);
+        }
+    }
+
+    /**
      * Return a per-install default storage path.
      *
      * The default sits in `sys_get_temp_dir()` (not hardcoded `/tmp`,

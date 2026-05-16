@@ -25,6 +25,19 @@ final class LoggingFactoryTest extends TestCase
         $prop = $ref->getProperty('logger');
         $prop->setAccessible(true);
         $prop->setValue(null);
+
+        // Restore the default redacted-variables list so tests that
+        // call `setRedactedVariables([])` don't leak into siblings.
+        LoggingFactory::setRedactedVariables([
+            'header.cookie',
+            'header.authorization',
+            'header.proxy-authorization',
+            'header.x-api-key',
+            'header.x-auth-token',
+            'header.x-csrf-token',
+            'header.x-session-token',
+            'cookie.*',
+        ]);
     }
 
     /**
@@ -294,5 +307,51 @@ final class LoggingFactoryTest extends TestCase
         ]);
 
         $this->assertCount(0, $logger->getHandlers());
+    }
+
+    /**
+     * Regression for #64: the default redacted-variable list must include
+     * the well-known credential-bearing header names. A regression in this
+     * list silently re-introduces the secret-leak in firewall logs.
+     */
+    public function testDefaultRedactedVariablesCoverCredentialHeaders(): void
+    {
+        $defaults = LoggingFactory::getRedactedVariables();
+
+        $this->assertContains('header.cookie', $defaults);
+        $this->assertContains('header.authorization', $defaults);
+        $this->assertContains('header.x-api-key', $defaults);
+        $this->assertContains('cookie.*', $defaults);
+    }
+
+    /**
+     * Regression for #64: `shouldRedactVariable()` matches case-insensitively
+     * and supports `prefix.*` wildcards (so every cookie collapses to one
+     * pattern entry rather than enumerating cookie names).
+     */
+    public function testShouldRedactVariableHandlesCaseAndWildcards(): void
+    {
+        $this->assertTrue(LoggingFactory::shouldRedactVariable('header.cookie'));
+        $this->assertTrue(LoggingFactory::shouldRedactVariable('HEADER.COOKIE'));
+        $this->assertTrue(LoggingFactory::shouldRedactVariable('header.authorization'));
+        $this->assertTrue(LoggingFactory::shouldRedactVariable('cookie.session_id'));
+        $this->assertTrue(LoggingFactory::shouldRedactVariable('cookie.anything'));
+        $this->assertFalse(LoggingFactory::shouldRedactVariable('header.user-agent'));
+        $this->assertFalse(LoggingFactory::shouldRedactVariable('query.q'));
+        $this->assertFalse(LoggingFactory::shouldRedactVariable('not-cookie.anything'));
+    }
+
+    /**
+     * Regression for #64: integrators can replace the redaction list
+     * (e.g. to add a custom session-header name) without modifying the
+     * library.
+     */
+    public function testSetRedactedVariablesReplacesTheList(): void
+    {
+        LoggingFactory::setRedactedVariables(['header.X-My-Session']);
+
+        $this->assertTrue(LoggingFactory::shouldRedactVariable('header.x-my-session'));
+        // Defaults are no longer in the list after replacement
+        $this->assertFalse(LoggingFactory::shouldRedactVariable('header.cookie'));
     }
 }

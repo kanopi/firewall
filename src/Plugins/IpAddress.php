@@ -137,7 +137,23 @@ class IpAddress extends AbstractPluginBase
             return false;
         }
 
-        $bytes = (int) floor((int) $prefixLength / 8);          // Fully matched bytes
+        // Validate the prefix length: must be a non-negative integer, no
+        // sign character, and within the allowed range for the address
+        // family (0..32 for IPv4, 0..128 for IPv6). Pre-fix any string
+        // after `/` was cast to int and used as-is, so a typo like
+        // `10.0.0.0/300` produced nonsense byte/bit math that on some
+        // inputs degenerated into "match everything" or "match nothing".
+        $maxPrefix = strlen($ipPacked) === 4 ? 32 : 128;
+        if (!ctype_digit($prefixLength) || (int) $prefixLength > $maxPrefix) {
+            $this->getLogger()->warning('Invalid CIDR prefix length', [
+                'cidr' => $cidr,
+                'prefix_length' => $prefixLength,
+                'max_allowed' => $maxPrefix,
+            ]);
+            return false;
+        }
+
+        $bytes = intdiv((int) $prefixLength, 8);          // Fully matched bytes
         $bits  = (int) $prefixLength % 8;                // Remaining bits to match
 
         // Compare full bytes

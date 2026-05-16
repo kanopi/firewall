@@ -25,6 +25,10 @@ class FileRateLimitStorageTest extends AbstractTestCase
         if (file_exists($this->tempFile)) {
             unlink($this->tempFile);
         }
+
+        if (file_exists($this->tempFile . '.lock')) {
+            unlink($this->tempFile . '.lock');
+        }
     }
 
     /**
@@ -101,5 +105,39 @@ class FileRateLimitStorageTest extends AbstractTestCase
         $storage = new FileRateLimitStorage(['file' => $this->tempFile]);
 
         $this->assertSame(0, $storage->countRequests('key', 0, time()));
+    }
+
+    /**
+     * Regression for #59: recordRequest() now wraps load → mutate → save
+     * with an exclusive flock against a sidecar `.lock` file. Asserting
+     * the lock file exists after a recordRequest call pins the contract;
+     * the pre-fix code didn't lock and could race-bypass the rate limit
+     * (both racing requests read N, both pass the check, both write N+1).
+     */
+    public function testRecordRequestCreatesSidecarLockFile(): void
+    {
+        $storage = new FileRateLimitStorage(['file' => $this->tempFile]);
+        $storage->recordRequest('ip:9.9.9.9', time());
+
+        $this->assertFileExists($this->tempFile . '.lock');
+    }
+
+    /**
+     * Regression for #59: when flock() fails, the call still has to land
+     * the write. Tested via the namespace override.
+     */
+    public function testRecordRequestFallsBackWhenFlockFails(): void
+    {
+        $storage = new FileRateLimitStorage(['file' => $this->tempFile]);
+        $now = time();
+
+        $GLOBALS['simulate_flock_failure'] = true;
+        try {
+            $storage->recordRequest('user:42', $now);
+        } finally {
+            $GLOBALS['simulate_flock_failure'] = false;
+        }
+
+        $this->assertSame(1, $storage->countRequests('user:42', $now - 1, $now + 1));
     }
 }

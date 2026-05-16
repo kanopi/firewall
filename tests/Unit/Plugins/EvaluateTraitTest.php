@@ -434,4 +434,96 @@ class EvaluateTraitTest extends AbstractTestCase
         $result = $this->invoke($plugin, 'parseSimpleStringRule', ['query@in:one,two,three']);
         $this->assertSame(['one', 'two', 'three'], $result['value']);
     }
+
+    /**
+     * Regression for #64: when the rule variable is in the redacted list
+     * (e.g. `header.cookie`), the `request_value` field in the debug log
+     * is replaced with `[REDACTED]`. Pre-fix the full cookie/authorization
+     * value reached the log verbatim.
+     */
+    public function testEvaluateComparisonRedactsSensitiveVariable(): void
+    {
+        $handler = new \Monolog\Handler\TestHandler(\Monolog\Level::Debug);
+        $logger = new \Monolog\Logger('test');
+        $logger->pushHandler($handler);
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger($logger);
+
+        $plugin = $this->getMockPlugin();
+        // 5th arg is the variable name; `header.cookie` is in the default list.
+        $this->invoke($plugin, 'evaluateComparison', ['Bearer secret-token', 'equals', 'whatever', false, 'header.cookie']);
+
+        $found = false;
+        foreach ($handler->getRecords() as $record) {
+            if ($record->message === 'Comparison matched') {
+                $found = true;
+                $this->assertSame('[REDACTED]', $record->context['request_value']);
+                $this->assertStringNotContainsString('secret-token', json_encode($record->context, JSON_THROW_ON_ERROR));
+            }
+        }
+
+        $this->assertTrue($found, 'Expected a "Comparison matched" debug log entry');
+    }
+
+    /**
+     * Regression for #64: non-sensitive variables (e.g. `method`) are not
+     * redacted — operators still get useful debug info on normal rule
+     * evaluations.
+     */
+    public function testEvaluateComparisonDoesNotRedactNonSensitiveVariable(): void
+    {
+        $handler = new \Monolog\Handler\TestHandler(\Monolog\Level::Debug);
+        $logger = new \Monolog\Logger('test');
+        $logger->pushHandler($handler);
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger($logger);
+
+        $plugin = $this->getMockPlugin();
+        $this->invoke($plugin, 'evaluateComparison', ['POST', 'equals', 'POST', false, 'method']);
+
+        foreach ($handler->getRecords() as $record) {
+            if ($record->message === 'Comparison matched') {
+                $this->assertSame('post', $record->context['request_value']);
+                return;
+            }
+        }
+
+        $this->fail('Expected a "Comparison matched" debug log entry');
+    }
+
+    /**
+     * Regression for #64: when `evaluateStructuredRule` matches an array
+     * value (matches=any/all/etc.), the variable is still propagated and
+     * redaction still applies. Pre-fix this code path didn't pass the
+     * variable through `array_map` at all.
+     */
+    public function testEvaluateStructuredRuleRedactsAcrossArrayMatches(): void
+    {
+        $handler = new \Monolog\Handler\TestHandler(\Monolog\Level::Debug);
+        $logger = new \Monolog\Logger('test');
+        $logger->pushHandler($handler);
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger($logger);
+
+        $plugin = $this->getMockPlugin(['header.authorization' => 'Bearer hunter2']);
+        $request = Request::create('/');
+
+        $this->invoke($plugin, 'evaluateStructuredRule', [
+            $request,
+            [
+                'variable' => 'header.authorization',
+                'operator' => 'contains',
+                'value' => ['hunter2', 'admin'],
+                'matches' => 'any',
+            ],
+        ]);
+
+        foreach ($handler->getRecords() as $record) {
+            if ($record->message === 'Comparison matched') {
+                $this->assertSame('[REDACTED]', $record->context['request_value']);
+            }
+        }
+
+        $this->assertStringNotContainsString(
+            'hunter2',
+            json_encode(array_map(fn($r) => $r->context, $handler->getRecords()), JSON_THROW_ON_ERROR)
+        );
+    }
 }

@@ -44,16 +44,18 @@ class FileRateLimitStorage extends InMemoryRateLimitStorage
      */
     public function recordRequest(string $key, int $timestamp): void
     {
-        $this->loadFile();
-        parent::recordRequest($key, $timestamp);
+        $this->withExclusiveLock($this->filePath, function () use ($key, $timestamp): void {
+            $this->loadFile();
+            parent::recordRequest($key, $timestamp);
 
-        $this->getLogger()->debug('Request recorded to file storage', [
-            'key' => $key,
-            'timestamp' => $timestamp,
-            'file' => $this->filePath,
-        ]);
+            $this->getLogger()->debug('Request recorded to file storage', [
+                'key' => $key,
+                'timestamp' => $timestamp,
+                'file' => $this->filePath,
+            ]);
 
-        $this->saveFile();
+            $this->saveFile();
+        });
     }
 
     /**

@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use PHPUnit\Framework\MockObject\MockObject;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -192,6 +195,51 @@ class FirewallTest extends AbstractTestCase
         $method->setAccessible(true);
         $id = $method->invoke($firewall, $request);
         $this->assertMatchesRegularExpression('/^[A-F0-9]{32}$/', $id);
+    }
+
+    /**
+     * Regression test for #60: two IDs generated back-to-back from the same
+     * client IP must differ. Pre-fix the ID was `md5($clientIp . time())`,
+     * so two calls from the same IP within the same second returned the
+     * same value — and an attacker who knew the IP and approximate time
+     * could brute-force IDs across a tiny key space.
+     */
+    public function testGenerateIdIsNotDerivableFromClientIpAndTime(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '8.8.8.8']);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('generateId');
+        $method->setAccessible(true);
+
+        $first = $method->invoke($firewall, $request);
+        $second = $method->invoke($firewall, $request);
+
+        $this->assertNotSame($first, $second, 'Two IDs from the same IP must not match (predictable ID regression).');
+        $this->assertNotSame(strtoupper(md5('8.8.8.8' . time())), $first, 'ID must not be derivable from md5(ip . time()).');
+    }
+
+    /**
+     * Regression test for #60: 1000 IDs from the same IP should all be
+     * distinct. A 128-bit CSPRNG output has birthday-collision odds at
+     * ~1 in 2^64 for this sample size — effectively zero. Pre-fix this
+     * would routinely collide whenever the loop completed inside one
+     * wall-clock second.
+     */
+    public function testGenerateIdProducesDistinctValuesUnderLoad(): void
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '8.8.8.8']);
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('generateId');
+        $method->setAccessible(true);
+
+        $ids = [];
+        for ($i = 0; $i < 1000; $i++) {
+            $ids[] = $method->invoke($firewall, $request);
+        }
+
+        $this->assertCount(1000, array_unique($ids));
     }
 
     /**
@@ -590,6 +638,95 @@ class FirewallTest extends AbstractTestCase
 
         // Should pass because allow is evaluated first
         $this->assertTrue($firewall->evaluate($request));
+    }
+
+    /**
+     * Helper: build a logger-config entry that routes records to a
+     * captured TestLogHandler. The handler instance is returned so
+     * assertions can inspect it after `Firewall::create()` completes —
+     * `create()` itself rebuilds the static logger, so installing one
+     * via setLogger() ahead of the call would be replaced.
+     */
+    private function captureLogger(): TestLogHandler
+    {
+        $handler = new TestLogHandler(\Monolog\Level::Debug);
+        // LoggingFactory::create() accepts handler instances directly under
+        // the `class` key, bypassing the string-class instantiation path.
+        return $handler;
+    }
+
+    /**
+     * Regression for #58: empty trusted-proxies setup produces a clear
+     * warning. Pre-fix the library silently trusted Symfony defaults — if
+     * those ever return to honouring X-Forwarded-For, attackers spoof
+     * source IPs and bypass IP/CIDR/rate-limit checks.
+     */
+    public function testCreateWarnsWhenTrustedProxiesNotConfigured(): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $handler = $this->captureLogger();
+            Firewall::create([
+                ['logger' => [['class' => $handler]]],
+            ]);
+
+            $this->assertTrue(
+                $handler->hasWarningContaining('getTrustedProxies() is empty'),
+                'Expected trusted-proxies warning when none configured.'
+            );
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * Regression for #58: when trusted proxies are configured, no warning
+     * fires.
+     */
+    public function testCreateDoesNotWarnWhenTrustedProxiesConfigured(): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies(['10.0.0.0/8'], Request::HEADER_X_FORWARDED_FOR);
+
+        try {
+            $handler = $this->captureLogger();
+            Firewall::create([
+                ['logger' => [['class' => $handler]]],
+            ]);
+
+            $this->assertFalse(
+                $handler->hasWarningContaining('getTrustedProxies() is empty'),
+                'Trusted proxies are configured — no warning should fire.'
+            );
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * Regression for #58: when `global.require_trusted_proxies: true` is
+     * set and trusted proxies are empty, the firewall should refuse to
+     * start instead of silently allowing spoofable IPs through.
+     */
+    public function testCreateThrowsWhenTrustedProxiesRequiredButMissing(): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            $this->expectExceptionMessage('getTrustedProxies() is empty');
+            Firewall::create([
+                ['global' => ['require_trusted_proxies' => true]],
+            ]);
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
     }
 
     /**

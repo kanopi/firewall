@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
@@ -96,6 +97,23 @@ final class Firewall
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 
+        // Every plugin reads `$request->getClientIp()`. Symfony only honors
+        // proxy headers (X-Forwarded-For, Forwarded, X-Real-IP, …) when the
+        // integrator has called `Request::setTrustedProxies(...)`. If trusted
+        // proxies aren't configured but the application sits behind a proxy
+        // anyway, attackers can spoof their source IP via X-Forwarded-For
+        // and trivially bypass IP/CIDR allowlists and per-IP rate limits.
+        //
+        // We can't detect "is there actually a proxy in front of me?" — that's
+        // deployment-specific. What we can do is surface that the firewall is
+        // currently trusting whatever Symfony does by default. Operators who
+        // know they're not behind a proxy can silence the warning with
+        // `global.require_trusted_proxies: false` (the default). Operators
+        // who know they *are* behind a proxy should set it to `true` and
+        // configure `Request::setTrustedProxies(...)` — startup will then
+        // throw a clear error if the wiring is missing.
+        self::checkTrustedProxiesPosture($config['global']);
+
         // Normalize configuration to the new plugins: array format.
         $config = PluginConfigNormalizer::normalize($config);
 
@@ -126,6 +144,53 @@ final class Firewall
         ]);
 
         return $firewall;
+    }
+
+    /**
+     * Detect and warn (or fail) on a missing trusted-proxies posture.
+     *
+     * If `Request::getTrustedProxies()` returns an empty list, the firewall
+     * is trusting whatever Symfony's defaults dictate for the proxy
+     * headers — which on every Symfony version since 4.4 means
+     * `X-Forwarded-For` does NOT influence `getClientIp()` unless trusted
+     * proxies are set, but a custom `Request` subclass or future Symfony
+     * default could change that. Log a warning so operators behind a proxy
+     * see the misconfiguration in their normal log channel.
+     *
+     * Behaviour switches on `global.require_trusted_proxies`:
+     *   * `false` / unset (default) — warn only.
+     *   * `true` — throw `ConfigurationException` at startup so a missing
+     *     trusted-proxies setup is a hard failure in production.
+     *
+     * @param array<string, mixed> $globalConfig
+     *   The `global` config section.
+     *
+     * @throws ConfigurationException
+     *   When `require_trusted_proxies` is true and no trusted proxies
+     *   have been configured before `Firewall::create()` runs.
+     */
+    protected static function checkTrustedProxiesPosture(array $globalConfig): void
+    {
+        if (Request::getTrustedProxies() !== []) {
+            return;
+        }
+
+        $require = !empty($globalConfig['require_trusted_proxies']);
+        $message = 'Symfony Request::getTrustedProxies() is empty. If this '
+            . 'application sits behind a proxy / load balancer, the firewall '
+            . 'cannot trust the client IP and IP-based block / allow / rate-'
+            . 'limit rules can be bypassed via X-Forwarded-For. Call '
+            . 'Request::setTrustedProxies(...) before Firewall::create() with '
+            . 'the proxy CIDRs and the header bitmask you trust. Set '
+            . 'global.require_trusted_proxies=true to make this a fatal '
+            . 'startup error.';
+
+        if ($require) {
+            LoggingFactory::logger()->error($message);
+            throw new ConfigurationException($message);
+        }
+
+        LoggingFactory::logger()->warning($message);
     }
 
     /**
@@ -221,15 +286,31 @@ final class Firewall
     /**
      * Generate an ID for the following Request.
      *
+     * Pre-fix this returned `strtoupper(md5($clientIp . time()))`, which
+     * is predictable per-IP at 1-second resolution. The ID is reflected
+     * to clients via `{{request.id}}` in the default banning message and
+     * shipped to downstream logs, so a predictable ID lets an attacker
+     * brute-force IDs for nearby timestamps on a shared proxy IP and
+     * stitch log lines together. 128 bits from a CSPRNG removes both.
+     *
+     * The `$request` parameter is retained (unused) so callers and
+     * subclasses that depend on the signature don't break.
+     *
      * @param Request $request
-     *   Request to get information from.
+     *   Request to get information from (unused — kept for backwards
+     *   compatibility with subclasses overriding this method).
      *
      * @return string
-     *   Return the ID associated with the request.
+     *   Return the ID associated with the request: 32 uppercase hex
+     *   characters from `bin2hex(random_bytes(16))`.
      */
     protected function generateId(Request $request): string
     {
-        return strtoupper(md5($request->getClientIp() . time()));
+        // The Request is no longer used — the previous predictable ID was
+        // derived from $request->getClientIp() and time(). Kept on the
+        // signature so subclasses overriding this method still satisfy the
+        // contract.
+        return strtoupper(bin2hex(random_bytes(16)));
     }
 
     /**

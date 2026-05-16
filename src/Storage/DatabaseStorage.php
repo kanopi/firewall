@@ -111,7 +111,18 @@ class DatabaseStorage extends AbstractStorageBase
     public function set(string $key, array $value, int $expire = 0): bool
     {
         try {
-            $value['request'] = @serialize($value['request']);
+            // Pre-fix this used `@serialize(...)`, so any future caller who
+            // unserialize()'d the column would have a CWE-502 PHP Object
+            // Injection sink fed by the row's content. `serializeRequest()`
+            // returns a plain array (scalars + nested arrays + headers/
+            // cookies bags pre-flattened to arrays), which JSON round-trips
+            // cleanly. The `@` is dropped — json_encode failures should be
+            // logged and abort the write rather than store a "false" string
+            // silently.
+            $value['request'] = json_encode(
+                $value['request'],
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES
+            );
             $value['timestamp'] = strtotime((string) $value['timestamp']);
             $data = array_merge(
                 $value,
@@ -293,12 +304,19 @@ class DatabaseStorage extends AbstractStorageBase
     public function addToExpire(string $key, int $amount): bool
     {
         try {
+            // Pre-fix this string-concatenated a `' u'` alias onto the
+            // table name to satisfy `u.expire` qualified column references
+            // and carried a phpstan-ignore comment to mask the type
+            // complaint. That route bypasses DBAL's identifier-quoting
+            // path, which is fine for the safe table names we ship but
+            // breaks on reserved words, schema-qualified names, or any
+            // identifier that needs quoting. DBAL handles unqualified
+            // column names in `set()` and `where()` without the alias.
             $result = $this->connection->createQueryBuilder()
-                /** @phpstan-ignore-next-line  */
-                ->update($this->config['storage_table'] . ' u')
-                ->set('u.expire', 'u.expire + :expire')
+                ->update($this->config['storage_table'])
+                ->set('expire', 'expire + :expire')
                 ->where('remote_address = :remote_address')
-                ->andWhere('u.expire > 0')
+                ->andWhere('expire > 0')
                 ->setParameter('remote_address', $key)
                 ->setParameter('expire', $amount)
                 ->executeQuery()

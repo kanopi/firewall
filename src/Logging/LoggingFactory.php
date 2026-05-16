@@ -24,6 +24,28 @@ class LoggingFactory
     protected static ?Logger $logger = null;
 
     /**
+     * Variable names whose log values should be replaced with [REDACTED].
+     *
+     * The list is matched case-insensitively and accepts a trailing `*` as
+     * a wildcard suffix — e.g. `header.cookie` matches the exact name and
+     * `cookie.*` matches every cookie. Operators add to or replace this
+     * list with `setRedactedVariables()`; an integrator that *wants* the
+     * cookie body in their firewall debug logs can pass an empty array.
+     *
+     * @var array<int, string>
+     */
+    protected static array $redactedVariables = [
+        'header.cookie',
+        'header.authorization',
+        'header.proxy-authorization',
+        'header.x-api-key',
+        'header.x-auth-token',
+        'header.x-csrf-token',
+        'header.x-session-token',
+        'cookie.*',
+    ];
+
+    /**
      * Create a new Logging Element.
      *
      * The `class` entries are intentionally typed as `mixed`: the config
@@ -153,5 +175,53 @@ class LoggingFactory
     public static function logMessage(string $level, string $message, array $context = []): void
     {
         (LoggingFactory::logger())->log($level, $message, $context);
+    }
+
+    /**
+     * Replace the redacted-variable list.
+     *
+     * @param array<int, string> $variables
+     *   Variable names (or `prefix.*` patterns) to redact in log context.
+     *   Pass an empty array to disable redaction entirely.
+     */
+    public static function setRedactedVariables(array $variables): void
+    {
+        static::$redactedVariables = array_values(array_map(
+            strtolower(...),
+            $variables
+        ));
+    }
+
+    /**
+     * Return the redacted-variable list (lowercased).
+     *
+     * @return array<int, string>
+     */
+    public static function getRedactedVariables(): array
+    {
+        return static::$redactedVariables;
+    }
+
+    /**
+     * Whether `$variable` matches any entry in the redacted list.
+     *
+     * Comparison is case-insensitive. A list entry ending in `.*` matches
+     * any variable whose name starts with the prefix before the `.*`.
+     */
+    public static function shouldRedactVariable(string $variable): bool
+    {
+        $needle = strtolower($variable);
+        foreach (static::$redactedVariables as $redactedVariable) {
+            if (str_ends_with($redactedVariable, '.*')) {
+                $prefix = substr($redactedVariable, 0, -1); // keep trailing `.`
+                if (str_starts_with($needle, $prefix)) {
+                    return true;
+                }
+            } elseif ($needle === $redactedVariable) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
