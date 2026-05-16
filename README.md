@@ -1445,13 +1445,24 @@ Combine multiple conditions with logical operators:
 
 ## Logging Configuration
 
-The firewall uses Monolog for flexible logging.
-Relative log file paths (e.g., in `args[0]` for `StreamHandler`) are resolved **relative to the YAML file** that declares them.
-Multiple handlers can be configured:
+The firewall uses [Monolog](https://github.com/Seldaek/monolog) for flexible logging, so any Monolog handler can be wired up through the `logger` key. Each entry under `logger` is a separate handler — combine as many as you need (file + Slack + email is a common pattern).
+
+Each handler entry accepts:
+
+- `class` — fully qualified handler class name (must implement `Monolog\Handler\HandlerInterface`).
+- `args` — positional constructor arguments, in order.
+- `formatter` *(optional)* — `class` + `args` for a `Monolog\Formatter\FormatterInterface` implementation, applied to that handler.
+
+Log levels are passed as strings like `Monolog\Level::Info` (Debug, Info, Notice, Warning, Error, Critical, Alert, Emergency). Relative log file paths (e.g., `args[0]` for `StreamHandler`) are resolved **relative to the YAML file** that declares them.
+
+> **Heads up:** several Monolog handlers require additional PHP extensions or third-party packages. Slack/IFTTT/Pushover/Telegram need `ext-curl`; `SendGridHandler` and `SymfonyMailerHandler` may require `composer require` of the relevant transport package. See the [Monolog handler docs](https://seldaek.github.io/monolog/doc/02-handlers-formatters-processors.html) for each handler's prerequisites.
+
+### File logging
+
+Write every event to a flat file:
 
 ```yaml
 logger:
-  # File logging
   - class: Monolog\Handler\StreamHandler
     args:
       - /var/log/firewall/firewall.log
@@ -1461,15 +1472,173 @@ logger:
       args:
         - "[%datetime%] [%level_name%] [%context.plugin%] %message% %context% %extra%\n"
         - "Y-m-d H:i:s"
-  
-  # Syslog
+```
+
+### Rotating file logging
+
+Rotate logs daily and keep the last seven days. Useful when StreamHandler files grow unbounded:
+
+```yaml
+logger:
+  - class: Monolog\Handler\RotatingFileHandler
+    args:
+      - /var/log/firewall/firewall.log
+      - 7                          # maxFiles to keep (0 = unlimited)
+      - Monolog\Level::Info
+```
+
+### JSON-structured logging
+
+Emit one JSON object per line — easy to ingest into Loki, ELK, Datadog, etc:
+
+```yaml
+logger:
+  - class: Monolog\Handler\StreamHandler
+    args:
+      - /var/log/firewall/firewall.ndjson
+      - Monolog\Level::Info
+    formatter:
+      class: Monolog\Formatter\JsonFormatter
+```
+
+### Syslog
+
+Forward events to the host's syslog (handy on managed/cloud platforms that scrape syslog automatically):
+
+```yaml
+logger:
   - class: Monolog\Handler\SyslogHandler
     args:
-      - firewall
-      - LOG_USER
+      - firewall                   # ident / tag
+      - LOG_USER                   # facility
       - Monolog\Level::Warning
-  
-  # Email alerts for critical events
+```
+
+### PHP error log
+
+Pipe firewall events into the configured PHP `error_log` — useful in shared hosting or when you don't control filesystem paths:
+
+```yaml
+logger:
+  - class: Monolog\Handler\ErrorLogHandler
+    args:
+      - 0                          # 0 = operating system, 4 = SAPI
+      - Monolog\Level::Warning
+```
+
+### Email alerts
+
+Send an email when something critical happens. `NativeMailerHandler` uses PHP's `mail()` — no extra package required:
+
+```yaml
+logger:
+  - class: Monolog\Handler\NativeMailerHandler
+    args:
+      - security@example.com       # to (string or list of recipients)
+      - "Firewall Alert"           # subject
+      - noreply@example.com        # from
+      - Monolog\Level::Critical
+```
+
+For higher-volume alerting via SendGrid (requires `ext-curl`):
+
+```yaml
+logger:
+  - class: Monolog\Handler\SendGridHandler
+    args:
+      - apikey                     # SendGrid API user (use "apikey" for API key auth)
+      - "${SENDGRID_API_KEY}"      # API key
+      - noreply@example.com        # from
+      - security@example.com       # to (string or list)
+      - "Firewall Alert"           # subject
+      - Monolog\Level::Critical
+```
+
+### Slack alerts
+
+Post directly to a Slack channel through an [Incoming Webhook](https://api.slack.com/messaging/webhooks). Requires `ext-curl`:
+
+```yaml
+logger:
+  - class: Monolog\Handler\SlackWebhookHandler
+    args:
+      - "${SLACK_WEBHOOK_URL}"     # webhook URL
+      - "#security-alerts"         # channel override (or null)
+      - "Firewall"                 # bot username
+      - true                       # useAttachment
+      - ":shield:"                 # iconEmoji
+      - false                      # useShortAttachment
+      - true                       # includeContextAndExtra
+      - Monolog\Level::Warning
+```
+
+If you prefer the Slack Web API (legacy token-based handler):
+
+```yaml
+logger:
+  - class: Monolog\Handler\SlackHandler
+    args:
+      - "${SLACK_BOT_TOKEN}"       # Slack bot token
+      - "#security-alerts"         # channel
+      - "Firewall"                 # username
+      - true                       # useAttachment
+      - ":shield:"                 # iconEmoji
+      - Monolog\Level::Critical
+```
+
+### Pushover (push notifications)
+
+Send mobile push notifications via [Pushover](https://pushover.net/):
+
+```yaml
+logger:
+  - class: Monolog\Handler\PushoverHandler
+    args:
+      - "${PUSHOVER_APP_TOKEN}"    # application API token
+      - "${PUSHOVER_USER_KEY}"     # user/group key (string or list)
+      - "Firewall Alert"           # notification title
+      - Monolog\Level::Critical
+```
+
+### IFTTT webhooks
+
+Trigger an [IFTTT Maker](https://ifttt.com/maker_webhooks) applet — useful for chaining custom automations (SMS, smart lights, voice assistants, etc.):
+
+```yaml
+logger:
+  - class: Monolog\Handler\IFTTTHandler
+    args:
+      - firewall_alert             # event name configured in the IFTTT applet
+      - "${IFTTT_MAKER_KEY}"       # Maker webhook key
+      - Monolog\Level::Error
+```
+
+IFTTT receives three values: `value1` = channel, `value2` = level name, `value3` = message.
+
+### Telegram bot
+
+Send messages to a Telegram channel or chat via a bot token:
+
+```yaml
+logger:
+  - class: Monolog\Handler\TelegramBotHandler
+    args:
+      - "${TELEGRAM_BOT_TOKEN}"    # bot token from @BotFather
+      - "@my_security_channel"     # chat ID or @channel
+      - Monolog\Level::Critical
+```
+
+### Per-handler severity thresholds
+
+Each handler entry has its own `level` argument, so you can tune verbosity per destination. The pattern below writes every Info-and-above event to file but only escalates Critical events to email:
+
+```yaml
+logger:
+  - class: Monolog\Handler\StreamHandler
+    args:
+      - /var/log/firewall/firewall.log
+      - Monolog\Level::Info
+
   - class: Monolog\Handler\NativeMailerHandler
     args:
       - security@example.com
@@ -1477,6 +1646,51 @@ logger:
       - noreply@example.com
       - Monolog\Level::Critical
 ```
+
+> Handlers that wrap other handlers (e.g. `FingersCrossedHandler`, `BufferHandler`, `FilterHandler`, `GroupHandler`) take a `HandlerInterface` as a constructor argument, which the YAML loader cannot construct recursively. To use those, build the logger programmatically with `Monolog\Logger` and inject it via `LoggingFactory::setLogger()` before calling `Firewall::create()`.
+
+### Combining multiple handlers
+
+You can stack any number of handlers — each entry under `logger` is independent. A common production setup tees everything to a file, surfaces warnings to syslog, and pages humans via Slack/Pushover only on critical events:
+
+```yaml
+logger:
+  # Everything to file
+  - class: Monolog\Handler\RotatingFileHandler
+    args:
+      - /var/log/firewall/firewall.log
+      - 14
+      - Monolog\Level::Info
+
+  # Warnings and above to syslog
+  - class: Monolog\Handler\SyslogHandler
+    args:
+      - firewall
+      - LOG_USER
+      - Monolog\Level::Warning
+
+  # Critical events ping the on-call channel
+  - class: Monolog\Handler\SlackWebhookHandler
+    args:
+      - "${SLACK_WEBHOOK_URL}"
+      - "#security-oncall"
+      - "Firewall"
+      - true
+      - ":rotating_light:"
+      - false
+      - true
+      - Monolog\Level::Critical
+
+  # And buzz a phone if no one acks
+  - class: Monolog\Handler\PushoverHandler
+    args:
+      - "${PUSHOVER_APP_TOKEN}"
+      - "${PUSHOVER_USER_KEY}"
+      - "Firewall CRITICAL"
+      - Monolog\Level::Critical
+```
+
+For the full catalogue of available handlers (Telegram, Mandrill, Loggly, Elasticsearch, Sentry via PSR, etc.), see the [Monolog handlers reference](https://seldaek.github.io/monolog/doc/02-handlers-formatters-processors.html).
 
 ## Dynamic Configuration Overrides
 
