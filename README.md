@@ -1,6 +1,6 @@
-# Simple Firewall
+# Lite Firewall
 
-**Simple Firewall** is a powerful, extensible request-evaluation library for PHP-based systems. It provides comprehensive protection by analyzing HTTP requests and applying configurable rules to either allow or block access based on IP addresses, geolocation, user agents, URLs, ASN (Autonomous System Numbers), and rate limits. The library is designed to work seamlessly with popular frameworks like Drupal, WordPress, Symfony, or any standalone PHP application.
+**Lite Firewall** is a powerful, extensible request-evaluation library for PHP-based systems. It provides comprehensive protection by analyzing HTTP requests and applying configurable rules to either allow or block access based on IP addresses, geolocation, user agents, URLs, ASN (Autonomous System Numbers), and rate limits. The library is designed to work seamlessly with popular frameworks like Drupal, WordPress, Symfony, or any standalone PHP application.
 
 ## Table of Contents
 
@@ -138,7 +138,7 @@ logger:
 
 ### Test Drive
 
-Follow these steps to quickly test Simple Firewall locally in a clean environment:
+Follow these steps to quickly test Lite Firewall locally in a clean environment:
 
 #### 🧪 Quick Test Drive Setup
 
@@ -149,7 +149,7 @@ Follow these steps to quickly test Simple Firewall locally in a clean environmen
    touch firewall.data
    ```
 
-2. **Install Simple Firewall via Composer**
+2. **Install Lite Firewall via Composer**
    ```bash
    composer require kanopi/firewall
    ```
@@ -1912,7 +1912,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Credits
 
-Simple Firewall is developed and maintained by [Kanopi Studios](https://kanopi.com).
+Lite Firewall is developed and maintained by [Kanopi Studios](https://kanopi.com).
 
 Special thanks to:
 - The Symfony team for the excellent HttpFoundation component
