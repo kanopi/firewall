@@ -10,4 +10,5 @@ parameters:
         - identifier: missingType.iterableValue
         - identifier: foreach.nonIterable
         - identifier: cast.string
+        - identifier: cast.int
         - identifier: return.type

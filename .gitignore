@@ -13,3 +13,7 @@ firewall.zip
 .env.local
 .env.*.local
 coverage-report
+
+# crs-engine is developed in-tree but is its own composer package.
+# Extract to a standalone repo before release.
+/crs-engine/

@@ -29,6 +29,7 @@
         "doctrine/dbal": "^4.2",
         "geoip2/geoip2": "~2 || ^3",
         "guzzlehttp/guzzle": "^7.9",
+        "kanopi/crs-engine": "^0.1.0",
         "matomo/device-detector": "^6.4",
         "monolog/monolog": "^3.9",
         "symfony/cache": "~6.4 || ~7.3",
