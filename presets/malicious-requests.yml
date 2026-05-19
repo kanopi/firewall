@@ -29,9 +29,10 @@
 # For country and ASN scoring, you must configure GeoIP databases.
 # See example/README.md for setup instructions.
 
-block:
-  Kanopi\Firewall\Plugins\VulnerabilityScore:
-    priority: 50
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: 50
     enable: true
 
     metadata:

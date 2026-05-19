@@ -6,9 +6,10 @@
 # Note: This is a complement to the WordPress blocking configuration and can be
 # used with any PHP application (WordPress, Drupal, Laravel, etc.)
 
-block:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -100
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -100
     enable: true
     config:
       # =====================================================================
@@ -157,9 +158,10 @@ block:
 # 2. If you have custom PHP files at the root level (like contact.php, api.php),
 #    you'll need to add bypass rules:
 #
-#    bypass:
-#      Kanopi\Firewall\Plugins\Url:
-#        priority: -200
+#    plugins:
+#      - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+#        response: allow
+#        weight: -200
 #        config:
 #          - path:/contact.php
 #          - path:/api.php

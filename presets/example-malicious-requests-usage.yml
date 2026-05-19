@@ -33,8 +33,9 @@ logging:
 
 # Optional: Override specific risk thresholds
 # Uncomment and adjust based on your false positive tolerance
-# block:
-#   Kanopi\Firewall\Plugins\VulnerabilityScore:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+#     response: block
 #     config:
 #       risk_levels:
 #         # More aggressive blocking (lower thresholds)
@@ -52,8 +53,9 @@ logging:
 
 # Optional: Enable GeoIP scoring for enhanced detection
 # Requires GeoIP databases - see example/README.md for setup
-# block:
-#   Kanopi\Firewall\Plugins\VulnerabilityScore:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+#     response: block
 #     metadata:
 #       country_reader:
 #         type: reader
@@ -98,11 +100,12 @@ logging:
 #           proxy: 20
 #           hosting: 5
 
-# Optional: Add bypass rules for trusted IPs or specific paths
-# bypass:
-#   # Bypass for internal/trusted IPs
-#   Kanopi\Firewall\Plugins\IpAddress:
-#     priority: -200  # Run before blocking rules
+# Optional: Add allow rules for trusted IPs or specific paths
+# plugins:
+#   # Allow internal/trusted IPs
+#   - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+#     response: allow
+#     weight: -200  # Run before blocking rules
 #     enable: true
 #     config:
 #       - 192.168.1.0/24      # Internal network
@@ -110,9 +113,10 @@ logging:
 #       - 127.0.0.1           # Localhost
 #       - 203.0.113.50        # Office IP
 #
-#   # Bypass for specific paths (e.g., webhooks, APIs)
-#   Kanopi\Firewall\Plugins\Url:
-#     priority: -200
+#   # Allow specific paths (e.g., webhooks, APIs)
+#   - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+#     response: allow
+#     weight: -200
 #     enable: true
 #     config:
 #       - path:/api/webhook
@@ -120,10 +124,11 @@ logging:
 #       - path@starts_with:/.well-known/
 
 # Optional: Add additional blocking rules
-# block:
+# plugins:
 #   # Block specific countries (requires GeoIP)
-#   Kanopi\Firewall\Plugins\GeoLocation:
-#     priority: 10
+#   - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+#     response: block
+#     weight: 10
 #     enable: false  # Set to true if using
 #     metadata:
 #       reader:
@@ -134,8 +139,9 @@ logging:
 #       - country:RU
 #
 #   # Rate limiting
-#   Kanopi\Firewall\Plugins\RateLimit:
-#     priority: 100
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
+#     weight: 100
 #     enable: false  # Set to true if using
 #     metadata:
 #       storage:

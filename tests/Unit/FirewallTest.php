@@ -606,6 +606,100 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Test that a `response: block` entry actually blocks at runtime when no
+     * `response: allow` entries match. The counterpart to
+     * testBypassEvaluatedBeforeBlock, verifying that response: block entries
+     * are routed to the blocking PluginManager (not the bypass manager) and
+     * reach sendBlockingResponse().
+     */
+    public function testResponseBlockEntryBlocksAtRuntime(): void
+    {
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'allow',
+                    'weight' => -100,
+                    'enable' => true,
+                    'config' => ['10.0.0.1'],  // does NOT match the request below
+                ],
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'block',
+                    'weight' => 0,
+                    'enable' => true,
+                    'config' => ['127.0.0.1'], // matches the request below
+                ],
+            ],
+            'global' => [
+                'mode' => 'exception',
+            ],
+        ];
+
+        $firewall = Firewall::create([$config]);
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+
+        $this->expectException(FirewallBlockedException::class);
+        $firewall->evaluate($request);
+    }
+
+    /**
+     * Regression test for end-to-end routing in mixed (new + legacy) configs:
+     * the normalizer must put `bypass:` entries into the bypass manager and
+     * `block:` entries into the block manager, alongside any `plugins:` array
+     * entries, with all weights respected.
+     */
+    public function testMixedFormatRoutesLegacyAndNewEntriesToCorrectManager(): void
+    {
+        $config = [
+            // New-format allow entry for 10.0.0.1
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'allow',
+                    'weight' => -100,
+                    'enable' => true,
+                    'config' => ['10.0.0.1'],
+                ],
+            ],
+            // Legacy bypass for 10.0.0.2
+            'bypass' => [
+                IpAddress::class => [
+                    'priority' => -100,
+                    'enable' => true,
+                    'config' => ['10.0.0.2'],
+                ],
+            ],
+            // Legacy block for 127.0.0.1
+            'block' => [
+                IpAddress::class => [
+                    'priority' => 0,
+                    'enable' => true,
+                    'config' => ['127.0.0.1'],
+                ],
+            ],
+            'global' => [
+                'mode' => 'exception',
+            ],
+        ];
+
+        $firewall = Firewall::create([$config]);
+
+        // Request from a new-format allow IP: passes.
+        $allowRequestNew = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.1']);
+        $this->assertTrue($firewall->evaluate($allowRequestNew), 'New-format allow should pass.');
+
+        // Request from a legacy bypass IP: passes.
+        $allowRequestLegacy = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.2']);
+        $this->assertTrue($firewall->evaluate($allowRequestLegacy), 'Legacy bypass should pass.');
+
+        // Request from the legacy block IP: blocks.
+        $blockRequest = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+        $this->expectException(FirewallBlockedException::class);
+        $firewall->evaluate($blockRequest);
+    }
+
+    /**
      * Test that bypass (allow) plugins are evaluated before block plugins.
      */
     public function testBypassEvaluatedBeforeBlock(): void

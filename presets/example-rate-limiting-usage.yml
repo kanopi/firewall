@@ -11,8 +11,9 @@ configs:
   - presets/rate-limiting.yml
 
 # Override to use your Redis configuration
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
     metadata:
       storage:
         type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
@@ -30,8 +31,9 @@ block:
 # configs:
 #   - presets/rate-limiting.yml
 #
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
 #     metadata:
 #       storage:
 #         type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
@@ -52,8 +54,9 @@ block:
 # configs:
 #   - presets/rate-limiting.yml
 #
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
 #     config:
 #       # More strict API limits
 #       - path: /api/*
@@ -61,7 +64,7 @@ block:
 #         sample: 60
 #
 #       # Allow more login attempts for internal network
-#       # (Use with IP bypass rules)
+#       # (Use with IP allow rules)
 #       - path: /login
 #         rate: 20      # 20 instead of default 10
 #         sample: 300
@@ -73,13 +76,15 @@ block:
 # configs:
 #   - presets/rate-limiting.yml
 #
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
 #     enable: false  # Completely disable in dev
 #
 # OR use very high limits:
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
 #     metadata:
 #       default_rate: 10000
 #       default_sample: 60
@@ -88,9 +93,10 @@ block:
 # EXAMPLE 5: API-Only Application
 # =============================================================================
 # Simplified rate limiting for API-only apps
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
-#     priority: 100
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
+#     weight: 100
 #     enable: true
 #     metadata:
 #       default_rate: 100
@@ -138,8 +144,9 @@ block:
 # configs:
 #   - presets/rate-limiting.yml
 #
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
 #     config:
 #       # Free tier
 #       - path: /api/free/*
@@ -164,8 +171,9 @@ block:
 #   - presets/rate-limiting.yml
 #   - presets/wordpress.yml  # Combine with WordPress preset
 #
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
 #     metadata:
 #       default_rate: 100
 #       default_sample: 60
@@ -200,9 +208,10 @@ block:
 # EXAMPLE 8: E-Commerce Site
 # =============================================================================
 # Rate limits optimized for online stores
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
-#     priority: 100
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
+#     weight: 100
 #     enable: true
 #     metadata:
 #       default_rate: 120
@@ -249,16 +258,17 @@ block:
 #         sample: 300
 
 # =============================================================================
-# EXAMPLE 9: Bypass Rate Limits for Trusted IPs
+# EXAMPLE 9: Allow Rate Limits for Trusted IPs
 # =============================================================================
-# Combine rate limiting with IP bypass rules
+# Combine rate limiting with IP allow rules
 configs:
   - presets/rate-limiting.yml
 
-bypass:
-  # Bypass ALL checks for trusted IPs (including rate limits)
-  Kanopi\Firewall\Plugins\IpAddress:
-    priority: -200  # Execute before rate limiting
+plugins:
+  # Allow ALL checks for trusted IPs (including rate limits)
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200  # Execute before rate limiting
     enable: true
     config:
       - 192.168.1.0/24  # Internal network
@@ -272,8 +282,9 @@ bypass:
 # configs:
 #   - presets/rate-limiting.yml
 #
-# block:
-#   Kanopi\Firewall\Plugins\RateLimit:
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#     response: block
 #     metadata:
 #       storage:
 #         type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage

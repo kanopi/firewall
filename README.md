@@ -30,6 +30,7 @@
 - [Platform Integration](#platform-integration)
 - [Advanced Examples](#advanced-examples)
 - [Testing](#testing)
+- [Legacy format (deprecated)](#legacy-format-deprecated)
 - [Contributing](#contributing)
 
 ## Features
@@ -105,16 +106,19 @@ storage:
   config:
     file: /var/log/firewall/blocked.data
 
-# Block malicious IPs
-block:
-  "Kanopi\\Firewall\\Plugins\\IpAddress":
+# Plugins evaluated for every request
+plugins:
+  # Block malicious IPs
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
     enable: true
     config:
       - 192.168.1.100
       - 10.0.0.0/24
 
   # Optional: Enable vulnerability scoring for advanced threat detection
-  # "Kanopi\\Firewall\\Plugins\\VulnerabilityScore":
+  # - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+  #   response: block
   #   enable: true
   #   config:
   #     scoring:
@@ -163,11 +167,12 @@ Follow these steps to quickly test Lite Firewall locally in a clean environment:
         config:
             storage_file: firewall.data
 
-    block:
-        "Kanopi\\Firewall\\Plugins\\Url":
-            enable: true
-            config:
-                - "query.block:1"   # Block any request that includes ?block=1
+    plugins:
+        - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+          response: block
+          enable: true
+          config:
+              - "query.block:1"   # Block any request that includes ?block=1
    ```
 
 4. **Create an `index.php` file**
@@ -219,13 +224,14 @@ echo "" > firewall.data
 
 The firewall configuration consists of four main sections:
 
-| Section   | Purpose                                                  | Required |
-|-----------|----------------------------------------------------------|----------|
-| `global`  | Defines global configuration settings                    | No       |
-| `storage` | Defines where blocked IP addresses are persisted         | Yes      |
-| `bypass`  | Plugins that allow trusted traffic through               | No       |
-| `block`   | Plugins that deny harmful or suspicious traffic          | No       |
-| `logger`  | Monolog handlers for logging firewall events             | No       |
+| Section   | Purpose                                                                    | Required |
+|-----------|----------------------------------------------------------------------------|----------|
+| `global`  | Defines global configuration settings                                      | No       |
+| `storage` | Defines where blocked IP addresses are persisted                           | Yes      |
+| `plugins` | Ordered list of plugin entries that allow (`response: allow`) or block (`response: block`) traffic | No       |
+| `logger`  | Monolog handlers for logging firewall events                               | No       |
+
+> **Legacy formats `bypass:` / `block:`** are still accepted and auto-normalized into `plugins:` entries at load time. See [Legacy format (deprecated)](#legacy-format-deprecated) at the end of this document. New configs should use the `plugins:` array.
 
 ## Configuration Loading & Includes
 
@@ -280,8 +286,9 @@ logger:
   - class: Monolog\Handler\StreamHandler
     args: ["logs/firewall.log", "Monolog\\Level::Info"]
 
-block:
-  "Kanopi\\Firewall\\Plugins\\GeoLocation":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
     enable: true
     metadata:
       reader:
@@ -387,6 +394,13 @@ Some metadata values are commonly file paths. The loader automatically rewrites 
 
 ```text
 logger.*.args.0
+
+# New plugins: array format
+plugins.*.metadata.reader.db
+plugins.*.metadata.storage.config.file
+plugins.*.metadata.config.*
+
+# Legacy block:/bypass: format (still supported)
 (block|allow).Kanopi\Firewall\Plugins\GeoLocation.metadata.reader.db
 (block|allow).Kanopi\Firewall\Plugins\Asn.metadata.reader.db
 (block|allow).Kanopi\Firewall\Plugins\RateLimit.metadata.storage.config.file
@@ -560,71 +574,75 @@ storage:
 
 ## Plugin Architecture
 
-Plugins are the core components that evaluate incoming requests. They can be configured in two sections:
-
-- **`bypass`**: Plugins here allow requests to pass through without further evaluation
-- **`block`**: Plugins here can block requests based on configured rules
+Plugins are the core components that evaluate incoming requests. They are configured as an ordered list under the top-level `plugins:` key. Each entry declares one plugin instance and its `response` mode — either `allow` (let the request through) or `block` (reject the request).
 
 ### Common Plugin Configuration
 
-All plugins share these configuration options:
+All plugin entries share the same shape:
 
 ```yaml
-"Kanopi\\Firewall\\Plugins\\PluginName":
-  enable: true              # Whether the plugin is active
-  priority: 0               # Execution order (-100 runs before 100)
-  metadata: {}              # Plugin-specific configuration
-  config: []                # Rules or conditions for the plugin
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\PluginName"   # Fully qualified class name
+    response: block          # 'allow' (bypass match) or 'block' (reject match)
+    weight: 0                # Execution order within its response group (lower runs first)
+    enable: true             # Whether the plugin entry is active
+    metadata: {}             # Plugin-specific configuration (DB readers, storage, etc.)
+    config: []               # Rules or conditions for the plugin
 ```
 
-**YAML Syntax Note**: Class names in YAML configuration must be quoted with double backslashes:
-- ✅ Correct: `"Kanopi\\Firewall\\Plugins\\IpAddress"`
-- ❌ Wrong: `Kanopi\Firewall\Plugins\IpAddress` (missing quotes and single backslash)
-- ❌ Wrong: `\Kanopi\Firewall\Plugins\IpAddress` (leading backslash)
+The same class can appear multiple times in the list — each entry becomes its own plugin instance, so you can split rules across instances with different weights or response modes.
 
-This applies to all `type:` declarations (storage backends, rate limit storage) and plugin keys in `block:` and `bypass:` sections.
+**YAML Syntax Note**: The `plugin:` value must be quoted with double backslashes:
+- ✅ Correct: `plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"`
+- ❌ Wrong: `plugin: Kanopi\Firewall\Plugins\IpAddress` (missing quotes and single backslash)
+- ❌ Wrong: `plugin: \Kanopi\Firewall\Plugins\IpAddress` (leading backslash)
 
-### Plugin Priority and Execution Order
+This also applies to all `type:` declarations (storage backends, rate limit storage).
 
-Plugins execute in order based on their `priority` value (lower numbers run first):
+### Plugin Execution Order
 
-- **-200 to -100**: Early filters (IP whitelists, trusted networks)
+The firewall evaluates `response: allow` entries first (sorted by `weight`, lower runs first). If any allow plugin matches, the request is permitted immediately and no `response: block` plugins run. Otherwise, `response: block` entries run next (also sorted by `weight`), and the first match rejects the request.
+
+Suggested weight ranges:
+
+- **-200 to -100**: Early filters (IP allow-lists, trusted networks)
 - **-99 to -1**: Security checks (geo-blocking, ASN filtering)
-- **0**: Default priority (URL rules, user agent checks)
+- **0**: Default (URL rules, user agent checks)
 - **1 to 100**: Post-evaluation (rate limiting, logging)
-
-**Important**: Bypass plugins run before block plugins. If any bypass plugin returns `true`, the request is allowed immediately without evaluating block plugins.
 
 **Example: Layered Security**
 
 ```yaml
-bypass:
-  # Run first - whitelist office IPs
-  "Kanopi\\Firewall\\Plugins\\IpAddress":
+plugins:
+  # Run first - allow trusted office IPs
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
     enable: true
-    priority: -200
     config:
       - 192.168.1.0/24
 
-block:
   # Run early - geographic blocking
-  "Kanopi\\Firewall\\Plugins\\GeoLocation":
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    weight: -100
     enable: true
-    priority: -100
     config:
       - "country:CN"
 
   # Run after geo - vulnerability scoring
-  "Kanopi\\Firewall\\Plugins\\VulnerabilityScore":
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -50
     enable: true
-    priority: -50
     config:
       # ... scoring config ...
 
   # Run last - rate limiting
-  "Kanopi\\Firewall\\Plugins\\RateLimit":
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100
     enable: true
-    priority: 100
     metadata:
       # ... rate limit config ...
 ```
@@ -634,10 +652,11 @@ block:
 Plugins can load rules from external files (local or remote) using the `metadata.config` option. This is useful for managing large rule sets separately:
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\VulnerabilityScore":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -50
     enable: true
-    priority: -50
     metadata:
       # Load scoring rules from external file(s)
       config:
@@ -665,11 +684,12 @@ Evaluates requests based on IP addresses, supporting IPv4, IPv6, CIDR blocks, an
 #### Configuration Example
 
 ```yaml
-# In bypass section - whitelist trusted IPs
-bypass:
-  "Kanopi\\Firewall\\Plugins\\IpAddress":
+plugins:
+  # Allow list - trusted IPs bypass further evaluation
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -100   # Run early
     enable: true
-    priority: -100  # Run early
     config:
       # Single IPv4 address
       - 192.168.1.1
@@ -682,11 +702,11 @@ bypass:
       # IP range (start-end)
       - 192.168.1.100-192.168.1.200
 
-# In block section - blacklist malicious IPs
-block:
-  "Kanopi\\Firewall\\Plugins\\IpAddress":
+  # Block list - reject malicious IPs
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
+    weight: -100
     enable: true
-    priority: -100
     config:
       - 192.168.1.50
       - 10.10.10.0/24
@@ -701,16 +721,17 @@ Evaluates requests based on geographic location using MaxMind GeoIP2 databases.
 #### Configuration Example
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\GeoLocation":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    weight: 0
     enable: true
-    priority: 0
     metadata:
       reader:
         # Option 1: Local database file
         type: reader
         db: /path/to/GeoLite2-City.mmdb
-        
+
         # Option 2: MaxMind web service
         # type: client
         # accountId: 123456
@@ -722,15 +743,15 @@ block:
       - "country:CN"
       - "country:RU"
       - "country.isoCode:KP"
-      
+
       # Block entire continents
       - "continent:AS"
       - "continent.code:AF"
-      
+
       # Block specific cities
       - "city:Moscow"
       - "city.name@contains:Beijing"
-      
+
       # Complex location rules
       - variable: location.timeZone
         operator: equals
@@ -762,36 +783,37 @@ Evaluates requests based on URL components and request parameters.
 #### Configuration Example
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\Url":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: 0
     enable: true
-    priority: 0
     config:
       # Block all POST requests
       - "method:POST"
-      
+
       # Block specific paths
       - "path:/wp-admin"
       - "path@starts_with:/admin"
       - "path@contains:phpmyadmin"
       - "path@regex:/\.(sql|bak|old)$/i"
-      
+
       # Block based on host
       - "host:malicious.example.com"
       - "host@ends_with:.suspicious.com"
-      
+
       # Block based on query parameters
       - "query.cmd@exists"
       - "query.action:delete"
-      
+
       # Block based on POST data
       - "post.username:admin"
       - "post.action@in:drop,truncate,delete"
-      
+
       # Block based on headers
       - "header.user-agent@contains:bot"
       - "header.x-forwarded-for@exists"
-      
+
       # Complex URL rules
       - type: AND
         rules:
@@ -821,32 +843,33 @@ Analyzes user agent strings to identify bots, devices, browsers, and operating s
 #### Configuration Example
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\UserAgent":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: block
+    weight: 0
     enable: true
-    priority: 0
     config:
       # Block all bots
       - "bot:true"
-      
+
       # Block specific device types
       - "device.type:desktop"
       - "device.type@in:smartphone,tablet"
-      
+
       # Block specific browsers
       - "client.name:Internet Explorer"
       - "client.type:browser"
       - "client.version@less_than:10"
-      
+
       # Block specific operating systems
       - "os.name:Windows XP"
       - "os.short_name:WIN"
       - "os.version@less_than:10"
-      
+
       # Block specific brands or models
       - "brand:Huawei"
       - "model@contains:Galaxy"
-      
+
       # Complex user agent rules
       - type: AND
         rules:
@@ -877,10 +900,11 @@ Evaluates requests based on Autonomous System Numbers (ASN) using MaxMind's GeoI
 #### Configuration Example
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\Asn":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+    response: block
+    weight: 0
     enable: true
-    priority: 0
     metadata:
       reader:
         type: reader
@@ -889,7 +913,7 @@ block:
       # Block specific ASN numbers
       - "asn:13335"  # Cloudflare
       - "asn:15169"  # Google
-      
+
       # Block by organization name
       - "asn_org:CLOUDFLARENET"
       - "asn_org@contains:AMAZON"
@@ -910,16 +934,17 @@ Implements rate limiting to prevent abuse and DDoS attacks.
 #### Configuration Example
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\RateLimit":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100   # Run after other plugins
     enable: true
-    priority: 100  # Run after other plugins
     metadata:
       # Default settings for all paths
       default_rate: 60        # Requests allowed
       default_sample: 60      # Time window in seconds
       default_expiration_time: 300  # Block duration in seconds
-      
+
       # Storage backend for rate limit data
       storage:
         # Option 1: Redis (recommended for production)
@@ -932,43 +957,43 @@ block:
             # auth: "password"
             # auth: ["password"]
             # auth: ["username", "password"]
-        
+
         # Option 2: File storage
         # type: "Kanopi\\Firewall\\RateLimitStorage\\FileRateLimitStorage"
         # config:
         #   file: /var/log/firewall/ratelimit.data
-        
+
         # Option 3: Database storage
         # type: "Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage"
         # config:
         #   storage-table: firewall_ratelimit
         #   connection:
         #     dsn: "mysql://user:pass@localhost/db"
-        
+
         # Option 4: In-memory (testing only)
         # type: "Kanopi\\Firewall\\RateLimitStorage\\InMemoryRateLimitStorage"
-    
+
     config:
       # Strict rate limit for homepage
       - path: "/"
         rate: 10
         sample: 60
-      
+
       # API endpoints with higher limits
       - path: "/api/*"
         rate: 100
         sample: 60
-      
+
       # Admin area with moderate limits
       - path: "/admin/*"
         rate: 30
         sample: 60
-      
+
       # Login endpoint with strict limits
       - path: "/login"
         rate: 5
         sample: 300  # 5 attempts per 5 minutes
-      
+
       # Use regex for complex patterns
       - path: "/\.(php|asp|aspx)$/i"
         rate: 1
@@ -998,29 +1023,30 @@ Evaluates requests based on a comprehensive scoring system that combines multipl
 #### Configuration Example
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\VulnerabilityScore":
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -50   # Run after basic filters but before rate limiting
     enable: true
-    priority: -50  # Run after basic filters but before rate limiting
     metadata:
       # Default response settings
       default_expiration_time: 3600
       status_code: 403
-      
+
       # Optional: GeoIP database for country scoring
       country_reader:
         type: reader
         db: /path/to/GeoLite2-Country.mmdb
-      
+
       # Optional: ASN database for network scoring
       asn_reader:
         type: reader
         db: /path/to/GeoLite2-ASN.mmdb
-      
+
       # Load scoring rules from external file
       config:
         - vulnerability-score-rules.yml
-    
+
     config:
       scoring:
         # HTTP Method Scoring
@@ -1321,25 +1347,27 @@ config:
 The VulnerabilityScore plugin works well with other firewall plugins:
 
 ```yaml
-# Use IP whitelist to bypass scoring
-bypass:
-  "Kanopi\\Firewall\\Plugins\\IpAddress":
+plugins:
+  # Use IP allow-list to bypass scoring
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
     enable: true
-    priority: -200
     config:
       - 192.168.1.0/24  # Internal network
 
-# Apply vulnerability scoring
-block:
-  "Kanopi\\Firewall\\Plugins\\VulnerabilityScore":
+  # Apply vulnerability scoring
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -50
     enable: true
-    priority: -50
     config: # ... scoring configuration ...
-  
+
   # Then apply rate limiting to scored requests
-  "Kanopi\\Firewall\\Plugins\\RateLimit":
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100
     enable: true
-    priority: 100
     config:
       - path: "/*"
         rate: 60
@@ -1391,11 +1419,12 @@ Evaluates each request against the [OWASP Core Rule Set](https://coreruleset.org
 #### Configuration Example
 
 ```yaml
-block:
-  "Kanopi\\Firewall\\Plugins\\Crs":
-    enable: true
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Crs"
+    response: block
     # CRS work is non-trivial — run cheap IP / UA / ASN filters first.
-    priority: 50
+    weight: 50
+    enable: true
     config:
       # Paranoia level 1-4. 1 is the recommended starting point.
       paranoia: 1
@@ -1765,25 +1794,37 @@ For the full catalogue of available handlers (Telegram, Mandrill, Loggly, Elasti
 
 ## Dynamic Configuration Overrides
 
-For dynamic environments (Docker, multi-site installations), you can override YAML configuration with PHP arrays:
+For dynamic environments (Docker, multi-site installations), you can override YAML configuration with PHP arrays. Override paths target the **source YAML shape** (before plugin normalization runs), so the right path depends on how your YAML is written.
+
+**Overriding entries written in the `plugins:` array** — the path includes the list index (`0`, `1`, `2`, …) in declaration order:
 
 ```php
 <?php
 $overrides = [
     // Override storage location
     '[storage][config][file]' => $_ENV['FIREWALL_STORAGE_PATH'] ?? '/tmp/firewall.data',
-    
-    // Override GeoIP database path
-    '[block][\Kanopi\Firewall\Plugins\GeoLocation][metadata][reader][db]' => $_ENV['GEOIP_DB_PATH'],
-    
-    // Override Redis connection
-    '[block][\Kanopi\Firewall\Plugins\RateLimit][metadata][storage][config][redis][host]' => $_ENV['REDIS_HOST'] ?? 'localhost',
-    
-    // Disable a plugin
-    '[block][\Kanopi\Firewall\Plugins\UserAgent][enable]' => false,
+
+    // Override GeoIP database path on the 2nd plugin entry (index 1)
+    '[plugins][1][metadata][reader][db]' => $_ENV['GEOIP_DB_PATH'],
+
+    // Override Redis connection on the 4th plugin entry (index 3)
+    '[plugins][3][metadata][storage][config][redis][host]' => $_ENV['REDIS_HOST'] ?? 'localhost',
+
+    // Disable a plugin entry
+    '[plugins][2][enable]' => false,
 ];
 
 \Kanopi\Firewall\Firewall::create([__DIR__ . '/config.yml'], $overrides)->evaluate();
+```
+
+**Overriding entries written in the legacy `block:` / `bypass:` format** — paths still address the plugin by class name (legacy format is normalized after overrides are merged, so this continues to work):
+
+```php
+<?php
+$overrides = [
+    '[block][\Kanopi\Firewall\Plugins\GeoLocation][metadata][reader][db]' => $_ENV['GEOIP_DB_PATH'],
+    '[block][\Kanopi\Firewall\Plugins\UserAgent][enable]' => false,
+];
 ```
 
 ## Platform Integration
@@ -1879,22 +1920,25 @@ storage:
     connection:
       dsn: "mysql://firewall:secure@localhost/security"
 
-# Whitelist trusted sources
-bypass:
-  # Office IPs
-  "Kanopi\\Firewall\\Plugins\\IpAddress":
+plugins:
+  # =====================================================================
+  # Trusted sources (response: allow)
+  # =====================================================================
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
     enable: true
-    priority: -200
     config:
       - 203.0.113.0/24  # Office network
       - 198.51.100.50   # VPN endpoint
 
-# Comprehensive blocking rules
-block:
+  # =====================================================================
   # Geographic restrictions
-  "Kanopi\\Firewall\\Plugins\\GeoLocation":
+  # =====================================================================
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    weight: -100
     enable: true
-    priority: -100
     metadata:
       reader:
         type: reader
@@ -1905,18 +1949,21 @@ block:
         rules:
           - "country@in:CN,RU,KP,IR"
           - "continent:AF"
-  
-  # Block suspicious user agents
-  "Kanopi\\Firewall\\Plugins\\UserAgent":
+
+  # =====================================================================
+  # Suspicious user agents
+  # =====================================================================
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: block
+    weight: -50
     enable: true
-    priority: -50
     config:
       # Block all bots except Google and Bing
       - type: AND
         rules:
           - "bot:true"
           - "!client.name@in:Googlebot,Bingbot"
-      
+
       # Block outdated browsers
       - type: OR
         rules:
@@ -1927,11 +1974,14 @@ block:
             rules:
               - "client.name:Chrome"
               - "client.version < 80"
-  
+
+  # =====================================================================
   # Vulnerability scoring for comprehensive threat assessment
-  "Kanopi\\Firewall\\Plugins\\VulnerabilityScore":
+  # =====================================================================
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -25
     enable: true
-    priority: -25
     metadata:
       country_reader:
         type: reader
@@ -1964,28 +2014,34 @@ block:
           block: true
           status_code: 403
           expiration_time: 7200
-  
+
+  # =====================================================================
   # URL-based protection
-  "Kanopi\\Firewall\\Plugins\\Url":
+  # =====================================================================
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: 0
     enable: true
-    priority: 0
     config:
       # Protect admin areas
       - type: AND
         rules:
           - "path@starts_with:/admin"
           - "!header.authorization@exists"
-      
+
       # Block vulnerability scanners
       - "path@regex:/(\.git|\.env|\.htaccess|wp-config\.php|phpmyadmin)/i"
-      
+
       # Block SQL injection attempts
       - "query@regex:/(union.*select|select.*from|insert.*into|drop.*table)/i"
-  
+
+  # =====================================================================
   # Aggressive rate limiting
-  "Kanopi\\Firewall\\Plugins\\RateLimit":
+  # =====================================================================
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100
     enable: true
-    priority: 100
     metadata:
       default_rate: 120
       default_sample: 60
@@ -2001,11 +2057,11 @@ block:
       - path: "/api/v1/auth/*"
         rate: 5
         sample: 300
-      
+
       - path: "/api/v1/public/*"
         rate: 100
         sample: 60
-      
+
       - path: "/api/v1/private/*"
         rate: 30
         sample: 60
@@ -2106,10 +2162,11 @@ class ApiKeyValidator extends AbstractPluginBase
 Register the custom plugin in your configuration:
 
 ```yaml
-block:
-  \App\Security\Firewall\Plugins\ApiKeyValidator:
+plugins:
+  - plugin: "App\\Security\\Firewall\\Plugins\\ApiKeyValidator"
+    response: block
+    weight: -150   # Run before rate limiting
     enable: true
-    priority: -150  # Run before rate limiting
     metadata:
       api_keys:
         - "sk_live_abcd1234567890"
@@ -2151,12 +2208,14 @@ class FirewallTest extends TestCase
             'storage' => [
                 'type' => 'Kanopi\Firewall\Storage\InMemoryStorage'
             ],
-            'block' => [
-                'Kanopi\Firewall\Plugins\IpAddress' => [
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\IpAddress',
+                    'response' => 'block',
                     'enable' => true,
-                    'config' => ['192.168.1.100']
-                ]
-            ]
+                    'config' => ['192.168.1.100'],
+                ],
+            ],
         ];
         
         $firewall = Firewall::create([$config]);
@@ -2172,6 +2231,60 @@ class FirewallTest extends TestCase
     }
 }
 ```
+
+## Legacy format (deprecated)
+
+Earlier versions of this library configured plugins in two separate top-level sections (`bypass:` and `block:`), each keyed by the plugin class name. This format is still accepted — `Kanopi\Firewall\Utility\PluginConfigNormalizer` rewrites it into the `plugins:` array shape at load time — but it will be removed in a future major release. New configs should use the `plugins:` array described above.
+
+**Side-by-side**
+
+| Legacy (deprecated)                             | New (`plugins:` array)               |
+|-------------------------------------------------|--------------------------------------|
+| `bypass:` section                               | entry with `response: allow`         |
+| `block:` section                                | entry with `response: block`         |
+| keyed by plugin class                           | `plugin: "..."` field on each entry  |
+| `priority:`                                     | `weight:`                            |
+| one instance per class per section              | multiple instances per class allowed |
+| deep-merges by class across `configs:` includes | appends entries across includes      |
+
+**Same config in both shapes**
+
+```yaml
+# Legacy (deprecated)
+bypass:
+  "Kanopi\\Firewall\\Plugins\\IpAddress":
+    priority: -200
+    enable: true
+    config:
+      - 192.168.1.0/24
+
+block:
+  "Kanopi\\Firewall\\Plugins\\Url":
+    priority: -10
+    enable: true
+    config:
+      - path:/wp-admin
+```
+
+```yaml
+# New (canonical)
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
+    enable: true
+    config:
+      - 192.168.1.0/24
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -10
+    enable: true
+    config:
+      - path:/wp-admin
+```
+
+You can also mix both formats in the same config during migration — legacy entries are normalized first, then appended to whatever is already in `plugins:`.
 
 ## Contributing
 

@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Tests\Plugins\TestFalsePlugin;
+use Kanopi\Firewall\Tests\Plugins\TestPluginWithMetadata;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginHigh;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginLow;
 use Kanopi\Firewall\Tests\Plugins\TestTruePlugin;
@@ -281,5 +282,110 @@ class PluginManagerTest extends AbstractTestCase
             [TestPriorityPluginLow::class, TestPriorityPluginHigh::class],
             $callOrder
         );
+    }
+
+    /**
+     * Test: createFromPluginsArray passes the entry's metadata to the plugin
+     * constructor. Regression for a coverage gap where metadata propagation
+     * for the new plugins: array format was unverified end-to-end.
+     */
+    public function testCreateFromPluginsArrayPropagatesMetadataToPlugin(): void
+    {
+        TestPluginWithMetadata::$lastMetadata = [];
+        TestPluginWithMetadata::$lastConfig = [];
+
+        $manager = PluginManager::createFromPluginsArray([
+            [
+                'plugin' => TestPluginWithMetadata::class,
+                'weight' => 0,
+                'enable' => true,
+                'metadata' => [
+                    'db' => '/path/to/file.mmdb',
+                    'nested' => ['key' => 'value'],
+                ],
+                'config' => ['rule-a', 'rule-b'],
+            ],
+        ]);
+
+        // Iterating the manager forces lazy instantiation of the plugin.
+        $manager->evaluate(new Request());
+
+        $this->assertSame(
+            ['db' => '/path/to/file.mmdb', 'nested' => ['key' => 'value']],
+            TestPluginWithMetadata::$lastMetadata
+        );
+    }
+
+    /**
+     * Test: createFromPluginsArray passes the entry's config rules to the plugin
+     * constructor. Companion to the metadata propagation test above.
+     */
+    public function testCreateFromPluginsArrayPropagatesConfigToPlugin(): void
+    {
+        TestPluginWithMetadata::$lastMetadata = [];
+        TestPluginWithMetadata::$lastConfig = [];
+
+        $manager = PluginManager::createFromPluginsArray([
+            [
+                'plugin' => TestPluginWithMetadata::class,
+                'weight' => 0,
+                'enable' => true,
+                'config' => ['rule-a', 'rule-b', ['nested' => 'rule-c']],
+            ],
+        ]);
+
+        $manager->evaluate(new Request());
+
+        $this->assertSame(
+            ['rule-a', 'rule-b', ['nested' => 'rule-c']],
+            TestPluginWithMetadata::$lastConfig
+        );
+    }
+
+    /**
+     * Test: createFromPluginsArray defaults missing metadata and config to
+     * empty arrays rather than failing or passing nulls.
+     */
+    public function testCreateFromPluginsArrayDefaultsMissingMetadataAndConfig(): void
+    {
+        TestPluginWithMetadata::$lastMetadata = ['stale'];
+        TestPluginWithMetadata::$lastConfig = ['stale'];
+
+        $manager = PluginManager::createFromPluginsArray([
+            [
+                'plugin' => TestPluginWithMetadata::class,
+                'weight' => 0,
+                'enable' => true,
+                // No metadata, no config keys.
+            ],
+        ]);
+
+        $manager->evaluate(new Request());
+
+        $this->assertSame([], TestPluginWithMetadata::$lastMetadata);
+        $this->assertSame([], TestPluginWithMetadata::$lastConfig);
+    }
+
+    /**
+     * Test: createFromPluginsArray registers an entry that omits `enable`.
+     *
+     * The new format documents enable defaulting to true. PluginManager itself
+     * registers every entry — the disabled filter lives in
+     * PluginConfigNormalizer::partitionAndSort(), but a defensive default in
+     * the manager is still worth pinning down so that a config that skips
+     * `enable` doesn't silently drop the plugin if it ever bypasses the
+     * normalizer (e.g., direct callers, future code paths).
+     */
+    public function testCreateFromPluginsArrayRegistersEntryWithoutEnableKey(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            [
+                'plugin' => TestFalsePlugin::class,
+                'weight' => 0,
+                // No `enable` key — entry should still register.
+            ],
+        ]);
+
+        $this->assertCount(1, $manager->getPlugins());
     }
 }

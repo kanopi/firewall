@@ -193,8 +193,11 @@ This document provides a quick reference for all rate limits defined in the `rat
 ### Stricter Login Protection
 
 ```yaml
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
     config:
       - path: /login
         rate: 3      # Only 3 attempts
@@ -204,9 +207,15 @@ block:
 ### Higher API Limits for Premium Tier
 
 ```yaml
-- path: /api/premium/*
-  rate: 500
-  sample: 60
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - path: /api/premium/*
+        rate: 500
+        sample: 60
 ```
 
 ### Disable Rate Limiting for Specific Path
@@ -214,17 +223,29 @@ block:
 Remove the path from config or set very high limits:
 
 ```yaml
-- path: /unlimited-endpoint
-  rate: 999999
-  sample: 60
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - path: /unlimited-endpoint
+        rate: 999999
+        sample: 60
 ```
 
 ### Custom Endpoint
 
 ```yaml
-- path: /my-custom-api
-  rate: 50
-  sample: 60
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - path: /my-custom-api
+        rate: 50
+        sample: 60
 ```
 
 ## Troubleshooting
@@ -239,7 +260,7 @@ Remove the path from config or set very high limits:
 ### Too many false positives
 
 1. Increase rate limits for affected endpoints
-2. Add IP bypass rules for trusted sources
+2. Add an IpAddress `response: allow` plugin entry for trusted sources
 3. Increase time window (sample)
 4. Check if behind proxy (ensure X-Forwarded-For is trusted)
 
@@ -278,3 +299,38 @@ Approximate overhead per request:
 - **Cache**: 1-3ms (varies by implementation)
 
 For high-traffic sites (>1000 req/sec), Redis is strongly recommended.
+
+## Legacy format (deprecated)
+
+Earlier releases configured plugins via top-level `bypass:` and `block:` sections keyed by class name. That format is still accepted but is auto-normalized at load time by `Kanopi\Firewall\Utility\PluginConfigNormalizer` into the canonical `plugins:` array, and **it will be removed in a future major version**. New configs should use the `plugins:` array.
+
+Mini side-by-side for the RateLimit plugin:
+
+Legacy (deprecated):
+
+```yaml
+block:
+  Kanopi\Firewall\Plugins\RateLimit:
+    priority: 0
+    enable: true
+    config:
+      - path: /login
+        rate: 5
+        sample: 300
+```
+
+Canonical (new):
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - path: /login
+        rate: 5
+        sample: 300
+```
+
+Mapping: `bypass:` → `response: allow`, `block:` → `response: block`, `priority:` → `weight:`, and the class-keyed map becomes a flat list of entries with `plugin:` set to the (double-quoted, backslash-escaped) class name.
