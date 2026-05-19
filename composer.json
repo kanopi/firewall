@@ -94,7 +94,32 @@
         "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --coverage-html reports/ --coverage-text",
         "cs": "@check:code",
         "cs:fix": "@fix:code",
-        "stan": "@check:security"
+        "stan": "@check:security",
+        "demo:reset": "rm -f /tmp/firewall-demo.data",
+        "demo": [
+            "Composer\\Config::disableProcessTimeout",
+            "@demo:reset",
+            "php -S localhost:8000 -t example/demo example/demo/index.php"
+        ],
+        "demo:workers": [
+            "Composer\\Config::disableProcessTimeout",
+            "@demo:reset",
+            "PHP_CLI_SERVER_WORKERS=8 php -S localhost:8000 -t example/demo example/demo/index.php"
+        ],
+        "demo:perf": [
+            "Composer\\Config::disableProcessTimeout",
+            "docker compose -f example/demo/docker-compose.perf.yml up"
+        ],
+        "demo:perf:down": "docker compose -f example/demo/docker-compose.perf.yml down",
+        "demo:perf:restart": "docker compose -f example/demo/docker-compose.perf.yml restart php"
+    },
+    "scripts-descriptions": {
+        "demo": "Run the demo on PHP's built-in server (single-process) at http://localhost:8000",
+        "demo:workers": "Same as `demo` but with PHP_CLI_SERVER_WORKERS=8 for concurrent request handling",
+        "demo:reset": "Delete the demo's FileStorage data file (/tmp/firewall-demo.data) so the next request starts with a clean slate",
+        "demo:perf": "Run the production-shaped demo stack (nginx + php-fpm) at http://localhost:8000",
+        "demo:perf:down": "Tear down the nginx + php-fpm demo stack",
+        "demo:perf:restart": "Restart only the php-fpm container (handy when opcache holds stale bytecode after edits)"
     },
     "prefer-stable": true,
     "minimum-stability": "dev",

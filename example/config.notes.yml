@@ -65,20 +65,54 @@ storage:
     #   port: 33066
     #   driver: 'pdo_mysql'
 
+# Challenge configuration
+#
+# Settings that govern the `response: challenge` interstitial flow. This whole
+# section is ignored when no plugin uses `response: challenge`. When any
+# plugin does, `secret` is REQUIRED — startup throws ConfigurationException
+# if it is empty.
+challenge:
+  # Short name of a built-in provider ("math") or FQCN of a class that
+  # implements Kanopi\Firewall\Challenge\ChallengeProviderInterface.
+  # The built-in "math" provider asks "What is A + B?" with single-digit
+  # operands — a low-friction proof-of-effort, not a CAPTCHA.
+  provider: math
+  # HMAC secret used to sign pass tokens. MUST be a long, random value. The
+  # `${VAR}` syntax loads it from an env var so it stays out of source control.
+  secret: '${FIREWALL_CHALLENGE_SECRET}'
+  # URL the interstitial form POSTs to. Configurable so it can avoid colliding
+  # with application routes.
+  path: /_firewall/challenge
+  # Cookie that carries the pass token (HttpOnly; Secure; SameSite=Strict).
+  # Set to "" to disable the cookie delivery path.
+  cookie_name: fw_challenge_pass
+  # Custom request header that SPA callers can send with the same pass token
+  # (read back from localStorage after a successful challenge). Set to "" to
+  # disable the localStorage / header delivery path.
+  header_name: X-Firewall-Challenge
+
 # Plugins (canonical format)
 #
 # The plugins: array is the preferred way to declare firewall plugins. Each entry
 # is an associative map describing one plugin instance. Common fields:
 #   - plugin:   Fully qualified class name (double-quoted with escaped backslashes).
-#   - response: 'allow' (request bypasses the firewall) or 'block' (request is blocked
-#               when conditions match).
+#   - response: 'allow'     - request bypasses the firewall when matched.
+#               'block'     - request is rejected when matched.
+#               'challenge' - visitor is shown a CAPTCHA-style interstitial; on
+#                             success they get a signed pass token that
+#                             short-circuits future challenge plugins for
+#                             metadata.default_expiration_time seconds.
 #   - weight:   Execution order. Lower runs first (e.g., -100 runs before 100).
 #   - enable:   Whether the plugin is active.
 #   - metadata: Plugin-specific options (readers, storage, defaults, etc.).
 #   - config:   Rules or conditions consumed by the plugin.
 #
-# Evaluation order: all `response: allow` entries run first (sorted by weight),
-# then all `response: block` entries (sorted by weight).
+# Evaluation order: `response: allow` runs first, then `response: challenge`
+# (skipped if the visitor already holds a valid pass token), then `response: block`.
+# Each bucket is sorted by weight independently.
+#
+# `response: challenge` also requires a top-level `challenge:` section. See the
+# Challenge Configuration block below.
 plugins:
 
   # ---------------------------------------------------------------------
@@ -107,6 +141,34 @@ plugins:
       - 10.0.0.1/24
       # IP Range formatted as start-end
       - 127.0.0.1-127.0.0.5
+
+  # ---------------------------------------------------------------------
+  # response: challenge
+  # Plugins listed with `response: challenge` serve an interstitial when they
+  # match. The visitor solves a CAPTCHA-style proof-of-effort (the built-in
+  # provider asks "What is A + B?") and on success receives an HMAC-signed
+  # pass token bound to their IP. Subsequent requests carrying that token
+  # (via cookie or via a custom header populated from localStorage) skip
+  # the challenge bucket until the token expires.
+  #
+  # `metadata.default_expiration_time` controls the pass-token TTL (seconds).
+  # Block plugins still apply — a pass token only attests "I am human", not
+  # "I am allowed everywhere."
+  #
+  # Requires a top-level `challenge:` section (see further down in this file).
+  # ---------------------------------------------------------------------
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+    response: challenge
+    weight: -10
+    enable: false
+    metadata:
+      # Pass-token TTL after a successful challenge (seconds).
+      default_expiration_time: 3600
+    config:
+      # Challenge traffic from cloud / hosting ASNs without outright blocking.
+      - "asn:AS14618"
+      - "asn:AS16509"
 
   # ---------------------------------------------------------------------
   # response: block

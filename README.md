@@ -15,6 +15,7 @@
   - [Multiple Offenses Defense](#multiple-offenses-defense)
 - [Storage Configuration](#storage-configuration)
 - [Plugin Architecture](#plugin-architecture)
+  - [Challenge Response Type](#challenge-response-type)
 - [Available Plugins](#available-plugins)
   - [IP Address Plugin](#ip-address-plugin)
   - [GeoLocation Plugin](#geolocation-plugin)
@@ -222,14 +223,15 @@ echo "" > firewall.data
 
 ## Configuration Overview
 
-The firewall configuration consists of four main sections:
+The firewall configuration consists of five main sections:
 
-| Section   | Purpose                                                                    | Required |
-|-----------|----------------------------------------------------------------------------|----------|
-| `global`  | Defines global configuration settings                                      | No       |
-| `storage` | Defines where blocked IP addresses are persisted                           | Yes      |
-| `plugins` | Ordered list of plugin entries that allow (`response: allow`) or block (`response: block`) traffic | No       |
-| `logger`  | Monolog handlers for logging firewall events                               | No       |
+| Section     | Purpose                                                                    | Required |
+|-------------|----------------------------------------------------------------------------|----------|
+| `global`    | Defines global configuration settings                                      | No       |
+| `storage`   | Defines where blocked IP addresses are persisted                           | Yes      |
+| `plugins`   | Ordered list of plugin entries that allow (`response: allow`), challenge (`response: challenge`), or block (`response: block`) traffic | No       |
+| `challenge` | Settings for the interstitial flow (provider, HMAC secret, cookie / header names). Required iff any plugin uses `response: challenge`. See [Challenge Response Type](#challenge-response-type). | Conditional |
+| `logger`    | Monolog handlers for logging firewall events                               | No       |
 
 > **Legacy formats `bypass:` / `block:`** are still accepted and auto-normalized into `plugins:` entries at load time. See [Legacy format (deprecated)](#legacy-format-deprecated) at the end of this document. New configs should use the `plugins:` array.
 
@@ -574,7 +576,7 @@ storage:
 
 ## Plugin Architecture
 
-Plugins are the core components that evaluate incoming requests. They are configured as an ordered list under the top-level `plugins:` key. Each entry declares one plugin instance and its `response` mode — either `allow` (let the request through) or `block` (reject the request).
+Plugins are the core components that evaluate incoming requests. They are configured as an ordered list under the top-level `plugins:` key. Each entry declares one plugin instance and its `response` mode — either `allow` (let the request through), `block` (reject the request), or `challenge` (require the visitor to solve an interstitial before continuing).
 
 ### Common Plugin Configuration
 
@@ -583,7 +585,7 @@ All plugin entries share the same shape:
 ```yaml
 plugins:
   - plugin: "Kanopi\\Firewall\\Plugins\\PluginName"   # Fully qualified class name
-    response: block          # 'allow' (bypass match) or 'block' (reject match)
+    response: block          # 'allow', 'block', or 'challenge'
     weight: 0                # Execution order within its response group (lower runs first)
     enable: true             # Whether the plugin entry is active
     metadata: {}             # Plugin-specific configuration (DB readers, storage, etc.)
@@ -601,7 +603,12 @@ This also applies to all `type:` declarations (storage backends, rate limit stor
 
 ### Plugin Execution Order
 
-The firewall evaluates `response: allow` entries first (sorted by `weight`, lower runs first). If any allow plugin matches, the request is permitted immediately and no `response: block` plugins run. Otherwise, `response: block` entries run next (also sorted by `weight`), and the first match rejects the request.
+The firewall evaluates `response: allow` entries first (sorted by `weight`, lower runs first). If any allow plugin matches, the request is permitted immediately and no other plugins run. Otherwise:
+
+1. `response: challenge` entries run next. If one matches and the visitor does **not** already hold a valid pass token, an interstitial is served and the request is paused until the challenge is solved.
+2. `response: block` entries run last and the first match rejects the request.
+
+A valid pass token (set by a previously solved challenge) short-circuits the challenge bucket but does **not** suppress block plugins. See [Challenge Response Type](#challenge-response-type) below.
 
 Suggested weight ranges:
 
@@ -646,6 +653,53 @@ plugins:
     metadata:
       # ... rate limit config ...
 ```
+
+### Challenge Response Type
+
+`response: challenge` serves an interstitial (a CAPTCHA-style proof-of-effort page) when a plugin matches, instead of rejecting the request outright. A visitor who solves the challenge is issued an HMAC-signed pass token that short-circuits any future `response: challenge` plugin until the token expires.
+
+The pass token is:
+
+- **Signed** with the configured `challenge.secret` (HMAC-SHA256) so it cannot be forged.
+- **IP-bound** — the token only verifies for the same client IP that solved the challenge.
+- **Delivered two ways** — as an `HttpOnly; Secure; SameSite=Strict` cookie *and* as a value the interstitial JS writes to `localStorage` so SPA callers can attach it to XHRs via a custom header (defaults to `X-Firewall-Challenge`).
+- **Expires** after `metadata.default_expiration_time` seconds for the matched plugin (default `3600`).
+
+#### Minimum configuration
+
+```yaml
+challenge:
+  provider: math                # 'math' is the built-in; or a FQCN that implements ChallengeProviderInterface
+  secret: "${FIREWALL_SECRET}"  # REQUIRED. Long random string, ideally from an env var.
+  cookie_name: fw_challenge_pass
+  header_name: X-Firewall-Challenge
+  path: /_firewall/challenge    # The URL the interstitial POSTs to
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+    response: challenge
+    weight: -10
+    enable: true
+    metadata:
+      default_expiration_time: 3600   # Pass token TTL in seconds
+    config:
+      - "asn:AS14618"   # Show the challenge to AWS traffic
+```
+
+If any plugin uses `response: challenge`, `challenge.secret` is **required**. Startup fails fast with `ConfigurationException` when it is empty — the firewall will not silently fall back to plaintext tokens.
+
+#### Built-in provider
+
+The `math` provider asks "What is A + B?" with single-digit operands. It's a low-friction proof-of-effort, not a CAPTCHA. For stronger bot resistance, implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` (Turnstile, hCaptcha, reCAPTCHA, etc.) and set `challenge.provider` to its FQCN.
+
+#### How dispatch interacts with allow / block
+
+| Visitor state                          | Result                                       |
+|----------------------------------------|----------------------------------------------|
+| Matched by an `allow` plugin           | Allowed (challenge skipped).                 |
+| Holds a valid pass token + matches `challenge` | Allowed (challenge bucket skipped).  |
+| No token, matches a `challenge` plugin | Interstitial served; original URL is remembered for the post-success redirect. |
+| Matches a `block` plugin               | Blocked, even if a valid pass token is held. |
 
 ### Loading External Plugin Configuration
 

@@ -91,7 +91,10 @@ Blocks common malicious PHP files, attack patterns, and suspicious URLs includin
 The firewall uses a canonical `plugins:` array format. Each entry in the array configures one plugin and supports the following keys:
 
 - `plugin` — Fully-qualified plugin class name (string, double-quoted with escaped backslashes, e.g. `"Kanopi\\Firewall\\Plugins\\Url"`).
-- `response` — Either `allow` (bypass / whitelist behavior) or `block` (deny / blacklist behavior).
+- `response` — One of:
+  - `allow` — bypass / whitelist behavior.
+  - `block` — deny / blacklist behavior.
+  - `challenge` — serve a CAPTCHA-style interstitial; on success the visitor receives an HMAC-signed pass token (cookie + custom header) valid for `metadata.default_expiration_time` seconds. Requires a top-level `challenge:` section with a non-empty `secret`. See the main [README → Challenge Response Type](../README.md#challenge-response-type) for the full contract.
 - `weight` — Integer execution order. Lower weights run first (e.g. `-200` before `-10` before `0`).
 - `enable` — `true`/`false` toggle for the entry.
 - `metadata` — Plugin-specific metadata (e.g. storage backends, GeoIP readers, external config file references).

@@ -1,6 +1,26 @@
 global: ~
 storage: ~
 plugins: []
+# Settings for the `response: challenge` flow. Defaults below apply when
+# at least one plugin uses `response: challenge`; if no challenge plugins
+# are configured this section is ignored.
+#   secret:      HMAC key for signing pass tokens. REQUIRED when challenge
+#                plugins are active. Use a long random string, typically
+#                injected from an env var (Config supports `${VAR}`).
+#   provider:    Built-in short name (`math`) or a FQCN that implements
+#                Kanopi\Firewall\Challenge\ChallengeProviderInterface.
+#   path:        URL the interstitial form POSTs to.
+#   cookie_name: Cookie that carries the pass token after a successful
+#                challenge. Set to "" to disable the cookie delivery path.
+#   header_name: Header the interstitial JS stashes in localStorage and
+#                that SPA callers send on subsequent XHRs. Set to "" to
+#                disable the localStorage delivery path.
+challenge:
+  provider: math
+  secret: ''
+  path: /_firewall/challenge
+  cookie_name: fw_challenge_pass
+  header_name: X-Firewall-Challenge
 # Legacy format (deprecated, auto-converted to plugins:)
 bypass: ~
 block: ~

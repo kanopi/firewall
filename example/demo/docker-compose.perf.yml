@@ -1,0 +1,45 @@
+# Production-shaped stack for performance testing the firewall.
+#
+# nginx fronts php-fpm over a FastCGI socket. Every request is routed
+# through example/demo/index.php — the firewall handles allow / block /
+# challenge dispatch and the POST /_firewall/challenge submission.
+#
+# From inside example/demo/:
+#
+#   docker compose -f docker-compose.perf.yml up
+#
+# Then hit http://localhost:8000.
+#
+# Tuning knobs:
+#   - PHP workers: see pm.max_children in www.conf
+#   - nginx worker_connections: edit nginx.conf
+#   - opcache: enabled by default on the fpm image; restart for cleanest results
+services:
+  php:
+    image: php:8.4-fpm-alpine
+    working_dir: /app
+    volumes:
+      - ../..:/app
+      - ./www.conf:/usr/local/etc/php-fpm.d/www.conf:ro
+    command: >
+      sh -c "
+        if [ ! -d /app/vendor ]; then
+          apk add --no-cache git unzip &&
+          curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer &&
+          composer install --no-dev --no-interaction --no-progress --prefer-dist;
+        fi;
+        rm -f /tmp/firewall-demo.data;
+        php-fpm
+      "
+    expose:
+      - "9000"
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ../..:/app:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8000:80"
+    depends_on:
+      - php
