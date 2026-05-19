@@ -3,9 +3,10 @@
 # Blocks common WordPress admin pages, sensitive files, and attack vectors
 # while allowing normal website functionality.
 
-block:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -100
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -100
     enable: true
     config:
       # =====================================================================
@@ -113,9 +114,10 @@ block:
 # Uncomment and configure if you need to allow specific IPs to access
 # WordPress admin or other blocked endpoints
 #
-# bypass:
-#   Kanopi\Firewall\Plugins\IpAddress:
-#     priority: -200
+# plugins:
+#   - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+#     response: allow
+#     weight: -200
 #     enable: true
 #     config:
 #       # Allow office IP

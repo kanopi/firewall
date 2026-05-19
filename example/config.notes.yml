@@ -4,28 +4,32 @@
 #    connection:
 #      dsn: "pdo-mysql://user:user@127.0.0.1:33066/default?serverVersion=10.6"
 #
-##bypass:
-##  Kanopi\Firewall\Plugins\IpAddress:
+#plugins:
+##  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+##    response: allow
 ##    config:
 ##      - ::1
-#
-#block:
-#  Kanopi\Firewall\Plugins\Asn:
+#  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+#    response: block
 #    enable: false
 ##    config:
 ##      - 'asn_org:ATT-INTERNET4'
-##  Kanopi\Firewall\Plugins\UserAgent:
+##  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+##    response: block
 ##    config:
 ##      - "device.type:desktop"
-#  Kanopi\Firewall\Plugins\IpAddress:
+#  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+#    response: block
 #    config:
 #      - 127.0.0.1
 #      - ::1
 #      - 108.195.124.110
-##  Kanopi\Firewall\Plugins\Url:
+##  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+##    response: block
 ##    config:
 ##      - "method@starts_with:GET"
-#  Kanopi\Firewall\Plugins\RateLimit:
+#  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+#    response: block
 #    enable: false
 ##    config: ~
 
@@ -61,13 +65,35 @@ storage:
     #   port: 33066
     #   driver: 'pdo_mysql'
 
-# All plugins under here allow for the request to be allowed without being questioned.
-bypass:
-  # Namespace of the Plugin
-  Kanopi\Firewall\Plugins\IpAddress:
-    # Priority of the plugin. Executed in order from lowest to highest.
-    # Example -100 is higher than 100.
-    priority: 0
+# Plugins (canonical format)
+#
+# The plugins: array is the preferred way to declare firewall plugins. Each entry
+# is an associative map describing one plugin instance. Common fields:
+#   - plugin:   Fully qualified class name (double-quoted with escaped backslashes).
+#   - response: 'allow' (request bypasses the firewall) or 'block' (request is blocked
+#               when conditions match).
+#   - weight:   Execution order. Lower runs first (e.g., -100 runs before 100).
+#   - enable:   Whether the plugin is active.
+#   - metadata: Plugin-specific options (readers, storage, defaults, etc.).
+#   - config:   Rules or conditions consumed by the plugin.
+#
+# Evaluation order: all `response: allow` entries run first (sorted by weight),
+# then all `response: block` entries (sorted by weight).
+plugins:
+
+  # ---------------------------------------------------------------------
+  # response: allow
+  # Plugins listed with `response: allow` let the request pass without further
+  # questioning when they match. They are the canonical replacement for the
+  # legacy top-level `bypass:` section.
+  # ---------------------------------------------------------------------
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    # The request is allowed through (bypass) when this plugin matches.
+    response: allow
+    # Weight of the plugin. Executed in order from lowest to highest.
+    # Example -100 is higher priority than 100.
+    weight: 0
     # Enable the plugin.
     enable: false
     # Configuration for the plugin. This plugin takes a list of IP addresses in different formats.
@@ -82,14 +108,19 @@ bypass:
       # IP Range formatted as start-end
       - 127.0.0.1-127.0.0.5
 
-# All plugins under here are evaluated and if they request passes the conditions the request is blocked.
-block:
+  # ---------------------------------------------------------------------
+  # response: block
+  # Plugins listed with `response: block` are evaluated and, if the request
+  # passes their conditions, the request is blocked. This is the canonical
+  # replacement for the legacy top-level `block:` section.
+  # ---------------------------------------------------------------------
 
   # Evaluate IP Addresses.
-  Kanopi\Firewall\Plugins\IpAddress:
-    # Priority of the plugin. Executed in order from lowest to highest.
-    # Example -100 is higher than 100.
-    priority: 0
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
+    # Weight of the plugin. Executed in order from lowest to highest.
+    # Example -100 is higher priority than 100.
+    weight: 0
     # Enable the plugin.
     enable: false
     # Configuration for the plugin. This plugin takes a list of IP addresses in different formats.
@@ -105,8 +136,9 @@ block:
       - 127.0.0.1-127.0.0.5
 
   # Using the MaxMind GeoIP service (either local database or service),
-  Kanopi\Firewall\Plugins\GeoLocation:
-    priority: 0
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    weight: 0
     enable: false
     # Information fed into the plugin.
     metadata:
@@ -136,8 +168,9 @@ block:
     config: ~
 
   # URLs to check against for possible spam related activity.
-  Kanopi\Firewall\Plugins\Url:
-    priority: 0
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: 0
     enable: false
     # Reference the Condition section
     # Possible variables:
@@ -158,8 +191,9 @@ block:
 
   # Details related to the User Agent that is being used.
   # More information: https://devicedetector.lw1.at/
-  Kanopi\Firewall\Plugins\UserAgent:
-    priority: 0
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: block
+    weight: 0
     enable: false
     # Reference the Condition section
     # Possible variables:
@@ -178,8 +212,9 @@ block:
 
   # Use MaxMind's GeoIP database to get the ASN (Autonomous System Number).
   # More Information: https://www.arin.net/resources/guide/asn/
-  Kanopi\Firewall\Plugins\Asn:
-    priority: 0
+  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+    response: block
+    weight: 0
     enable: false
     metadata:
       # Follows same information as the Kanopi\Firewall\Plugins\Geolocation Metadata
@@ -196,8 +231,9 @@ block:
   # The following is limited as it only takes into account the request as long as this file is located and processed.
   # This plugin won't take into account files, assets (css, js, images), or any possible other requests where this isn't
   # included as part of the bootstrapping process.
-  Kanopi\Firewall\Plugins\RateLimit:
-    priority: 0
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
     enable: false
     metadata:
       # Default amount of requests that can be made in the following
@@ -277,11 +313,12 @@ block:
   # CRS ruleset (SQLi, XSS, LFI, RCE, scanner detection, protocol
   # enforcement). Backed by the kanopi/crs-engine composer package, which
   # ships the parsed rules and refreshes them weekly from upstream.
-  Kanopi\Firewall\Plugins\Crs:
-    # Plugins are executed in priority order (lowest first). CRS is fairly
+  - plugin: "Kanopi\\Firewall\\Plugins\\Crs"
+    response: block
+    # Plugins are executed in weight order (lowest first). CRS is fairly
     # expensive (~3-4 ms per request once warm), so put it after the cheap
     # IP / UA / ASN filters but before any heavier downstream work.
-    priority: 50
+    weight: 50
     enable: false
     config:
       # Paranoia level 1-4. 1 has the lowest false-positive rate; higher
@@ -404,3 +441,29 @@ logger:
 #
 #
 # When referring to conditions they can be a mixture of Simple Format, Complex Format, or Grouping Format
+
+# =====================================================================
+# Legacy format (deprecated)
+# =====================================================================
+# The firewall still accepts the older top-level `bypass:` and `block:`
+# sections; they are auto-normalized into the canonical `plugins:` array
+# at load time. The new format above is preferred for all new configs.
+#
+# Mapping: `bypass:` -> `response: allow`, `block:` -> `response: block`,
+# and per-plugin `priority:` -> `weight:`.
+#
+# Mini example:
+#
+# bypass:
+#   Kanopi\Firewall\Plugins\IpAddress:
+#     priority: -200
+#     enable: true
+#     config:
+#       - 1.2.3.4
+#
+# block:
+#   Kanopi\Firewall\Plugins\Url:
+#     priority: -10
+#     enable: true
+#     config:
+#       - path:/foo

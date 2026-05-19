@@ -19,12 +19,16 @@ storage:
     file: /tmp/firewall-blocked-ips.data
 
 # =====================================================================
-# Bypass Rules (Whitelist)
+# Plugin Configuration
+#
+# Allow entries (response: allow) run first, then block entries
+# (response: block), sorted by weight (lower runs first).
 # =====================================================================
-bypass:
+plugins:
   # Allow admin access from office/VPN IPs
-  Kanopi\Firewall\Plugins\IpAddress:
-    priority: -200
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
     enable: true
     config:
       # Office IP
@@ -35,8 +39,9 @@ bypass:
       - 198.51.100.50/32
 
   # Allow legitimate PHP files that would be blocked by generic rule
-  Kanopi\Firewall\Plugins\Url:
-    priority: -200
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
     enable: true
     config:
       # Custom contact form
@@ -54,14 +59,11 @@ bypass:
       # Allow WordPress REST API (if needed)
       - path@starts_with:/wp-json/
 
-# =====================================================================
-# Additional Blocking Rules
-# =====================================================================
-block:
   # Rate limiting for login attempts
-  Kanopi\Firewall\Plugins\RateLimit:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: -90
     enable: true
-    priority: -90
     metadata:
       default_rate: 5              # Max 5 requests
       default_sample: 60           # Per 60 seconds
@@ -84,8 +86,9 @@ block:
           - method:POST
 
   # Optional: Block specific countries (requires GeoLocation plugin + GeoIP database)
-  # Kanopi\Firewall\Plugins\GeoLocation:
-  #   priority: -50
+  # - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+  #   response: block
+  #   weight: -50
   #   enable: true
   #   metadata:
   #     reader:
@@ -98,8 +101,9 @@ block:
   #     - country:KP
 
   # Optional: Block specific ASNs (requires ASN plugin + GeoIP database)
-  # Kanopi\Firewall\Plugins\Asn:
-  #   priority: -50
+  # - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+  #   response: block
+  #   weight: -50
   #   enable: true
   #   metadata:
   #     reader:

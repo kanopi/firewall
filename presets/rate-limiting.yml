@@ -22,9 +22,10 @@
 #
 # See configuration examples below.
 
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
-    priority: 100
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100
     enable: true
 
     metadata:

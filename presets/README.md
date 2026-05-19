@@ -86,6 +86,46 @@ Blocks common malicious PHP files, attack patterns, and suspicious URLs includin
 
 **Note**: `.well-known` directory is NOT blocked by default (required for SSL cert validation).
 
+## Configuration Format
+
+The firewall uses a canonical `plugins:` array format. Each entry in the array configures one plugin and supports the following keys:
+
+- `plugin` — Fully-qualified plugin class name (string, double-quoted with escaped backslashes, e.g. `"Kanopi\\Firewall\\Plugins\\Url"`).
+- `response` — Either `allow` (bypass / whitelist behavior) or `block` (deny / blacklist behavior).
+- `weight` — Integer execution order. Lower weights run first (e.g. `-200` before `-10` before `0`).
+- `enable` — `true`/`false` toggle for the entry.
+- `metadata` — Plugin-specific metadata (e.g. storage backends, GeoIP readers, external config file references).
+- `config` — Plugin-specific rule list or scalar configuration.
+
+Example skeleton:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
+    enable: true
+    config:
+      - 203.0.113.100/32
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -10
+    enable: true
+    config:
+      - path:/blocked-path
+```
+
+### Preset composition and merging
+
+When a preset is pulled in through `configs:`, the loader **appends** each included file's `plugins:` entries onto a single combined list — it does not class-key-merge entries. This means:
+
+- Two files can each declare an entry for `Kanopi\Firewall\Plugins\Url` and both will be kept as separate entries with their own `response`, `weight`, `enable`, and `config`. They are not folded into one.
+- Order of `configs:` includes does not collapse duplicates; instead, all entries land in the combined list and are then partitioned by `response` and sorted by `weight` at runtime.
+- To override an entry from a preset, add another `plugins:` entry in your main config with a lower `weight` so it runs first, or disable an unwanted plugin upstream by republishing it with `enable: false`.
+
+This is a meaningful behavior difference from the legacy `block:`/`bypass:` format (which keyed entries by class name and deep-merged). See the **Legacy format (deprecated)** section at the bottom of this document.
+
 ## Usage
 
 ### Quick Start with Malicious Request Detection
@@ -115,11 +155,14 @@ configs:
   - presets/rate-limiting.yml
 
 # Rate limiting requires storage - configure Redis (recommended)
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
     metadata:
       storage:
-        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        type: "Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage"
         config:
           redis:
             host: redis
@@ -157,9 +200,10 @@ configs:
   - presets/malicious-urls.yml
 
 # Allow specific files that would otherwise be blocked
-bypass:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -200
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
     enable: true
     config:
       # Allow custom API endpoint
@@ -187,8 +231,11 @@ configs:
   - presets/malicious-requests.yml
 
 # Override to enable GeoIP
-block:
-  Kanopi\Firewall\Plugins\VulnerabilityScore:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -75
+    enable: true
     metadata:
       country_reader:
         type: reader
@@ -218,8 +265,11 @@ Adjust blocking sensitivity by modifying risk level thresholds:
 configs:
   - presets/malicious-requests.yml
 
-block:
-  Kanopi\Firewall\Plugins\VulnerabilityScore:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+    response: block
+    weight: -75
+    enable: true
     config:
       risk_levels:
         # More aggressive: Lower thresholds
@@ -263,11 +313,14 @@ The rate limiting preset requires persistent storage. Choose based on your infra
 #### Redis (Recommended for Production)
 
 ```yaml
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
     metadata:
       storage:
-        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        type: "Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage"
         config:
           redis:
             host: localhost
@@ -283,11 +336,14 @@ block:
 #### Database Storage
 
 ```yaml
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
     metadata:
       storage:
-        type: Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage
+        type: "Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage"
         config:
           storage-table: firewall_ratelimit
           connection:
@@ -305,11 +361,14 @@ block:
 #### File Storage (Simple Deployments)
 
 ```yaml
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
     metadata:
       storage:
-        type: Kanopi\Firewall\RateLimitStorage\FileRateLimitStorage
+        type: "Kanopi\\Firewall\\RateLimitStorage\\FileRateLimitStorage"
         config:
           file: /var/lib/firewall/ratelimit.data
 ```
@@ -320,11 +379,14 @@ block:
 #### PSR-6 Cache
 
 ```yaml
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
     metadata:
       storage:
-        type: Kanopi\Firewall\RateLimitStorage\CacheRateLimitStorage
+        type: "Kanopi\\Firewall\\RateLimitStorage\\CacheRateLimitStorage"
         config:
           cache: '@cache.app'  # Your PSR-6 service
 ```
@@ -339,8 +401,11 @@ Override specific endpoints while keeping preset defaults:
 configs:
   - presets/rate-limiting.yml
 
-block:
-  Kanopi\Firewall\Plugins\RateLimit:
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 0
+    enable: true
     config:
       # More strict login limits
       - path: /login
@@ -412,17 +477,19 @@ This blocks **any PHP file except index.php**. This is useful for:
 
 ### Adapting the Generic PHP Block
 
-If you need to allow specific PHP files, add them to your bypass rules:
+If you need to allow specific PHP files, add an `allow` entry to your `plugins:` array:
 
 ```yaml
-bypass:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -200
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
+    enable: true
     config:
       - path:/contact.php
       - path:/api.php
       - path:/webhook.php
-      - path@regex:^/api/.*\.php$  # Allow all files in /api/ directory
+      - path@regex:#^/api/.*\.php$#  # Allow all files in /api/ directory
 ```
 
 Or modify the preset to exclude specific patterns:
@@ -493,7 +560,7 @@ curl -I https://yoursite.com/index.php
 curl -I https://yoursite.com/test.php
 curl -I https://yoursite.com/random.php
 
-# Should work if in bypass rules
+# Should work if explicitly allowed (response: allow entry)
 curl -I https://yoursite.com/contact.php
 ```
 
@@ -562,12 +629,14 @@ tail -f /var/log/firewall-debug.log | grep "Total vulnerability score"
 
 **Problem**: Your application has legitimate PHP files that are blocked.
 
-**Solution**: Add bypass rules for those specific files:
+**Solution**: Add an `allow` entry for those specific files:
 
 ```yaml
-bypass:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -200
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
+    enable: true
     config:
       - path:/my-file.php
 ```
@@ -579,9 +648,11 @@ bypass:
 **Solution**: The preset already allows `/wp-content/plugins/` and `/wp-content/themes/`. If you're still having issues:
 
 ```yaml
-bypass:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -200
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
+    enable: true
     config:
       - path@starts_with:/wp-content/plugins/
       - path@starts_with:/wp-content/themes/
@@ -591,12 +662,14 @@ bypass:
 
 **Problem**: Your REST API endpoints are being blocked.
 
-**Solution**: Add specific bypasses for API routes:
+**Solution**: Add specific `allow` entries for API routes:
 
 ```yaml
-bypass:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -200
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
+    enable: true
     config:
       - path@starts_with:/api/
       - path@starts_with:/wp-json/
@@ -608,20 +681,21 @@ You can create your own presets by following the same structure:
 
 ```yaml
 # presets/my-custom-rules.yml
-block:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -100
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
+    enable: true
+    config:
+      - path:/my-allowed-path
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -100
     enable: true
     config:
       - path:/my-blocked-path
       - path@contains:/sensitive
-
-bypass:
-  Kanopi\Firewall\Plugins\Url:
-    priority: -200
-    enable: true
-    config:
-      - path:/my-allowed-path
 ```
 
 Then include it in your main config:
@@ -630,6 +704,8 @@ Then include it in your main config:
 configs:
   - presets/my-custom-rules.yml
 ```
+
+Both entries will be appended to the combined `plugins:` list at load time. The `allow` entry runs first (lower `weight`) so trusted paths are short-circuited before the block rules execute.
 
 ## Security Recommendations
 
@@ -644,7 +720,7 @@ configs:
 - **Minimal**: URL pattern matching is very fast
 - **Regex Rules**: Slightly slower than simple string matching, but still negligible
 - **Rule Count**: Having 100+ rules has minimal performance impact
-- **Plugin Priority**: URL plugin runs early (-100) to block bad requests quickly
+- **Plugin Weight**: URL plugin runs early (`weight: -100`) to block bad requests quickly
 
 ## Contributing
 
@@ -663,3 +739,55 @@ For questions or issues:
 - Check the main [documentation](../docs/)
 - Review [example configurations](../example/)
 - Open an issue on GitHub
+
+## Legacy format (deprecated)
+
+Older configurations used top-level `bypass:` and `block:` sections keyed by plugin class. That shape is still accepted, but it is normalized at load time by `Kanopi\Firewall\Utility\PluginConfigNormalizer` into the canonical `plugins:` array, and **it will be removed in a future major version**. New configs should use the `plugins:` array directly.
+
+Mini side-by-side:
+
+Legacy (deprecated):
+
+```yaml
+bypass:
+  Kanopi\Firewall\Plugins\IpAddress:
+    priority: -200
+    enable: true
+    config:
+      - 203.0.113.100
+
+block:
+  Kanopi\Firewall\Plugins\Url:
+    priority: -10
+    enable: true
+    config:
+      - path:/foo
+```
+
+Canonical (new):
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
+    enable: true
+    config:
+      - 203.0.113.100
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -10
+    enable: true
+    config:
+      - path:/foo
+```
+
+Mapping:
+
+- `bypass:` → `response: allow`
+- `block:` → `response: block`
+- `priority:` → `weight:`
+- Class-keyed map → flat list of entries with `plugin:` set to the (double-quoted, escaped) class name
+
+Note that the legacy format keyed entries by class name, so a class could appear at most once per file. The canonical format allows multiple entries for the same plugin class, and entries from preset includes are appended (not class-merged) into a single combined list.
