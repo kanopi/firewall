@@ -1,0 +1,56 @@
+# General-purpose demo config for the Lite Firewall.
+#
+# Shows all three response modes in one config, keyed by URL so the demo
+# behaves the same whether you hit it via the PHP built-in server (where
+# REMOTE_ADDR is 127.0.0.1) or via Docker (where nginx forwards a bridge
+# IP). Hit these paths from a browser to exercise each mode:
+#
+#   /            → allowed (no rule matches)
+#   /admin       → blocked (response: block)
+#   /admin/foo   → blocked
+#   /secure      → challenged (response: challenge)
+#   /secure/foo  → challenged
+#
+# Replace the hardcoded HMAC secret before reusing this anywhere real.
+
+global:
+  # Plain string body for blocks; full template syntax (e.g. {{request.id}})
+  # is documented in the main README.
+  banning_message: "Blocked: {{request.path}} is restricted (request {{request.id}})."
+
+# Persistent storage so a block on /admin is observed by a later /secure
+# request from the same IP (repeat-offender path). The composer demo
+# scripts and the docker compose files wipe this file on startup so each
+# `composer demo` / `docker compose up` starts with a clean slate.
+storage:
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    storage_file: /tmp/firewall-demo.data
+
+challenge:
+  provider: math
+  secret: 'demo-secret-do-not-reuse-in-prod'
+  cookie_name: fw_challenge_pass
+  header_name: X-Firewall-Challenge
+  path: /_firewall/challenge
+
+plugins:
+  # Block administrative paths outright. Weight is negative so it runs
+  # before any default-weighted entries.
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -10
+    enable: true
+    config:
+      - "path@starts_with:/admin"
+
+  # Challenge anything under /secure. The pass token lasts 60s so the
+  # interstitial is easy to re-trigger during testing.
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: challenge
+    weight: 0
+    enable: true
+    metadata:
+      default_expiration_time: 60
+    config:
+      - "path@starts_with:/secure"

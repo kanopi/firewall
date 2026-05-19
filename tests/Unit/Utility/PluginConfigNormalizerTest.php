@@ -457,6 +457,89 @@ final class PluginConfigNormalizerTest extends AbstractTestCase
     }
 
     /**
+     * Test: partitionAndSort routes response: challenge to challenge bucket.
+     */
+    public function testPartitionAndSortRoutesChallenge(): void
+    {
+        $plugins = [
+            [
+                'plugin' => 'Kanopi\Firewall\Plugins\IpAddress',
+                'response' => 'challenge',
+                'weight' => 0,
+                'enable' => true,
+            ],
+            [
+                'plugin' => 'Kanopi\Firewall\Plugins\Url',
+                'response' => 'block',
+                'weight' => 0,
+                'enable' => true,
+            ],
+        ];
+
+        $result = PluginConfigNormalizer::partitionAndSort($plugins);
+
+        $this->assertArrayHasKey('challenge', $result);
+        $this->assertCount(1, $result['challenge']);
+        $this->assertCount(0, $result['allow']);
+        $this->assertCount(1, $result['block']);
+        $this->assertEquals('Kanopi\Firewall\Plugins\IpAddress', $result['challenge'][0]['plugin']);
+    }
+
+    /**
+     * Test: challenge bucket sorts by weight.
+     */
+    public function testPartitionAndSortSortsChallengeByWeight(): void
+    {
+        $plugins = [
+            [
+                'plugin' => 'C',
+                'response' => 'challenge',
+                'weight' => 100,
+                'enable' => true,
+            ],
+            [
+                'plugin' => 'A',
+                'response' => 'challenge',
+                'weight' => -100,
+                'enable' => true,
+            ],
+            [
+                'plugin' => 'B',
+                'response' => 'challenge',
+                'weight' => 0,
+                'enable' => true,
+            ],
+        ];
+
+        $result = PluginConfigNormalizer::partitionAndSort($plugins);
+
+        $this->assertEquals('A', $result['challenge'][0]['plugin']);
+        $this->assertEquals('B', $result['challenge'][1]['plugin']);
+        $this->assertEquals('C', $result['challenge'][2]['plugin']);
+    }
+
+    /**
+     * Test: unknown response value falls back to block, not challenge.
+     */
+    public function testPartitionAndSortUnknownResponseDefaultsToBlock(): void
+    {
+        $plugins = [
+            [
+                'plugin' => 'Kanopi\Firewall\Plugins\IpAddress',
+                'response' => 'bogus',
+                'weight' => 0,
+                'enable' => true,
+            ],
+        ];
+
+        $result = PluginConfigNormalizer::partitionAndSort($plugins);
+
+        $this->assertCount(0, $result['allow']);
+        $this->assertCount(0, $result['challenge']);
+        $this->assertCount(1, $result['block']);
+    }
+
+    /**
      * Test: full workflow from legacy format to partitioned plugins.
      */
     public function testFullWorkflow(): void

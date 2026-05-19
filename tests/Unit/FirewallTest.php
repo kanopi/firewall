@@ -22,12 +22,14 @@ class FirewallTest extends AbstractTestCase
     private StorageInterface&MockObject $storage;
     private PluginManager&MockObject $blockManager;
     private PluginManager&MockObject $bypassManager;
+    private PluginManager&MockObject $challengeManager;
 
     protected function setUp(): void {
         parent::setUp();
         $this->storage = $this->createMock(StorageInterface::class);
         $this->blockManager = $this->createMock(PluginManager::class);
         $this->bypassManager = $this->createMock(PluginManager::class);
+        $this->challengeManager = $this->createMock(PluginManager::class);
     }
 
     /**
@@ -38,7 +40,14 @@ class FirewallTest extends AbstractTestCase
         $firewall = $ref->newInstanceWithoutConstructor();
         $constructor = $ref->getConstructor();
         $constructor->setAccessible(true);
-        $constructor->invoke($firewall, $storage ?? $this->storage, $this->blockManager, $this->bypassManager, $config);
+        $constructor->invoke(
+            $firewall,
+            $storage ?? $this->storage,
+            $this->blockManager,
+            $this->bypassManager,
+            $this->challengeManager,
+            $config
+        );
         return $firewall;
     }
 

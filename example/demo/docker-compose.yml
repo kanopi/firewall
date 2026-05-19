@@ -1,0 +1,29 @@
+# One-shot demo: `docker compose up` from inside example/demo/
+# then open http://localhost:8000.
+#
+# Source is bind-mounted so edits to src/ or config.yml hot-reload on the
+# next request — no rebuild needed.
+#
+# PHP_CLI_SERVER_WORKERS turns the built-in server into a multi-worker
+# server so concurrent requests aren't serialized. Bump it up for perf
+# playgrounds (`PHP_CLI_SERVER_WORKERS=32 docker compose up`).
+services:
+  firewall:
+    image: php:8.4-cli-alpine
+    working_dir: /app
+    environment:
+      PHP_CLI_SERVER_WORKERS: ${PHP_CLI_SERVER_WORKERS:-8}
+    volumes:
+      - ../..:/app
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "
+        if [ ! -d /app/vendor ]; then
+          apk add --no-cache git unzip &&
+          curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer &&
+          composer install --no-dev --no-interaction --no-progress --prefer-dist;
+        fi;
+        rm -f /tmp/firewall-demo.data;
+        php -S 0.0.0.0:8000 -t example/demo example/demo/index.php
+      "

@@ -114,16 +114,20 @@ final class PluginConfigNormalizer
     /**
      * Partition plugins array by response type and sort by weight.
      *
+     * Unknown response values default to 'block' so a typo never silently
+     * promotes a plugin to 'allow' or 'challenge'.
+     *
      * @param array<int, array<string, mixed>> $plugins
      *   The plugins array to partition.
      *
-     * @return array{allow: array<int, array<string, mixed>>, block: array<int, array<string, mixed>>}
-     *   Partitioned plugins: 'allow' plugins and 'block' plugins, each sorted by weight.
+     * @return array{allow: array<int, array<string, mixed>>, block: array<int, array<string, mixed>>, challenge: array<int, array<string, mixed>>}
+     *   Partitioned plugins: 'allow', 'block', and 'challenge', each sorted by weight.
      */
     public static function partitionAndSort(array $plugins): array
     {
         $allowPlugins = [];
         $blockPlugins = [];
+        $challengePlugins = [];
 
         foreach ($plugins as $plugin) {
             // Skip disabled plugins
@@ -131,20 +135,27 @@ final class PluginConfigNormalizer
                 continue;
             }
 
-            if (($plugin['response'] ?? 'block') === 'allow') {
-                $allowPlugins[] = $plugin;
-            } else {
-                $blockPlugins[] = $plugin;
+            switch ($plugin['response'] ?? 'block') {
+                case 'allow':
+                    $allowPlugins[] = $plugin;
+                    break;
+                case 'challenge':
+                    $challengePlugins[] = $plugin;
+                    break;
+                default:
+                    $blockPlugins[] = $plugin;
             }
         }
 
-        // Sort each group by weight (lower weights execute first)
-        usort($allowPlugins, static fn(array $a, array $b): int => ($a['weight'] ?? 0) <=> ($b['weight'] ?? 0));
-        usort($blockPlugins, static fn(array $a, array $b): int => ($a['weight'] ?? 0) <=> ($b['weight'] ?? 0));
+        $byWeight = static fn(array $a, array $b): int => ($a['weight'] ?? 0) <=> ($b['weight'] ?? 0);
+        usort($allowPlugins, $byWeight);
+        usort($blockPlugins, $byWeight);
+        usort($challengePlugins, $byWeight);
 
         return [
             'allow' => $allowPlugins,
             'block' => $blockPlugins,
+            'challenge' => $challengePlugins,
         ];
     }
 }

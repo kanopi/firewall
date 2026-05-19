@@ -11,6 +11,12 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall;
 
+use Kanopi\Firewall\Challenge\ChallengeProviderFactory;
+use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
+use Kanopi\Firewall\Challenge\MathChallengeProvider;
+use Kanopi\Firewall\Challenge\TokenManager;
+use Kanopi\Firewall\Exception\ChallengeRequiredException;
+use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Logging\LoggingFactory;
@@ -44,19 +50,40 @@ final class Firewall
      *   Plugin manager for Blocking Plugins.
      * @param PluginManager $bypassPluginManager
      *   Plugin manager for Bypass Plugins.
+     * @param PluginManager $challengePluginManager
+     *   Plugin manager for Challenge Plugins.
      * @param array $config
      *   Global configuration that can be set as defaults.
+     * @param ChallengeProviderInterface|null $challengeProvider
+     *   Provider that renders + verifies challenges. Required iff at
+     *   least one challenge plugin is configured.
+     * @param TokenManager|null $tokenManager
+     *   Mints / verifies the pass token issued after a challenge is
+     *   solved. Required iff $challengeProvider is set.
+     * @param array<string, mixed> $challengeConfig
+     *   Subset of config relevant to the challenge flow: path,
+     *   cookie_name, header_name.
      */
-    protected function __construct(private StorageInterface $storage, private PluginManager $blockingPluginManager, private PluginManager $bypassPluginManager, private array $config)
-    {
+    protected function __construct(
+        private StorageInterface $storage,
+        private PluginManager $blockingPluginManager,
+        private PluginManager $bypassPluginManager,
+        private PluginManager $challengePluginManager,
+        private array $config,
+        private ?ChallengeProviderInterface $challengeProvider = null,
+        private ?TokenManager $tokenManager = null,
+        private array $challengeConfig = []
+    ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
 
         $this->getLogger()->debug('Firewall instance created', [
             'storage_type' => $storage::class,
             'blocking_plugins_count' => count($blockingPluginManager->getPlugins()),
             'bypass_plugins_count' => count($bypassPluginManager->getPlugins()),
+            'challenge_plugins_count' => count($challengePluginManager->getPlugins()),
             'config_keys' => array_keys($config), // Log keys instead of full config to avoid sensitive data
             'mode' => $this->firewallMode->value,
+            'challenge_enabled' => $challengeProvider !== null,
         ]);
         $this->storage->expire();
     }
@@ -94,6 +121,7 @@ final class Firewall
         $config['logger'] = isset($config['logger']) && is_array($config['logger']) ? array_filter($config['logger']) : [];
         $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
         $config['global'] = isset($config['global']) && is_array($config['global']) ? array_filter($config['global']) : [];
+        $config['challenge'] = isset($config['challenge']) && is_array($config['challenge']) ? $config['challenge'] : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 
@@ -125,14 +153,24 @@ final class Firewall
             'storage_config_keys' => array_keys($config['storage']),
             'allow_plugins_count' => count($partitioned['allow']),
             'block_plugins_count' => count($partitioned['block']),
+            'challenge_plugins_count' => count($partitioned['challenge']),
             'global_config_keys' => array_keys($config['global']),
         ]);
+
+        [$challengeProvider, $tokenManager, $challengeConfig] = self::createChallengePieces(
+            $config['challenge'],
+            $partitioned['challenge'] !== []
+        );
 
         $firewall = new self(
             StorageFactory::create($config['storage']),
             PluginManager::createFromPluginsArray($partitioned['block']),
             PluginManager::createFromPluginsArray($partitioned['allow']),
-            $config['global']
+            PluginManager::createFromPluginsArray($partitioned['challenge']),
+            $config['global'],
+            $challengeProvider,
+            $tokenManager,
+            $challengeConfig
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -140,10 +178,67 @@ final class Firewall
             'storage_config_keys' => array_keys($config['storage']),
             'allow_plugins_count' => count($partitioned['allow']),
             'block_plugins_count' => count($partitioned['block']),
+            'challenge_plugins_count' => count($partitioned['challenge']),
             'global_config_keys' => array_keys($config['global']),
         ]);
 
         return $firewall;
+    }
+
+    /**
+     * Build the challenge collaborators (or skip if not needed).
+     *
+     * Returns `[provider|null, tokenManager|null, normalizedChallengeConfig]`.
+     * When no challenge plugins are present and no challenge block was
+     * declared, all three slots are empty/null and the firewall acts as
+     * if the feature did not exist.
+     *
+     * Failing here (rather than at first request) keeps a missing secret
+     * from looking like a 500 deep in the request lifecycle.
+     *
+     * @param array<string, mixed> $challengeConfig
+     *   The `challenge:` section from the loaded YAML.
+     * @param bool $hasChallengePlugins
+     *   Whether any plugin partitioned into the challenge bucket.
+     *
+     * @return array{0: ?ChallengeProviderInterface, 1: ?TokenManager, 2: array<string, mixed>}
+     *
+     * @throws ConfigurationException
+     *   When challenge plugins exist but no secret is configured, or
+     *   when the configured provider cannot be resolved.
+     */
+    private static function createChallengePieces(array $challengeConfig, bool $hasChallengePlugins): array
+    {
+        $defaults = [
+            'provider' => 'math',
+            'secret' => '',
+            'cookie_name' => 'fw_challenge_pass',
+            'header_name' => 'X-Firewall-Challenge',
+            'path' => '/_firewall/challenge',
+        ];
+
+        $challengeConfig = array_replace($defaults, $challengeConfig);
+
+        if (!$hasChallengePlugins) {
+            return [null, null, $challengeConfig];
+        }
+
+        $secret = (string) ($challengeConfig['secret'] ?? '');
+        if ($secret === '') {
+            throw new ConfigurationException(
+                'response: challenge plugins are configured but `challenge.secret` is '
+                . 'empty. Set a long, random secret (typically from an env var) so '
+                . 'pass tokens can be HMAC-signed.'
+            );
+        }
+
+        $tokenManager = new TokenManager($secret);
+        $provider = ChallengeProviderFactory::create(
+            (string) $challengeConfig['provider'],
+            $tokenManager
+        );
+
+        return [$provider, $tokenManager, $challengeConfig];
     }
 
     /**
@@ -229,6 +324,14 @@ final class Firewall
             $this->getLogger()->debug('Request evaluation started', $this->getContext($request));
         }
 
+        // Intercept challenge solutions before any plugin evaluation so a
+        // POST to the magic path can never be blocked by an unrelated rule
+        // (e.g. a URL plugin matching the magic path itself).
+        if ($this->isChallengeSubmission($request)) {
+            $this->handleChallengeSubmission($request);
+            return true;
+        }
+
         if (($plugin = $this->bypassPluginManager->evaluate($request)) !== false) {
             $this->getLogger()->info('Request bypassed', $this->getContext($request, [
                 'plugin_name' => $plugin->getName(),
@@ -244,6 +347,24 @@ final class Firewall
 
             $this->repeatOffender($request);
             $this->sendBlockingResponse($request, intval($this->config['repeat_offender_status'] ?? 0));
+        }
+
+        // A held pass token short-circuits the challenge bucket. Block
+        // plugins still run — the token only attests "I am human", not
+        // "I am allowed everywhere".
+        $hasValidToken = $this->hasValidChallengeToken($request);
+
+        if (!$hasValidToken && ($plugin = $this->challengePluginManager->evaluate($request)) !== false) {
+            if ($this->firewallMode === FirewallMode::Log) {
+                $this->getLogger()->warning('Request would be challenged (log mode)', $this->getContext($request, [
+                    'mode' => 'log',
+                    'plugin_name' => $plugin->getName(),
+                    'plugin_type' => $plugin::class,
+                ]));
+                return true;
+            }
+
+            $this->sendChallengeResponse($request, $plugin);
         }
 
         if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {
@@ -263,6 +384,215 @@ final class Firewall
         $this->getLogger()->debug('Request allowed', $this->getContext($request));
 
         return true;
+    }
+
+    /**
+     * Is this request a POST to the configured challenge submission path?
+     *
+     * Only matches when challenge support is actually wired up — a host
+     * app without challenge plugins won't accidentally intercept POSTs to
+     * the default magic path.
+     */
+    protected function isChallengeSubmission(Request $request): bool
+    {
+        if ($this->challengeProvider === null || $this->tokenManager === null) {
+            return false;
+        }
+
+        if ($request->getMethod() !== 'POST') {
+            return false;
+        }
+
+        $path = (string) ($this->challengeConfig['path'] ?? '');
+        return $path !== '' && $request->getPathInfo() === $path;
+    }
+
+    /**
+     * Verify a posted challenge solution and mint a pass token on success.
+     *
+     * Always terminates the request — either with `exit()` in production
+     * (cookie + JSON/303 body) or by throwing in Exception mode.
+     *
+     * @throws ChallengeSolvedException
+     *   In Exception mode when the solution is valid. Carries the minted
+     *   token and the redirect target so tests can assert both.
+     * @throws ChallengeRequiredException
+     *   In Exception mode when the solution is invalid.
+     */
+    protected function handleChallengeSubmission(Request $request): void
+    {
+        if ($this->challengeProvider === null || $this->tokenManager === null) {
+            // Defensive — isChallengeSubmission() already gated this.
+            return;
+        }
+
+        $valid = $this->challengeProvider->verifySolution($request);
+
+        if (!$valid) {
+            $this->getLogger()->info('Challenge solution rejected', $this->getContext($request, [
+                'provider' => $this->challengeProvider->getName(),
+            ]));
+
+            if ($this->firewallMode === FirewallMode::Exception) {
+                throw new ChallengeRequiredException('Invalid challenge solution');
+            }
+
+            // @codeCoverageIgnoreStart
+            http_response_code(400);
+            if (!headers_sent()) {
+                header('Content-Type: application/json; charset=utf-8');
+            }
+            exit((string) json_encode(['error' => 'invalid_solution']));
+            // @codeCoverageIgnoreEnd
+        }
+
+        $ttl = max(0, (int) $request->request->get(MathChallengeProvider::TTL_FIELD, 3600));
+        $token = $this->tokenManager->mint($request, $ttl);
+        $redirect = $this->sanitizeRedirect((string) $request->request->get(MathChallengeProvider::REDIRECT_FIELD, '/'));
+
+        $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
+            'provider' => $this->challengeProvider->getName(),
+            'ttl' => $ttl,
+        ]));
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new ChallengeSolvedException($token, $redirect);
+        }
+
+        // @codeCoverageIgnoreStart
+        $this->setPassTokenCookie($token, $ttl);
+
+        if (!headers_sent()) {
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        exit((string) json_encode(['token' => $token, 'redirect' => $redirect]));
+        // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Render the challenge interstitial for the matched plugin.
+     *
+     * @throws ChallengeRequiredException
+     *   In Exception mode.
+     */
+    protected function sendChallengeResponse(Request $request, PluginInterface $plugin): void
+    {
+        if ($this->challengeProvider === null) {
+            // Should be impossible — partitioning would have routed this
+            // request to the block path instead — but guard anyway so a
+            // misconfigured firewall fails loud rather than serving an
+            // empty page.
+            throw new ConfigurationException(
+                'A challenge plugin matched but no ChallengeProviderInterface is configured.'
+            );
+        }
+
+        $ttl = (int) $plugin->getExpirationTime($request);
+        if ($ttl <= 0) {
+            $ttl = 3600;
+        }
+
+        $this->getLogger()->notice('Sending challenge response', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'provider' => $this->challengeProvider->getName(),
+            'ttl' => $ttl,
+        ]));
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new ChallengeRequiredException(sprintf(
+                'Challenge required by plugin: %s',
+                $plugin->getName()
+            ));
+        }
+
+        // @codeCoverageIgnoreStart
+        $body = $this->challengeProvider->renderInterstitial($request, [
+            'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
+            'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
+            'ttl' => (string) $ttl,
+            'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
+            'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
+        ]);
+
+        http_response_code(200);
+        if (!headers_sent()) {
+            header('Content-Type: text/html; charset=utf-8');
+            header('Cache-Control: no-store');
+        }
+        exit($body);
+        // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Does the request carry a pass token that verifies for this client?
+     *
+     * Looks first in the cookie, then in the configured custom header
+     * (the localStorage delivery path used by SPA callers whose XHRs
+     * cannot rely on cookies).
+     */
+    protected function hasValidChallengeToken(Request $request): bool
+    {
+        if ($this->tokenManager === null) {
+            return false;
+        }
+
+        $cookieName = (string) ($this->challengeConfig['cookie_name'] ?? '');
+        $headerName = (string) ($this->challengeConfig['header_name'] ?? '');
+
+        $token = '';
+        if ($cookieName !== '' && $request->cookies->has($cookieName)) {
+            $token = (string) $request->cookies->get($cookieName);
+        }
+
+        if ($token === '' && $headerName !== '' && $request->headers->has($headerName)) {
+            $token = (string) $request->headers->get($headerName);
+        }
+
+        if ($token === '') {
+            return false;
+        }
+
+        return $this->tokenManager->verify($token, $request);
+    }
+
+    /**
+     * Sanitize a redirect target so the interstitial can't be turned into
+     * an open redirect by attacker-controlled hidden form values.
+     *
+     * Accepts only same-origin paths (must start with `/` and must NOT
+     * start with `//` or `/\`). Falls back to "/" otherwise.
+     */
+    protected function sanitizeRedirect(string $target): string
+    {
+        if ($target === '' || $target[0] !== '/') {
+            return '/';
+        }
+        if (str_starts_with($target, '//') || str_starts_with($target, '/\\')) {
+            return '/';
+        }
+        return $target;
+    }
+
+    /**
+     * Set the pass-token cookie with conservative defaults.
+     *
+     * @codeCoverageIgnore
+     */
+    protected function setPassTokenCookie(string $token, int $ttl): void
+    {
+        $cookieName = (string) ($this->challengeConfig['cookie_name'] ?? '');
+        if ($cookieName === '' || headers_sent()) {
+            return;
+        }
+
+        setcookie($cookieName, $token, [
+            'expires' => time() + $ttl,
+            'path' => '/',
+            'secure' => true,
+            'httponly' => true,
+            'samesite' => 'Strict',
+        ]);
     }
 
     /**
