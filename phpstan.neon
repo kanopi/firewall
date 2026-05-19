@@ -11,4 +11,5 @@ parameters:
         - identifier: foreach.nonIterable
         - identifier: cast.string
         - identifier: cast.int
+        - identifier: method.nonObject
         - identifier: return.type

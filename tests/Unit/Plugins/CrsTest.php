@@ -6,6 +6,7 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Plugins\Crs;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -115,6 +116,53 @@ class CrsTest extends AbstractTestCase
         $this->assertTrue($plugin->evaluate($request));
     }
 
+    public function testSingleFileUploadIsAdaptedToEngineDto(): void
+    {
+        // Cover the single-UploadedFile branch in adaptRequest().
+        $tmp = tempnam(sys_get_temp_dir(), 'crs-test-');
+        file_put_contents($tmp, 'benign upload contents');
+
+        try {
+            $request = new Request(
+                files: ['avatar' => new UploadedFile($tmp, 'avatar.jpg', 'image/jpeg', null, true)],
+                server: $this->browserServer(['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/upload']),
+            );
+
+            $plugin = new Crs([], ['paranoia' => 1]);
+            $this->assertTrue($plugin->evaluate($request));
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testArrayOfUploadedFilesIsFlattened(): void
+    {
+        // Cover the multi-upload-under-one-field branch: Symfony returns
+        // an array of UploadedFile for `<input multiple>`.
+        $tmpA = tempnam(sys_get_temp_dir(), 'crs-test-');
+        $tmpB = tempnam(sys_get_temp_dir(), 'crs-test-');
+        file_put_contents($tmpA, 'a');
+        file_put_contents($tmpB, 'b');
+
+        try {
+            $request = new Request(
+                files: [
+                    'photos' => [
+                        new UploadedFile($tmpA, 'one.jpg', 'image/jpeg', null, true),
+                        new UploadedFile($tmpB, 'two.jpg', 'image/jpeg', null, true),
+                    ],
+                ],
+                server: $this->browserServer(['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/upload']),
+            );
+
+            $plugin = new Crs([], ['paranoia' => 1]);
+            $this->assertTrue($plugin->evaluate($request));
+        } finally {
+            @unlink($tmpA);
+            @unlink($tmpB);
+        }
+    }
+
     /**
      * Build a Symfony Request shaped like a normal browser would send.
      */
@@ -122,16 +170,29 @@ class CrsTest extends AbstractTestCase
     {
         return new Request(
             query: $queryArgs,
-            server: array_merge([
-                'REMOTE_ADDR'      => '203.0.113.10',
-                'REQUEST_METHOD'   => 'GET',
-                'REQUEST_URI'      => '/?' . http_build_query($queryArgs),
-                'SERVER_PROTOCOL'  => 'HTTP/1.1',
-                'HTTP_HOST'        => 'example.com',
-                'HTTP_USER_AGENT'  => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-                'HTTP_ACCEPT'      => 'text/html,application/xhtml+xml',
-                'HTTP_ACCEPT_LANGUAGE' => 'en-US,en;q=0.5',
-            ], $serverOverrides),
+            server: $this->browserServer(array_merge(
+                ['REQUEST_URI' => '/?' . http_build_query($queryArgs)],
+                $serverOverrides,
+            )),
         );
+    }
+
+    /**
+     * Browser-shaped $_SERVER bag so requests look legitimate to CRS rules
+     * that check Host / User-Agent / Accept headers (e.g. rule 920280 fails
+     * a request without Host).
+     */
+    private function browserServer(array $overrides = []): array
+    {
+        return array_merge([
+            'REMOTE_ADDR'          => '203.0.113.10',
+            'REQUEST_METHOD'       => 'GET',
+            'REQUEST_URI'          => '/',
+            'SERVER_PROTOCOL'      => 'HTTP/1.1',
+            'HTTP_HOST'            => 'example.com',
+            'HTTP_USER_AGENT'      => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'HTTP_ACCEPT'          => 'text/html,application/xhtml+xml',
+            'HTTP_ACCEPT_LANGUAGE' => 'en-US,en;q=0.5',
+        ], $overrides);
     }
 }

@@ -149,24 +149,19 @@ class Crs extends AbstractPluginBase
      */
     protected function adaptRequest(Request $request): RequestData
     {
+        // Symfony's FileBag guarantees each leaf is an UploadedFile — single
+        // uploads as objects, multi-uploads (`<input multiple>`) as arrays
+        // of objects. No null / non-object cases reach us.
         $files = [];
         foreach ($request->files->all() as $name => $upload) {
-            if ($upload === null) {
-                continue;
-            }
-
             $list = is_array($upload) ? $upload : [$upload];
             foreach ($list as $file) {
-                if (!is_object($file)) {
-                    continue;
-                }
-
                 $files[] = [
                     'name'     => (string) $name,
-                    'filename' => method_exists($file, 'getClientOriginalName') ? (string) $file->getClientOriginalName() : '',
-                    'mime'     => method_exists($file, 'getClientMimeType') ? (string) $file->getClientMimeType() : '',
-                    'size'     => method_exists($file, 'getSize') ? (int) $file->getSize() : 0,
-                    'tmp_name' => method_exists($file, 'getRealPath') ? (string) $file->getRealPath() : '',
+                    'filename' => $file->getClientOriginalName(),
+                    'mime'     => $file->getClientMimeType(),
+                    'size'     => (int) $file->getSize(),
+                    'tmp_name' => (string) $file->getRealPath(),
                 ];
             }
         }
