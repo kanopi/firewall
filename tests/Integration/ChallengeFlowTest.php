@@ -197,9 +197,12 @@ class ChallengeFlowTest extends TestCase
         $firewall = Firewall::create([$this->configWithChallenge()]);
 
         $token = $this->mintTokenViaSolution($firewall, '10.0.0.50');
-        // Flip a character in the signature portion.
+        // Replace the first signature character with a guaranteed-different
+        // one; using strtr() would be flaky when the random base64url
+        // signature happens to contain none of the target characters.
         [$payload, $signature] = explode('.', $token, 2);
-        $tampered = $payload . '.' . strtr($signature, ['A' => 'B', 'a' => 'b', '0' => '1']);
+        $replacement = $signature[0] === 'A' ? 'B' : 'A';
+        $tampered = $payload . '.' . $replacement . substr($signature, 1);
 
         $request = Request::create(
             '/protected',

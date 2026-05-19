@@ -49,7 +49,7 @@ final class TokenManagerTest extends AbstractTestCase
 
         $token = $manager->mint($request, 3600);
         [$payload, $signature] = explode('.', $token, 2);
-        $tampered = strtr($payload, ['A' => 'B', 'a' => 'b']) . '.' . $signature;
+        $tampered = self::flipFirstChar($payload) . '.' . $signature;
 
         $this->assertFalse($manager->verify($tampered, $request));
     }
@@ -61,9 +61,24 @@ final class TokenManagerTest extends AbstractTestCase
 
         $token = $manager->mint($request, 3600);
         [$payload, $signature] = explode('.', $token, 2);
-        $tamperedSig = $payload . '.' . strtr($signature, ['A' => 'B', 'a' => 'b']);
+        $tamperedSig = $payload . '.' . self::flipFirstChar($signature);
 
         $this->assertFalse($manager->verify($tamperedSig, $request));
+    }
+
+    /**
+     * Replace the first character of $s with a different one, so the
+     * resulting string is always distinct from the input — even when the
+     * input is random base64url and may not contain any chosen target
+     * character.
+     */
+    private static function flipFirstChar(string $s): string
+    {
+        if ($s === '') {
+            return 'A';
+        }
+        $replacement = $s[0] === 'A' ? 'B' : 'A';
+        return $replacement . substr($s, 1);
     }
 
     public function testVerifyFailsForExpiredToken(): void
