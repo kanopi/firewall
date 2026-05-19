@@ -48,7 +48,7 @@ final class TokenManager
      * @throws ConfigurationException
      *   When the secret is empty.
      */
-    public function __construct(private string $secret)
+    public function __construct(private readonly string $secret)
     {
         if ($this->secret === '') {
             throw new ConfigurationException(
@@ -80,8 +80,8 @@ final class TokenManager
             'nonce' => bin2hex(random_bytes(16)),
         ];
 
-        $payloadEncoded = self::base64UrlEncode((string) json_encode($payload));
-        $signature = self::base64UrlEncode(hash_hmac('sha256', $payloadEncoded, $this->secret, true));
+        $payloadEncoded = $this->base64UrlEncode((string) json_encode($payload));
+        $signature = $this->base64UrlEncode(hash_hmac('sha256', $payloadEncoded, $this->secret, true));
 
         return $payloadEncoded . '.' . $signature;
     }
@@ -108,15 +108,13 @@ final class TokenManager
             return false;
         }
 
-        $expectedSignature = self::base64UrlEncode(
-            hash_hmac('sha256', $payloadEncoded, $this->secret, true)
-        );
+        $expectedSignature = $this->base64UrlEncode(hash_hmac('sha256', $payloadEncoded, $this->secret, true));
 
         if (!hash_equals($expectedSignature, $signature)) {
             return false;
         }
 
-        $payloadJson = self::base64UrlDecode($payloadEncoded);
+        $payloadJson = $this->base64UrlDecode($payloadEncoded);
         if ($payloadJson === false) {
             return false;
         }
@@ -144,7 +142,7 @@ final class TokenManager
      */
     public function sign(string $data): string
     {
-        return self::base64UrlEncode(hash_hmac('sha256', $data, $this->secret, true));
+        return $this->base64UrlEncode(hash_hmac('sha256', $data, $this->secret, true));
     }
 
     /**
@@ -155,12 +153,12 @@ final class TokenManager
         return hash_equals($this->sign($data), $signature);
     }
 
-    private static function base64UrlEncode(string $data): string
+    private function base64UrlEncode(string $data): string
     {
         return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
 
-    private static function base64UrlDecode(string $data): string|false
+    private function base64UrlDecode(string $data): string|false
     {
         $padded = $data . str_repeat('=', (4 - strlen($data) % 4) % 4);
         return base64_decode(strtr($padded, '-_', '+/'), true);

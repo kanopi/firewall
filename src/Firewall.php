@@ -83,7 +83,7 @@ final class Firewall
             'challenge_plugins_count' => count($challengePluginManager->getPlugins()),
             'config_keys' => array_keys($config), // Log keys instead of full config to avoid sensitive data
             'mode' => $this->firewallMode->value,
-            'challenge_enabled' => $challengeProvider !== null,
+            'challenge_enabled' => $challengeProvider instanceof \Kanopi\Firewall\Challenge\ChallengeProviderInterface,
         ]);
         $this->storage->expire();
     }
@@ -233,12 +233,12 @@ final class Firewall
         }
 
         $tokenManager = new TokenManager($secret);
-        $provider = ChallengeProviderFactory::create(
+        $challengeProvider = ChallengeProviderFactory::create(
             (string) $challengeConfig['provider'],
             $tokenManager
         );
 
-        return [$provider, $tokenManager, $challengeConfig];
+        return [$challengeProvider, $tokenManager, $challengeConfig];
     }
 
     /**
@@ -395,7 +395,7 @@ final class Firewall
      */
     protected function isChallengeSubmission(Request $request): bool
     {
-        if ($this->challengeProvider === null || $this->tokenManager === null) {
+        if (!$this->challengeProvider instanceof \Kanopi\Firewall\Challenge\ChallengeProviderInterface || !$this->tokenManager instanceof \Kanopi\Firewall\Challenge\TokenManager) {
             return false;
         }
 
@@ -421,7 +421,7 @@ final class Firewall
      */
     protected function handleChallengeSubmission(Request $request): void
     {
-        if ($this->challengeProvider === null || $this->tokenManager === null) {
+        if (!$this->challengeProvider instanceof \Kanopi\Firewall\Challenge\ChallengeProviderInterface || !$this->tokenManager instanceof \Kanopi\Firewall\Challenge\TokenManager) {
             // Defensive — isChallengeSubmission() already gated this.
             return;
         }
@@ -442,6 +442,7 @@ final class Firewall
             if (!headers_sent()) {
                 header('Content-Type: application/json; charset=utf-8');
             }
+
             exit((string) json_encode(['error' => 'invalid_solution']));
             // @codeCoverageIgnoreEnd
         }
@@ -465,6 +466,7 @@ final class Firewall
         if (!headers_sent()) {
             header('Content-Type: application/json; charset=utf-8');
         }
+
         exit((string) json_encode(['token' => $token, 'redirect' => $redirect]));
         // @codeCoverageIgnoreEnd
     }
@@ -477,7 +479,7 @@ final class Firewall
      */
     protected function sendChallengeResponse(Request $request, PluginInterface $plugin): void
     {
-        if ($this->challengeProvider === null) {
+        if (!$this->challengeProvider instanceof \Kanopi\Firewall\Challenge\ChallengeProviderInterface) {
             // Should be impossible — partitioning would have routed this
             // request to the block path instead — but guard anyway so a
             // misconfigured firewall fails loud rather than serving an
@@ -487,7 +489,7 @@ final class Firewall
             );
         }
 
-        $ttl = (int) $plugin->getExpirationTime($request);
+        $ttl = $plugin->getExpirationTime($request);
         if ($ttl <= 0) {
             $ttl = 3600;
         }
@@ -520,6 +522,7 @@ final class Firewall
             header('Content-Type: text/html; charset=utf-8');
             header('Cache-Control: no-store');
         }
+
         exit($body);
         // @codeCoverageIgnoreEnd
     }
@@ -533,7 +536,7 @@ final class Firewall
      */
     protected function hasValidChallengeToken(Request $request): bool
     {
-        if ($this->tokenManager === null) {
+        if (!$this->tokenManager instanceof \Kanopi\Firewall\Challenge\TokenManager) {
             return false;
         }
 
@@ -568,9 +571,11 @@ final class Firewall
         if ($target === '' || $target[0] !== '/') {
             return '/';
         }
+
         if (str_starts_with($target, '//') || str_starts_with($target, '/\\')) {
             return '/';
         }
+
         return $target;
     }
 

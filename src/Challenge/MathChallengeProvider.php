@@ -62,7 +62,7 @@ final class MathChallengeProvider implements ChallengeProviderInterface
 
     private const STATE_LIFETIME = 300;
 
-    public function __construct(private TokenManager $tokenManager)
+    public function __construct(private readonly TokenManager $tokenManager)
     {
     }
 
