@@ -273,6 +273,48 @@ block:
         rate: 100
         sample: 60
 
+  # OWASP Core Rule Set plugin. Evaluates each request against the parsed
+  # CRS ruleset (SQLi, XSS, LFI, RCE, scanner detection, protocol
+  # enforcement). Backed by the kanopi/crs-engine composer package, which
+  # ships the parsed rules and refreshes them weekly from upstream.
+  Kanopi\Firewall\Plugins\Crs:
+    # Plugins are executed in priority order (lowest first). CRS is fairly
+    # expensive (~3-4 ms per request once warm), so put it after the cheap
+    # IP / UA / ASN filters but before any heavier downstream work.
+    priority: 50
+    enable: false
+    config:
+      # Paranoia level 1-4. 1 has the lowest false-positive rate; higher
+      # levels enable progressively more aggressive rules.
+      paranoia: 1
+      # `block` returns false from evaluate() on any blocking-action match
+      # so the firewall blocks the request. `monitor` records the match in
+      # the logs but never returns false (useful for testing without
+      # impacting users).
+      mode: block
+      # HTTP status returned for blocked requests.
+      block_status: 403
+      # How long the firewall keeps the offending IP on its blocklist.
+      block_duration: 3600
+      # Override paths only if you've vendored a custom CRS build. Default
+      # is vendor/kanopi/crs-engine/rules.
+      # rules_path: /etc/firewall/crs-rules
+      # Specific CRS rule IDs to skip (use for known false positives).
+      disabled_rules: []
+      # Whole categories to skip. Values:
+      # sqli, xss, lfi, rfi, rce, php, java, session_fixation,
+      # protocol_attack, protocol_enforcement, method_enforcement, scanner,
+      # multipart, generic, response_leak_sql, response_leak_java,
+      # response_leak_php, response_leak_iis, web_shell, correlation.
+      disabled_categories: []
+      # Thresholds for the engine's anomaly-score aggregator (CRS-native
+      # severity weights). Lower 'critical' means more sensitive.
+      anomaly_thresholds:
+        critical: 5
+        error: 4
+        warning: 3
+        notice: 2
+
 # Loggers help log data in specific formats. Uses Monolog (https://seldaek.github.io/monolog/)
 # Multiple loggers can be added as the following are structured but added as arrays under the logger section.
 logger:
