@@ -1,6 +1,6 @@
 # Lite Firewall local demo
 
-A throwaway harness for poking at the firewall in a browser. Demonstrates all three response modes (`allow`, `block`, `challenge`) in one config, and ships a production-shaped nginx → php-fpm stack so you can run perf experiments against something that looks like a real deployment.
+A throwaway harness for poking at the firewall in a browser. Demonstrates all three response modes (`allow`, `block`, `challenge`) and both built-in challenge providers (`math` and `altcha`) side by side, and ships a production-shaped nginx → php-fpm stack so you can run perf experiments against something that looks like a real deployment.
 
 ## TL;DR — composer shortcuts
 
@@ -18,11 +18,14 @@ The longer-form invocations and tuning knobs are documented below.
 
 The config keys rules off the URL so behavior is identical on any networking setup:
 
-| Path     | Result                                                                                          |
-|----------|-------------------------------------------------------------------------------------------------|
-| `/`      | Allowed — nothing matches.                                                                      |
-| `/admin` | Blocked — a `response: block` URL plugin returns 400 with the configured banning message.       |
-| `/secure`| Challenged — `response: challenge` serves a math interstitial. Solve it once, get a 60s pass cookie. |
+| Path              | Result                                                                                          |
+|-------------------|-------------------------------------------------------------------------------------------------|
+| `/`               | Allowed — nothing matches.                                                                      |
+| `/admin`          | Blocked — a `response: block` URL plugin returns 400 with the configured banning message.       |
+| `/secure`         | Challenged via the **math** provider. Solve "What is A + B?" → 60s pass cookie (`fw_challenge_pass`). |
+| `/secure-altcha`  | Challenged via the **ALTCHA** provider. The widget solves a SHA-256 proof-of-work automatically → 60s pass cookie (`fw_challenge_altcha_pass`). |
+
+Only one `challenge.provider` is configurable per Firewall instance, so the demo ships two configs (`config.yml` for math, `config.altcha.yml` for ALTCHA) and `index.php` dispatches between them based on the request path. The two pass tokens live in distinct cookies / submit paths so they coexist cleanly.
 
 ## Option 1 — PHP built-in server (quick)
 

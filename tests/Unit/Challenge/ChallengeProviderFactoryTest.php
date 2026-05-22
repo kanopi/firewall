@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Challenge;
 
+use Kanopi\Firewall\Challenge\AltchaChallengeProvider;
 use Kanopi\Firewall\Challenge\ChallengeProviderFactory;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
 use Kanopi\Firewall\Challenge\MathChallengeProvider;
@@ -20,6 +21,14 @@ final class ChallengeProviderFactoryTest extends AbstractTestCase
 
         $this->assertInstanceOf(MathChallengeProvider::class, $provider);
         $this->assertSame('math', $provider->getName());
+    }
+
+    public function testResolvesAltchaShortName(): void
+    {
+        $provider = ChallengeProviderFactory::create('altcha', new TokenManager('secret-value'));
+
+        $this->assertInstanceOf(AltchaChallengeProvider::class, $provider);
+        $this->assertSame('altcha', $provider->getName());
     }
 
     public function testResolvesFqcn(): void

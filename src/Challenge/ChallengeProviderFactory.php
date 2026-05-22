@@ -29,6 +29,7 @@ final class ChallengeProviderFactory
      */
     private const BUILTINS = [
         'math' => MathChallengeProvider::class,
+        'altcha' => AltchaChallengeProvider::class,
     ];
 
     /**

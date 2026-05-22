@@ -688,9 +688,14 @@ plugins:
 
 If any plugin uses `response: challenge`, `challenge.secret` is **required**. Startup fails fast with `ConfigurationException` when it is empty — the firewall will not silently fall back to plaintext tokens.
 
-#### Built-in provider
+#### Built-in providers
 
-The `math` provider asks "What is A + B?" with single-digit operands. It's a low-friction proof-of-effort, not a CAPTCHA. For stronger bot resistance, implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` (Turnstile, hCaptcha, reCAPTCHA, etc.) and set `challenge.provider` to its FQCN.
+Two providers ship with the firewall — set `challenge.provider` to either short name:
+
+- **`math`** — asks "What is A + B?" with single-digit operands. Low-friction proof-of-effort, no JS bundle, no external script load. Defeats the laziest bots; trivial for a human.
+- **`altcha`** — embeds the [ALTCHA](https://altcha.org/docs/v2/) v2 widget with a pre-computed challenge (no server round-trip to fetch one). The visitor's browser brute-forces `SHA-256(salt + N) == challenge`; the salt embeds an expiry and the challenge is HMAC-signed with `challenge.secret`, so the server stays stateless. Self-hostable, privacy-respecting, and imposes a measurable per-solve CPU cost on bots. The widget script loads from `cdn.jsdelivr.net/npm/altcha`; allow it in your CSP if you have one.
+
+For stronger bot resistance (Turnstile, hCaptcha, reCAPTCHA, etc.), implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` and set `challenge.provider` to its FQCN.
 
 #### How dispatch interacts with allow / block
 

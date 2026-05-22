@@ -72,10 +72,15 @@ storage:
 # plugin does, `secret` is REQUIRED — startup throws ConfigurationException
 # if it is empty.
 challenge:
-  # Short name of a built-in provider ("math") or FQCN of a class that
-  # implements Kanopi\Firewall\Challenge\ChallengeProviderInterface.
-  # The built-in "math" provider asks "What is A + B?" with single-digit
-  # operands — a low-friction proof-of-effort, not a CAPTCHA.
+  # Short name of a built-in provider ("math", "altcha") or FQCN of a class
+  # that implements Kanopi\Firewall\Challenge\ChallengeProviderInterface.
+  #   math   — "What is A + B?" with single-digit operands. Low-friction
+  #            proof-of-effort, no JS bundle, no external script load.
+  #   altcha — Embeds the ALTCHA v2 widget with a pre-computed challenge.
+  #            The browser brute-forces SHA-256(salt + N) == challenge;
+  #            challenge is HMAC-signed with `secret`. Self-hostable,
+  #            privacy-respecting, measurable per-solve CPU cost on bots.
+  #            See https://altcha.org/docs/v2/.
   provider: math
   # HMAC secret used to sign pass tokens. MUST be a long, random value. The
   # `${VAR}` syntax loads it from an env var so it stays out of source control.
