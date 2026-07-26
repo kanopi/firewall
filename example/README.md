@@ -132,6 +132,19 @@ curl -H "X-Forwarded-For: 172.16.0.1" http://localhost:8080
 
 The GeoLocation and ASN plugins require MaxMind GeoIP2 databases. You have two options:
 
+### Quickest path: `bin/update_geoip.sh`
+
+The repository ships a helper that downloads all three databases (`GeoLite2-City`, `GeoLite2-Country`, `GeoLite2-ASN`) into a directory you name:
+
+```bash
+mkdir -p example/geo
+bash bin/update_geoip.sh YOUR_MAXMIND_LICENSE_KEY example/geo
+```
+
+Both arguments are required and the target directory must already exist. The script currently pulls from a public GeoLite2 mirror, so the license key is checked for non-emptiness but not used for the download itself — pass any non-empty value if you don't have one yet. Because GeoLite2 is refreshed twice weekly, re-run this periodically rather than once.
+
+The manual options below give you more control (specific editions, MaxMind's official endpoint, or the web service instead of local files).
+
 ### Option 1: Download Free GeoLite2 Databases (Recommended for Testing)
 
 1. **Sign up for a free MaxMind account**:
@@ -298,6 +311,18 @@ This directory contains several example configurations:
 - **config.ip.yml** - Simple IP blocking example
 - **config.vulnerability-score.yml** - Advanced multi-factor risk scoring example
 - **test-vulnerability-score.php** - Test script for vulnerability scoring
+
+### Supporting Files
+
+- **index.php** - Front controller for the sandbox. Loads `config.yml`, calls `Firewall::create(...)->evaluate()`, and prints either `BLOCKED` or the `$_SERVER` array.
+- **.ht.router.php** - Router script for PHP's built-in web server, used instead of nginx for a dependency-free run. It serves existing files as-is and routes everything else to `index.php`, working around [PHP bug #61286](https://bugs.php.net/bug.php?id=61286). It refuses to run outside the `cli-server` SAPI, so it is inert if it ever gets served by a real web server.
+
+  ```bash
+  # From the example/ directory — an alternative to the Docker setup above
+  php -S localhost:8888 .ht.router.php
+  ```
+
+  For a richer, purpose-built demo (including the challenge flow and repeat-offender escalation) use [example/demo/](demo/README.md) and `composer demo` instead.
 
 ## Testing Examples
 
@@ -471,7 +496,10 @@ curl -I http://localhost:8080
 
 ## Additional Resources
 
-- [Main README](../README.md) - Full library documentation
-- [CLAUDE.md](../CLAUDE.md) - Development guide
+- [Main README](../README.md) - Full configuration reference
+- [CONTRIBUTING.md](../CONTRIBUTING.md) - Development guide
 - [config.notes.yml](config.notes.yml) - Complete plugin reference
+- [Presets](../presets/README.md) - Ready-made rule sets you can include instead of writing your own
+- [Demo app](demo/README.md) - Runnable demo covering the challenge flow and repeat-offender escalation
+- [Performance suite](../tests/Performance/README.md) - Load testing harness
 - [MaxMind GeoIP2 Documentation](https://maxmind.github.io/GeoIP2-php/)

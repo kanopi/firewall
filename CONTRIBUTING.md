@@ -220,19 +220,51 @@ Update documentation when you:
 - Change plugin behavior
 - Add new plugins
 
+### Where Documentation Lives
+
+There is no separate docs site — everything ships in the repository:
+
+| File | Scope |
+|------|-------|
+| `README.md` | The configuration reference. Every config key, plugin, storage backend, and public API belongs here. |
+| `presets/README.md` | The shipped presets: what each one blocks, how to compose and override them, false positives. |
+| `presets/RATE-LIMITING-REFERENCE.md` | Per-rule detail for `rate-limiting.yml`. |
+| `example/README.md` | The Docker sandbox, GeoIP setup, and worked blocking examples. |
+| `example/demo/README.md` | The runnable demo app. |
+| `tests/Performance/README.md` | The load-testing harness. |
+| `CONTRIBUTING.md` | This file — process, not product. |
+
+If you add a preset, a `bin/` script, or an example config, it needs an entry in the relevant README. A committed file that no document mentions is a documentation bug.
+
 ### What to Document
 
 1. **README.md**: Update when adding features or changing usage
-2. **Code Comments**: Document complex logic and public methods
-3. **Test Descriptions**: Clearly describe what each test verifies
-4. **Configuration Examples**: Provide examples for new configuration options
+2. **PHPDoc**: Every class, interface, trait, enum, and method — including constructors and private helpers — carries a docblock. Use `{@inheritdoc}` for interface implementations and overrides. This is enforced by review, not tooling, so don't rely on CI to catch a missing one.
+3. **Code Comments**: Document *why*, not *what*. Explain non-obvious decisions, security reasoning, and workarounds.
+4. **Test Descriptions**: Clearly describe what each test verifies
+5. **Configuration Examples**: Provide examples for new configuration options
+
+### Documenting Public API
+
+Anything an integrator can call needs more than a docblock — it needs a README section with a working example. That includes:
+
+- New config keys (and their defaults)
+- New plugins, storage backends, or challenge providers
+- New static methods on `LoggingFactory`, `TokenSubstitute`, etc.
+- New exception types, and which mode throws them
+
+Opt-in or security-relevant behavior deserves particular care: if a feature is disabled by default, or fails closed, say so explicitly and show the call that enables it.
 
 ### Documentation Checklist
 
 - [ ] Updated README.md if adding/changing features
+- [ ] Every new class and method has a docblock
+- [ ] Public API additions have a README example, not just a docblock
 - [ ] Added inline comments for complex code
 - [ ] Included configuration examples
 - [ ] Updated any affected examples in `/example` directory
+- [ ] Any new preset / script / example file is referenced from a README
+- [ ] Existing examples still reflect actual behavior (config keys, defaults, method names)
 
 ## Submitting Changes
 

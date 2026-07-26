@@ -62,15 +62,29 @@ final class MathChallengeProvider implements ChallengeProviderInterface
 
     private const STATE_LIFETIME = 300;
 
+    /**
+     * Constructs a new MathChallengeProvider object.
+     *
+     * @param TokenManager $tokenManager
+     *   Shared HMAC manager. Used to sign the `answer|exp` state embedded in
+     *   the interstitial, which is what keeps this provider stateless — the
+     *   expected answer never has to be stored server-side.
+     */
     public function __construct(private readonly TokenManager $tokenManager)
     {
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function getName(): string
     {
         return 'math';
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function renderInterstitial(Request $request, array $context): string
     {
         $a = random_int(1, 9);
@@ -96,6 +110,15 @@ final class MathChallengeProvider implements ChallengeProviderInterface
         ]);
     }
 
+    /**
+     * {@inheritdoc}
+     *
+     * Rejects the solution unless all four checks pass: the signed state is
+     * intact (HMAC), the state has not gone stale (`exp`), the state is
+     * well-formed, and the typed answer matches the signed expected answer.
+     * The answer comparison uses `hash_equals` so a near-miss reveals nothing
+     * through timing.
+     */
     public function verifySolution(Request $request): bool
     {
         $state = (string) $request->request->get(self::STATE_FIELD, '');
