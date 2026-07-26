@@ -9,6 +9,7 @@ use Kanopi\Firewall\Challenge\MathChallengeProvider;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
+use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Traits\FileTrait;
 use PHPUnit\Framework\TestCase;
@@ -106,6 +107,35 @@ class ChallengeFlowTest extends TestCase
         );
 
         $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($request);
+    }
+
+    public function testBlockedIpCannotMintATokenViaSubmission(): void
+    {
+        $firewall = Firewall::create([$this->configWithChallenge()]);
+
+        [$state, $answer] = $this->generateSolvedState($firewall, '10.0.0.50');
+
+        // Durable repeat-offender state: this IP already earned a block.
+        $storageRef = new \ReflectionProperty($firewall, 'storage');
+        $storage = $storageRef->getValue($firewall);
+        $storage->set('10.0.0.50', ['event_id' => 'PRIOR-OFFENSE'], time() + 3600);
+
+        $request = Request::create(
+            '/_firewall/challenge',
+            'POST',
+            [
+                MathChallengeProvider::STATE_FIELD => $state,
+                MathChallengeProvider::ANSWER_FIELD => $answer,
+                MathChallengeProvider::REDIRECT_FIELD => '/protected',
+                MathChallengeProvider::TTL_FIELD => '600',
+            ],
+            [],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50']
+        );
+
+        $this->expectException(FirewallBlockedException::class);
         $firewall->evaluate($request);
     }
 
