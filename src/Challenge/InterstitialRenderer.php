@@ -35,6 +35,34 @@ final class InterstitialRenderer
     }
 
     /**
+     * Encode a value as a complete JavaScript string literal, quotes included.
+     *
+     * HTML entity escaping is NOT valid inside a `<script>` block — the
+     * browser does not decode entities there, and `htmlspecialchars()`
+     * leaves backslashes untouched, so a value ending in `\` escapes the
+     * closing quote and produces a SyntaxError that kills the whole
+     * script. That matters: the ALTCHA submit button ships disabled and
+     * is only enabled by this script, so a parse error locks the visitor
+     * out of the page with no fallback.
+     *
+     * `json_encode()` with the HEX flags is the correct tool — it escapes
+     * backslashes, quotes and `<` / `>` / `&`, so neither the string
+     * literal nor the enclosing `</script>` can be broken out of.
+     */
+    public static function escapeJs(string|int $value): string
+    {
+        $encoded = json_encode(
+            (string) $value,
+            JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE
+        );
+
+        // Defensive: never emit an empty expression, which would itself be
+        // a syntax error. json_encode() should not fail given the
+        // substitution flag, but the fallback costs nothing.
+        return $encoded === false ? '""' : $encoded;
+    }
+
+    /**
      * Build the interstitial document.
      *
      * `form_fields`, `extra_script`, `extra_head`, `extra_styles` and
@@ -65,9 +93,12 @@ final class InterstitialRenderer
         $submitUrl = self::escapeHtml($parts['submit_url']);
         $redirectTo = self::escapeHtml($parts['redirect_to']);
         $ttl = self::escapeHtml($parts['ttl']);
-        $headerName = self::escapeHtml($parts['header_name']);
         $redirectField = self::escapeHtml($parts['redirect_field']);
         $ttlField = self::escapeHtml($parts['ttl_field']);
+
+        // Script-context values need JS literal encoding, not HTML escaping.
+        $headerNameJs = self::escapeJs($parts['header_name']);
+        $redirectToJs = self::escapeJs($parts['redirect_to']);
 
         $intro = $parts['intro'];
         $extraStyles = $parts['extra_styles'];
@@ -116,8 +147,8 @@ final class InterstitialRenderer
       var form = document.getElementById('challenge-form');
       var err = document.getElementById('error');
       var submit = document.getElementById('submit');
-      var headerName = "{$headerName}";
-      var redirectTo = "{$redirectTo}";
+      var headerName = {$headerNameJs};
+      var redirectTo = {$redirectToJs};
 {$extraScript}
       form.addEventListener('submit', function (event) {
         event.preventDefault();
