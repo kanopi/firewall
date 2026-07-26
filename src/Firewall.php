@@ -100,10 +100,13 @@ final class Firewall
      * All configurations are merged in the order they are passed, layered on top of
      * the default configuration loaded from `config.yml`.
      *
-     * Configuration inputs are loaded leniently: a string that does not
-     * reference a readable file, and an argument that is neither string,
-     * array, nor null, are both skipped rather than raising. Only the
-     * wiring performed after loading can fail.
+     * Configuration inputs are loaded leniently by default: a string that
+     * does not reference a readable file, and an argument that is neither
+     * string, array, nor null, are both skipped rather than raising. Unlike
+     * before, a skipped or malformed input is no longer silent — each one is
+     * logged at `error` level, and setting `global.require_config: true` (or
+     * defining `KANOPI_FIREWALL_REQUIRE_CONFIG`) turns it into a startup
+     * failure instead.
      *
      * @param array<int, string|array<string, mixed>|null> $configs
      *   Zero or more configurations to merge.
@@ -117,16 +120,28 @@ final class Firewall
      * @throws ConfigurationException
      *   When challenge plugins are configured without a `challenge.secret`,
      *   when `challenge.provider` cannot be resolved to a
-     *   ChallengeProviderInterface, or when `global.require_trusted_proxies`
-     *   is enabled and no trusted proxies have been set.
+     *   ChallengeProviderInterface, when `global.require_trusted_proxies`
+     *   is enabled and no trusted proxies have been set, or when
+     *   `global.require_config` is enabled and any config input failed to
+     *   load.
      * @throws StorageException
      *   When the configured storage backend cannot create, read, or write
      *   its backing file.
      */
     public static function create(array $configs = [], array $overrides = []): self
     {
-        // Load default config first
+        // Load default config first. Clear first, read after: `Config::load()`
+        // never throws, so the only evidence that a config file was missing,
+        // unreadable, or malformed is the list it leaves behind.
+        Config::clearLoadErrors();
         $config = Config::load(array_merge([__DIR__ . '/../config/config.yml'], $configs), $overrides);
+        $configLoadErrors = Config::getLoadErrors();
+
+        // Read the flag before the array_filter() below strips an explicit
+        // `require_config: false` and makes it indistinguishable from unset.
+        $requireConfig = self::requireConfig(
+            isset($config['global']) && is_array($config['global']) ? $config['global'] : []
+        );
 
         // Set the default values.
         $config['logger'] = isset($config['logger']) && is_array($config['logger']) ? array_filter($config['logger']) : [];
@@ -135,6 +150,10 @@ final class Firewall
         $config['challenge'] = isset($config['challenge']) && is_array($config['challenge']) ? $config['challenge'] : [];
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
+
+        // The logger only exists now, so this is the first moment a load
+        // failure recorded above can actually reach an operator.
+        self::reportConfigLoadFailures($configLoadErrors, $requireConfig);
 
         // Every plugin reads `$request->getClientIp()`. Symfony only honors
         // proxy headers (X-Forwarded-For, Forwarded, X-Real-IP, …) when the
@@ -250,6 +269,90 @@ final class Firewall
         );
 
         return [$challengeProvider, $tokenManager, $challengeConfig];
+    }
+
+    /**
+     * Is a complete config load mandatory for this firewall?
+     *
+     * Sources, in precedence order:
+     *   1. `global.require_config` in the merged config — the normal place
+     *      to set it, and reachable from an override
+     *      (`['[global][require_config]' => true]`) as well as YAML.
+     *   2. The `KANOPI_FIREWALL_REQUIRE_CONFIG` constant, following the same
+     *      pattern as the `KANOPI_FIREWALL_CACHE_*` constants. This is the
+     *      one that survives the case the flag exists for: when the *only*
+     *      config file is the one that failed to load, its YAML cannot
+     *      possibly carry the flag, so bootstrap PHP has to.
+     *   3. Off — the 2.x default, so existing setups that pass optional
+     *      config paths keep working.
+     *
+     * @param array<string, mixed> $globalConfig
+     *   The `global` config section, before `array_filter()` strips falsey
+     *   values.
+     */
+    private static function requireConfig(array $globalConfig): bool
+    {
+        if (array_key_exists('require_config', $globalConfig)) {
+            return (bool) $globalConfig['require_config'];
+        }
+
+        return defined('KANOPI_FIREWALL_REQUIRE_CONFIG') && (bool) KANOPI_FIREWALL_REQUIRE_CONFIG;
+    }
+
+    /**
+     * Surface config inputs that did not load (#78).
+     *
+     * `Config::loadFile()` returns `[]` for a missing, unreadable, or
+     * malformed file. An empty plugin registry makes `PluginManager::
+     * evaluate()` return false for every request, so a mistyped path used to
+     * produce a firewall that allowed everything, with no exception and
+     * nothing in the log to say why — a silent fail-open on a security
+     * component.
+     *
+     * Behaviour mirrors `checkTrustedProxiesPosture()`:
+     *   * default — log every failure at `error` and start anyway, because
+     *     optional config paths are an established 2.x usage.
+     *   * `global.require_config: true` — refuse to start, so a deploy that
+     *     renames or fails to ship a config file fails the deploy instead of
+     *     quietly disabling the firewall.
+     *
+     * @param array<int, array{file: string, message: string}> $errors
+     *   Failures recorded by `Config::load()`.
+     * @param bool $requireConfig
+     *   Whether a complete load is mandatory.
+     *
+     * @throws ConfigurationException
+     *   When `$requireConfig` is true and at least one input failed.
+     */
+    protected static function reportConfigLoadFailures(array $errors, bool $requireConfig): void
+    {
+        if ($errors === []) {
+            return;
+        }
+
+        foreach ($errors as $error) {
+            LoggingFactory::logger()->error(
+                'Firewall config file failed to load — its rules are NOT active',
+                [
+                    'file' => $error['file'],
+                    'reason' => $error['message'],
+                    'require_config' => $requireConfig,
+                ]
+            );
+        }
+
+        if (!$requireConfig) {
+            return;
+        }
+
+        throw new ConfigurationException(sprintf(
+            'global.require_config is enabled and %d config input(s) failed to load: %s',
+            count($errors),
+            implode('; ', array_map(
+                static fn (array $error): string => $error['file'] . ' — ' . $error['message'],
+                $errors
+            ))
+        ));
     }
 
     /**

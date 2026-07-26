@@ -411,7 +411,7 @@ The `file:` (read a file's contents) and `require:` (include a PHP file and use 
 Using either one without opting in raises `ConfigurationException` from `TokenSubstitute`. Note where that exception ends up:
 
 - **Calling `TokenSubstitute::substitute()` directly** — the exception propagates to you.
-- **A token inside a YAML config** — `Config::loadFile()` swallows it, so `Firewall::create()` succeeds with **an empty config that allows every request**. There is no exception and no log entry. The gate still refuses to read the file, but it fails *open*, not loud. See [Fail open or fail closed?](#fail-open-or-fail-closed) for how to guard against this, and [#78](https://github.com/kanopi/firewall/issues/78) for the underlying silent-swallow behavior.
+- **A token inside a YAML config** — `Config::loadFile()` catches it and drops that file from the merge, so with the default `require_config: false` the firewall starts with **a config missing those rules** — potentially an empty one that allows every request. The failure is logged at `error` level with the reason. Set [`global.require_config: true`](#requiring-the-config-to-load) to make it a startup failure instead.
 
 Opt in during bootstrap, **before any config is loaded**, and constrain the reads to directories you control:
 
@@ -472,6 +472,7 @@ global:
   banning_status_code: 429
   banning_message: '{{request.id}} Request Banned'
   require_trusted_proxies: false
+  require_config: false
   blocking_escalation:
     - window: 300
       offense: 0
@@ -496,6 +497,36 @@ global:
 | `true` | Throws `Kanopi\Firewall\Exception\ConfigurationException` and refuses to start. Recommended for production deployments behind a load balancer / CDN / reverse proxy. |
 
 See the trusted-proxies note in [Basic Implementation](#basic-implementation) for the `Request::setTrustedProxies(...)` call you need to add before `Firewall::create()`.
+
+### Requiring the config to load
+
+Config loading is lenient: a config file that is missing, unreadable, or malformed contributes nothing to the merge rather than raising. That is convenient for optional config paths and dangerous everywhere else — a firewall with no plugins allows every request. `require_config` decides which of those you get:
+
+| Value | Behaviour |
+|-------|-----------|
+| `false` (default) | Every config input that failed to load is logged at `error` level (`Firewall config file failed to load — its rules are NOT active`, with the path and the reason), and the firewall starts with whatever did load. |
+| `true` | Throws `Kanopi\Firewall\Exception\ConfigurationException` listing every input that failed, and refuses to start. Recommended for production. |
+
+The exception message carries the underlying reason, so a typo, a permissions problem, a YAML syntax error, a circular `configs:` include, an unresolvable `%env(...)%` token, and a disabled `file:` / `require:` processor are all distinguishable:
+
+```
+global.require_config is enabled and 1 config input(s) failed to load:
+/var/www/firewall.yml — File does not exist.
+```
+
+There is one case the YAML flag cannot cover: when the config file that *would* have carried `require_config: true` is itself the one that failed to load. Set it outside the YAML for that:
+
+```php
+// Bootstrap, before Firewall::create().
+define('KANOPI_FIREWALL_REQUIRE_CONFIG', true);
+
+// …or as an override, which is read even when no config file parsed.
+Firewall::create([__DIR__ . '/firewall.yml'], ['[global][require_config]' => true]);
+```
+
+`global.require_config` wins over the constant when both are present, including when it is explicitly `false`.
+
+Plugin-level config files (`metadata.config`) are reported the same way — an unreadable one logs `Plugin config file failed to load — its rules are NOT active` and leaves that plugin with only its inline `config:` entries. `require_config` does not escalate those to a startup failure.
 
 ### Mode
 
@@ -2325,7 +2356,7 @@ Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallEx
 
 Note that the three request-time exceptions are thrown **only** in `mode: exception`. In the default `block` mode the firewall writes the response and calls `exit()` itself, so there is nothing to catch.
 
-Config *loading* problems are the notable omission from that table: a missing, unreadable, or malformed config file — including circular `configs:` includes, unresolvable `%env(...)%` tokens, and use of a disabled filesystem processor — raises **no exception**. Loading is lenient by design and those failures produce an empty or partial ruleset instead. See [Fail open or fail closed?](#fail-open-or-fail-closed) for why that matters and how to guard against it.
+Config *loading* problems are conditional: a missing, unreadable, or malformed config file — including circular `configs:` includes, unresolvable `%env(...)%` tokens, and use of a disabled filesystem processor — is logged at `error` level and produces an empty or partial ruleset, and raises `ConfigurationException` only when [`global.require_config: true`](#requiring-the-config-to-load) is set. See [Fail open or fail closed?](#fail-open-or-fail-closed) for why that matters.
 
 ### Handling blocks in a framework
 
@@ -2355,32 +2386,39 @@ try {
 |---|---|---|
 | A `block` plugin matched a request (`mode: exception`) | `FirewallBlockedException` | The request you were meant to block proceeds. |
 | Startup validation failed — empty `challenge.secret`, unresolvable `challenge.provider`, or no trusted proxies with `require_trusted_proxies: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
-| Your config file is missing, unreadable, or malformed | **Nothing at all** | The firewall starts with an empty ruleset and allows every request. |
+| Your config file is missing, unreadable, or malformed, with `require_config: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
+| The same, with `require_config: false` (default) | **Nothing** — logged at `error` | The firewall starts with a partial ruleset, possibly an empty one that allows every request. |
 
-**The third row is the one to design around.** Config loading is deliberately lenient: `Config::loadFile()` skips files it cannot read and swallows YAML, include, and `%env(...)%` resolution errors, so a mistyped path or a broken include yields a firewall with **no plugins and no complaint**. `Firewall::create()` succeeds, `evaluate()` returns `true` for everything, and nothing in your logs says otherwise. Catching `ConfigurationException` does not protect you here, because none is thrown.
+**The last row is the one to design around.** Config loading is lenient by default: `Config::loadFile()` skips files it cannot read and catches YAML, include, and `%env(...)%` resolution errors, so a mistyped path or a broken include yields a firewall with **no plugins**. `Firewall::create()` succeeds and `evaluate()` returns `true` for everything. Each failure is at least logged:
 
-So an exception handler alone is not enough. Assert that your rules actually loaded:
+```
+firewall.ERROR: Firewall config file failed to load — its rules are NOT active
+    {"file":"/var/www/firewall.yml","reason":"File does not exist.","require_config":false}
+```
+
+An exception handler alone still will not catch that, because none is thrown. Turn it into a startup failure instead:
+
+```yaml
+global:
+  require_config: true
+```
+
+See [Requiring the config to load](#requiring-the-config-to-load) for the constant and override forms, which cover the case where the file carrying the flag is the one that failed to load. If you would rather assert on the result yourself, `Config::getLoadErrors()` reports what a lenient load dropped:
 
 ```php
 $configPath = __DIR__ . '/firewall.yml';
 
-// A typo here would otherwise be silent.
-if (!is_readable($configPath)) {
-    throw new \RuntimeException("Firewall config unreadable: {$configPath}");
-}
-
-// Confirm the file parsed into the rules you expect before trusting the firewall.
+\Kanopi\Firewall\Utility\Config::clearLoadErrors();
 $config = \Kanopi\Firewall\Utility\Config::load([$configPath]);
-if (($config['plugins'] ?? []) === []) {
-    throw new \RuntimeException("Firewall config loaded no plugins: {$configPath}");
+
+if (\Kanopi\Firewall\Utility\Config::getLoadErrors() !== []) {
+    throw new \RuntimeException("Firewall config did not load cleanly: {$configPath}");
 }
 
 Firewall::create([$configPath])->evaluate();
 ```
 
-If your config still uses the legacy `block:` / `bypass:` format, check those keys instead — they are normalized into `plugins:` inside `Firewall::create()`, which is after `Config::load()` returns. Whichever shape you use, the point is the same: verify your rules are present rather than assuming a silent load succeeded.
-
-For the two cases that *do* throw, pick a policy deliberately:
+For the cases that *do* throw, pick a policy deliberately:
 
 - **Fail closed** — rethrow, or return a 503. Correct default for anything where serving unfiltered traffic is worse than serving an error: authenticated apps, checkout flows, admin surfaces. A startup misconfiguration is an operator error caught in deploy, not something to paper over at runtime.
 - **Fail open** — log at `critical` and continue. Reasonable only for public, low-risk content where availability outweighs filtering, and only if that alert actually pages someone.

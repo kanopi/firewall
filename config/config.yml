@@ -1,3 +1,11 @@
+# Global settings. Left empty here so a caller's own YAML supplies them.
+#   require_config: when true, Firewall::create() throws
+#                   ConfigurationException if any config input failed to
+#                   load, instead of starting with a partial ruleset. The
+#                   default (false) logs each failure at `error` and starts
+#                   anyway. Define KANOPI_FIREWALL_REQUIRE_CONFIG for the
+#                   case where the file carrying this flag is the one that
+#                   failed to load.
 global: ~
 storage: ~
 plugins: []

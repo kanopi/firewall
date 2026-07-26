@@ -50,6 +50,11 @@ final class ReadmeOverrideExamplesTest extends TestCase
             'redis host on a plugins: entry' => ['[plugins][3][metadata][storage][config][redis][host]', 'localhost'],
             'disable a plugins: entry' => ['[plugins][2][enable]', false],
 
+            // "Requiring the config to load" (#78) — the override form is the
+            // route that still works when the config file carrying the flag
+            // is the one that failed to load.
+            'require config' => ['[global][require_config]', true],
+
             // "Dynamic Configuration Overrides" — legacy block:/bypass: format.
             'legacy geoip db' => ['[block][\Kanopi\Firewall\Plugins\GeoLocation][metadata][reader][db]', '/tmp/GeoLite2-City.mmdb'],
             'legacy disable plugin' => ['[block][\Kanopi\Firewall\Plugins\UserAgent][enable]', false],
