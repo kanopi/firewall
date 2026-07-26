@@ -49,6 +49,9 @@
         "symfony/dotenv": "~6.4 || ~7.3",
         "symfony/var-dumper": "~6.4 || ~7.3"
     },
+    "suggest": {
+        "ext-redis": "Required only by Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage, for distributed rate limiting. Every other rate-limit backend (memory, file, database, PSR-6 cache) works without it."
+    },
     "scripts": {
         "server:start": [
             "Composer\\Config::disableProcessTimeout",

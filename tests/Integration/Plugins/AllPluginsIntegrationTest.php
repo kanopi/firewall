@@ -412,8 +412,10 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
         // Test with file storage
         $this->runRateLimitTest('file');
         
-        // Test with Redis if available
-        if (!self::getEnv('TEST_SKIP_REDIS')) {
+        // Test with Redis if available. `ext-redis` is a composer `suggest`,
+        // so the class genuinely may not exist — the skip below only covers a
+        // reachable-but-unusable server.
+        if (extension_loaded('redis') && !self::getEnv('TEST_SKIP_REDIS')) {
             $this->runRateLimitTest('redis');
         }
         
@@ -464,7 +466,10 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
         
         try {
             $firewall = $this->createFirewall($config);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // \Throwable, not \Exception: a missing `ext-redis` surfaces as
+            // `Error: Class "Redis" not found`, which an \Exception catch lets
+            // through and turns an optional backend into a suite failure.
             if ($storageType === 'redis') {
                 $this->markTestSkipped('Redis not available: ' . $e->getMessage());
             }
