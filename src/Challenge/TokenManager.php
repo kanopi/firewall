@@ -24,7 +24,7 @@ use Symfony\Component\HttpFoundation\Request;
  * it expires (rotating the secret invalidates everything).
  *
  * Wire format: `base64url(payload).base64url(hmac)`
- *   payload = JSON{ip, exp, nonce}
+ *   payload = JSON{ip, exp, nonce, aud}
  *   hmac    = HMAC-SHA256(payload, secret)
  *
  * Token binding (verified on every request):
@@ -32,6 +32,11 @@ use Symfony\Component\HttpFoundation\Request;
  *   - `exp`   is a unix timestamp; tokens past it are rejected.
  *   - `nonce` is 128 random bits to keep two same-second mints distinct in
  *             downstream logs and to prevent precomputed-token attacks.
+ *   - `aud`   scopes the token to one challenge configuration. Without it,
+ *             any two Firewall instances sharing a secret would accept
+ *             each other's tokens, so a token earned on a weak challenge
+ *             could be spent on a route protected by a stronger one — the
+ *             weakest challenge would set the security of all of them.
  *
  * The signature is verified with `hash_equals` so a wrong token reveals
  * nothing through timing. Payload parsing errors return FALSE rather than
@@ -44,11 +49,17 @@ final class TokenManager
      *   HMAC key. Must be non-empty when challenge plugins are active —
      *   `Firewall::create()` fails fast if a challenge plugin is configured
      *   without a secret.
+     * @param string $audience
+     *   Scope this manager mints and accepts tokens for. `Firewall`
+     *   defaults it to the configured provider name, so a `math` token is
+     *   not accepted by an `altcha`-protected instance. Operators running
+     *   several instances with the same provider and the same secret can
+     *   set `challenge.audience` explicitly to keep them separate.
      *
      * @throws ConfigurationException
      *   When the secret is empty.
      */
-    public function __construct(private readonly string $secret)
+    public function __construct(private readonly string $secret, private readonly string $audience = '')
     {
         if ($this->secret === '') {
             throw new ConfigurationException(
@@ -78,6 +89,7 @@ final class TokenManager
             'ip' => (string) $request->getClientIp(),
             'exp' => time() + $ttl,
             'nonce' => bin2hex(random_bytes(16)),
+            'aud' => $this->audience,
         ];
 
         $payloadEncoded = $this->base64UrlEncode((string) json_encode($payload));
@@ -129,6 +141,13 @@ final class TokenManager
         }
 
         if ($payload['exp'] <= time()) {
+            return false;
+        }
+
+        // Fail closed on a missing `aud`: tokens minted before this claim
+        // existed are rejected, costing their holders one extra challenge
+        // rather than leaving the cross-instance hole open.
+        if (!isset($payload['aud']) || !is_string($payload['aud']) || $payload['aud'] !== $this->audience) {
             return false;
         }
 

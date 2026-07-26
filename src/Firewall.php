@@ -13,7 +13,6 @@ namespace Kanopi\Firewall;
 
 use Kanopi\Firewall\Challenge\ChallengeProviderFactory;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
-use Kanopi\Firewall\Challenge\MathChallengeProvider;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
@@ -245,6 +244,8 @@ final class Firewall
             'cookie_name' => 'fw_challenge_pass',
             'header_name' => 'X-Firewall-Challenge',
             'path' => '/_firewall/challenge',
+            'provider_options' => [],
+            'audience' => '',
         ];
 
         $challengeConfig = array_replace($defaults, $challengeConfig);
@@ -262,10 +263,22 @@ final class Firewall
             );
         }
 
-        $tokenManager = new TokenManager($secret);
+        $providerOptions = $challengeConfig['provider_options'] ?? [];
+
+        // Scope pass tokens so two instances sharing a secret but running
+        // different challenges cannot accept each other's tokens. Defaults
+        // to the provider name, which is what distinguishes them; operators
+        // running the same provider in several places can override it.
+        $audience = trim((string) ($challengeConfig['audience'] ?? ''));
+        if ($audience === '') {
+            $audience = (string) $challengeConfig['provider'];
+        }
+
+        $tokenManager = new TokenManager($secret, $audience);
         $challengeProvider = ChallengeProviderFactory::create(
             (string) $challengeConfig['provider'],
-            $tokenManager
+            $tokenManager,
+            is_array($providerOptions) ? $providerOptions : []
         );
 
         return [$challengeProvider, $tokenManager, $challengeConfig];
@@ -546,7 +559,9 @@ final class Firewall
      *   In Exception mode when the solution is valid. Carries the minted
      *   token and the redirect target so tests can assert both.
      * @throws ChallengeRequiredException
-     *   In Exception mode when the solution is invalid.
+     *   In Exception mode when the solution does not verify, or when it
+     *   verifies but has already been spent (see
+     *   `consumeSingleUseSolution()`).
      */
     protected function handleChallengeSubmission(Request $request): void
     {
@@ -556,10 +571,20 @@ final class Firewall
         }
 
         $valid = $this->challengeProvider->verifySolution($request);
+        $replayed = false;
+
+        // A stateless verify accepts the same payload every time it is
+        // posted. For providers that opt in, burn the solution here so the
+        // work behind it cannot be redistributed and reused.
+        if ($valid && !$this->consumeSingleUseSolution($request)) {
+            $valid = false;
+            $replayed = true;
+        }
 
         if (!$valid) {
             $this->getLogger()->info('Challenge solution rejected', $this->getContext($request, [
                 'provider' => $this->challengeProvider->getName(),
+                'reason' => $replayed ? 'solution_already_used' : 'invalid_solution',
             ]));
 
             if ($this->firewallMode === FirewallMode::Exception) {
@@ -576,9 +601,11 @@ final class Firewall
             // @codeCoverageIgnoreEnd
         }
 
-        $ttl = max(0, (int) $request->request->get(MathChallengeProvider::TTL_FIELD, 3600));
+        $ttl = max(0, (int) $request->request->get(ChallengeProviderInterface::TTL_FIELD, 3600));
         $token = $this->tokenManager->mint($request, $ttl);
-        $redirect = $this->sanitizeRedirect((string) $request->request->get(MathChallengeProvider::REDIRECT_FIELD, '/'));
+        $redirect = $this->sanitizeRedirect(
+            (string) $request->request->get(ChallengeProviderInterface::REDIRECT_FIELD, '/')
+        );
 
         $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
             'provider' => $this->challengeProvider->getName(),
@@ -598,6 +625,50 @@ final class Firewall
 
         exit((string) json_encode(['token' => $token, 'redirect' => $redirect]));
         // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Record a single-use solution, refusing one that was already spent.
+     *
+     * Only applies to providers implementing SingleUseSolutionInterface;
+     * everything else is waved through, so custom providers and the math
+     * provider are unaffected.
+     *
+     * Note this is a read-then-write against the storage backend, which
+     * exposes no atomic add. Two submissions of the same solution racing
+     * within the same instant can therefore both succeed. That narrows the
+     * window from the full challenge lifetime to microseconds, which is
+     * what matters here — the attack this closes is redistributing one
+     * solve to many clients over seconds or minutes, not winning a race.
+     *
+     * @return bool
+     *   TRUE when the solution had not been used before (or the provider
+     *   does not track reuse), FALSE when this is a replay.
+     */
+    protected function consumeSingleUseSolution(Request $request): bool
+    {
+        if (!$this->challengeProvider instanceof \Kanopi\Firewall\Challenge\SingleUseSolutionInterface) {
+            return true;
+        }
+
+        $receipt = $this->challengeProvider->getSolutionReceipt($request);
+        if ($receipt === null) {
+            return true;
+        }
+
+        // Hashed so the raw challenge value never lands in the store.
+        $key = 'fw_challenge_solution:' . hash('sha256', $receipt['id']);
+
+        if ($this->storage->get($key) !== null) {
+            return false;
+        }
+
+        // Storage treats the third argument as a lifetime in seconds. Keep
+        // the record only until the solution would expire on its own.
+        $ttl = max(1, $receipt['expires'] - time());
+        $this->storage->set($key, ['consumed_at' => time()], $ttl);
+
+        return true;
     }
 
     /**

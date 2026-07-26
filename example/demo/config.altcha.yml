@@ -1,0 +1,36 @@
+# ALTCHA variant of the demo config.
+#
+# Loaded by example/demo/index.php whenever the request touches the ALTCHA
+# routes (/secure-altcha or /_firewall/challenge-altcha) — see that file
+# for the dispatch logic. Everything else falls back to config.yml.
+#
+# Each provider gets a distinct challenge submit path, cookie name, and
+# header name so a math pass token and an altcha pass token can co-exist
+# in the same browser session without overwriting each other.
+
+global:
+  banning_message: "Blocked: {{request.path}} is restricted (request {{request.id}})."
+
+# Same storage file as config.yml so a block recorded by one Firewall
+# instance is observed by the other (repeat-offender behavior).
+storage:
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    storage_file: /tmp/firewall-demo.data
+
+challenge:
+  provider: altcha
+  secret: 'demo-secret-do-not-reuse-in-prod'
+  cookie_name: fw_challenge_altcha_pass
+  header_name: X-Firewall-Challenge-Altcha
+  path: /_firewall/challenge-altcha
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: challenge
+    weight: 0
+    enable: true
+    metadata:
+      default_expiration_time: 60
+    config:
+      - "path@starts_with:/secure-altcha"

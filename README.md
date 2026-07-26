@@ -880,6 +880,7 @@ The pass token is:
 
 - **Signed** with the configured `challenge.secret` (HMAC-SHA256) so it cannot be forged.
 - **IP-bound** — the token only verifies for the same client IP that solved the challenge.
+- **Audience-bound** — the token carries an `aud` claim and only verifies against the instance that issued it. See [Scoping tokens across instances](#scoping-tokens-across-instances).
 - **Delivered two ways** — as an `HttpOnly; Secure; SameSite=Strict` cookie *and* as a value the interstitial JS writes to `localStorage` so SPA callers can attach it to XHRs via a custom header (defaults to `X-Firewall-Challenge`).
 - **Expires** after `metadata.default_expiration_time` seconds for the matched plugin (default `3600`).
 
@@ -906,9 +907,58 @@ plugins:
 
 If any plugin uses `response: challenge`, `challenge.secret` is **required**. Startup fails fast with `ConfigurationException` when it is empty — the firewall will not silently fall back to plaintext tokens.
 
-#### Built-in provider
+#### Single-use solutions
 
-The `math` provider asks "What is A + B?" with single-digit operands. It's a low-friction proof-of-effort, not a CAPTCHA. For stronger bot resistance, implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` (Turnstile, hCaptcha, reCAPTCHA, etc.) and set `challenge.provider` to its FQCN.
+A stateless provider verifies a solution purely from the posted payload, so the same payload keeps verifying until it expires. For a proof-of-work challenge that quietly defeats the point: an attacker solves one challenge and hands the payload to as many clients as they like, each minting its own IP-bound pass token, and the per-solve cost is amortised to nothing.
+
+Providers can opt out of that by implementing `Kanopi\Firewall\Challenge\SingleUseSolutionInterface`, which hands the firewall an identifier for the solution in the current request. The firewall records it in the configured storage backend and refuses any later submission carrying the same identifier. `altcha` implements this; a solved payload is accepted exactly once.
+
+Two consequences worth knowing:
+
+- **The challenge flow now writes to storage.** Records are small (one per solved challenge) and expire on their own when the underlying challenge would have gone stale. With `InMemoryStorage` they do not survive the process, so use a shared backend if you serve challenges from more than one worker.
+- **The check is read-then-write, not atomic.** Two submissions of the same solution arriving in the same instant can both succeed. This shrinks the reuse window from the full challenge lifetime to microseconds, which is the part that matters — the attack being closed is redistribution over seconds or minutes, not winning a race.
+
+`math` deliberately does **not** implement it: its signed state is `answer|expiry`, and with only nine possible answers two visitors served in the same second routinely share one, so treating that value as single-use would reject legitimate solvers.
+
+#### Scoping tokens across instances
+
+A pass token attests "this client solved *a* challenge" — so if two Firewall instances share a `challenge.secret`, they would accept each other's tokens without further scoping. That matters when the challenges differ in strength: a token earned on the trivial `math` challenge could otherwise be replayed against a route protected by `altcha`, and the weakest challenge in your deployment would set the effective security of every route that shares the secret.
+
+Tokens therefore carry an `aud` claim, which defaults to the configured provider name and is covered by the signature. A `math` token will not verify against an `altcha` instance.
+
+If you run **the same provider** in several places with the same secret — say a low-value public route and a sensitive admin area — the default audiences are identical, so set them apart explicitly:
+
+```yaml
+challenge:
+  provider: altcha
+  secret: "${FIREWALL_SECRET}"
+  audience: admin-portal   # defaults to the provider name
+```
+
+The alternative is to give each instance its own `challenge.secret`, which isolates them just as effectively.
+
+> **Upgrade note.** Pass tokens minted before the `aud` claim existed are rejected, because verification fails closed rather than treating a missing audience as a match. The visible effect is that everyone holding a live pass token is challenged once more after deploying. Tokens are short-lived (default one hour), so this clears on its own.
+
+#### Built-in providers
+
+Two providers ship with the firewall — set `challenge.provider` to either short name:
+
+- **`math`** — asks "What is A + B?" with single-digit operands. Low-friction proof-of-effort, no JS bundle, no external script load. Defeats the laziest bots; trivial for a human.
+- **`altcha`** — embeds the [ALTCHA](https://altcha.org/docs/v2/) v2 widget with a pre-computed challenge (no server round-trip to fetch one). The visitor's browser brute-forces `SHA-256(salt + N) == challenge`; the salt embeds an expiry and the challenge is HMAC-signed with `challenge.secret`, so the server stays stateless. Privacy-respecting, and imposes a per-solve CPU cost on bots. Solved challenges are single-use — see [Single-use solutions](#single-use-solutions).
+
+  The widget script is pinned to an exact version and served with a Subresource Integrity digest. To self-host it, or to serve it from a host your CSP already allows, set both options — supplying `widget_src` without `widget_integrity` emits no `integrity` attribute, since a digest that does not match the bytes would block the script entirely:
+
+  ```yaml
+  challenge:
+    provider: altcha
+    provider_options:
+      widget_src: /assets/altcha.min.js
+      widget_integrity: 'sha384-…'   # openssl dgst -sha384 -binary altcha.min.js | openssl base64 -A
+  ```
+
+  The bundle is an ES module, so it is loaded with `<script type="module">`. If you host it yourself, keep that in mind: a classic script tag fails with `Unexpected token 'export'`.
+
+For stronger bot resistance (Turnstile, hCaptcha, reCAPTCHA, etc.), implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` and set `challenge.provider` to its FQCN.
 
 #### Writing a custom provider
 
