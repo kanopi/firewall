@@ -214,6 +214,7 @@ final class Firewall
             'cookie_name' => 'fw_challenge_pass',
             'header_name' => 'X-Firewall-Challenge',
             'path' => '/_firewall/challenge',
+            'provider_options' => [],
         ];
 
         $challengeConfig = array_replace($defaults, $challengeConfig);
@@ -231,10 +232,13 @@ final class Firewall
             );
         }
 
+        $providerOptions = $challengeConfig['provider_options'] ?? [];
+
         $tokenManager = new TokenManager($secret);
         $challengeProvider = ChallengeProviderFactory::create(
             (string) $challengeConfig['provider'],
-            $tokenManager
+            $tokenManager,
+            is_array($providerOptions) ? $providerOptions : []
         );
 
         return [$challengeProvider, $tokenManager, $challengeConfig];

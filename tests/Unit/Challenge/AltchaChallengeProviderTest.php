@@ -76,6 +76,86 @@ final class AltchaChallengeProviderTest extends AbstractTestCase
         $this->assertStringContainsString('&lt;script&gt;', $html);
     }
 
+    public function testRenderPinsWidgetAndEmitsIntegrityByDefault(): void
+    {
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+        $html = $this->render($provider);
+
+        $this->assertStringContainsString(
+            'src="' . AltchaChallengeProvider::DEFAULT_WIDGET_SRC . '"',
+            $html
+        );
+        $this->assertStringContainsString(
+            'integrity="' . AltchaChallengeProvider::DEFAULT_WIDGET_INTEGRITY . '"',
+            $html
+        );
+        $this->assertStringContainsString('crossorigin="anonymous"', $html);
+        // The bundle is an ES module; a classic script tag cannot load it.
+        $this->assertStringContainsString('type="module"', $html);
+    }
+
+    public function testDefaultWidgetSrcIsPinnedToAnExactVersion(): void
+    {
+        // An unpinned URL silently changes what every challenge page loads.
+        $this->assertMatchesRegularExpression(
+            '#/altcha@\d+\.\d+\.\d+/#',
+            AltchaChallengeProvider::DEFAULT_WIDGET_SRC
+        );
+        $this->assertStringStartsWith('sha384-', AltchaChallengeProvider::DEFAULT_WIDGET_INTEGRITY);
+    }
+
+    public function testCustomWidgetSrcIsHonoured(): void
+    {
+        $provider = new AltchaChallengeProvider(
+            new TokenManager(self::SECRET),
+            ['widget_src' => '/assets/altcha.min.js', 'widget_integrity' => 'sha384-custom']
+        );
+        $html = $this->render($provider);
+
+        $this->assertStringContainsString('src="/assets/altcha.min.js"', $html);
+        $this->assertStringContainsString('integrity="sha384-custom"', $html);
+        $this->assertStringNotContainsString(AltchaChallengeProvider::DEFAULT_WIDGET_SRC, $html);
+    }
+
+    public function testCustomWidgetSrcWithoutIntegrityEmitsNoDigest(): void
+    {
+        // Carrying the default digest over to a different bundle would
+        // block the script outright, so no attribute is emitted at all.
+        $provider = new AltchaChallengeProvider(
+            new TokenManager(self::SECRET),
+            ['widget_src' => '/assets/altcha.min.js']
+        );
+        $html = $this->render($provider);
+
+        $this->assertStringContainsString('src="/assets/altcha.min.js"', $html);
+        $this->assertStringNotContainsString('integrity=', $html);
+        $this->assertStringNotContainsString(AltchaChallengeProvider::DEFAULT_WIDGET_INTEGRITY, $html);
+    }
+
+    public function testBlankWidgetOptionsFallBackToTheDefaults(): void
+    {
+        $provider = new AltchaChallengeProvider(
+            new TokenManager(self::SECRET),
+            ['widget_src' => '   ', 'widget_integrity' => '']
+        );
+        $html = $this->render($provider);
+
+        $this->assertStringContainsString(AltchaChallengeProvider::DEFAULT_WIDGET_SRC, $html);
+        $this->assertStringContainsString(AltchaChallengeProvider::DEFAULT_WIDGET_INTEGRITY, $html);
+    }
+
+    public function testWidgetSrcIsEscapedIntoTheAttribute(): void
+    {
+        $provider = new AltchaChallengeProvider(
+            new TokenManager(self::SECRET),
+            ['widget_src' => '/a.js" onload="alert(1)']
+        );
+        $html = $this->render($provider);
+
+        $this->assertStringNotContainsString('onload="alert(1)"', $html);
+        $this->assertStringContainsString('&quot;', $html);
+    }
+
     public function testVerifyAcceptsValidSolution(): void
     {
         $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
@@ -189,6 +269,19 @@ final class AltchaChallengeProviderTest extends AbstractTestCase
         $this->assertFalse($provider->verifySolution(
             $this->makeSubmissionRequest($this->encodeSolution($challenge, $number))
         ));
+    }
+
+    /**
+     * Render an interstitial with a stock context.
+     */
+    private function render(AltchaChallengeProvider $provider): string
+    {
+        return $provider->renderInterstitial($this->getRequest('10.0.0.5'), [
+            'submit_url' => '/_firewall/challenge',
+            'redirect_to' => '/',
+            'ttl' => '60',
+            'header_name' => 'X-FW',
+        ]);
     }
 
     /**

@@ -15,12 +15,17 @@ plugins: []
 #   header_name: Header the interstitial JS stashes in localStorage and
 #                that SPA callers send on subsequent XHRs. Set to "" to
 #                disable the localStorage delivery path.
+#   provider_options:
+#                Optional per-provider settings forwarded to the provider
+#                constructor. `altcha` accepts `widget_src` and
+#                `widget_integrity`; see example/config.notes.yml.
 challenge:
   provider: math
   secret: ''
   path: /_firewall/challenge
   cookie_name: fw_challenge_pass
   header_name: X-Firewall-Challenge
+  provider_options: {}
 # Legacy format (deprecated, auto-converted to plugins:)
 bypass: ~
 block: ~

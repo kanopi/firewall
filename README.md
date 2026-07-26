@@ -875,7 +875,19 @@ If any plugin uses `response: challenge`, `challenge.secret` is **required**. St
 Two providers ship with the firewall — set `challenge.provider` to either short name:
 
 - **`math`** — asks "What is A + B?" with single-digit operands. Low-friction proof-of-effort, no JS bundle, no external script load. Defeats the laziest bots; trivial for a human.
-- **`altcha`** — embeds the [ALTCHA](https://altcha.org/docs/v2/) v2 widget with a pre-computed challenge (no server round-trip to fetch one). The visitor's browser brute-forces `SHA-256(salt + N) == challenge`; the salt embeds an expiry and the challenge is HMAC-signed with `challenge.secret`, so the server stays stateless. Self-hostable, privacy-respecting, and imposes a measurable per-solve CPU cost on bots. The widget script loads from `cdn.jsdelivr.net/npm/altcha`; allow it in your CSP if you have one.
+- **`altcha`** — embeds the [ALTCHA](https://altcha.org/docs/v2/) v2 widget with a pre-computed challenge (no server round-trip to fetch one). The visitor's browser brute-forces `SHA-256(salt + N) == challenge`; the salt embeds an expiry and the challenge is HMAC-signed with `challenge.secret`, so the server stays stateless. Privacy-respecting, and imposes a per-solve CPU cost on bots.
+
+  The widget script is pinned to an exact version and served with a Subresource Integrity digest. To self-host it, or to serve it from a host your CSP already allows, set both options — supplying `widget_src` without `widget_integrity` emits no `integrity` attribute, since a digest that does not match the bytes would block the script entirely:
+
+  ```yaml
+  challenge:
+    provider: altcha
+    provider_options:
+      widget_src: /assets/altcha.min.js
+      widget_integrity: 'sha384-…'   # openssl dgst -sha384 -binary altcha.min.js | openssl base64 -A
+  ```
+
+  The bundle is an ES module, so it is loaded with `<script type="module">`. If you host it yourself, keep that in mind: a classic script tag fails with `Unexpected token 'export'`.
 
 For stronger bot resistance (Turnstile, hCaptcha, reCAPTCHA, etc.), implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` and set `challenge.provider` to its FQCN.
 

@@ -54,7 +54,31 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
 
     private const CHALLENGE_LIFETIME = 300;
 
-    private const WIDGET_SRC = 'https://cdn.jsdelivr.net/npm/altcha/dist/altcha.min.js';
+    /**
+     * Default widget bundle, pinned to an exact version.
+     *
+     * @see self::DEFAULT_WIDGET_INTEGRITY for the matching SRI digest.
+     */
+    public const DEFAULT_WIDGET_SRC = 'https://cdn.jsdelivr.net/npm/altcha@2.3.0/dist/altcha.min.js';
+
+    /**
+     * Subresource Integrity digest for DEFAULT_WIDGET_SRC.
+     *
+     * Must be regenerated whenever DEFAULT_WIDGET_SRC changes:
+     *   curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+     */
+    public const DEFAULT_WIDGET_INTEGRITY =
+        'sha384-8I1KL049hNSwGKuCu/6NlGM1rfkVTfw/5bVzUFNvxO3XLV3isCJR1s5pTyuE2Zuo';
+
+    /**
+     * Widget bundle URL actually emitted into the interstitial.
+     */
+    private readonly string $widgetSrc;
+
+    /**
+     * SRI digest emitted alongside the bundle, or '' to emit none.
+     */
+    private readonly string $widgetIntegrity;
 
     /**
      * Constructs a new AltchaChallengeProvider object.
@@ -63,9 +87,30 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
      *   Shared HMAC manager. Signs the per-challenge value embedded in the
      *   widget, which is what keeps this provider stateless — the expected
      *   challenge never has to be stored server-side.
+     * @param array<string, mixed> $options
+     *   Provider options from `challenge.provider_options`:
+     *     - widget_src:       URL of the ALTCHA widget bundle. Override to
+     *                         self-host the script or to serve it from a
+     *                         CDN your CSP already allows.
+     *     - widget_integrity: SRI digest for that bundle. Defaults to the
+     *                         digest of the pinned default; overriding
+     *                         `widget_src` without also supplying this
+     *                         emits no `integrity` attribute, because a
+     *                         stale digest would block the script outright.
      */
-    public function __construct(private readonly TokenManager $tokenManager)
+    public function __construct(private readonly TokenManager $tokenManager, array $options = [])
     {
+        $src = trim((string) ($options['widget_src'] ?? ''));
+        $integrity = trim((string) ($options['widget_integrity'] ?? ''));
+
+        $this->widgetSrc = $src !== '' ? $src : self::DEFAULT_WIDGET_SRC;
+
+        if ($integrity !== '') {
+            $this->widgetIntegrity = $integrity;
+        } else {
+            // Only the pinned default has a digest we can vouch for.
+            $this->widgetIntegrity = $src === '' ? self::DEFAULT_WIDGET_INTEGRITY : '';
+        }
     }
 
     /**
@@ -96,7 +141,17 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
 
         $challengeAttr = InterstitialRenderer::escapeHtml($challengeJson);
         $payloadField = InterstitialRenderer::escapeHtml(self::PAYLOAD_FIELD);
-        $widgetSrc = InterstitialRenderer::escapeHtml(self::WIDGET_SRC);
+        $widgetSrc = InterstitialRenderer::escapeHtml($this->widgetSrc);
+
+        // SRI only means anything alongside a CORS request, hence
+        // crossorigin — without it the browser cannot verify the digest.
+        $integrityAttr = '';
+        if ($this->widgetIntegrity !== '') {
+            $integrityAttr = sprintf(
+                ' integrity="%s" crossorigin="anonymous"',
+                InterstitialRenderer::escapeHtml($this->widgetIntegrity)
+            );
+        }
 
         return InterstitialRenderer::render([
             'intro' => 'Please complete the check below to continue.',
@@ -104,7 +159,7 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
                 . "\n" . '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',
             // The official ALTCHA distribution is an ES module — a classic
             // <script> tag fails with "Unexpected token 'export'".
-            'extra_head' => "  <script type=\"module\" src=\"{$widgetSrc}\" async defer></script>",
+            'extra_head' => "  <script type=\"module\" src=\"{$widgetSrc}\"{$integrityAttr} async defer></script>",
             'form_fields' => <<<FIELDS
       <altcha-widget challengejson="{$challengeAttr}" auto="onload" hidefooter></altcha-widget>
 FIELDS,
