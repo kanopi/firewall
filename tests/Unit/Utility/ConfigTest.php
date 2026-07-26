@@ -987,4 +987,107 @@ class ConfigTest extends AbstractTestCase
         // Verify no double slashes in path
         $this->assertStringNotContainsString('//', $cacheFile);
     }
+
+    /**
+     * Regression for #78: a path that does not exist used to fall through
+     * both branches of loadFile() and return [] as if the file had been
+     * empty. It still returns [], but the reason is now recoverable.
+     */
+    public function testLoadFileRecordsErrorForMissingFile(): void
+    {
+        Config::clearLoadErrors();
+
+        $missing = sys_get_temp_dir() . '/fw78-does-not-exist-' . uniqid() . '.yml';
+        $this->assertSame([], Config::loadFile($missing));
+
+        $errors = Config::getLoadErrors();
+        $this->assertCount(1, $errors);
+        $this->assertSame($missing, $errors[0]['file']);
+        $this->assertStringContainsString('does not exist', $errors[0]['message']);
+    }
+
+    /**
+     * Regression for #78: a directory is reported as a directory, not as a
+     * generic failure, so the operator can see the path is wrong.
+     */
+    public function testLoadFileRecordsErrorForDirectory(): void
+    {
+        Config::clearLoadErrors();
+
+        $this->assertSame([], Config::loadFile(sys_get_temp_dir()));
+
+        $errors = Config::getLoadErrors();
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('directory', $errors[0]['message']);
+    }
+
+    /**
+     * Regression for #78: an unreadable file points at permissions.
+     */
+    public function testLoadFileRecordsErrorForUnreadableFile(): void
+    {
+        Config::clearLoadErrors();
+
+        $tempFile = tempnam(sys_get_temp_dir(), 'fw78_unreadable_');
+        file_put_contents($tempFile, Yaml::dump(['key' => 'value']));
+        chmod($tempFile, 0000);
+
+        $this->assertSame([], Config::loadFile($tempFile));
+
+        $errors = Config::getLoadErrors();
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('permissions', $errors[0]['message']);
+
+        chmod($tempFile, 0644);
+        @unlink($tempFile);
+    }
+
+    /**
+     * Regression for #78: ConfigLoader raises a descriptive exception for
+     * malformed YAML. loadFile() used to discard it entirely; it now keeps
+     * the message.
+     */
+    public function testLoadFileRecordsErrorForInvalidYaml(): void
+    {
+        Config::clearLoadErrors();
+
+        $this->assertSame([], Config::loadFile($this->tempFile3));
+
+        $errors = Config::getLoadErrors();
+        $this->assertCount(1, $errors);
+        $this->assertSame($this->tempFile3, $errors[0]['file']);
+        $this->assertNotSame('', $errors[0]['message']);
+    }
+
+    /**
+     * A load that works records nothing — the list only ever holds failures.
+     */
+    public function testLoadRecordsNoErrorsWhenEveryInputLoads(): void
+    {
+        Config::clearLoadErrors();
+
+        Config::load([$this->tempFile1, ['inline' => true], null]);
+
+        $this->assertSame([], Config::getLoadErrors());
+    }
+
+    /**
+     * Failures accumulate across a multi-file load so the caller sees every
+     * broken input, not just the first, and clearLoadErrors() resets them.
+     */
+    public function testLoadAccumulatesEveryFailureAndClearResets(): void
+    {
+        Config::clearLoadErrors();
+
+        $missing = sys_get_temp_dir() . '/fw78-missing-' . uniqid() . '.yml';
+        Config::load([$this->tempFile1, $missing, $this->tempFile3]);
+
+        $errors = Config::getLoadErrors();
+        $this->assertCount(2, $errors);
+        $this->assertSame($missing, $errors[0]['file']);
+        $this->assertSame($this->tempFile3, $errors[1]['file']);
+
+        Config::clearLoadErrors();
+        $this->assertSame([], Config::getLoadErrors());
+    }
 }

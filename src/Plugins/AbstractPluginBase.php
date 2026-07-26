@@ -57,7 +57,11 @@ abstract class AbstractPluginBase implements PluginInterface
             $files = $metadata['config'];
             if (!is_array($files)) {
                 if (is_string($files) && !Path::looksLikeUrl($files)) {
-                    $files = [@realpath($files)];
+                    // Keep the path as written when realpath() fails. It used
+                    // to become `false`, which Config::load() skips without a
+                    // word; as a string it reaches Config::loadFile(), which
+                    // records why it could not be read (#78).
+                    $files = [@realpath($files) ?: $files];
                 } elseif (is_string($files) && Path::looksLikeUrl($files)) {
                     $files = [$files];
                 } else {
@@ -71,12 +75,30 @@ abstract class AbstractPluginBase implements PluginInterface
 
             foreach ($files as &$file) {
                 if (is_string($file) && !Path::looksLikeUrl($file)) {
-                    $file = realpath($file);
+                    $file = realpath($file) ?: $file;
                 }
             }
 
+            unset($file);
+
             $this->files = $files;
+
+            // A plugin's own config files fail open exactly like the top-level
+            // ones do: an unreadable or malformed file leaves the plugin with
+            // an empty rule list, which for a block plugin means it matches
+            // nothing. Report what did not load — the logger is already
+            // configured by the time plugins are constructed, so unlike the
+            // bootstrap load this can be logged directly (#78).
+            Config::clearLoadErrors();
             $this->config = Config::load($files);
+
+            foreach (Config::getLoadErrors() as $error) {
+                $this->getLogger()->error('Plugin config file failed to load — its rules are NOT active', [
+                    'plugin' => $this->getName(),
+                    'file' => $error['file'],
+                    'reason' => $error['message'],
+                ]);
+            }
 
             $this->getLogger()->debug('Plugin initialized with config files', [
                 'plugin' => $this->getName(),

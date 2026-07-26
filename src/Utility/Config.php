@@ -19,7 +19,27 @@ use Symfony\Component\PropertyAccess\PropertyAccess;
 class Config
 {
     /**
+     * Load failures recorded since the last `clearLoadErrors()`.
+     *
+     * Loading stays lenient — `loadFile()` still returns `[]` for a file it
+     * cannot read or parse — but the reason is no longer thrown away. Every
+     * skipped file and every swallowed `ConfigurationException` lands here so
+     * the caller can report it (or refuse to start) once a real logger
+     * exists. See `Firewall::create()`, which clears this list, loads, and
+     * then hands whatever accumulated to `reportConfigLoadFailures()`.
+     *
+     * @var array<int, array{file: string, message: string}>
+     */
+    private static array $loadErrors = [];
+
+    /**
      * Loader function used for producing the configuration files and merging.
+     *
+     * Loading is lenient: an input that cannot be read or parsed contributes
+     * nothing to the merge rather than raising. Those failures are appended
+     * to the load-error list instead of vanishing — call `clearLoadErrors()`
+     * beforehand and `getLoadErrors()` afterwards to find out whether the
+     * merged result is actually complete.
      *
      * @param array $configs
      *   Configs to process.
@@ -178,13 +198,91 @@ class Config
     }
 
     /**
+     * Failures recorded since the last `clearLoadErrors()` call.
+     *
+     * @return array<int, array{file: string, message: string}>
+     *   One entry per config input that could not be loaded, in the order
+     *   they were attempted. Empty when everything loaded.
+     */
+    public static function getLoadErrors(): array
+    {
+        return self::$loadErrors;
+    }
+
+    /**
+     * Discard recorded load failures.
+     *
+     * Call this before a `load()` you intend to inspect, so failures from an
+     * earlier load (or from another firewall instance in the same process)
+     * are not attributed to it.
+     */
+    public static function clearLoadErrors(): void
+    {
+        self::$loadErrors = [];
+    }
+
+    /**
+     * Record a config input that could not be loaded.
+     *
+     * Recording rather than logging on the spot is deliberate. The main
+     * caller — `Firewall::create()` — loads config *before*
+     * `LoggingFactory::setLogger()` runs, so a log written here would go to a
+     * handler-less bootstrap logger on a cold start and be lost, yet would
+     * duplicate the caller's report in a long-running process where a logger
+     * from a previous `create()` is still installed. Each caller reports the
+     * list it collected, exactly once, when it has a logger.
+     *
+     * @param string $file
+     *   The config input that failed.
+     * @param string $message
+     *   Why it failed, in operator-readable terms.
+     */
+    private static function recordLoadError(string $file, string $message): void
+    {
+        self::$loadErrors[] = ['file' => $file, 'message' => $message];
+    }
+
+    /**
+     * Explain why a local path was not loaded.
+     *
+     * @param string $file
+     *   Path that failed the readability gate in `loadFile()`.
+     *
+     * @return string
+     *   Operator-readable reason.
+     */
+    private static function describeUnreadablePath(string $file): string
+    {
+        if (!file_exists($file)) {
+            return 'File does not exist.';
+        }
+
+        if (is_dir($file)) {
+            return 'Path is a directory, not a config file.';
+        }
+
+        if (!is_file($file)) {
+            return 'Path is not a regular file.';
+        }
+
+        return 'File is not readable — check filesystem permissions.';
+    }
+
+    /**
      * Load the Configuration file.
+     *
+     * Never throws. A missing, unreadable, or malformed file yields `[]`, but
+     * the reason is recorded on the class (see `getLoadErrors()`) instead of
+     * being discarded. Callers report or escalate it: `Firewall::create()`
+     * logs every failure at `error` level and turns a non-empty list into a
+     * `ConfigurationException` when `global.require_config` is enabled.
      *
      * @param string $file
      *   File to load.
      *
      * @return array
-     *   Return an array of config data.
+     *   Return an array of config data, or an empty array when the file could
+     *   not be read or parsed.
      */
     public static function loadFile(string $file): array
     {
@@ -206,18 +304,30 @@ class Config
             try {
                 $contents = self::fileGetContents($file);
                 if ($contents === false) {
+                    self::recordLoadError($file, 'Remote config could not be fetched (network error, non-200 response, or timeout).');
                     return [];
                 }
 
                 $config = ConfigLoader::parse($contents, $file, $replacementPaths);
-            } catch (\Exception) {
+            } catch (\Exception $exception) {
+                self::recordLoadError($file, $exception->getMessage());
             }
         } elseif (file_exists($file) && is_file($file) && !is_dir($file) && is_readable($file)) {
             try {
                 // Load the file and parse as YAML.
                 $config = ConfigLoader::load($file, $replacementPaths);
-            } catch (\Exception) {
+            } catch (\Exception $exception) {
+                // Everything ConfigLoader is careful to raise — malformed
+                // YAML, circular `configs:` includes, depth overflow, an
+                // unresolvable %env(...)% token, a disabled file:/require:
+                // processor — arrives here. Discarding it is what turned a
+                // broken ruleset into a firewall that allows everything (#78).
+                self::recordLoadError($file, $exception->getMessage());
             }
+        } else {
+            // No `else` used to exist at all: a mistyped path fell through
+            // both branches and returned [] as if the file had been empty.
+            self::recordLoadError($file, self::describeUnreadablePath($file));
         }
 
         return $config;

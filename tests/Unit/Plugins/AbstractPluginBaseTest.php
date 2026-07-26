@@ -105,6 +105,51 @@ final class AbstractPluginBaseTest extends AbstractTestCase
     }
 
     /**
+     * Regression for #78: a plugin config file that cannot be read left the
+     * plugin with an empty rule list — for a block plugin, one that matches
+     * nothing — without saying so. The plugin now logs the failure.
+     */
+    public function testPluginLogsWhenConfigFileCannotBeLoaded(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $missing = sys_get_temp_dir() . '/fw78-plugin-missing-' . uniqid() . '.yaml';
+        $plugin = new TestablePlugin(['config' => $missing], ['inline' => true]);
+
+        // The inline config still applies — only the unreadable file is lost.
+        $this->assertSame(['inline' => true], $plugin->getRawConfig());
+        $this->assertTrue(
+            $handler->hasRecordThatContains('Plugin config file failed to load', Level::Error),
+            'Expected an error log naming the plugin config file that did not load.'
+        );
+    }
+
+    /**
+     * Regression for #78: a plugin whose config files all load says nothing
+     * at error level.
+     */
+    public function testPluginLogsNoErrorWhenConfigFileLoads(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $file = __DIR__ . '/config-loads.yaml';
+        file_put_contents($file, "featureA: true\n");
+
+        try {
+            new TestablePlugin(['config' => $file], ['inline' => true]);
+
+            $this->assertFalse(
+                $handler->hasRecordThatContains('Plugin config file failed to load', Level::Error),
+                'The config file loaded — no error should be reported.'
+            );
+        } finally {
+            unlink($file);
+        }
+    }
+
+    /**
      * Tests that LoggingTrait logs messages when triggered through AbstractPluginBase.
      */
     public function testLoggingTraitWritesLog(): void

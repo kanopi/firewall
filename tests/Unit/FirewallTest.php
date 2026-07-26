@@ -16,6 +16,8 @@ use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\MockObject\MockObject;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -927,5 +929,120 @@ class FirewallTest extends AbstractTestCase
                 ],
             ],
         ]);
+    }
+
+    /**
+     * Regression for #78: a config file that never loaded produced a
+     * firewall with no plugins, no exception, and nothing in the log. The
+     * default is still lenient, but the failure is now reported at `error`.
+     */
+    public function testCreateLogsErrorWhenConfigInputFailsToLoad(): void
+    {
+        $handler = $this->captureLogger();
+        $missing = sys_get_temp_dir() . '/fw78-does-not-exist-' . uniqid() . '.yml';
+
+        $firewall = Firewall::create([
+            $missing,
+            ['logger' => [['class' => $handler]]],
+        ]);
+
+        $this->assertInstanceOf(Firewall::class, $firewall);
+        $this->assertTrue(
+            $handler->hasErrorContaining('config file failed to load'),
+            'Expected an error log naming the config file that did not load.'
+        );
+    }
+
+    /**
+     * Regression for #78: a load that succeeds says nothing.
+     */
+    public function testCreateDoesNotLogConfigErrorWhenEveryInputLoads(): void
+    {
+        $handler = $this->captureLogger();
+
+        Firewall::create([
+            ['logger' => [['class' => $handler]]],
+        ]);
+
+        $this->assertFalse(
+            $handler->hasErrorContaining('config file failed to load'),
+            'Nothing failed to load — no config error should be reported.'
+        );
+    }
+
+    /**
+     * Regression for #78: `global.require_config: true` turns a silent
+     * fail-open into a startup failure, so a deploy that renames or fails
+     * to ship a config file fails the deploy instead.
+     */
+    public function testCreateThrowsWhenRequireConfigAndInputFailsToLoad(): void
+    {
+        $missing = sys_get_temp_dir() . '/fw78-does-not-exist-' . uniqid() . '.yml';
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('global.require_config is enabled');
+        Firewall::create([
+            $missing,
+            ['global' => ['require_config' => true]],
+        ]);
+    }
+
+    /**
+     * Regression for #78: the flag is reachable through the override
+     * syntax too, which is the only route left when the config file that
+     * would have carried it is the one that failed to load.
+     */
+    public function testCreateThrowsWhenRequireConfigSetViaOverride(): void
+    {
+        $missing = sys_get_temp_dir() . '/fw78-does-not-exist-' . uniqid() . '.yml';
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($missing);
+        Firewall::create([$missing], ['[global][require_config]' => true]);
+    }
+
+    /**
+     * Regression for #78: strict mode only fires on an actual failure — a
+     * complete load starts normally.
+     */
+    public function testCreateStartsWithRequireConfigWhenEveryInputLoads(): void
+    {
+        $firewall = Firewall::create([
+            ['global' => ['require_config' => true], 'plugins' => []],
+        ]);
+
+        $this->assertInstanceOf(Firewall::class, $firewall);
+    }
+
+    /**
+     * Regression for #78: `require_config: false` is honoured even though
+     * `create()` runs the `global` section through `array_filter()`, which
+     * strips the value before the posture check would otherwise see it.
+     */
+    public function testCreateRespectsExplicitRequireConfigFalse(): void
+    {
+        $missing = sys_get_temp_dir() . '/fw78-does-not-exist-' . uniqid() . '.yml';
+
+        $firewall = Firewall::create([
+            $missing,
+            ['global' => ['require_config' => false]],
+        ]);
+
+        $this->assertInstanceOf(Firewall::class, $firewall);
+    }
+
+    /**
+     * Regression for #78: when the only config file is the one that failed,
+     * its YAML cannot carry the flag — the constant can.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testCreateHonoursRequireConfigConstant(): void
+    {
+        define('KANOPI_FIREWALL_REQUIRE_CONFIG', true);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('global.require_config is enabled');
+        Firewall::create([sys_get_temp_dir() . '/fw78-constant-missing.yml']);
     }
 }
