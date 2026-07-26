@@ -48,18 +48,6 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
      */
     public const PAYLOAD_FIELD = 'altcha';
 
-    /**
-     * Form field carrying the post-success redirect target. Same name as
-     * MathChallengeProvider — `Firewall::handleChallengeSubmission` reads
-     * a shared field name regardless of which provider is wired up.
-     */
-    public const REDIRECT_FIELD = 'redirect_to';
-
-    /**
-     * Form field carrying the per-plugin TTL.
-     */
-    public const TTL_FIELD = 'ttl';
-
     private const ALGORITHM = 'SHA-256';
 
     private const MAXNUMBER = 100000;

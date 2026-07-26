@@ -13,7 +13,6 @@ namespace Kanopi\Firewall;
 
 use Kanopi\Firewall\Challenge\ChallengeProviderFactory;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
-use Kanopi\Firewall\Challenge\MathChallengeProvider;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
@@ -447,9 +446,11 @@ final class Firewall
             // @codeCoverageIgnoreEnd
         }
 
-        $ttl = max(0, (int) $request->request->get(MathChallengeProvider::TTL_FIELD, 3600));
+        $ttl = max(0, (int) $request->request->get(ChallengeProviderInterface::TTL_FIELD, 3600));
         $token = $this->tokenManager->mint($request, $ttl);
-        $redirect = $this->sanitizeRedirect((string) $request->request->get(MathChallengeProvider::REDIRECT_FIELD, '/'));
+        $redirect = $this->sanitizeRedirect(
+            (string) $request->request->get(ChallengeProviderInterface::REDIRECT_FIELD, '/')
+        );
 
         $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
             'provider' => $this->challengeProvider->getName(),

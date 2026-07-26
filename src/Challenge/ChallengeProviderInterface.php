@@ -29,6 +29,23 @@ use Symfony\Component\HttpFoundation\Request;
 interface ChallengeProviderInterface
 {
     /**
+     * Form field carrying the post-success redirect target.
+     *
+     * Part of the contract rather than each provider's own constant:
+     * `Firewall::handleChallengeSubmission()` reads the posted solution
+     * without knowing which provider rendered it, so the field name has
+     * to be fixed across every implementation.
+     */
+    public const REDIRECT_FIELD = 'redirect_to';
+
+    /**
+     * Form field carrying the per-plugin pass-token TTL in seconds.
+     *
+     * Fixed across implementations for the same reason as REDIRECT_FIELD.
+     */
+    public const TTL_FIELD = 'ttl';
+
+    /**
      * Short identifier used in `challenge.provider` config (e.g. "math").
      */
     public function getName(): string;

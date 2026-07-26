@@ -49,17 +49,6 @@ final class MathChallengeProvider implements ChallengeProviderInterface
      */
     public const ANSWER_FIELD = 'challenge_answer';
 
-    /**
-     * Form field carrying the post-success redirect target.
-     */
-    public const REDIRECT_FIELD = 'redirect_to';
-
-    /**
-     * Form field carrying the per-plugin TTL (so the Firewall knows how
-     * long to mint the resulting pass token for).
-     */
-    public const TTL_FIELD = 'ttl';
-
     private const STATE_LIFETIME = 300;
 
     /**
