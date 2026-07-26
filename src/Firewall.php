@@ -440,10 +440,20 @@ final class Firewall
         }
 
         $valid = $this->challengeProvider->verifySolution($request);
+        $replayed = false;
+
+        // A stateless verify accepts the same payload every time it is
+        // posted. For providers that opt in, burn the solution here so the
+        // work behind it cannot be redistributed and reused.
+        if ($valid && !$this->consumeSingleUseSolution($request)) {
+            $valid = false;
+            $replayed = true;
+        }
 
         if (!$valid) {
             $this->getLogger()->info('Challenge solution rejected', $this->getContext($request, [
                 'provider' => $this->challengeProvider->getName(),
+                'reason' => $replayed ? 'solution_already_used' : 'invalid_solution',
             ]));
 
             if ($this->firewallMode === FirewallMode::Exception) {
@@ -484,6 +494,50 @@ final class Firewall
 
         exit((string) json_encode(['token' => $token, 'redirect' => $redirect]));
         // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Record a single-use solution, refusing one that was already spent.
+     *
+     * Only applies to providers implementing SingleUseSolutionInterface;
+     * everything else is waved through, so custom providers and the math
+     * provider are unaffected.
+     *
+     * Note this is a read-then-write against the storage backend, which
+     * exposes no atomic add. Two submissions of the same solution racing
+     * within the same instant can therefore both succeed. That narrows the
+     * window from the full challenge lifetime to microseconds, which is
+     * what matters here — the attack this closes is redistributing one
+     * solve to many clients over seconds or minutes, not winning a race.
+     *
+     * @return bool
+     *   TRUE when the solution had not been used before (or the provider
+     *   does not track reuse), FALSE when this is a replay.
+     */
+    protected function consumeSingleUseSolution(Request $request): bool
+    {
+        if (!$this->challengeProvider instanceof \Kanopi\Firewall\Challenge\SingleUseSolutionInterface) {
+            return true;
+        }
+
+        $receipt = $this->challengeProvider->getSolutionReceipt($request);
+        if ($receipt === null) {
+            return true;
+        }
+
+        // Hashed so the raw challenge value never lands in the store.
+        $key = 'fw_challenge_solution:' . hash('sha256', $receipt['id']);
+
+        if ($this->storage->get($key) !== null) {
+            return false;
+        }
+
+        // Storage treats the third argument as a lifetime in seconds. Keep
+        // the record only until the solution would expire on its own.
+        $ttl = max(1, $receipt['expires'] - time());
+        $this->storage->set($key, ['consumed_at' => time()], $ttl);
+
+        return true;
     }
 
     /**

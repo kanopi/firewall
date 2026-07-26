@@ -30,17 +30,25 @@ use Symfony\Component\HttpFoundation\Request;
  *   client → server (base64-encoded JSON in the `altcha` field):
  *     {algorithm, challenge, number, salt, signature}
  *
- * The salt embeds an `?expires=<unix>` query string so a precomputed
- * solution goes stale before it can be replayed at scale. The signature
- * is an HMAC over the challenge value via TokenManager::sign(), so a
- * tampered challenge or salt fails verification even with a valid PoW.
+ * The salt embeds an `?expires=<unix>` query string so a solution goes
+ * stale shortly after it is issued. The signature is an HMAC over the
+ * challenge value via TokenManager::sign(), so a tampered challenge or
+ * salt fails verification even with a valid PoW.
+ *
+ * Expiry alone does not make the work non-reusable, though: within the
+ * challenge lifetime the same solved payload verifies every time it is
+ * submitted. This provider therefore implements SingleUseSolutionInterface
+ * so `Firewall` records each solved challenge and rejects the second
+ * submission — without that, one solve could be redistributed to any
+ * number of clients, each minting its own pass token, and the per-solve
+ * cost below would be amortised to nothing.
  *
  * Compared to MathChallengeProvider this trades a tiny bit of CPU on the
  * visitor's device (50-150 ms typical at the default maxnumber) for a
- * fully automated flow — no typing required — and a measurable cost per
- * solve, which makes mass single-shot bot attacks less attractive.
+ * fully automated flow — no typing required — and a per-solve cost that,
+ * because solutions are single-use, actually has to be paid per client.
  */
-final class AltchaChallengeProvider implements ChallengeProviderInterface
+final class AltchaChallengeProvider implements ChallengeProviderInterface, SingleUseSolutionInterface
 {
     /**
      * Form field that carries the base64-encoded solution payload posted
@@ -191,31 +199,69 @@ SCRIPT,
         ]);
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function verifySolution(Request $request): bool
+    {
+        return $this->validate($request) !== null;
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * The `challenge` value is the identifier: it is a SHA-256 over the
+     * per-render salt, so it is unique to one issued challenge, and it is
+     * the exact value covered by the HMAC signature — an attacker cannot
+     * vary it to dodge the consumed-solution record without invalidating
+     * the signature.
+     */
+    public function getSolutionReceipt(Request $request): ?array
+    {
+        $validated = $this->validate($request);
+        if ($validated === null) {
+            return null;
+        }
+
+        return ['id' => $validated['challenge'], 'expires' => $validated['expires']];
+    }
+
+    /**
+     * Decode and fully validate the posted solution.
+     *
+     * Shared by verifySolution() and getSolutionReceipt() so the two can
+     * never disagree about whether a payload is acceptable.
+     *
+     * @return array{challenge: string, expires: int}|null
+     *   The verified challenge value and its expiry, or NULL if the
+     *   payload is malformed, stale, unsigned, or does not solve the
+     *   proof of work.
+     */
+    private function validate(Request $request): ?array
     {
         $encoded = trim((string) $request->request->get(self::PAYLOAD_FIELD, ''));
         if ($encoded === '') {
-            return false;
+            return null;
         }
 
         $json = base64_decode($encoded, true);
         if ($json === false) {
-            return false;
+            return null;
         }
 
         $payload = json_decode($json, true);
         if (!is_array($payload)) {
-            return false;
+            return null;
         }
 
         foreach (['algorithm', 'challenge', 'number', 'salt', 'signature'] as $key) {
             if (!isset($payload[$key]) || !is_scalar($payload[$key])) {
-                return false;
+                return null;
             }
         }
 
         if ($payload['algorithm'] !== self::ALGORITHM) {
-            return false;
+            return null;
         }
 
         $salt = (string) $payload['salt'];
@@ -228,19 +274,23 @@ SCRIPT,
         } elseif (is_string($rawNumber) && ctype_digit($rawNumber)) {
             $number = (int) $rawNumber;
         } else {
-            return false;
+            return null;
         }
 
         $expires = $this->parseExpires($salt);
         if ($expires === null || $expires <= time()) {
-            return false;
+            return null;
         }
 
         if (!hash_equals($challenge, hash('sha256', $salt . $number))) {
-            return false;
+            return null;
         }
 
-        return $this->tokenManager->verifySignature($challenge, $signature);
+        if (!$this->tokenManager->verifySignature($challenge, $signature)) {
+            return null;
+        }
+
+        return ['challenge' => $challenge, 'expires' => $expires];
     }
 
     /**

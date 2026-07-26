@@ -166,6 +166,48 @@ final class AltchaChallengeProviderTest extends AbstractTestCase
         $this->assertTrue($provider->verifySolution($request));
     }
 
+    public function testSolutionReceiptIdentifiesTheSolvedChallenge(): void
+    {
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        [$challenge, $number] = $this->renderAndSolve($provider);
+        $request = $this->makeSubmissionRequest($this->encodeSolution($challenge, $number));
+
+        $receipt = $provider->getSolutionReceipt($request);
+
+        $this->assertIsArray($receipt);
+        $this->assertSame($challenge['challenge'], $receipt['id']);
+        $this->assertGreaterThan(time(), $receipt['expires']);
+    }
+
+    public function testSolutionReceiptIsNullForAnInvalidPayload(): void
+    {
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        [$challenge, $number] = $this->renderAndSolve($provider);
+        $challenge['signature'] = 'forged-signature';
+        $request = $this->makeSubmissionRequest($this->encodeSolution($challenge, $number));
+
+        $this->assertNull($provider->getSolutionReceipt($request));
+    }
+
+    public function testTwoRendersProduceDistinctReceiptIds(): void
+    {
+        // A shared id would make one visitor's solve invalidate another's.
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        $ids = [];
+        for ($i = 0; $i < 3; $i++) {
+            [$challenge, $number] = $this->renderAndSolve($provider);
+            $request = $this->makeSubmissionRequest($this->encodeSolution($challenge, $number));
+            $receipt = $provider->getSolutionReceipt($request);
+            $this->assertIsArray($receipt);
+            $ids[] = $receipt['id'];
+        }
+
+        $this->assertCount(3, array_unique($ids));
+    }
+
     public function testVerifyRejectsMissingPayload(): void
     {
         $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
