@@ -56,15 +56,29 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
 
     private const WIDGET_SRC = 'https://cdn.jsdelivr.net/npm/altcha/dist/altcha.min.js';
 
+    /**
+     * Constructs a new AltchaChallengeProvider object.
+     *
+     * @param TokenManager $tokenManager
+     *   Shared HMAC manager. Signs the per-challenge value embedded in the
+     *   widget, which is what keeps this provider stateless — the expected
+     *   challenge never has to be stored server-side.
+     */
     public function __construct(private readonly TokenManager $tokenManager)
     {
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function getName(): string
     {
         return 'altcha';
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function renderInterstitial(Request $request, array $context): string
     {
         $salt = bin2hex(random_bytes(12)) . '?expires=' . (time() + self::CHALLENGE_LIFETIME);
@@ -85,7 +99,6 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
             'submit_url' => $context['submit_url'] ?? '',
             'redirect_to' => $context['redirect_to'] ?? '/',
             'ttl' => $context['ttl'] ?? '3600',
-            'cookie_name' => $context['cookie_name'] ?? '',
             'header_name' => $context['header_name'] ?? '',
             'payload_field' => self::PAYLOAD_FIELD,
             'redirect_field' => self::REDIRECT_FIELD,
@@ -225,7 +238,6 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
       var err = document.getElementById('error');
       var submit = document.getElementById('submit');
       var widget = document.querySelector('altcha-widget');
-      var cookieName = "{$e['cookie_name']}";
       var headerName = "{$e['header_name']}";
       var redirectTo = "{$e['redirect_to']}";
 

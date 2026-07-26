@@ -89,7 +89,6 @@ final class MathChallengeProvider implements ChallengeProviderInterface
             'submit_url' => $context['submit_url'] ?? '',
             'redirect_to' => $context['redirect_to'] ?? '/',
             'ttl' => $context['ttl'] ?? '3600',
-            'cookie_name' => $context['cookie_name'] ?? '',
             'header_name' => $context['header_name'] ?? '',
             'state' => $signedState,
             'state_field' => self::STATE_FIELD,
@@ -193,7 +192,6 @@ final class MathChallengeProvider implements ChallengeProviderInterface
     (function () {
       var form = document.getElementById('challenge-form');
       var err = document.getElementById('error');
-      var cookieName = "{$e['cookie_name']}";
       var headerName = "{$e['header_name']}";
       var redirectTo = "{$e['redirect_to']}";
 
