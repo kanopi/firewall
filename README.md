@@ -2289,13 +2289,15 @@ Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallEx
 
 | Exception | When | What to do |
 |---|---|---|
-| `ConfigurationException` | During `Firewall::create()`: missing/unreadable config file, circular or too-deep `configs:` include, unresolvable `%env(...)%` token, a disabled filesystem processor, missing `challenge.secret`, unusable `challenge.provider`, or missing trusted proxies when `require_trusted_proxies: true`. | Fail the deploy. This always signals operator error, never attacker input. |
+| `ConfigurationException` | During `Firewall::create()`: an empty `challenge.secret` while challenge plugins are configured, a `challenge.provider` that does not resolve to a `ChallengeProviderInterface`, or no trusted proxies when `require_trusted_proxies: true`. | Fail the deploy. This always signals operator error, never attacker input. |
 | `StorageException` | A `FileStorage` / `FileRateLimitStorage` path cannot be created, read, or written. | Fix permissions on the storage path. Thrown at construction, so it also surfaces from `create()`. |
 | `FirewallBlockedException` | `mode: exception` only — a `block` plugin matched. Carries `getStatusCode()` and the interpolated banning message. | Render your framework's error response with that status code. |
 | `ChallengeRequiredException` | `mode: exception` only — a `challenge` plugin matched and the visitor holds no valid pass token, **or** a posted solution was rejected. | Render the interstitial yourself, or return the status your API expects. |
 | `ChallengeSolvedException` | `mode: exception` only — a posted solution verified. Carries `getToken()` (the minted pass token) and `getRedirect()` (a sanitized, same-origin target). | Set the pass-token cookie / return the token to the client, then redirect to `getRedirect()`. |
 
 Note that the three request-time exceptions are thrown **only** in `mode: exception`. In the default `block` mode the firewall writes the response and calls `exit()` itself, so there is nothing to catch.
+
+Config *loading* problems are the notable omission from that table: a missing, unreadable, or malformed config file — including circular `configs:` includes, unresolvable `%env(...)%` tokens, and use of a disabled filesystem processor — raises **no exception**. Loading is lenient by design and those failures produce an empty or partial ruleset instead. See [Fail open or fail closed?](#fail-open-or-fail-closed) for why that matters and how to guard against it.
 
 ### Handling blocks in a framework
 
@@ -2307,15 +2309,55 @@ use Kanopi\Firewall\Firewall;
 try {
     Firewall::create([__DIR__ . '/firewall.yml'])->evaluate();
 } catch (FirewallBlockedException $e) {
-    // mode: exception — hand off to your own error rendering.
+    // mode: exception — a plugin blocked the request. Render your own page.
     return new Response($e->getMessage(), $e->getStatusCode());
 } catch (ConfigurationException $e) {
-    // Misconfiguration. Log loudly; decide whether to fail open or closed.
+    // Startup validation failed. See "Fail open or fail closed?" below.
     $logger->critical('Firewall failed to start: ' . $e->getMessage());
+
+    throw $e;
 }
 ```
 
-**Fail open or fail closed?** A `ConfigurationException` means the firewall is not running. Failing open (swallow and continue) keeps the site up but unprotected; failing closed (rethrow, return a 503) is the safer default for anything security-sensitive. Choose deliberately — the library does not decide for you.
+#### Fail open or fail closed?
+
+"Fail open" means a broken firewall lets traffic through; "fail closed" means it refuses traffic. Which one you get depends on *how* the firewall broke, and the three cases behave differently:
+
+| What went wrong | Throws? | What happens if you catch it and continue |
+|---|---|---|
+| A `block` plugin matched a request (`mode: exception`) | `FirewallBlockedException` | The request you were meant to block proceeds. |
+| Startup validation failed — empty `challenge.secret`, unresolvable `challenge.provider`, or no trusted proxies with `require_trusted_proxies: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
+| Your config file is missing, unreadable, or malformed | **Nothing at all** | The firewall starts with an empty ruleset and allows every request. |
+
+**The third row is the one to design around.** Config loading is deliberately lenient: `Config::loadFile()` skips files it cannot read and swallows YAML, include, and `%env(...)%` resolution errors, so a mistyped path or a broken include yields a firewall with **no plugins and no complaint**. `Firewall::create()` succeeds, `evaluate()` returns `true` for everything, and nothing in your logs says otherwise. Catching `ConfigurationException` does not protect you here, because none is thrown.
+
+So an exception handler alone is not enough. Assert that your rules actually loaded:
+
+```php
+$configPath = __DIR__ . '/firewall.yml';
+
+// A typo here would otherwise be silent.
+if (!is_readable($configPath)) {
+    throw new \RuntimeException("Firewall config unreadable: {$configPath}");
+}
+
+// Confirm the file parsed into the rules you expect before trusting the firewall.
+$config = \Kanopi\Firewall\Utility\Config::load([$configPath]);
+if (($config['plugins'] ?? []) === []) {
+    throw new \RuntimeException("Firewall config loaded no plugins: {$configPath}");
+}
+
+Firewall::create([$configPath])->evaluate();
+```
+
+If your config still uses the legacy `block:` / `bypass:` format, check those keys instead — they are normalized into `plugins:` inside `Firewall::create()`, which is after `Config::load()` returns. Whichever shape you use, the point is the same: verify your rules are present rather than assuming a silent load succeeded.
+
+For the two cases that *do* throw, pick a policy deliberately:
+
+- **Fail closed** — rethrow, or return a 503. Correct default for anything where serving unfiltered traffic is worse than serving an error: authenticated apps, checkout flows, admin surfaces. A startup misconfiguration is an operator error caught in deploy, not something to paper over at runtime.
+- **Fail open** — log at `critical` and continue. Reasonable only for public, low-risk content where availability outweighs filtering, and only if that alert actually pages someone.
+
+Whichever you choose, make it explicit in code. The library does not decide for you: it propagates the exception and leaves the policy to your error handler.
 
 ### Handling the challenge flow in a framework
 
