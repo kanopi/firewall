@@ -18,6 +18,7 @@ use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Plugins\PluginInterface;
@@ -98,6 +99,11 @@ final class Firewall
      * All configurations are merged in the order they are passed, layered on top of
      * the default configuration loaded from `config.yml`.
      *
+     * Configuration inputs are loaded leniently: a string that does not
+     * reference a readable file, and an argument that is neither string,
+     * array, nor null, are both skipped rather than raising. Only the
+     * wiring performed after loading can fail.
+     *
      * @param array<int, string|array<string, mixed>|null> $configs
      *   Zero or more configurations to merge.
      *   Each can be a YAML file path (string), a config array, or null.
@@ -107,9 +113,14 @@ final class Firewall
      * @return self
      *   A new instance of the class initialized with the merged config.
      *
-     * @throws FirewallBlockedException
-     *   If a string argument does not reference an existing file,
-     *   or if an argument is not string, array, or null.
+     * @throws ConfigurationException
+     *   When challenge plugins are configured without a `challenge.secret`,
+     *   when `challenge.provider` cannot be resolved to a
+     *   ChallengeProviderInterface, or when `global.require_trusted_proxies`
+     *   is enabled and no trusted proxies have been set.
+     * @throws StorageException
+     *   When the configured storage backend cannot create, read, or write
+     *   its backing file.
      */
     public static function create(array $configs = [], array $overrides = []): self
     {
@@ -308,8 +319,23 @@ final class Firewall
      *   Request to evaluate.
      *
      * @return bool
-     *   Return TRUE if allowed to pass. FALSE
+     *   Always TRUE when the request is allowed through. A blocked or
+     *   challenged request never returns — in production the response is
+     *   written and the process exits, and in `mode: exception` one of the
+     *   exceptions below is thrown instead.
+     *
      * @throws FirewallBlockedException
+     *   In `mode: exception`, when a blocking plugin matches or the request
+     *   key is already on the block list.
+     * @throws ChallengeRequiredException
+     *   In `mode: exception`, when a challenge plugin matches and no valid
+     *   pass token is held, or when a posted solution is invalid.
+     * @throws ChallengeSolvedException
+     *   In `mode: exception`, when a posted challenge solution is valid.
+     * @throws ConfigurationException
+     *   In every mode, when a challenge plugin matches but no challenge
+     *   provider is configured. `create()` normally rejects that wiring
+     *   first, so this is a defensive last resort.
      */
     public function evaluate(?Request $request = null): bool
     {
@@ -545,6 +571,10 @@ final class Firewall
      *
      * @throws ChallengeRequiredException
      *   In Exception mode.
+     * @throws ConfigurationException
+     *   When a challenge plugin matched but no provider is wired up. This
+     *   should be unreachable — `create()` fails first — but is raised in
+     *   every mode rather than serving an empty page.
      */
     protected function sendChallengeResponse(Request $request, PluginInterface $plugin): void
     {
@@ -726,7 +756,8 @@ final class Firewall
      *   Status code to return for the request.
      *
      * @throws FirewallBlockedException
-     *   When env variable is used for testing.
+     *   In `mode: exception`. Every other mode writes the status code and
+     *   message to the response and exits.
      */
     protected function sendBlockingResponse(Request $request, int $statusCode = 0): void
     {

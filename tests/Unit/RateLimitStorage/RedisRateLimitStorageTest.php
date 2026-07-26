@@ -6,9 +6,18 @@ namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
 use Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use Redis;
 use RedisException;
 
+/**
+ * `ext-redis` is a composer `suggest`, not a `require` — only
+ * RedisRateLimitStorage needs it, and every other rate-limit backend works
+ * without it. These tests mock `Redis`/`RedisException`, which PHPUnit cannot
+ * do when the extension is absent, so the whole case is skipped rather than
+ * erroring out a suite that is otherwise green.
+ */
+#[RequiresPhpExtension('redis')]
 class RedisRateLimitStorageTest extends AbstractTestCase
 {
     /**
