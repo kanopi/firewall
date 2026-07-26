@@ -7,9 +7,13 @@ namespace Kanopi\Firewall\Tests\Unit;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\FirewallMode;
+use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Monolog\Handler\TestHandler;
+use Monolog\Level;
+use Monolog\Logger;
 use PHPUnit\Framework\MockObject\MockObject;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -71,6 +75,72 @@ class FirewallModeTest extends AbstractTestCase
 
         $firewall = $this->createFirewall(['mode' => 'log']);
         $this->assertTrue($firewall->evaluate($request));
+    }
+
+    /**
+     * Regression for #44: `mode: log` is documented as a dry run that
+     * neither writes to storage nor terminates the request, but the durable
+     * storage blocklist was enforced unconditionally — so an audit-only
+     * deployment still hard-blocked every repeat offender and extended
+     * their ban.
+     *
+     * Calls the blocklist check directly: `evaluate()` short-circuits under
+     * PHP_SAPI === 'cli' for every mode but `exception`, so the log-mode
+     * path is not reachable through it in the unit suite.
+     */
+    public function testLogModeDoesNotEnforceStorageBlocklist(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $this->storage->method('getKey')->willReturn('1.2.3.4');
+        $this->storage->method('isBlocked')->willReturn(['event_id' => 'prior-block']);
+        $this->storage->expects($this->never())->method('addToExpire');
+        $this->storage->expects($this->never())->method('recordOffense');
+
+        $firewall = $this->createFirewall(['mode' => 'log']);
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
+
+        $this->invokeEnforceStorageBlocklist($firewall, $request);
+
+        $this->assertTrue(
+            $handler->hasRecordThatContains('Request would be blocked by storage blocklist (log mode)', Level::Warning),
+            'Expected a warning naming the blocklist hit that log mode declined to enforce.'
+        );
+        $this->assertSame(
+            'prior-block',
+            $request->attributes->get('x-request-id'),
+            'The stored event ID should still be adopted so the audit log ties back to the original block.'
+        );
+    }
+
+    /**
+     * Companion to #44: every other mode still enforces the blocklist —
+     * recording the offense, extending the ban, and terminating.
+     */
+    public function testExceptionModeStillEnforcesStorageBlocklist(): void
+    {
+        $this->storage->method('getKey')->willReturn('1.2.3.4');
+        $this->storage->method('isBlocked')->willReturn(['event_id' => 'prior-block']);
+        $this->storage->expects($this->once())->method('addToExpire')->with('1.2.3.4', 3600);
+        $this->storage->expects($this->once())->method('recordOffense')->with('1.2.3.4');
+
+        $firewall = $this->createFirewall(['mode' => 'exception']);
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '1.2.3.4']);
+
+        $this->expectException(FirewallBlockedException::class);
+        $this->invokeEnforceStorageBlocklist($firewall, $request);
+    }
+
+    /**
+     * Invoke the protected blocklist check, bypassing the CLI guard in
+     * evaluate().
+     */
+    private function invokeEnforceStorageBlocklist(Firewall $firewall, Request $request): void
+    {
+        $method = new \ReflectionMethod(Firewall::class, 'enforceStorageBlocklist');
+        $method->setAccessible(true);
+        $method->invoke($firewall, $request);
     }
 
     public function testExceptionModeThrowsFirewallBlockedException(): void

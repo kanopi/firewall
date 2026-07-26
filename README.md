@@ -540,7 +540,7 @@ The `mode` setting controls how the firewall responds when a request is matched 
 | `disabled` | No | No | No (skips all evaluation) |
 
 - **`block`** — Default production behavior. Blocked requests receive an HTTP error response and the script exits.
-- **`log`** — Useful for dry-run/audit deployments. Plugins are evaluated normally, but blocks are only logged (at `warning` level) without stopping the request or recording offenses in storage.
+- **`log`** — Useful for dry-run/audit deployments. Plugins are evaluated normally, but blocks are only logged (at `warning` level) without stopping the request or recording offenses in storage. This includes clients already on the durable storage blocklist: the hit is logged, the ban is neither enforced nor extended, and the request continues.
 - **`exception`** — Throws instead of calling `exit()`, allowing host frameworks (Laravel, Symfony, etc.) to catch and render their own responses. A block throws `FirewallBlockedException`, which carries the status code (via `getStatusCode()`) and banning message. The challenge flow throws `ChallengeRequiredException` or `ChallengeSolvedException` instead — see [Error Handling & Exceptions](#error-handling--exceptions) for all of them and what to do with each.
 - **`disabled`** — Bypasses the firewall entirely. No plugins are evaluated and the request is immediately allowed. Useful for maintenance or feature-flag toggling.
 
