@@ -828,6 +828,8 @@ The firewall evaluates `response: allow` entries first (sorted by `weight`, lowe
 
 A valid pass token (set by a previously solved challenge) short-circuits the challenge bucket but does **not** suppress block plugins. See [Challenge Response Type](#challenge-response-type) below.
 
+A POST to `challenge.path` (the challenge submission endpoint) skips all three buckets — otherwise an unrelated rule matching the magic path would trap a legitimate visitor in a challenge loop with no way out. The durable storage block list still applies: an IP that already earned a block is rejected before the solution is verified, so it cannot solve its way back out.
+
 Suggested weight ranges:
 
 - **-200 to -100**: Early filters (IP allow-lists, trusted networks)

@@ -466,10 +466,14 @@ final class Firewall
             $this->getLogger()->debug('Request evaluation started', $this->getContext($request));
         }
 
-        // Intercept challenge solutions before any plugin evaluation so a
-        // POST to the magic path can never be blocked by an unrelated rule
-        // (e.g. a URL plugin matching the magic path itself).
+        // Intercept challenge solutions before plugin evaluation so a POST
+        // to the magic path can never be blocked by an unrelated rule (e.g.
+        // a URL plugin matching the magic path itself) — which would trap a
+        // legitimate visitor in a challenge loop with no way out. The
+        // durable storage blocklist is the one exception: an IP that already
+        // earned a block does not get to solve its way back out.
         if ($this->isChallengeSubmission($request)) {
+            $this->enforceStorageBlocklist($request);
             $this->handleChallengeSubmission($request);
             return true;
         }
@@ -482,14 +486,7 @@ final class Firewall
             return true;
         }
 
-        if (($data = $this->storage->isBlocked($this->storage->getKey($request))) !== false) {
-            if (array_key_exists('event_id', $data)) {
-                $request->attributes->set('x-request-id', $data['event_id']);
-            }
-
-            $this->repeatOffender($request);
-            $this->sendBlockingResponse($request, intval($this->config['repeat_offender_status'] ?? 0));
-        }
+        $this->enforceStorageBlocklist($request);
 
         // A held pass token short-circuits the challenge bucket. Block
         // plugins still run — the token only attests "I am human", not
@@ -802,6 +799,36 @@ final class Firewall
             'httponly' => true,
             'samesite' => 'Strict',
         ]);
+    }
+
+    /**
+     * Enforce the durable storage blocklist for this request key.
+     *
+     * Returns quietly when the key is not on the list. When it is, the
+     * offense is recorded and the request is terminated — the blocklist is
+     * durable repeat-offender state, so nothing downstream (including a
+     * validly signed challenge solution) gets to undo it.
+     *
+     * @param Request $request
+     *   Request to evaluate.
+     *
+     * @throws FirewallBlockedException
+     *   In `mode: exception`, when the request key is on the block list.
+     *   Every other mode writes the response and exits.
+     */
+    protected function enforceStorageBlocklist(Request $request): void
+    {
+        $data = $this->storage->isBlocked($this->storage->getKey($request));
+        if ($data === false) {
+            return;
+        }
+
+        if (array_key_exists('event_id', $data)) {
+            $request->attributes->set('x-request-id', $data['event_id']);
+        }
+
+        $this->repeatOffender($request);
+        $this->sendBlockingResponse($request, intval($this->config['repeat_offender_status'] ?? 0));
     }
 
     /**
