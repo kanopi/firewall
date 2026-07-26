@@ -6,11 +6,13 @@ namespace Kanopi\Firewall\Tests\Unit;
 
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
+use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
@@ -862,5 +864,68 @@ class FirewallTest extends AbstractTestCase
 
         $firewall = Firewall::create([$config]);
         $this->assertInstanceOf(Firewall::class, $firewall);
+    }
+
+    /**
+     * Regression for #79: `create()` used to advertise a
+     * FirewallBlockedException for unloadable config inputs. Nothing is
+     * raised — a string that isn't a readable file, and an argument that is
+     * neither string, array, nor null, are both skipped.
+     */
+    public function testCreateSkipsUnloadableConfigInputsWithoutThrowing(): void
+    {
+        $firewall = Firewall::create([
+            sys_get_temp_dir() . '/fw79-does-not-exist.yml',
+            42,
+            null,
+        ]);
+
+        $this->assertInstanceOf(Firewall::class, $firewall);
+    }
+
+    /**
+     * Regression for #79: `StorageFactory::create()` runs inline inside
+     * `create()` and is not wrapped, so an unusable storage file surfaces
+     * as a StorageException out of `create()`.
+     */
+    public function testCreateThrowsStorageExceptionForUnusableStorageFile(): void
+    {
+        // The parent directory does not exist, so touch() fails regardless
+        // of the uid the suite runs as.
+        $unusable = sys_get_temp_dir() . '/fw79-missing-dir/storage_data.json';
+
+        $this->expectException(StorageException::class);
+        $this->expectExceptionMessage('Unable to create file');
+        Firewall::create([
+            [
+                'storage' => [
+                    'type' => FileStorage::class,
+                    'config' => ['storage_file' => $unusable],
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Regression for #79: a challenge plugin without `challenge.secret`
+     * fails at startup with a ConfigurationException — one of the two
+     * exceptions `create()` now documents.
+     */
+    public function testCreateThrowsConfigurationExceptionForChallengeWithoutSecret(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('`challenge.secret`');
+        Firewall::create([
+            [
+                'plugins' => [
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'challenge',
+                        'enable' => true,
+                        'config' => ['1.2.3.4'],
+                    ],
+                ],
+            ],
+        ]);
     }
 }
