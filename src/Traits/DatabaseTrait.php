@@ -76,30 +76,42 @@ trait DatabaseTrait
      */
     protected function createTable(): void
     {
-        /** @phpstan-ignore-next-line */
-        if (method_exists($this, 'getStorageTables')) {
-            $tables = $this->getStorageTables();
-            /** @var Table[] $tables */
-            foreach ($tables as $table) {
-                if (!$this->schemaManager->tablesExist([$table->getName()])) {
-                    try {
-                        $this->schemaManager->createTable($table);
-                        $this->getLogger()->info('Database table created', [
-                            'table' => $table->getName(),
-                        ]);
-                    } catch (\Exception $e) {
-                        $this->getLogger()->error('Failed to create database table', [
-                            'table' => $table->getName(),
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                } else {
-                    $this->getLogger()->debug('Database table already exists', [
-                        'table' => $this->config['storage_table'],
+        $tables = $this->getStorageTables();
+        /** @var Table[] $tables */
+        foreach ($tables as $table) {
+            if (!$this->schemaManager->tablesExist([$table->getName()])) {
+                try {
+                    $this->schemaManager->createTable($table);
+                    $this->getLogger()->info('Database table created', [
+                        'table' => $table->getName(),
+                    ]);
+                } catch (\Exception $e) {
+                    $this->getLogger()->error('Failed to create database table', [
+                        'table' => $table->getName(),
+                        'error' => $e->getMessage(),
                     ]);
                 }
+            } else {
+                $this->getLogger()->debug('Database table already exists', [
+                    'table' => $this->config['storage_table'],
+                ]);
             }
         }
+    }
+
+    /**
+     * Describe the tables this storage requires.
+     *
+     * Optional hook. Classes using this trait override this to declare their
+     * schema; the default returns no tables so the trait remains usable by
+     * classes that manage their own schema or need none.
+     *
+     * @return Table[]
+     *   Tables to create when they do not already exist.
+     */
+    protected function getStorageTables(): array
+    {
+        return [];
     }
 
     /**

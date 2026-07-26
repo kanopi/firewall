@@ -500,11 +500,26 @@ trait EvaluateTrait
             return null;
         }
 
-        /** @phpstan-ignore-next-line */
-        if (method_exists($this, 'getValue')) {
-            return $this->getValue($request, $variable);
-        }
+        return $this->getValue($request, $variable);
+    }
 
+    /**
+     * Resolve a request variable to its value.
+     *
+     * Optional hook. Classes using this trait override this to expose the
+     * variables they know how to resolve; the default returns null so the
+     * trait remains usable by classes that only need rule evaluation.
+     *
+     * @param Request $request
+     *   Symfony HTTP request object.
+     * @param string $variable
+     *   Variable name to extract from the request.
+     *
+     * @return mixed
+     *   The value of the variable, or null when it cannot be resolved.
+     */
+    protected function getValue(Request $request, string $variable): mixed
+    {
         return null;
     }
 }
