@@ -25,7 +25,9 @@ The config keys rules off the URL so behavior is identical on any networking set
 | `/secure`         | Challenged via the **math** provider. Solve "What is A + B?" → 60s pass cookie (`fw_challenge_pass`). |
 | `/secure-altcha`  | Challenged via the **ALTCHA** provider. The widget solves a SHA-256 proof-of-work automatically → 60s pass cookie (`fw_challenge_altcha_pass`). |
 
-Only one `challenge.provider` is configurable per Firewall instance, so the demo ships two configs (`config.yml` for math, `config.altcha.yml` for ALTCHA) and `index.php` dispatches between them based on the request path. The two pass tokens live in distinct cookies / submit paths so they coexist cleanly.
+Only one `challenge.provider` is configurable per Firewall instance, so the demo ships two configs (`config.yml` for math, `config.altcha.yml` for ALTCHA) and `index.php` dispatches between them based on the request path. The two pass tokens live in distinct cookies and submit paths so they coexist in one browser session.
+
+Note that the distinct cookie names are ergonomics, not a security boundary. The two instances share a `challenge.secret`, so what actually stops a token earned on the easy math challenge from opening `/secure-altcha` is the `aud` claim, which defaults to the provider name — see [Scoping tokens across instances](../../README.md#scoping-tokens-across-instances). Try it: solve `/secure`, copy `fw_challenge_pass` into `fw_challenge_altcha_pass`, and `/secure-altcha` still challenges you.
 
 ## Option 1 — PHP built-in server (quick)
 

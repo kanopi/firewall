@@ -456,7 +456,9 @@ final class Firewall
      *   In Exception mode when the solution is valid. Carries the minted
      *   token and the redirect target so tests can assert both.
      * @throws ChallengeRequiredException
-     *   In Exception mode when the solution is invalid.
+     *   In Exception mode when the solution does not verify, or when it
+     *   verifies but has already been spent (see
+     *   `consumeSingleUseSolution()`).
      */
     protected function handleChallengeSubmission(Request $request): void
     {
