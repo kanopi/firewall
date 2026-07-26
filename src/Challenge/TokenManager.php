@@ -153,11 +153,36 @@ final class TokenManager
         return hash_equals($this->sign($data), $signature);
     }
 
+    /**
+     * Base64url-encode a string (RFC 4648 §5, padding stripped).
+     *
+     * Tokens travel in cookies and HTTP headers, so `+`, `/` and `=` are
+     * translated away to keep the value safe to transport without further
+     * escaping.
+     *
+     * @param string $data
+     *   Raw bytes to encode.
+     *
+     * @return string
+     *   The base64url representation, without `=` padding.
+     */
     private function base64UrlEncode(string $data): string
     {
         return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
 
+    /**
+     * Decode a base64url string produced by self::base64UrlEncode().
+     *
+     * Re-adds the stripped padding before decoding and uses strict mode so
+     * attacker-supplied garbage is rejected rather than silently truncated.
+     *
+     * @param string $data
+     *   The base64url payload (padding optional).
+     *
+     * @return string|false
+     *   The decoded bytes, or FALSE when the input is not valid base64url.
+     */
     private function base64UrlDecode(string $data): string|false
     {
         $padded = $data . str_repeat('=', (4 - strlen($data) % 4) % 4);
