@@ -127,6 +127,112 @@ class ChallengeFlowTest extends TestCase
         $this->assertTrue($firewall->evaluate($request));
     }
 
+    public function testCustomCookieNameIsHonoured(): void
+    {
+        // `challenge.cookie_name` is operator-configurable; the firewall
+        // must both write and read the pass token under that name, and
+        // must not silently fall back to the default.
+        $configFile = $this->writeConfig([
+            'global' => ['mode' => 'exception'],
+            'challenge' => [
+                'provider' => 'math',
+                'secret' => self::SECRET,
+                'cookie_name' => 'my_custom_pass_cookie',
+                'header_name' => 'X-Firewall-Challenge',
+                'path' => '/_firewall/challenge',
+            ],
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\IpAddress',
+                    'response' => 'challenge',
+                    'weight' => 0,
+                    'enable' => true,
+                    'metadata' => ['default_expiration_time' => 600],
+                    'config' => ['10.0.0.50'],
+                ],
+            ],
+        ], 'custom_cookie.yml');
+
+        $firewall = Firewall::create([$configFile]);
+        $token = $this->mintTokenViaSolution($firewall, '10.0.0.50');
+
+        $underCustomName = Request::create(
+            '/protected',
+            'GET',
+            [],
+            ['my_custom_pass_cookie' => $token],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50']
+        );
+        $this->assertTrue($firewall->evaluate($underCustomName));
+
+        // The default name must carry no weight once one is configured.
+        $underDefaultName = Request::create(
+            '/protected',
+            'GET',
+            [],
+            ['fw_challenge_pass' => $token],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50']
+        );
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($underDefaultName);
+    }
+
+    public function testEmptyCookieNameDisablesTheCookiePath(): void
+    {
+        // Documented as the way to turn off cookie delivery and rely on
+        // the localStorage/header path only.
+        $configFile = $this->writeConfig([
+            'global' => ['mode' => 'exception'],
+            'challenge' => [
+                'provider' => 'math',
+                'secret' => self::SECRET,
+                'cookie_name' => '',
+                'header_name' => 'X-Firewall-Challenge',
+                'path' => '/_firewall/challenge',
+            ],
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\IpAddress',
+                    'response' => 'challenge',
+                    'weight' => 0,
+                    'enable' => true,
+                    'metadata' => ['default_expiration_time' => 600],
+                    'config' => ['10.0.0.50'],
+                ],
+            ],
+        ], 'no_cookie.yml');
+
+        $firewall = Firewall::create([$configFile]);
+        $token = $this->mintTokenViaSolution($firewall, '10.0.0.50');
+
+        // No cookie name configured, so no cookie is consulted...
+        $viaCookie = Request::create(
+            '/protected',
+            'GET',
+            [],
+            ['fw_challenge_pass' => $token],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50']
+        );
+
+        // ...but the header delivery path still works.
+        $viaHeader = Request::create(
+            '/protected',
+            'GET',
+            [],
+            [],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50', 'HTTP_X_FIREWALL_CHALLENGE' => $token]
+        );
+        $this->assertTrue($firewall->evaluate($viaHeader));
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($viaCookie);
+    }
+
     public function testValidTokenInHeaderAllowsRequest(): void
     {
         $firewall = Firewall::create([$this->configWithChallenge()]);
