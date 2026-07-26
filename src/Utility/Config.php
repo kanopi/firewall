@@ -53,12 +53,68 @@ class Config
 
         foreach ($overrides as $key => $value) {
             try {
+                self::openOverridePath($merged, (string) $key);
                 $propertyAccessor->setValue($merged, $key, $value);
             } catch (\Exception) {
             }
         }
 
         return $merged;
+    }
+
+    /**
+     * Replace NULL nodes along an override path with empty arrays.
+     *
+     * `config/config.yml` — always prepended by `Firewall::create()` — ships
+     * `global: ~`, `storage: ~`, `logger: ~`, `bypass: ~` and `block: ~`, all
+     * of which parse to NULL. PropertyAccess cannot traverse into NULL, so it
+     * throws `UnexpectedTypeException`, which `load()` swallows. The override
+     * was then silently dropped: `[storage][config][file]`, `[logger][0][class]`,
+     * `[global][mode]` and `[block][...][enable]` all no-opped unless the
+     * caller's own YAML happened to define that section. Only `[plugins][...]`
+     * worked, because `plugins: []` is already an array.
+     *
+     * An empty section and an absent one mean the same thing here, so opening
+     * NULL to `[]` only makes the documented overrides land. Nodes holding a
+     * non-NULL value are left untouched — overwriting those would discard real
+     * configuration, and PropertyAccess still raises (and `load()` still
+     * swallows) exactly as before.
+     *
+     * @param array<string, mixed> $merged
+     *   Merged config to open up, by reference.
+     * @param string $path
+     *   PropertyAccess path the override will be written to.
+     */
+    private static function openOverridePath(array &$merged, string $path): void
+    {
+        // Only bracket notation addresses array offsets. Anything else (e.g.
+        // the bare `a` in testConfigLoadWithOverridesNotValid) is not a
+        // traversable array path, so leave it entirely to PropertyAccess.
+        if (preg_match('/^(?:\[[^\[\]]*\])+$/', $path) !== 1) {
+            return;
+        }
+
+        preg_match_all('/\[([^\[\]]*)\]/', $path, $matches);
+
+        // The last segment is the key being written, not a node to traverse.
+        $segments = $matches[1];
+        array_pop($segments);
+
+        $cursor = &$merged;
+        foreach ($segments as $segment) {
+            if (!is_array($cursor) || !array_key_exists($segment, $cursor)) {
+                // Missing nodes are fine — PropertyAccess creates those itself.
+                break;
+            }
+
+            if (is_null($cursor[$segment])) {
+                $cursor[$segment] = [];
+            }
+
+            $cursor = &$cursor[$segment];
+        }
+
+        unset($cursor);
     }
 
     /**

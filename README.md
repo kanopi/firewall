@@ -406,7 +406,12 @@ app:
 
 ### Filesystem Processors (opt-in)
 
-The `file:` (read a file's contents) and `require:` (include a PHP file and use its return value) processors are **disabled by default**. Because their path comes from an environment variable, enabling them turns any env-var injection into a local file inclusion — or, for `require:`, remote code execution. Using either one without opting in throws `ConfigurationException`.
+The `file:` (read a file's contents) and `require:` (include a PHP file and use its return value) processors are **disabled by default**. Because their path comes from an environment variable, enabling them turns any env-var injection into a local file inclusion — or, for `require:`, remote code execution.
+
+Using either one without opting in raises `ConfigurationException` from `TokenSubstitute`. Note where that exception ends up:
+
+- **Calling `TokenSubstitute::substitute()` directly** — the exception propagates to you.
+- **A token inside a YAML config** — `Config::loadFile()` swallows it, so `Firewall::create()` succeeds with **an empty config that allows every request**. There is no exception and no log entry. The gate still refuses to read the file, but it fails *open*, not loud. See [Fail open or fail closed?](#fail-open-or-fail-closed) for how to guard against this, and [#78](https://github.com/kanopi/firewall/issues/78) for the underlying silent-swallow behavior.
 
 Opt in during bootstrap, **before any config is loaded**, and constrain the reads to directories you control:
 
@@ -2218,7 +2223,7 @@ By default the library builds its own Monolog `Logger` on the `firewall` channel
 )->evaluate();
 ```
 
-This keeps everything the firewall logs — including the messages emitted *during* `create()` — flowing to your handler.
+This keeps everything the firewall logs — including the messages emitted *during* `create()` — flowing to your handler. It works whether or not your YAML declares a `logger:` section; index `0` is created if it does not exist. Entries you do declare are preserved, so `[logger][1][class]` adds a second handler alongside the first.
 
 **Option 2 — replace the whole logger after construction.** `LoggingFactory::setLogger()` takes a Monolog `Logger` instance (not any PSR-3 logger):
 
@@ -2270,6 +2275,29 @@ $overrides = [
     '[block][\Kanopi\Firewall\Plugins\GeoLocation][metadata][reader][db]' => $_ENV['GEOIP_DB_PATH'],
     '[block][\Kanopi\Firewall\Plugins\UserAgent][enable]' => false,
 ];
+```
+
+**Sections you have not declared are created for you.** An override writes into `global:`, `storage:`, `logger:`, `bypass:` or `block:` even when your YAML leaves that section out entirely — you do not have to add a placeholder entry first.
+
+**An override that cannot be applied is silently ignored.** This happens when the path has to traverse *through* a value that is not an array:
+
+```yaml
+storage: /tmp/firewall.data   # a scalar, not a mapping
+```
+
+```php
+// Dropped — `[storage]` is a string, so there is no `[config]` to write into.
+// No exception, no log entry, and the original scalar is left intact.
+'[storage][config][file]' => '/tmp/other.data',
+```
+
+Because there is no signal when this happens, assert the value landed if the override matters:
+
+```php
+$config = \Kanopi\Firewall\Utility\Config::load([$configPath], $overrides);
+if (($config['storage']['config']['file'] ?? null) !== $expectedPath) {
+    throw new \RuntimeException('Firewall storage override did not apply.');
+}
 ```
 
 ## Error Handling & Exceptions
