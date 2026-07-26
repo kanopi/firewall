@@ -61,8 +61,11 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
     public const TTL_FIELD = 'ttl';
 
     private const ALGORITHM = 'SHA-256';
+
     private const MAXNUMBER = 100000;
+
     private const CHALLENGE_LIFETIME = 300;
+
     private const WIDGET_SRC = 'https://cdn.jsdelivr.net/npm/altcha/dist/altcha.min.js';
 
     public function __construct(private readonly TokenManager $tokenManager)
