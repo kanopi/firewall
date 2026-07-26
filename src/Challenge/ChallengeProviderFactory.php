@@ -73,14 +73,14 @@ final class ChallengeProviderFactory
             ));
         }
 
-        $instance = self::instantiate($class, $tokenManager, $options);
+        $challengeProvider = self::instantiate($class, $tokenManager, $options);
 
         LoggingFactory::logMessage('debug', 'Challenge provider created', [
-            'provider' => $instance->getName(),
+            'provider' => $challengeProvider->getName(),
             'class' => $class,
         ]);
 
-        return $instance;
+        return $challengeProvider;
     }
 
     /**

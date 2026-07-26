@@ -215,6 +215,7 @@ final class Firewall
             'header_name' => 'X-Firewall-Challenge',
             'path' => '/_firewall/challenge',
             'provider_options' => [],
+            'audience' => '',
         ];
 
         $challengeConfig = array_replace($defaults, $challengeConfig);
@@ -234,7 +235,16 @@ final class Firewall
 
         $providerOptions = $challengeConfig['provider_options'] ?? [];
 
-        $tokenManager = new TokenManager($secret);
+        // Scope pass tokens so two instances sharing a secret but running
+        // different challenges cannot accept each other's tokens. Defaults
+        // to the provider name, which is what distinguishes them; operators
+        // running the same provider in several places can override it.
+        $audience = trim((string) ($challengeConfig['audience'] ?? ''));
+        if ($audience === '') {
+            $audience = (string) $challengeConfig['provider'];
+        }
+
+        $tokenManager = new TokenManager($secret, $audience);
         $challengeProvider = ChallengeProviderFactory::create(
             (string) $challengeConfig['provider'],
             $tokenManager,

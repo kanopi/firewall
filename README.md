@@ -844,6 +844,7 @@ The pass token is:
 
 - **Signed** with the configured `challenge.secret` (HMAC-SHA256) so it cannot be forged.
 - **IP-bound** — the token only verifies for the same client IP that solved the challenge.
+- **Audience-bound** — the token carries an `aud` claim and only verifies against the instance that issued it. See [Scoping tokens across instances](#scoping-tokens-across-instances).
 - **Delivered two ways** — as an `HttpOnly; Secure; SameSite=Strict` cookie *and* as a value the interstitial JS writes to `localStorage` so SPA callers can attach it to XHRs via a custom header (defaults to `X-Firewall-Challenge`).
 - **Expires** after `metadata.default_expiration_time` seconds for the matched plugin (default `3600`).
 
@@ -869,6 +870,25 @@ plugins:
 ```
 
 If any plugin uses `response: challenge`, `challenge.secret` is **required**. Startup fails fast with `ConfigurationException` when it is empty — the firewall will not silently fall back to plaintext tokens.
+
+#### Scoping tokens across instances
+
+A pass token attests "this client solved *a* challenge" — so if two Firewall instances share a `challenge.secret`, they would accept each other's tokens without further scoping. That matters when the challenges differ in strength: a token earned on the trivial `math` challenge could otherwise be replayed against a route protected by `altcha`, and the weakest challenge in your deployment would set the effective security of every route that shares the secret.
+
+Tokens therefore carry an `aud` claim, which defaults to the configured provider name and is covered by the signature. A `math` token will not verify against an `altcha` instance.
+
+If you run **the same provider** in several places with the same secret — say a low-value public route and a sensitive admin area — the default audiences are identical, so set them apart explicitly:
+
+```yaml
+challenge:
+  provider: altcha
+  secret: "${FIREWALL_SECRET}"
+  audience: admin-portal   # defaults to the provider name
+```
+
+The alternative is to give each instance its own `challenge.secret`, which isolates them just as effectively.
+
+> **Upgrade note.** Pass tokens minted before the `aud` claim existed are rejected, because verification fails closed rather than treating a missing audience as a match. The visible effect is that everyone holding a live pass token is challenged once more after deploying. Tokens are short-lived (default one hour), so this clears on its own.
 
 #### Built-in providers
 

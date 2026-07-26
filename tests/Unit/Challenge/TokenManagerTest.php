@@ -133,4 +133,75 @@ final class TokenManagerTest extends AbstractTestCase
         $token = $manager->mint($request, -1);
         $this->assertTrue($manager->verify($token, $request));
     }
+
+    public function testTokenIsNotAcceptedByADifferentAudience(): void
+    {
+        // The exact deployment the demo now ships: two instances, one
+        // secret, different challenge providers. A token earned on the
+        // trivial math challenge must not open an ALTCHA-protected route.
+        $math = new TokenManager(self::SECRET, 'math');
+        $altcha = new TokenManager(self::SECRET, 'altcha');
+        $request = $this->getRequest('10.1.2.3');
+
+        $token = $math->mint($request, 3600);
+
+        $this->assertTrue($math->verify($token, $request));
+        $this->assertFalse($altcha->verify($token, $request));
+    }
+
+    public function testSameAudienceStillInteroperates(): void
+    {
+        // Two processes of the same deployment must still share tokens.
+        $minter = new TokenManager(self::SECRET, 'altcha');
+        $verifier = new TokenManager(self::SECRET, 'altcha');
+        $request = $this->getRequest('10.1.2.3');
+
+        $this->assertTrue($verifier->verify($minter->mint($request, 3600), $request));
+    }
+
+    public function testCustomAudienceSeparatesSameProviderInstances(): void
+    {
+        $public = new TokenManager(self::SECRET, 'public-site');
+        $admin = new TokenManager(self::SECRET, 'admin-portal');
+        $request = $this->getRequest('10.1.2.3');
+
+        $this->assertFalse($admin->verify($public->mint($request, 3600), $request));
+    }
+
+    public function testTokenWithoutAudienceClaimIsRejected(): void
+    {
+        // Forge a pre-upgrade token: correctly signed, but no `aud`.
+        // Verification must fail closed rather than accept it.
+        $manager = new TokenManager(self::SECRET, 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        $payload = ['ip' => '10.1.2.3', 'exp' => time() + 3600, 'nonce' => str_repeat('a', 32)];
+        $encoded = rtrim(strtr(base64_encode((string) json_encode($payload)), '+/', '-_'), '=');
+        $signature = rtrim(
+            strtr(base64_encode(hash_hmac('sha256', $encoded, self::SECRET, true)), '+/', '-_'),
+            '='
+        );
+
+        $this->assertFalse($manager->verify($encoded . '.' . $signature, $request));
+    }
+
+    public function testAudienceIsCoveredByTheSignature(): void
+    {
+        // Swapping `aud` in the payload must invalidate the HMAC, so an
+        // attacker cannot re-scope a token they already hold.
+        $manager = new TokenManager(self::SECRET, 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        [$payloadPart, $signature] = explode('.', $manager->mint($request, 3600), 2);
+        $padded = $payloadPart . str_repeat('=', (4 - strlen($payloadPart) % 4) % 4);
+        $json = base64_decode(strtr($padded, '-_', '+/'), true);
+        $payload = json_decode((string) $json, true);
+        $this->assertIsArray($payload);
+
+        $payload['aud'] = 'altcha';
+        $tampered = rtrim(strtr(base64_encode((string) json_encode($payload)), '+/', '-_'), '=');
+
+        $altcha = new TokenManager(self::SECRET, 'altcha');
+        $this->assertFalse($altcha->verify($tampered . '.' . $signature, $request));
+    }
 }

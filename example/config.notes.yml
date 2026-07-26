@@ -96,6 +96,13 @@ challenge:
   #                      Generate with:
   #                        openssl dgst -sha384 -binary FILE | openssl base64 -A
   provider_options: {}
+  # Scopes pass tokens to this instance. Tokens carry the value as an `aud`
+  # claim and only verify against a firewall configured with the same one,
+  # so two instances that share `secret` but run different challenges do
+  # not accept each other's tokens. Defaults to the provider name; set it
+  # explicitly when several instances run the SAME provider and should not
+  # share passes (e.g. a public site and an admin portal).
+  audience: ''
   # HMAC secret used to sign pass tokens. MUST be a long, random value. The
   # `${VAR}` syntax loads it from an env var so it stays out of source control.
   secret: '${FIREWALL_CHALLENGE_SECRET}'

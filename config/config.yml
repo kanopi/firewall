@@ -19,6 +19,9 @@ plugins: []
 #                Optional per-provider settings forwarded to the provider
 #                constructor. `altcha` accepts `widget_src` and
 #                `widget_integrity`; see example/config.notes.yml.
+#   audience:    Scopes pass tokens to this instance so two firewalls
+#                sharing a secret do not accept each other's tokens.
+#                Defaults to the provider name when left empty.
 challenge:
   provider: math
   secret: ''
@@ -26,6 +29,7 @@ challenge:
   cookie_name: fw_challenge_pass
   header_name: X-Firewall-Challenge
   provider_options: {}
+  audience: ''
 # Legacy format (deprecated, auto-converted to plugins:)
 bypass: ~
 block: ~

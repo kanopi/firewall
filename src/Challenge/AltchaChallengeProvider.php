@@ -159,7 +159,7 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface
                 . "\n" . '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',
             // The official ALTCHA distribution is an ES module — a classic
             // <script> tag fails with "Unexpected token 'export'".
-            'extra_head' => "  <script type=\"module\" src=\"{$widgetSrc}\"{$integrityAttr} async defer></script>",
+            'extra_head' => sprintf('  <script type="module" src="%s"%s async defer></script>', $widgetSrc, $integrityAttr),
             'form_fields' => <<<FIELDS
       <altcha-widget challengejson="{$challengeAttr}" auto="onload" hidefooter></altcha-widget>
 FIELDS,
