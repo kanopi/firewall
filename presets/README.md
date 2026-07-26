@@ -59,6 +59,8 @@ This directory contains pre-configured firewall rule sets (presets) that can be 
 
 **Requirements**: Redis, Database, or File storage configured
 
+📖 **[RATE-LIMITING-REFERENCE.md](RATE-LIMITING-REFERENCE.md)** documents every rule in this preset — the exact limit and window for each path, why it was chosen, storage backend comparisons, customization recipes, and a troubleshooting guide for limits that fire too early or never fire.
+
 ### `wordpress.yml`
 
 WordPress-specific blocking rules including:
@@ -85,6 +87,67 @@ Blocks common malicious PHP files, attack patterns, and suspicious URLs includin
 - **Suspicious Extensions**: `.exe`, `.bat`, `.cmd`, `.sh` files
 
 **Note**: `.well-known` directory is NOT blocked by default (required for SSL cert validation).
+
+### Pantheon Platform Presets
+
+Two presets wire the firewall into [Pantheon](https://pantheon.io)'s environment rather than adding rules. Both read Pantheon's `PRESSFLOW_SETTINGS` / filesystem conventions, so they are no-ops (or wrong) anywhere else.
+
+#### `storage-pantheon.yml`
+
+Points blocked-client storage at the site's own MySQL database, pulling credentials out of the JSON in `$_SERVER['PRESSFLOW_SETTINGS']`:
+
+```yaml
+configs:
+  - presets/storage-pantheon.yml
+```
+
+Every value uses the `safe:` env processor with a fallback, so a missing or malformed `PRESSFLOW_SETTINGS` degrades to placeholder values instead of throwing during bootstrap. See [Environment Variables in YAML](../README.md#environment-variables-in-yaml) for the processor syntax.
+
+Tables are created automatically on first connection, using the `DatabaseStorage` defaults `firewall_storage` and `firewall_offenses` (this preset does not override the names — add `storage_table` / `offenses_table` under `config` if you need different ones). Database storage is the right choice on Pantheon because it is shared across application containers, unlike file storage on the ephemeral local filesystem.
+
+#### `logging-pantheon.yml`
+
+Writes firewall events to `/files/private/firewall.log`, which is inside Pantheon's persistent, non-web-accessible files directory:
+
+```yaml
+configs:
+  - presets/logging-pantheon.yml
+```
+
+Logs at `INFO` and above. Read it with `terminus drush <site>.<env> -- ...` or over SFTP.
+
+> **Note**: this preset still uses the legacy top-level `logger:` key. That key remains supported, but see [Logging Configuration](../README.md#logging-configuration) for the current handler options if you are writing your own.
+
+### Composed Preset
+
+#### `config.yml`
+
+A convenience bundle that pulls in the two URL-pattern presets together:
+
+```yaml
+configs:
+  - presets/config.yml    # == malicious-urls.yml + wordpress.yml
+```
+
+Use it when you want both rule sets and no rate limiting or vulnerability scoring. For anything more selective, include the individual presets so the composition is visible in your own config.
+
+## Example Configurations
+
+Three fully-commented example configs show complete, deployable setups. They are meant to be **copied into your project and edited**, not included via `configs:` — each one already declares its own storage and overrides.
+
+| File | Shows |
+|---|---|
+| `example-usage.yml` | Composing multiple presets (`wordpress.yml` + `malicious-urls.yml`) with custom allow rules and additional plugins. |
+| `example-malicious-requests-usage.yml` | Deploying `malicious-requests.yml` in production: storage, logging, and threshold overrides. |
+| `example-rate-limiting-usage.yml` | Several rate limiting deployment scenarios side by side — Redis, database, and file storage, plus per-path limit overrides. |
+
+```bash
+cp presets/example-malicious-requests-usage.yml config/firewall.yml
+# edit paths and credentials, then:
+#   Firewall::create(['config/firewall.yml'])->evaluate();
+```
+
+Because each example is a menu of alternatives rather than one runnable config, read the comments before using one — several blocks are mutually exclusive and expect you to delete the ones you don't want.
 
 ## Configuration Format
 
@@ -173,6 +236,19 @@ plugins:
 ```
 
 See [Rate Limiting Storage Options](#rate-limiting-storage-options) for other storage backends.
+
+### Referencing Presets From `vendor/`
+
+Every example here writes `presets/…`, which assumes your config sits next to a `presets/` directory. When the library is installed as a dependency the presets live under `vendor/kanopi/firewall/presets/`. Use the `{presets_dir}` token so you don't have to hardcode that path:
+
+```yaml
+# firewall-config.yml — works regardless of where vendor/ is
+configs:
+  - "{presets_dir}/malicious-requests.yml"
+  - "{presets_dir}/wordpress.yml"
+```
+
+`{presets_dir}` expands to this package's own `presets/` directory. `{config_dir}` is also available and expands to the directory of the YAML file doing the including — useful for your own rule files.
 
 ### Include in Main Configuration
 
@@ -391,10 +467,27 @@ plugins:
       storage:
         type: "Kanopi\\Firewall\\RateLimitStorage\\CacheRateLimitStorage"
         config:
-          cache: '@cache.app'  # Your PSR-6 service
+          # A class implementing Psr\Cache\CacheItemPoolInterface.
+          adaptor: "Symfony\\Component\\Cache\\Adapter\\FilesystemAdapter"
+          # Constructor arguments, spread in declaration order.
+          args: ['firewall', 0, '/var/cache/firewall']
+          # Per-key lifetime in seconds (default 3600).
+          ttl: 3600
 ```
 
 **Benefits**: Integrates with existing cache infrastructure
+
+Any PSR-6 pool works — `RedisAdapter`, `MemcachedAdapter`, `ApcuAdapter`, or your framework's own pool. To hand over an **already-constructed** pool (for example your framework's `cache.app` service) pass it through the overrides argument instead of YAML, since a YAML scalar cannot carry an object. The index (`0` here) is the plugin's position in your `plugins:` list:
+
+```php
+Firewall::create([__DIR__ . '/firewall.yml'], [
+    '[plugins][0][metadata][storage][config][adaptor]' => $myCachePool,
+]);
+```
+
+See [Dynamic Configuration Overrides](../README.md#dynamic-configuration-overrides) for the full path syntax.
+
+**Note**: if `adaptor` is missing or cannot be resolved to a PSR-6 pool, the backend logs a warning and silently records nothing — rate limits will never trigger. Check for `Cache rate limit storage failed to initialize` in your logs.
 
 ### Customizing Rate Limits
 
@@ -739,8 +832,9 @@ To contribute new presets or improvements:
 
 For questions or issues:
 
-- Check the main [documentation](../docs/)
-- Review [example configurations](../example/)
+- Check the main [configuration reference](../README.md)
+- Review the [rate limiting reference](RATE-LIMITING-REFERENCE.md)
+- Review [example configurations](../example/README.md)
 - Open an issue on GitHub
 
 ## Legacy format (deprecated)

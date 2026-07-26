@@ -11,9 +11,12 @@
 - [Configuration Overview](#configuration-overview)
 - [Configuration Loading & Includes](#configuration-loading--includes)
 - [Environment Variables in YAML](#environment-variables-in-yaml)
+  - [Filesystem Processors (opt-in)](#filesystem-processors-opt-in)
 - [Global Configuration](#global-configuration)
   - [Multiple Offenses Defense](#multiple-offenses-defense)
 - [Storage Configuration](#storage-configuration)
+  - [Custom Storage Backends](#custom-storage-backends)
+  - [Custom Rate Limit Storage](#custom-rate-limit-storage)
 - [Plugin Architecture](#plugin-architecture)
   - [Challenge Response Type](#challenge-response-type)
 - [Available Plugins](#available-plugins)
@@ -27,25 +30,32 @@
   - [CRS (OWASP Core Rule Set) Plugin](#crs-owasp-core-rule-set-plugin)
 - [Conditional Logic](#conditional-logic)
 - [Logging Configuration](#logging-configuration)
+  - [Sensitive Value Redaction](#sensitive-value-redaction)
+  - [Injecting Your Own Logger](#injecting-your-own-logger)
 - [Dynamic Configuration Overrides](#dynamic-configuration-overrides)
+- [Error Handling & Exceptions](#error-handling--exceptions)
 - [Platform Integration](#platform-integration)
 - [Advanced Examples](#advanced-examples)
 - [Testing](#testing)
 - [Legacy format (deprecated)](#legacy-format-deprecated)
+- [Additional Documentation](#additional-documentation)
 - [Contributing](#contributing)
 
 ## Features
 
 - **Flexible Plugin System**: Modular architecture allows for easy extension and customization
-- **Multiple Storage Backends**: Support for in-memory, file-based, database, and Redis storage
-- **Comprehensive Request Analysis**: Evaluate requests based on IP, location, user agent, URL patterns, and more
+- **Multiple Storage Backends**: In-memory, file-based, and database storage for blocked clients, plus in-memory, file, database, PSR-6 cache, and Redis backends for rate-limit counters — or bring your own
+- **Comprehensive Request Analysis**: Evaluate requests based on IP, location, ASN, user agent, URL patterns, and more
+- **OWASP Core Rule Set**: Real CRS rules (SQLi, XSS, LFI/RFI, RCE, scanners) with tunable paranoia levels
 - **Vulnerability Scoring**: Advanced risk assessment based on multiple factors with configurable thresholds
 - **Rate Limiting**: Built-in rate limiting with configurable storage backends
+- **Challenge Responses**: Serve a proof-of-effort interstitial instead of a hard block, with HMAC-signed, IP-bound pass tokens
 - **GeoIP Integration**: Full support for MaxMind GeoIP2 databases (both local and web service)
 - **Advanced Conditional Logic**: Support for simple, complex, and grouped conditional rules
+- **Escalating Bans**: Repeat offenders can be banned for progressively longer, up to permanently
 - **Remote Configuration Support**: Load configuration files from remote URLs with local caching
-- **PSR-3 Compatible Logging**: Integration with Monolog for flexible logging
-- **Framework Agnostic**: Works with any PHP application or framework
+- **PSR-3 Compatible Logging**: Integration with Monolog for flexible logging, with sensitive headers redacted by default
+- **Framework Agnostic**: Works with any PHP application or framework — block, log-only, or throw exceptions for your framework to handle
 
 ## Requirements
 
@@ -246,6 +256,7 @@ The firewall supports **modular configuration** via a top‑level `configs:` key
   - **Absolute**
   - **Remote URLs** (e.g., `https://example.com/firewall-rules.yml`; cached locally with configurable TTL)
   - Use the `{config_dir}` token (expanded to the current YAML's directory)
+  - Use the `{presets_dir}` token (expanded to this package's `presets/` directory inside `vendor/`, so you can include a shipped preset without knowing your vendor layout — e.g. `"{presets_dir}/malicious-requests.yml"`)
   - **Glob patterns** (e.g., `more/*.yml`; matched files are sorted alphabetically)
   - **Environment-driven** using `%env(...)%` (must resolve to a string path)
 - **Merge semantics**:
@@ -344,16 +355,18 @@ storage:
 
 **Supported processors (can be chained left→right):**
 
-- **Type Processors**: `string`, `int`, `float`, `bool`, `json` (→ array), `base64`
-- **File Operations**: `file` (reads file contents), `resolve` (resolves relative paths)
+- **Type Processors**: `string`, `int`, `float`, `bool`, `json` (→ array), `base64`, `enum:FQCN` (→ backed enum case, matched by value then by case name)
+- **File Operations**: `resolve` (resolves relative paths), plus the opt-in `file` and `require` processors — see [Filesystem Processors](#filesystem-processors-opt-in) below
 - **String Operations**: `trim`, `lower`, `upper`, `urlencode`, `urldecode`
-- **Array/List Operations**: `csv` (→ list), `query_string` (→ array, preserves duplicate keys), `url` (→ array from `parse_url`)
+- **Array/List Operations**: `csv` (→ list), `query_string` (→ array, preserves duplicate keys), `url` (→ array from `parse_url`), `shuffle` (randomizes an array in place)
 - **Special Processors**:
   - `default:value` - Provides fallback value if variable doesn't exist
   - `defined` - Returns boolean indicating if variable exists
   - `const` - Retrieves PHP constant instead of environment variable
   - `key:name` - Extracts a key from an array (chain multiple for nested keys)
+  - `raw_key:name` - Like `key:` but does not treat the key name as further processors; use when a key contains a `:`
   - `not` - Logical NOT (negates boolean value)
+  - `safe:fallback` - Wraps every processor to its right in a try/catch and returns `fallback` if any of them fail (missing variable, bad JSON, absent key). Useful for optional platform config — see [Pantheon presets](presets/README.md#pantheon-platform-presets).
 
 **Examples**
 
@@ -364,7 +377,6 @@ app:
   port: '%env(int:APP_PORT)%'            # 8080 (int)
   debug: '%env(bool:APP_DEBUG)%'         # true/false (bool)
   options: '%env(json:APP_JSON)%'        # { key: value } (array)
-  secret: '%env(file:SECRET_PATH)%'      # file contents as string
   list: '%env(csv:ALLOWED)%'             # ["a","b","c"]
   params: '%env(query_string:QS)%'       # { foo: "1", bar: ["2","3"] }
   note: "running on %env(APP_ENV)%"      # string interpolation
@@ -383,7 +395,41 @@ app:
 
   # Nested JSON key extraction
   db_host: '%env(json:key:database:key:host:CONFIG_JSON)%'
+
+  # Backed enum resolution — resolves to an enum *instance*, so only use it
+  # for keys read by your own code (e.g. a custom plugin's metadata).
+  tier: '%env(enum:App\Enum\ServiceTier:SERVICE_TIER)%'  # 'gold' or 'Gold' → ServiceTier::Gold
+
+  # Tolerate a missing / malformed variable
+  db_name: '%env(safe:fallback_db:json:key:name:DB_SETTINGS)%'    # "fallback_db" on any failure
 ```
+
+### Filesystem Processors (opt-in)
+
+The `file:` (read a file's contents) and `require:` (include a PHP file and use its return value) processors are **disabled by default**. Because their path comes from an environment variable, enabling them turns any env-var injection into a local file inclusion — or, for `require:`, remote code execution. Using either one without opting in throws `ConfigurationException`.
+
+Opt in during bootstrap, **before any config is loaded**, and constrain the reads to directories you control:
+
+```php
+use Kanopi\Firewall\Utility\TokenSubstitute;
+
+// Allow file: reads, but only from within /etc/firewall/secrets.
+TokenSubstitute::enableUnsafeProcessors(['file'], ['/etc/firewall/secrets']);
+
+\Kanopi\Firewall\Firewall::create([__DIR__ . '/firewall.yml'])->evaluate();
+```
+
+```yaml
+global:
+  banning_message: '%env(file:BANNED_TEMPLATE_PATH)%'   # /etc/firewall/secrets/banned.html
+```
+
+- **First argument** — processors to enable. Only `file` and `require` are valid; anything else throws `ConfigurationException`.
+- **Second argument** — absolute base directories. The resolved `realpath()` of the target must sit under one of them, otherwise loading fails. Passing an empty list disables the prefix check entirely and is **not recommended in production** — do it only if you have vetted every path your environment variables can produce.
+- Base directories must already exist; a directory that does not resolve throws `ConfigurationException`.
+- `TokenSubstitute::resetUnsafeProcessors()` clears the opt-in again. It exists for test suites, not for request-time use.
+
+Prefer `file:` over `require:` whenever you can — reading a secret is far less dangerous than executing a path an attacker may influence.
 
 **Path resolution for common keys**
 
@@ -454,12 +500,12 @@ The `mode` setting controls how the firewall responds when a request is matched 
 |------|--------------------|--------------------|---------------------|
 | `block` | Yes | Yes | Yes (sends HTTP response and exits) |
 | `log` | Yes | No | No (logs a warning and allows the request) |
-| `exception` | Yes | Yes | No (throws `FirewallBlockedException`) |
+| `exception` | Yes | Yes | No (throws — see [Error Handling & Exceptions](#error-handling--exceptions)) |
 | `disabled` | No | No | No (skips all evaluation) |
 
 - **`block`** — Default production behavior. Blocked requests receive an HTTP error response and the script exits.
 - **`log`** — Useful for dry-run/audit deployments. Plugins are evaluated normally, but blocks are only logged (at `warning` level) without stopping the request or recording offenses in storage.
-- **`exception`** — Throws a `Kanopi\Firewall\Exception\FirewallBlockedException` instead of calling `exit()`. The exception carries the status code (via `getStatusCode()`) and banning message, allowing host frameworks (Laravel, Symfony, etc.) to catch and handle it with their own error responses.
+- **`exception`** — Throws instead of calling `exit()`, allowing host frameworks (Laravel, Symfony, etc.) to catch and render their own responses. A block throws `FirewallBlockedException`, which carries the status code (via `getStatusCode()`) and banning message. The challenge flow throws `ChallengeRequiredException` or `ChallengeSolvedException` instead — see [Error Handling & Exceptions](#error-handling--exceptions) for all of them and what to do with each.
 - **`disabled`** — Bypasses the firewall entirely. No plugins are evaluated and the request is immediately allowed. Useful for maintenance or feature-flag toggling.
 
 ### Status Code
@@ -572,6 +618,142 @@ storage:
       # host: 'localhost'
       # port: 3306
       # driver: 'pdo_mysql'
+```
+
+### Custom Storage Backends
+
+`storage.type` accepts **any** fully-qualified class name that implements `Kanopi\Firewall\Storage\StorageInterface`, so you can persist blocks anywhere — DynamoDB, Memcached, a platform-specific KV store, your app's ORM. Extend `AbstractStorageBase` and you only have to implement the persistence methods; the base class already provides `getKey()`, `isBlocked()`, and `getStorageData()` (request serialization).
+
+```php
+<?php
+
+namespace App\Firewall;
+
+use Kanopi\Firewall\Storage\AbstractStorageBase;
+
+class MemcachedStorage extends AbstractStorageBase
+{
+    private \Memcached $client;
+
+    public function __construct(array $config = [])
+    {
+        parent::__construct($config);
+        $this->client = new \Memcached();
+        $this->client->addServer($config['host'] ?? 'localhost', $config['port'] ?? 11211);
+    }
+
+    public function set(string $key, array $value, int $expire = 0): bool
+    {
+        return $this->client->set($key, $value, $expire);
+    }
+
+    public function get(string $key, mixed $default = null): mixed
+    {
+        $value = $this->client->get($key);
+
+        return $value === false ? $default : $value;
+    }
+
+    public function exists(string $key): bool
+    {
+        return $this->client->get($key) !== false;
+    }
+
+    public function delete(string $key): bool
+    {
+        return $this->client->delete($key);
+    }
+
+    public function reset(): bool
+    {
+        return $this->client->flush();
+    }
+
+    public function expire(): bool
+    {
+        // Memcached expires items itself — nothing to sweep.
+        return true;
+    }
+
+    public function addToExpire(string $key, int $amount): bool
+    {
+        return $this->client->touch($key, time() + $amount);
+    }
+
+    public function recordOffense(string $key): bool
+    {
+        $offenses = $this->client->get($key . ':offenses') ?: [];
+        $offenses[] = time();
+
+        return $this->client->set($key . ':offenses', $offenses);
+    }
+
+    public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
+    {
+        $offenses = $this->client->get($key . ':offenses') ?: [];
+
+        return count(array_filter($offenses, fn (int $t): bool => $t >= $start && $t <= $end));
+    }
+}
+```
+
+```yaml
+storage:
+  type: "App\\Firewall\\MemcachedStorage"
+  config:
+    host: cache.internal
+    port: 11211
+```
+
+**Contract summary** (see `src/Storage/StorageInterface.php` for full PHPDoc):
+
+| Method | Responsibility |
+|---|---|
+| `set()` / `get()` / `exists()` / `delete()` | Store, read, test, and remove one block record. `$expire` is an absolute unix timestamp; `0` means never. |
+| `reset()` | Drop everything. Used by tests and administrative resets. |
+| `expire()` | Sweep records past their expiry. Return `true` for backends that expire on their own. |
+| `addToExpire()` | Extend an existing block by `$amount` seconds. |
+| `recordOffense()` / `countOffenses()` | Offense history — this is what [Multiple Offenses Defense](#multiple-offenses-defense) escalation reads. A backend that no-ops these cannot escalate bans. |
+| `getKey()` | Derive the storage key from the request. `AbstractStorageBase` uses the client IP. |
+| `isBlocked()` | Return the block record or `false`. Provided by `AbstractStorageBase`. |
+| `getStorageData()` | Build the record written on a block (serialized request + plugin). Provided by `AbstractStorageBase`. |
+
+If `storage.type` is missing, is not loadable, or does not implement `StorageInterface`, the factory falls back to `InMemoryStorage` — which means **blocks will not persist between requests**. It logs `Storage type defaulted to InMemoryStorage` at `info` level with a `reason` of `not_string`, `class_not_found`, or `invalid_interface`. Check for that message first when a custom backend appears to do nothing.
+
+### Custom Rate Limit Storage
+
+`metadata.storage.type` on the Rate Limit plugin works the same way for `Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface`. The contract is only two methods, and extending `AbstractRateLimitStorage` gives you `$this->config` plus the logging trait:
+
+```php
+<?php
+
+namespace App\Firewall;
+
+use Kanopi\Firewall\RateLimitStorage\AbstractRateLimitStorage;
+
+class DynamoRateLimitStorage extends AbstractRateLimitStorage
+{
+    public function recordRequest(string $key, int $timestamp): void
+    {
+        // Append $timestamp to the list held for $key.
+    }
+
+    public function countRequests(string $key, int $start, int $end): int
+    {
+        // Count timestamps for $key within the inclusive window.
+        return 0;
+    }
+}
+```
+
+An unresolvable rate limit storage type falls back to `InMemoryRateLimitStorage`, so counters reset every request and limits effectively never fire. Look for `Rate limit storage type defaulted to InMemoryRateLimitStorage` at `info` level, which carries the same `reason` field.
+
+This factory also accepts an **already-instantiated** `RateLimitStorageInterface` object and uses it as-is, which is how you inject a backend built by your framework's container. Pass it through [Dynamic Configuration Overrides](#dynamic-configuration-overrides), since YAML cannot carry an object:
+
+```php
+Firewall::create([__DIR__ . '/firewall.yml'], [
+    '[plugins][0][metadata][storage][type]' => $myRateLimitStorage,
+]);
 ```
 
 ## Plugin Architecture
@@ -692,6 +874,78 @@ If any plugin uses `response: challenge`, `challenge.secret` is **required**. St
 
 The `math` provider asks "What is A + B?" with single-digit operands. It's a low-friction proof-of-effort, not a CAPTCHA. For stronger bot resistance, implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` (Turnstile, hCaptcha, reCAPTCHA, etc.) and set `challenge.provider` to its FQCN.
 
+#### Writing a custom provider
+
+A provider owns both halves of the round-trip: rendering the interstitial, and verifying what comes back. Providers must be **stateless** — embed whatever you need to verify the answer in the interstitial itself (a hidden field, signed with the shared `TokenManager`) rather than storing a per-challenge record. That is what lets the firewall scale horizontally without a shared session store.
+
+```php
+<?php
+
+namespace App\Firewall;
+
+use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
+use Kanopi\Firewall\Challenge\TokenManager;
+use Symfony\Component\HttpFoundation\Request;
+
+class TurnstileProvider implements ChallengeProviderInterface
+{
+    // The factory passes the shared TokenManager to every provider. Use it
+    // to sign your own per-challenge state; ignore it if you don't need to.
+    public function __construct(private readonly TokenManager $tokenManager)
+    {
+    }
+
+    public function getName(): string
+    {
+        return 'turnstile';
+    }
+
+    public function renderInterstitial(Request $request, array $context): string
+    {
+        // $context carries: submit_url, redirect_to, ttl, cookie_name, header_name.
+        // Echo redirect_to and ttl back as hidden fields — the Firewall reads
+        // them off the POST to size and target the pass token.
+        return <<<HTML
+        <!DOCTYPE html>
+        <html lang="en"><body>
+          <form method="post" action="{$context['submit_url']}">
+            <div class="cf-turnstile" data-sitekey="YOUR_SITE_KEY"></div>
+            <input type="hidden" name="redirect_to" value="{$context['redirect_to']}">
+            <input type="hidden" name="ttl" value="{$context['ttl']}">
+            <button type="submit">Continue</button>
+          </form>
+          <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+        </body></html>
+        HTML;
+    }
+
+    public function verifySolution(Request $request): bool
+    {
+        $token = (string) $request->request->get('cf-turnstile-response', '');
+
+        // Verify server-side against the provider's siteverify endpoint.
+        // Return FALSE on any failure — never throw.
+        return $token !== '' && $this->verifyWithCloudflare($token, $request);
+    }
+}
+```
+
+```yaml
+challenge:
+  provider: "App\\Firewall\\TurnstileProvider"
+  secret: "${FIREWALL_SECRET}"
+  path: /_firewall/challenge
+```
+
+Requirements and gotchas:
+
+- **Escape everything you interpolate.** `redirect_to` originates from the request URI. The built-in `MathChallengeProvider` runs every substitution through `htmlspecialchars()`; do the same.
+- **Echo back `redirect_to` and `ttl`** as form fields named exactly that. The Firewall reads them from the POST to decide where to send the visitor and how long to mint the pass token for. Omit them and you get `/` and 3600s.
+- **`verifySolution()` must never throw.** It runs on attacker-controlled input; return `false` for anything you don't like.
+- **Register via FQCN**, not a short name. `challenge.provider` only resolves `math` as a built-in; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
+- **The constructor signature is fixed** — `ChallengeProviderFactory` always calls `new $class($tokenManager)`. Read any further configuration from your own environment or constants.
+- Use `$this->tokenManager->sign()` / `verifySignature()` if you need tamper-proof state in the form. You do **not** need to mint the pass token — the Firewall does that once `verifySolution()` returns `true`.
+
 #### How dispatch interacts with allow / block
 
 | Visitor state                          | Result                                       |
@@ -772,6 +1026,21 @@ plugins:
 
 Evaluates requests based on geographic location using MaxMind GeoIP2 databases.
 
+#### Obtaining the databases
+
+The plugin needs a `.mmdb` database. `bin/update_geoip.sh` fetches all three editions the library can use (`GeoLite2-City`, `GeoLite2-Country`, `GeoLite2-ASN` — the last one is for the [ASN Plugin](#asn-plugin)) into a directory you name:
+
+```bash
+mkdir -p /var/lib/geoip
+bash bin/update_geoip.sh YOUR_MAXMIND_LICENSE_KEY /var/lib/geoip
+```
+
+- Both arguments are required and the target directory must already exist.
+- The script currently downloads from a public mirror of the GeoLite2 databases, so the license key argument is validated as non-empty but not actually used for the download. Keep passing one — the direct-from-MaxMind path is retained in the script and the argument will be needed again when it is re-enabled.
+- MaxMind refreshes GeoLite2 twice weekly. Run this on a schedule (cron, or a build step) rather than once at install; stale geolocation data quietly produces wrong verdicts.
+
+For manual downloads, MaxMind web-service configuration, and Docker volume mounting, see [example/README.md](example/README.md#geoip-database-setup).
+
 #### Configuration Example
 
 ```yaml
@@ -850,7 +1119,7 @@ plugins:
       - "path:/wp-admin"
       - "path@starts_with:/admin"
       - "path@contains:phpmyadmin"
-      - "path@regex:/\.(sql|bak|old)$/i"
+      - 'path@regex:/\.(sql|bak|old)$/i'
 
       # Block based on host
       - "host:malicious.example.com"
@@ -1024,7 +1293,16 @@ plugins:
         #   connection:
         #     dsn: "mysql://user:pass@localhost/db"
 
-        # Option 4: In-memory (testing only)
+        # Option 4: PSR-6 cache pool
+        # type: "Kanopi\\Firewall\\RateLimitStorage\\CacheRateLimitStorage"
+        # config:
+        #   # Class implementing Psr\Cache\CacheItemPoolInterface
+        #   adaptor: "Symfony\\Component\\Cache\\Adapter\\FilesystemAdapter"
+        #   # Constructor arguments, spread in order
+        #   args: ['firewall', 0, '/var/cache/firewall']
+        #   ttl: 3600
+
+        # Option 5: In-memory (testing only)
         # type: "Kanopi\\Firewall\\RateLimitStorage\\InMemoryRateLimitStorage"
 
     config:
@@ -1049,7 +1327,7 @@ plugins:
         sample: 300  # 5 attempts per 5 minutes
 
       # Use regex for complex patterns
-      - path: "/\.(php|asp|aspx)$/i"
+      - path: '/\.(php|asp|aspx)$/i'
         rate: 1
         sample: 3600  # Block direct script access
 ```
@@ -1172,13 +1450,13 @@ plugins:
             locations: ["uri", "query_string", "body"]
           
           # Command Injection
-          - pattern: "/(;|\||&&|`|\$\()/i"
+          - pattern: '/(;|\||&&|`|\$\()/i'
             score: 25
             type: regex
             locations: ["uri", "query_string"]
           
           # Path Traversal
-          - pattern: "/(\.\.[\/\\]){2,}/i"
+          - pattern: '/(\.\.[\/\\]){2,}/i'
             score: 30
             type: regex
             locations: ["uri", "query_string"]
@@ -1524,6 +1802,41 @@ Blocked requests log at `info` level with full context:
 
 Non-blocking matches (monitor mode, or rules whose action is `pass`) log at `debug` level.
 
+#### Inspecting the verdict programmatically
+
+`evaluate()` returns a plain bool, which is all the firewall needs to make a decision. When you want the full CRS verdict — to surface in an admin UI, forward to a SIEM, or drive your own routing — `Crs::getLastVerdict()` returns the `Kanopi\Crs\CrsVerdict` from the most recent evaluation, or `null` if the plugin has not evaluated anything yet.
+
+The plugin instances the firewall builds internally are not exposed, so use this by driving the plugin directly, alongside (or instead of) the firewall:
+
+```php
+use Kanopi\Firewall\Plugins\Crs;
+use Symfony\Component\HttpFoundation\Request;
+
+$request = Request::createFromGlobals();
+
+$crs = new Crs(metadata: [], config: [
+    'paranoia' => 1,
+    'mode' => 'monitor',   // Score and report without blocking.
+]);
+
+// evaluate() returns FALSE when CRS would block the request.
+$allowed = $crs->evaluate($request);
+
+$verdict = $crs->getLastVerdict();
+if ($verdict !== null) {
+    $siem->send([
+        'blocked'       => $verdict->isBlocked(),
+        'rule_id'       => $verdict->blockingRuleId,
+        'action'        => $verdict->action,
+        'total_score'   => $verdict->totalScore,
+        'scores'        => $verdict->scores,      // per-category breakdown
+        'matched_rules' => $verdict->matchedRules,
+    ]);
+}
+```
+
+This pairs naturally with `mode: monitor`, where the request is allowed through and you want to record what *would* have been blocked in more detail than the log line carries. `getLastVerdict()` returns `null` until `evaluate()` has run at least once on that instance.
+
 ## Conditional Logic
 
 The firewall supports three formats for defining conditions:
@@ -1846,6 +2159,84 @@ logger:
 
 For the full catalogue of available handlers (Telegram, Mandrill, Loggly, Elasticsearch, Sentry via PSR, etc.), see the [Monolog handlers reference](https://seldaek.github.io/monolog/doc/02-handlers-formatters-processors.html).
 
+### Sensitive Value Redaction
+
+Conditional rules can match against any part of a request, including headers and cookies. At `debug` level the matched value is logged so you can see *why* a rule fired — which would otherwise write session cookies and API keys into your firewall log verbatim.
+
+To prevent that, matched values for a set of variable names are logged as `[REDACTED]`. **This is on by default**, covering:
+
+```
+header.cookie
+header.authorization
+header.proxy-authorization
+header.x-api-key
+header.x-auth-token
+header.x-csrf-token
+header.x-session-token
+cookie.*
+```
+
+Matching is case-insensitive, and a trailing `.*` makes the entry a prefix wildcard — `cookie.*` covers every individual cookie. Redaction applies to the logged value only; **rule evaluation always sees the real value**, so redacting a variable never changes whether a request is blocked.
+
+Replace the list from PHP, before evaluation:
+
+```php
+use Kanopi\Firewall\Logging\LoggingFactory;
+
+// Keep the defaults and add your own headers.
+LoggingFactory::setRedactedVariables([
+    ...LoggingFactory::getRedactedVariables(),
+    'header.x-internal-token',
+    'query.access_token',
+    'post.password',
+]);
+
+\Kanopi\Firewall\Firewall::create([__DIR__ . '/firewall.yml'])->evaluate();
+```
+
+`setRedactedVariables()` **replaces** the list rather than appending to it, which is why the example above spreads `getRedactedVariables()` first. Passing an empty array turns redaction off entirely:
+
+```php
+// Everything gets logged verbatim. Only do this in local debugging.
+LoggingFactory::setRedactedVariables([]);
+```
+
+Use the same dot-notation as your conditional rules (`header.*`, `cookie.*`, `query.*`, `post.*`). `LoggingFactory::shouldRedactVariable('header.cookie')` tells you whether a given name currently matches.
+
+**Redaction only covers rule-match logging.** It does not scrub values that reach your log through other paths — the banning message, for instance, interpolates `{{ request.header.? }}` placeholders you write yourself. Don't put a secret-bearing header in a banning message and expect it to be redacted.
+
+### Injecting Your Own Logger
+
+By default the library builds its own Monolog `Logger` on the `firewall` channel from the `logger:` config. There are two ways to send firewall events to logging your application already owns.
+
+**Option 1 — inject your handlers (recommended).** `class` accepts an *instantiated* `Monolog\Handler\HandlerInterface`, not just a class name. Because a YAML scalar cannot carry an object, pass it through [Dynamic Configuration Overrides](#dynamic-configuration-overrides):
+
+```php
+\Kanopi\Firewall\Firewall::create(
+    [__DIR__ . '/firewall.yml'],
+    ['[logger][0][class]' => $myMonologHandler]
+)->evaluate();
+```
+
+This keeps everything the firewall logs — including the messages emitted *during* `create()` — flowing to your handler.
+
+**Option 2 — replace the whole logger after construction.** `LoggingFactory::setLogger()` takes a Monolog `Logger` instance (not any PSR-3 logger):
+
+```php
+use Kanopi\Firewall\Logging\LoggingFactory;
+
+$firewall = \Kanopi\Firewall\Firewall::create([__DIR__ . '/firewall.yml']);
+
+// Must come *after* create() — see the note below.
+LoggingFactory::setLogger($myMonologLogger);
+
+$firewall->evaluate();
+```
+
+> **Ordering matters.** `Firewall::create()` always ends up calling `setLogger()` itself with a logger built from the `logger:` config, so a logger you install *before* `create()` is discarded. Install it after `create()` and before `evaluate()`. Startup messages (config loading, plugin registration, trusted-proxy warnings) are emitted during `create()` and will still go to the YAML-configured logger — which is why Option 1 is the better choice if you need those too.
+
+`LoggingFactory::logger()` returns whichever logger is currently in effect, and `LoggingFactory::logMessage($level, $message, $context)` writes to it — useful from a custom plugin.
+
 ## Dynamic Configuration Overrides
 
 For dynamic environments (Docker, multi-site installations), you can override YAML configuration with PHP arrays. Override paths target the **source YAML shape** (before plugin normalization runs), so the right path depends on how your YAML is written.
@@ -1881,7 +2272,142 @@ $overrides = [
 ];
 ```
 
+## Error Handling & Exceptions
+
+Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallException`, which extends `\RuntimeException`. Catching that one base class is always safe.
+
+```
+\RuntimeException
+└── FirewallException
+    ├── ConfigurationException     Bad config — thrown from Firewall::create()
+    │   └── (no subclasses)
+    ├── StorageException           Storage file is unusable
+    ├── FirewallBlockedException    ─┐
+    ├── ChallengeRequiredException   ├─ only in mode: exception
+    └── ChallengeSolvedException    ─┘
+```
+
+| Exception | When | What to do |
+|---|---|---|
+| `ConfigurationException` | During `Firewall::create()`: an empty `challenge.secret` while challenge plugins are configured, a `challenge.provider` that does not resolve to a `ChallengeProviderInterface`, or no trusted proxies when `require_trusted_proxies: true`. | Fail the deploy. This always signals operator error, never attacker input. |
+| `StorageException` | A `FileStorage` / `FileRateLimitStorage` path cannot be created, read, or written. | Fix permissions on the storage path. Thrown at construction, so it also surfaces from `create()`. |
+| `FirewallBlockedException` | `mode: exception` only — a `block` plugin matched. Carries `getStatusCode()` and the interpolated banning message. | Render your framework's error response with that status code. |
+| `ChallengeRequiredException` | `mode: exception` only — a `challenge` plugin matched and the visitor holds no valid pass token, **or** a posted solution was rejected. | Render the interstitial yourself, or return the status your API expects. |
+| `ChallengeSolvedException` | `mode: exception` only — a posted solution verified. Carries `getToken()` (the minted pass token) and `getRedirect()` (a sanitized, same-origin target). | Set the pass-token cookie / return the token to the client, then redirect to `getRedirect()`. |
+
+Note that the three request-time exceptions are thrown **only** in `mode: exception`. In the default `block` mode the firewall writes the response and calls `exit()` itself, so there is nothing to catch.
+
+Config *loading* problems are the notable omission from that table: a missing, unreadable, or malformed config file — including circular `configs:` includes, unresolvable `%env(...)%` tokens, and use of a disabled filesystem processor — raises **no exception**. Loading is lenient by design and those failures produce an empty or partial ruleset instead. See [Fail open or fail closed?](#fail-open-or-fail-closed) for why that matters and how to guard against it.
+
+### Handling blocks in a framework
+
+```php
+use Kanopi\Firewall\Exception\ConfigurationException;
+use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Firewall;
+
+try {
+    Firewall::create([__DIR__ . '/firewall.yml'])->evaluate();
+} catch (FirewallBlockedException $e) {
+    // mode: exception — a plugin blocked the request. Render your own page.
+    return new Response($e->getMessage(), $e->getStatusCode());
+} catch (ConfigurationException $e) {
+    // Startup validation failed. See "Fail open or fail closed?" below.
+    $logger->critical('Firewall failed to start: ' . $e->getMessage());
+
+    throw $e;
+}
+```
+
+#### Fail open or fail closed?
+
+"Fail open" means a broken firewall lets traffic through; "fail closed" means it refuses traffic. Which one you get depends on *how* the firewall broke, and the three cases behave differently:
+
+| What went wrong | Throws? | What happens if you catch it and continue |
+|---|---|---|
+| A `block` plugin matched a request (`mode: exception`) | `FirewallBlockedException` | The request you were meant to block proceeds. |
+| Startup validation failed — empty `challenge.secret`, unresolvable `challenge.provider`, or no trusted proxies with `require_trusted_proxies: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
+| Your config file is missing, unreadable, or malformed | **Nothing at all** | The firewall starts with an empty ruleset and allows every request. |
+
+**The third row is the one to design around.** Config loading is deliberately lenient: `Config::loadFile()` skips files it cannot read and swallows YAML, include, and `%env(...)%` resolution errors, so a mistyped path or a broken include yields a firewall with **no plugins and no complaint**. `Firewall::create()` succeeds, `evaluate()` returns `true` for everything, and nothing in your logs says otherwise. Catching `ConfigurationException` does not protect you here, because none is thrown.
+
+So an exception handler alone is not enough. Assert that your rules actually loaded:
+
+```php
+$configPath = __DIR__ . '/firewall.yml';
+
+// A typo here would otherwise be silent.
+if (!is_readable($configPath)) {
+    throw new \RuntimeException("Firewall config unreadable: {$configPath}");
+}
+
+// Confirm the file parsed into the rules you expect before trusting the firewall.
+$config = \Kanopi\Firewall\Utility\Config::load([$configPath]);
+if (($config['plugins'] ?? []) === []) {
+    throw new \RuntimeException("Firewall config loaded no plugins: {$configPath}");
+}
+
+Firewall::create([$configPath])->evaluate();
+```
+
+If your config still uses the legacy `block:` / `bypass:` format, check those keys instead — they are normalized into `plugins:` inside `Firewall::create()`, which is after `Config::load()` returns. Whichever shape you use, the point is the same: verify your rules are present rather than assuming a silent load succeeded.
+
+For the two cases that *do* throw, pick a policy deliberately:
+
+- **Fail closed** — rethrow, or return a 503. Correct default for anything where serving unfiltered traffic is worse than serving an error: authenticated apps, checkout flows, admin surfaces. A startup misconfiguration is an operator error caught in deploy, not something to paper over at runtime.
+- **Fail open** — log at `critical` and continue. Reasonable only for public, low-risk content where availability outweighs filtering, and only if that alert actually pages someone.
+
+Whichever you choose, make it explicit in code. The library does not decide for you: it propagates the exception and leaves the policy to your error handler.
+
+### Handling the challenge flow in a framework
+
+In `mode: exception` you own the HTTP side of the challenge round-trip. `evaluate()` intercepts POSTs to `challenge.path` before any plugin runs, so a single call site handles both directions:
+
+```php
+use Kanopi\Firewall\Challenge\MathChallengeProvider;
+use Kanopi\Firewall\Challenge\TokenManager;
+use Kanopi\Firewall\Exception\ChallengeRequiredException;
+use Kanopi\Firewall\Exception\ChallengeSolvedException;
+use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Firewall;
+
+// Same secret as challenge.secret in your YAML.
+$provider = new MathChallengeProvider(new TokenManager($_ENV['FIREWALL_SECRET']));
+
+try {
+    Firewall::create([__DIR__ . '/firewall.yml'])->evaluate($request);
+} catch (ChallengeSolvedException $e) {
+    // Visitor answered correctly. Issue the pass token and send them on.
+    $response = new RedirectResponse($e->getRedirect());
+    $response->headers->setCookie(
+        Cookie::create('fw_challenge_pass', $e->getToken())
+            ->withHttpOnly(true)
+            ->withSecure(true)
+            ->withSameSite('strict')
+    );
+
+    return $response;
+} catch (ChallengeRequiredException $e) {
+    // No valid token, or a wrong answer. Serve the interstitial again.
+    return new Response($provider->renderInterstitial($request, [
+        'submit_url' => '/_firewall/challenge',
+        'redirect_to' => $request->getRequestUri(),
+        'ttl' => '3600',
+        'cookie_name' => 'fw_challenge_pass',
+        'header_name' => 'X-Firewall-Challenge',
+    ]), 200);
+} catch (FirewallBlockedException $e) {
+    return new Response($e->getMessage(), $e->getStatusCode());
+}
+```
+
+`ChallengeRequiredException` deliberately does not distinguish "you need to solve a challenge" from "your answer was wrong" — telling a bot which of the two happened is free information. If your UX needs to show a retry message, key it off the request being a POST to `challenge.path`.
+
+The cookie attributes above mirror what the firewall sets for you in `block` mode (`HttpOnly`, `Secure`, `SameSite=Strict`). Keep them.
+
 ## Platform Integration
+
+Each snippet below uses the default `mode: block`, where the firewall sends its own response and exits. If you set `mode: exception`, wrap `evaluate()` as shown in [Error Handling & Exceptions](#error-handling--exceptions).
 
 ### Drupal
 
@@ -2084,7 +2610,7 @@ plugins:
           - "!header.authorization@exists"
 
       # Block vulnerability scanners
-      - "path@regex:/(\.git|\.env|\.htaccess|wp-config\.php|phpmyadmin)/i"
+      - 'path@regex:/(\.git|\.env|\.htaccess|wp-config\.php|phpmyadmin)/i'
 
       # Block SQL injection attempts
       - "query@regex:/(union.*select|select.*from|insert.*into|drop.*table)/i"
@@ -2245,6 +2771,40 @@ composer test:coverage
 ./vendor/bin/phpunit tests/Integration/
 ```
 
+### Static Analysis and Code Style
+
+```bash
+composer check          # phpcs + phpstan (level max) + rector --dry-run
+composer check:code     # PHP_CodeSniffer against phpcs_ruleset.xml
+composer check:security # PHPStan at level max
+composer check:rector   # Rector, dry run
+
+composer fix            # php -l + phpcbf + rector, applied
+```
+
+### Testing Against Another PHP Version
+
+`bin/test.sh` runs the quality gates inside a throwaway Docker container, which is how you reproduce a CI failure on a PHP version you don't have locally:
+
+```bash
+# Defaults to cimg/php:8.2
+bash bin/test.sh
+
+# Pick a version, or a different base image
+PHP_VERSION=8.3 bash bin/test.sh
+PHP_IMAGE=php PHP_VERSION=8.1-cli bash bin/test.sh
+```
+
+It copies the working tree into the container, discards `composer.lock` and `vendor/` so dependencies resolve fresh for that PHP version, then runs `check:code`, `check:security`, and `check:rector`. The container is removed afterwards. Note that it does **not** run PHPUnit — use `composer test` locally for that.
+
+### Performance Benchmarks
+
+The repository ships a load-testing harness that measures throughput, latency, memory, and false-positive rate under mixed legitimate/malicious traffic. See [tests/Performance/README.md](tests/Performance/README.md).
+
+```bash
+bash tests/Performance/run-local-test.sh
+```
+
 ### Example Test Case
 
 ```php
@@ -2339,6 +2899,19 @@ plugins:
 ```
 
 You can also mix both formats in the same config during migration — legacy entries are normalized first, then appended to whatever is already in `plugins:`.
+
+## Additional Documentation
+
+This README is the configuration reference. The repository carries several focused guides alongside it:
+
+| Guide | Covers |
+|---|---|
+| [presets/README.md](presets/README.md) | The shipped presets (malicious requests, malicious URLs, WordPress, rate limiting, Pantheon), how to compose and override them, tuning thresholds, and common false positives. |
+| [presets/RATE-LIMITING-REFERENCE.md](presets/RATE-LIMITING-REFERENCE.md) | Every rate limit rule in `rate-limiting.yml`, with the reasoning behind each limit. |
+| [example/README.md](example/README.md) | The Docker sandbox: simulating remote IPs with `X-Forwarded-For`, GeoIP database setup, and worked blocking examples. |
+| [example/demo/README.md](example/demo/README.md) | A runnable demo app (`composer demo`), including a scripted walkthrough of the challenge flow and repeat-offender escalation. |
+| [tests/Performance/README.md](tests/Performance/README.md) | The load-testing harness: traffic profiles, success criteria, reports, and CI integration. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, branch and commit conventions, testing requirements, and the PR checklist. |
 
 ## Contributing
 

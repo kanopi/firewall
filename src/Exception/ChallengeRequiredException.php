@@ -21,6 +21,14 @@ namespace Kanopi\Firewall\Exception;
  */
 class ChallengeRequiredException extends FirewallException
 {
+    /**
+     * Constructs a new ChallengeRequiredException object.
+     *
+     * @param string $message
+     *   Human-readable reason, naming the plugin that demanded the challenge.
+     * @param \Throwable|null $previous
+     *   Previous exception for chaining, if any.
+     */
     public function __construct(string $message, ?\Throwable $previous = null)
     {
         parent::__construct($message, 0, $previous);

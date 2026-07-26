@@ -22,6 +22,18 @@ namespace Kanopi\Firewall\Exception;
  */
 class ChallengeSolvedException extends FirewallException
 {
+    /**
+     * Constructs a new ChallengeSolvedException object.
+     *
+     * @param string $token
+     *   The freshly minted pass token. In `block` mode this would have been
+     *   written to the pass-token cookie instead.
+     * @param string $redirect
+     *   Sanitized URL the visitor should be sent to now that the challenge
+     *   is solved.
+     * @param \Throwable|null $previous
+     *   Previous exception for chaining, if any.
+     */
     public function __construct(
         private readonly string $token,
         private readonly string $redirect,
@@ -30,11 +42,27 @@ class ChallengeSolvedException extends FirewallException
         parent::__construct('Challenge solved', 0, $previous);
     }
 
+    /**
+     * The minted pass token.
+     *
+     * @return string
+     *   Token value to hand back to the client — as the pass-token cookie,
+     *   or as a body value the caller attaches to later requests via the
+     *   configured challenge header.
+     */
     public function getToken(): string
     {
         return $this->token;
     }
 
+    /**
+     * Where to send the visitor after a successful challenge.
+     *
+     * @return string
+     *   A root-relative path, already sanitized — protocol-relative (`//`)
+     *   and non-`/`-prefixed targets collapse to `/`, so this cannot send a
+     *   visitor off-site. Safe to use directly in a `Location` header.
+     */
     public function getRedirect(): string
     {
         return $this->redirect;

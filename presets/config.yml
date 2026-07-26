@@ -1,3 +1,15 @@
-config:
+# Composed preset: URL-pattern blocking.
+#
+# Bundles the two URL-based rule sets so you can pull both in with one
+# include. Add no rate limiting and no vulnerability scoring — see
+# rate-limiting.yml and malicious-requests.yml for those.
+#
+# USAGE:
+#   configs:
+#     - presets/config.yml
+#
+# Paths are relative to this file, so the include works regardless of where
+# your application bootstraps from.
+configs:
   - ./malicious-urls.yml
   - ./wordpress.yml

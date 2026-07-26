@@ -25,6 +25,17 @@ class FileRateLimitStorage extends InMemoryRateLimitStorage
      */
     protected string $filePath;
 
+    /**
+     * Constructs a new FileRateLimitStorage object.
+     *
+     * @param array $config
+     *   Configuration array. Supported keys:
+     *   - 'file' => string: Path to the JSON file holding request timestamps.
+     *     Defaults to `ratelimit_data.json` inside a mode-0700, per-user
+     *     fingerprinted subdirectory of the system temp directory, so
+     *     counters are not readable by other users on a shared host.
+     *   Any keys understood by InMemoryRateLimitStorage are also honored.
+     */
     public function __construct(array $config = [])
     {
         parent::__construct($config);
