@@ -293,6 +293,98 @@ jobs:
       - store_test_results:
           path: reports/performance
 
+  # Build the MkDocs site on every branch and PR. `--strict` promotes every
+  # MkDocs warning to a failure, so a broken cross-reference, a missing
+  # `--8<--` snippet, or a page absent from `nav:` fails the job rather than
+  # shipping quietly. The rendered HTML is stored as an artifact so a reviewer
+  # can read a docs change as a real page before approving it.
+  docs-build:
+    docker:
+      - image: cimg/python:3.12
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+    resource_class: small
+    steps:
+      - checkout
+      - ci-tools/install-github-cli
+      - restore_cache:
+          keys:
+            - docs-pip-{{ checksum "docs/requirements.txt" }}
+            - docs-pip-
+      - run:
+          name: Install docs toolchain
+          command: pip install --user -r docs/requirements.txt
+      - save_cache:
+          key: docs-pip-{{ checksum "docs/requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Build docs (strict)
+          command: mkdocs build --strict
+      - store_artifacts:
+          path: site
+          destination: docs
+      - persist_to_workspace:
+          root: .
+          paths:
+            - site
+      - run:
+          name: Comment preview link on PR
+          when: on_success
+          command: |
+            if [[ "${CI_PULL_REQUEST}" == "" ]]; then
+              echo "Not a PR — skipping preview comment."
+              exit 0
+            fi
+            PREVIEW="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/docs/index.html"
+            echo "📖 **Docs preview** for this PR: [${PREVIEW}](${PREVIEW})" > /tmp/docs-preview.md
+            gh pr comment --body-file /tmp/docs-preview.md
+
+  # Publish the reviewed build to the gh-pages branch, which GitHub Pages
+  # serves at https://kanopi.github.io/firewall/. Deploys exactly the artifact
+  # docs-build produced (`--no-build`) rather than rebuilding, so what ships is
+  # what CI checked.
+  docs-deploy:
+    docker:
+      - image: cimg/python:3.12
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+    resource_class: small
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - restore_cache:
+          keys:
+            - docs-pip-{{ checksum "docs/requirements.txt" }}
+            - docs-pip-
+      - run:
+          name: Install docs toolchain
+          command: pip install --user -r docs/requirements.txt
+      - run:
+          name: Publish to gh-pages
+          command: |
+            TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+            if [[ -z "${TOKEN}" ]]; then
+              echo "Neither GITHUB_TOKEN nor GH_TOKEN is set in the CircleCI context."
+              echo "Add a token with 'contents: write' on kanopi/firewall to the"
+              echo "kanopi-code context, or swap this step for an SSH deploy key."
+              exit 1
+            fi
+            git config user.name "circleci"
+            git config user.email "engineering@kanopi.com"
+            # Put the credential on the remote rather than on the command line,
+            # so a git failure cannot echo the token back into the build log.
+            git remote set-url origin \
+              "https://x-access-token:${TOKEN}@github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
+            mkdocs gh-deploy \
+              --no-build \
+              --force \
+              --remote-name origin \
+              --message "docs: deploy ${CIRCLE_SHA1:0:7} [ci skip]"
+
 workflows:
   test:
     jobs:
@@ -372,6 +464,24 @@ workflows:
               only: /.*/
             branches:
               only: /.*/
+      - docs-build:
+          name: docs
+          context: kanopi-code
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: /.*/
+      - docs-deploy:
+          name: docs deploy
+          context: kanopi-code
+          requires:
+            - docs
+          filters:
+            tags:
+              ignore: /.*/
+            branches:
+              only: 2.x
       # - performance-test:
       #     name: "performance"
       #     context: kanopi-code

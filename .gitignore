@@ -17,3 +17,8 @@ coverage-report
 # crs-engine is developed in-tree but is its own composer package.
 # Extract to a standalone repo before release.
 /crs-engine/
+
+# Documentation site: `mkdocs build` output and the local preview virtualenv.
+# The published site lives on the gh-pages branch, built by CI.
+/site/
+.venv-docs/

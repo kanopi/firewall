@@ -1,0 +1,224 @@
+site_name: Lite Firewall
+site_description: >-
+  Request-evaluation library for PHP. Block, challenge, or log traffic by IP,
+  geolocation, ASN, user agent, URL, rate limit, vulnerability score, and the
+  OWASP Core Rule Set.
+site_author: Kanopi Studios
+site_url: https://kanopi.github.io/firewall/
+
+repo_name: kanopi/firewall
+repo_url: https://github.com/kanopi/firewall
+# Puts an "Edit this page" pencil on every page, pointed at the GitHub web
+# editor. Clicking it and saving opens a fork + PR without leaving the browser,
+# which is the whole point of keeping this site in Markdown.
+edit_uri: edit/2.x/docs/
+
+copyright: Copyright &copy; Kanopi Studios — MIT Licensed
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  icon:
+    logo: material/shield-lock
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+  favicon: assets/images/favicon.svg
+  palette:
+    # Respect the visitor's OS preference by default, but let them override it.
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    # Navigation
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    # Search
+    - search.suggest
+    - search.highlight
+    - search.share
+    # Content
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - content.tooltips
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kanopi/firewall
+      name: Lite Firewall on GitHub
+    - icon: fontawesome/brands/php
+      link: https://packagist.org/packages/kanopi/firewall
+      name: kanopi/firewall on Packagist
+    - icon: fontawesome/solid/globe
+      link: https://kanopi.com
+      name: Kanopi Studios
+
+plugins:
+  - search:
+      separator: '[\s​\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  # Click-to-zoom on screenshots. Skipped for images tagged `.off-glb`.
+  - glightbox:
+      touchNavigation: true
+      loop: false
+      effect: zoom
+      slide_effect: slide
+      width: 100%
+      height: auto
+      zoomable: true
+      draggable: true
+      skip_classes:
+        - off-glb
+      auto_caption: true
+      caption_position: bottom
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+      htmlmin_opts:
+        remove_comments: true
+      cache_safe: true
+
+markdown_extensions:
+  # Core
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Link to this section
+      toc_depth: 3
+  # PyMdown
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.saneheaders
+  # Pull real, tested files out of the repo into the docs so examples cannot
+  # drift from what actually ships. Usage: --8<-- "presets/wordpress.yml"
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - docs
+      check_paths: true
+      dedent_subsections: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+# Turn silent breakage into build noise. CI runs `mkdocs build --strict`, which
+# promotes every one of these warnings to a hard failure, so a PR that breaks a
+# cross-reference cannot merge.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - Quick Start: getting-started/quick-start.md
+      - Test Drive: getting-started/test-drive.md
+      - Platform Integration: getting-started/platform-integration.md
+  - Configuration:
+      - configuration/index.md
+      - Loading & Includes: configuration/loading-and-includes.md
+      - Environment Variables: configuration/environment-variables.md
+      - Global Settings: configuration/global.md
+      - Storage: configuration/storage.md
+      - Conditional Logic: configuration/conditional-logic.md
+      - Logging: configuration/logging.md
+      - Runtime Overrides: configuration/overrides.md
+  - Plugins:
+      - plugins/index.md
+      - Challenge Responses: plugins/challenges.md
+      - IP Address: plugins/ip-address.md
+      - GeoLocation: plugins/geolocation.md
+      - URL: plugins/url.md
+      - User Agent: plugins/user-agent.md
+      - ASN: plugins/asn.md
+      - Rate Limit: plugins/rate-limit.md
+      - Vulnerability Score: plugins/vulnerability-score.md
+      - OWASP CRS: plugins/crs.md
+  - Presets:
+      - presets/index.md
+      - Available Presets: presets/available.md
+      - Using Presets: presets/usage.md
+      - Tuning & False Positives: presets/tuning.md
+      - Testing Presets: presets/testing.md
+      - Custom Presets: presets/custom.md
+  - Guides:
+      - guides/index.md
+      - Error Handling: guides/error-handling.md
+      - Custom Plugins: guides/custom-plugins.md
+      - Custom Storage: guides/custom-storage.md
+      - Advanced Examples: guides/advanced-examples.md
+      - GeoIP Setup: guides/geoip-setup.md
+      - Local Example Environment: guides/example-environment.md
+      - Demo Application: guides/demo.md
+  - Reference:
+      - reference/index.md
+      - Rate Limiting Reference: reference/rate-limiting.md
+      - Legacy Config Format: reference/legacy-format.md
+  - Contributing:
+      - contributing/index.md
+      - Development Setup: contributing/development.md
+      - Testing: contributing/testing.md
+      - Writing Documentation: contributing/documentation.md
