@@ -809,12 +809,19 @@ final class Firewall
      * durable repeat-offender state, so nothing downstream (including a
      * validly signed challenge solution) gets to undo it.
      *
+     * `mode: log` is the exception: it is a dry-run mode, so a listed key is
+     * reported at `warning` level and the request continues. Recording the
+     * offense would extend a real ban from an audit-only deployment, and
+     * terminating would make `log` indistinguishable from `block` for every
+     * repeat offender.
+     *
      * @param Request $request
      *   Request to evaluate.
      *
      * @throws FirewallBlockedException
      *   In `mode: exception`, when the request key is on the block list.
-     *   Every other mode writes the response and exits.
+     *   `mode: log` logs and returns; every other mode writes the response
+     *   and exits.
      */
     protected function enforceStorageBlocklist(Request $request): void
     {
@@ -825,6 +832,13 @@ final class Firewall
 
         if (array_key_exists('event_id', $data)) {
             $request->attributes->set('x-request-id', $data['event_id']);
+        }
+
+        if ($this->firewallMode === FirewallMode::Log) {
+            $this->getLogger()->warning('Request would be blocked by storage blocklist (log mode)', $this->getContext($request, [
+                'mode' => 'log',
+            ]));
+            return;
         }
 
         $this->repeatOffender($request);
