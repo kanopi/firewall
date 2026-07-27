@@ -17,6 +17,11 @@ use Symfony\Component\HttpFoundation\Request;
  * mapping, configuration plumbing, status/expiration accessors, and the
  * bool return contract of evaluate().
  *
+ * That contract is "did this plugin match", not "should the request pass" —
+ * see PluginInterface::evaluate(). A payload CRS blocks makes evaluate()
+ * return TRUE. PluginPolarityTest enforces the same convention across every
+ * shipped plugin.
+ *
  * Tests skip themselves if the engine's bundled rules haven't been generated
  * (vendor install pulls the rules cache in, but a fresh dev clone without
  * `composer install` won't have them).
@@ -63,57 +68,60 @@ class CrsTest extends AbstractTestCase
         $this->assertSame(7200, $plugin->getExpirationTime());
     }
 
-    public function testBenignRequestPasses(): void
+    public function testBenignRequestDoesNotMatch(): void
     {
         $plugin = new Crs([], ['paranoia' => 1]);
         $request = $this->request(['q' => 'hello world']);
-        $this->assertTrue($plugin->evaluate($request));
+        $this->assertFalse($plugin->evaluate($request), 'a benign request must not match');
         $this->assertNotNull($plugin->getLastVerdict());
         $this->assertFalse($plugin->getLastVerdict()->isBlocked());
     }
 
-    public function testSqliRequestBlocks(): void
+    public function testSqliRequestMatches(): void
     {
         $plugin = new Crs([], ['paranoia' => 1]);
         $request = $this->request(['id' => '1 UNION SELECT password FROM users']);
-        $this->assertFalse($plugin->evaluate($request));
+        $this->assertTrue($plugin->evaluate($request), 'SQLi must match so `response:` is applied');
         $verdict = $plugin->getLastVerdict();
         $this->assertNotNull($verdict);
         $this->assertTrue($verdict->isBlocked());
         $this->assertNotNull($verdict->blockingRuleId);
     }
 
-    public function testXssRequestBlocks(): void
+    public function testXssRequestMatches(): void
     {
         $plugin = new Crs([], ['paranoia' => 1]);
         $request = $this->request(['c' => '<script>alert(1)</script>']);
-        $this->assertFalse($plugin->evaluate($request));
+        $this->assertTrue($plugin->evaluate($request));
     }
 
-    public function testScannerUserAgentBlocks(): void
+    public function testScannerUserAgentMatches(): void
     {
         $plugin = new Crs([], ['paranoia' => 1]);
         $request = $this->request([], ['HTTP_USER_AGENT' => 'sqlmap/1.5.2#stable (http://sqlmap.org)']);
-        $this->assertFalse($plugin->evaluate($request));
+        $this->assertTrue($plugin->evaluate($request));
     }
 
-    public function testMonitorModeNeverBlocks(): void
+    public function testMonitorModeNeverMatches(): void
     {
+        // Monitor mode scores and logs but never sets a blocking verdict, so
+        // the plugin must report no match and let the request through.
         $plugin = new Crs([], ['paranoia' => 1, 'mode' => 'monitor']);
         $request = $this->request(['id' => '1 UNION SELECT password FROM users']);
-        $this->assertTrue($plugin->evaluate($request), 'monitor mode should not block even on SQLi');
+        $this->assertFalse($plugin->evaluate($request), 'monitor mode must not block, even on SQLi');
         $this->assertNotEmpty($plugin->getLastVerdict()->matchedRules, 'rule should still have matched');
     }
 
     public function testDisabledRulesAreSkipped(): void
     {
-        // Disable everything that would normally catch this payload — should pass.
+        // Disable everything that would normally catch this payload — with no
+        // rule left to fire, the plugin must report no match.
         $plugin = new Crs([], [
             'paranoia' => 1,
             'disabled_categories' => ['sqli', 'rce', 'scanner'],
         ]);
         $request = $this->request(['id' => '1 UNION SELECT password FROM users']);
-        $this->assertTrue($plugin->evaluate($request));
+        $this->assertFalse($plugin->evaluate($request));
     }
 
     public function testSingleFileUploadIsAdaptedToEngineDto(): void
@@ -129,7 +137,7 @@ class CrsTest extends AbstractTestCase
             );
 
             $plugin = new Crs([], ['paranoia' => 1]);
-            $this->assertTrue($plugin->evaluate($request));
+            $this->assertFalse($plugin->evaluate($request), 'a benign upload must not match');
         } finally {
             @unlink($tmp);
         }
@@ -156,7 +164,7 @@ class CrsTest extends AbstractTestCase
             );
 
             $plugin = new Crs([], ['paranoia' => 1]);
-            $this->assertTrue($plugin->evaluate($request));
+            $this->assertFalse($plugin->evaluate($request), 'benign uploads must not match');
         } finally {
             @unlink($tmpA);
             @unlink($tmpB);
