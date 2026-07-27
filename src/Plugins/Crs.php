@@ -35,6 +35,11 @@ use Symfony\Component\HttpFoundation\Request;
  * score-contributing rule carries one. The threshold is therefore inert as
  * shipped, and raising it is not the false-positive lever it looks like —
  * `disabled_rules` / `disabled_categories` are. See anomalyThresholds().
+ *
+ * The cause is upstream: crs-engine's parser inlines `%{tx.*}` macros at
+ * build time and flattens the runtime accumulators feeding 949110 / 959100
+ * to a literal 0, so CRS's own anomaly-evaluation rules never fire. Nothing
+ * here can fix that; when it is fixed the threshold goes live as-is.
  */
 class Crs extends AbstractPluginBase
 {

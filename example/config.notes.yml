@@ -441,7 +441,8 @@ plugins:
       #
       # Note the threshold is only consulted for requests that trip no rule
       # carrying a block/deny/drop action, and in the bundled rule set every
-      # score-contributing rule carries one — so it is inert as shipped.
+      # score-contributing rule carries one — so it is inert as shipped. The
+      # cause is an upstream crs-engine parser defect, not a design choice.
       # Raising it will not quiet a false positive; use disabled_rules,
       # disabled_categories, a lower paranoia, or mode: monitor.
       anomaly_thresholds:

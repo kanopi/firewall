@@ -1897,7 +1897,9 @@ foreach ([5, 50, 500] as $threshold) {
 // true, true, true — blocked by rule 942190 every time, score 5.
 ```
 
-This mirrors ModSecurity's `deny` actions rather than stock CRS, where blocking is routed through the anomaly-evaluation rules (949110 / 959100) and the threshold governs everything. The setting is honoured by the engine and matters for rule sets whose score-contributing rules use non-blocking actions (`rules_path`), but for the bundled set treat it as inert.
+This is not a deliberate departure from stock CRS. The anomaly-evaluation rules that normally do the blocking are present in the bundled set — 949111 chained with 949110 inbound, 959101 with 959100 outbound — and they do compare `TX.BLOCKING_INBOUND_ANOMALY_SCORE` against `%{tx.inbound_anomaly_score_threshold}` with a `deny` action. They can never fire, because the aggregator rules that feed that variable (949052–949063) have their `setvar` values compiled to a literal `0`: `crs-engine`'s parser inlines `%{tx.*}` macros at build time, which is right for fixed seeds like `%{tx.critical_anomaly_score}` but flattens the runtime accumulators `%{tx.inbound_anomaly_score_plN}` — which have no seed value — to zero. With its input pinned at 0 the whole anomaly-evaluation path is dead, and blocking falls back entirely to per-rule `block` actions.
+
+That is an upstream defect in `kanopi/crs-engine`, not something this plugin can fix. Note the threshold macro *is* preserved in the operator argument and resolved at runtime, so once the parser keeps those setvar macros, `inbound` becomes live and meaningful with no config change here.
 
 So, to tune a false positive:
 
