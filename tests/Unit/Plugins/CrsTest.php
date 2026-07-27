@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
+use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\Crs;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Monolog\Handler\TestHandler;
+use Monolog\Level;
+use Monolog\Logger;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -34,6 +38,17 @@ class CrsTest extends AbstractTestCase
         if (!is_file(__DIR__ . '/../../../vendor/kanopi/crs-engine/rules/compiled.php')) {
             $this->markTestSkipped('CRS engine rules not available — run `composer install` to pull them.');
         }
+    }
+
+    protected function tearDown(): void
+    {
+        // Reset the process-wide logger so a handler installed by one test
+        // does not collect records from the next.
+        $prop = (new \ReflectionClass(LoggingFactory::class))->getProperty('logger');
+        $prop->setAccessible(true);
+        $prop->setValue(null, null);
+
+        parent::tearDown();
     }
 
     public function testGetName(): void
@@ -122,6 +137,172 @@ class CrsTest extends AbstractTestCase
         ]);
         $request = $this->request(['id' => '1 UNION SELECT password FROM users']);
         $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * #93: the engine reads exactly two thresholds, keyed by CRS severity
+     * names that read as though there were one per severity. `inbound` and
+     * `outbound` are the honest names, and they map onto those two keys.
+     */
+    public function testCanonicalThresholdNamesMapToEngineKeys(): void
+    {
+        $plugin = $this->thresholdProbe(['inbound' => 9, 'outbound' => 7]);
+        $this->assertSame(['critical' => 9, 'error' => 7], $plugin->thresholds());
+    }
+
+    public function testLegacySeverityThresholdNamesStillWork(): void
+    {
+        $plugin = $this->thresholdProbe(['critical' => 9, 'error' => 7]);
+        $this->assertSame(['critical' => 9, 'error' => 7], $plugin->thresholds());
+    }
+
+    public function testCanonicalThresholdNameWinsOverLegacySpelling(): void
+    {
+        // Config migrated one key at a time must not depend on write order.
+        $this->assertSame(
+            ['critical' => 9, 'error' => 4],
+            $this->thresholdProbe(['critical' => 3, 'inbound' => 9])->thresholds(),
+        );
+        $this->assertSame(
+            ['critical' => 9, 'error' => 4],
+            $this->thresholdProbe(['inbound' => 9, 'critical' => 3])->thresholds(),
+        );
+    }
+
+    public function testOmittedThresholdsFallBackToDefaults(): void
+    {
+        $this->assertSame(['critical' => 5, 'error' => 4], $this->thresholdProbe([])->thresholds());
+        $this->assertSame(['critical' => 9, 'error' => 4], $this->thresholdProbe(['inbound' => 9])->thresholds());
+    }
+
+    /**
+     * #93: `warning` and `notice` were documented, accepted, and read
+     * nowhere. They are still accepted — dropping them would break existing
+     * config — but the plugin now says they do nothing.
+     */
+    public function testInertThresholdKeysAreIgnoredAndReported(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->thresholdProbe([
+            'critical' => 5,
+            'error'    => 4,
+            'warning'  => 3,
+            'notice'   => 2,
+        ]);
+
+        $this->assertSame(['critical' => 5, 'error' => 4], $plugin->thresholds());
+        $this->assertTrue(
+            $handler->hasRecordThatContains('CRS anomaly_thresholds keys are ignored', Level::Warning),
+            'Keys the engine never reads must be reported, not silently accepted.',
+        );
+
+        $record = $handler->getRecords()[count($handler->getRecords()) - 1];
+        $this->assertSame(['warning', 'notice'], $record->context['ignored']);
+    }
+
+    public function testSupportedThresholdKeysAloneLogNoWarning(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $this->thresholdProbe(['inbound' => 5, 'outbound' => 4])->thresholds();
+
+        $this->assertFalse(
+            $handler->hasRecordThatContains('CRS anomaly_thresholds keys are ignored', Level::Warning),
+            'Config using only the supported keys must stay quiet.',
+        );
+    }
+
+    public function testNonNumericThresholdFallsBackToTheDefault(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->thresholdProbe(['inbound' => 'high']);
+
+        $this->assertSame(['critical' => 5, 'error' => 4], $plugin->thresholds());
+        $this->assertTrue(
+            $handler->hasRecordThatContains('CRS anomaly threshold is not a number', Level::Warning),
+        );
+    }
+
+    public function testNonArrayThresholdsAreIgnoredAndReported(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->thresholdProbe(5);
+
+        $this->assertSame(['critical' => 5, 'error' => 4], $plugin->thresholds());
+        $this->assertTrue(
+            $handler->hasRecordThatContains('CRS anomaly_thresholds must be a mapping', Level::Warning),
+        );
+    }
+
+    /**
+     * #93, the consequential half: a rule carrying a block / deny / drop
+     * action rejects on first match without consulting the score, so raising
+     * the threshold is not the false-positive lever it looks like. Pinning
+     * that here so the behaviour the README now describes cannot drift away
+     * from it silently.
+     */
+    public function testRaisingTheThresholdDoesNotDisarmBlockingRules(): void
+    {
+        foreach ([5, 50, 500] as $threshold) {
+            $plugin = new Crs([], [
+                'paranoia' => 1,
+                'mode' => 'block',
+                'anomaly_thresholds' => ['inbound' => $threshold],
+            ]);
+
+            $this->assertTrue(
+                $plugin->evaluate($this->request(['id' => "1' UNION SELECT 1,2,3--"])),
+                sprintf('SQLi is rejected on match, so threshold %d must change nothing', $threshold),
+            );
+        }
+    }
+
+    /**
+     * Monitor mode does not rescue the threshold either: nothing blocks
+     * there, so both sides of the threshold comparison produce the same
+     * verdict.
+     *
+     * Together with the test above this pins the README's claim that the
+     * threshold is inert against the bundled rule set. If the engine ever
+     * routes blocking through the anomaly-evaluation rules (949110 / 959100)
+     * the way stock CRS does, these two tests fail — which is the signal to
+     * revisit that section, not to weaken the tests.
+     */
+    public function testThresholdDoesNotChangeMonitorModeVerdicts(): void
+    {
+        $payload = ['q' => '/etc/passwd'];
+
+        $strict = new Crs([], ['paranoia' => 1, 'mode' => 'monitor', 'anomaly_thresholds' => ['inbound' => 1]]);
+        $lax    = new Crs([], ['paranoia' => 1, 'mode' => 'monitor', 'anomaly_thresholds' => ['inbound' => 100000]]);
+
+        $strict->evaluate($this->request($payload));
+        $lax->evaluate($this->request($payload));
+
+        $this->assertSame($strict->getLastVerdict()->action, $lax->getLastVerdict()->action);
+        $this->assertSame($strict->getLastVerdict()->totalScore, $lax->getLastVerdict()->totalScore);
+    }
+
+    /**
+     * Expose the normalised thresholds the plugin hands the engine.
+     */
+    private function thresholdProbe(mixed $configured): Crs
+    {
+        return new class ([], ['anomaly_thresholds' => $configured]) extends Crs {
+            /**
+             * @return array<string, int>
+             */
+            public function thresholds(): array
+            {
+                return $this->anomalyThresholds();
+            }
+        };
     }
 
     public function testSingleFileUploadIsAdaptedToEngineDto(): void

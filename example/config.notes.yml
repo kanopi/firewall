@@ -412,10 +412,10 @@ plugins:
       # Paranoia level 1-4. 1 has the lowest false-positive rate; higher
       # levels enable progressively more aggressive rules.
       paranoia: 1
-      # `block` returns false from evaluate() on any blocking-action match
-      # so the firewall blocks the request. `monitor` records the match in
-      # the logs but never returns false (useful for testing without
-      # impacting users).
+      # `block` reports a match on any blocking-action rule so the firewall
+      # applies this entry's `response:`. `monitor` records the match in the
+      # logs but never reports one (useful for testing without impacting
+      # users).
       mode: block
       # HTTP status returned for blocked requests.
       block_status: 403
@@ -424,7 +424,9 @@ plugins:
       # Override paths only if you've vendored a custom CRS build. Default
       # is vendor/kanopi/crs-engine/rules.
       # rules_path: /etc/firewall/crs-rules
-      # Specific CRS rule IDs to skip (use for known false positives).
+      # Specific CRS rule IDs to skip. This — not the thresholds below — is
+      # the lever for a known false positive: the blocked request's log line
+      # carries the `rule_id` to add here.
       disabled_rules: []
       # Whole categories to skip. Values:
       # sqli, xss, lfi, rfi, rce, php, java, session_fixation,
@@ -432,13 +434,23 @@ plugins:
       # multipart, generic, response_leak_sql, response_leak_java,
       # response_leak_php, response_leak_iis, web_shell, correlation.
       disabled_categories: []
-      # Thresholds for the engine's anomaly-score aggregator (CRS-native
-      # severity weights). Lower 'critical' means more sensitive.
+      # Anomaly-score thresholds. There are exactly two, and only these two
+      # keys are read — anything else (including the 'warning' and 'notice'
+      # earlier versions of this file listed) is ignored and logged as such.
+      # Per-severity score contributions are fixed by CRS, not set here.
+      #
+      # Note the threshold is only consulted for requests that trip no rule
+      # carrying a block/deny/drop action, and in the bundled rule set every
+      # score-contributing rule carries one — so it is inert as shipped.
+      # Raising it will not quiet a false positive; use disabled_rules,
+      # disabled_categories, a lower paranoia, or mode: monitor.
       anomaly_thresholds:
-        critical: 5
-        error: 4
-        warning: 3
-        notice: 2
+        # Request-side score at or above which the request is rejected.
+        # Lower is stricter. The legacy spelling 'critical' still works.
+        inbound: 5
+        # Response-side equivalent. Inert until response-side evaluation
+        # lands. The legacy spelling 'error' still works.
+        outbound: 4
 
 # Loggers help log data in specific formats. Uses Monolog (https://seldaek.github.io/monolog/)
 # Multiple loggers can be added as the following are structured but added as arrays under the logger section.

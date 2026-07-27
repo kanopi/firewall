@@ -1863,15 +1863,48 @@ plugins:
       #   response_leak_java, response_leak_php, response_leak_iis,
       #   web_shell, correlation
       disabled_categories: []
-      # Override anomaly-score thresholds
+      # Anomaly-score thresholds. There are exactly two — see
+      # "Anomaly scores and thresholds" below before reaching for these.
       anomaly_thresholds:
-        critical: 5
-        error: 4
-        warning: 3
-        notice: 2
+        # Request-side score at or above which the request is rejected.
+        inbound: 5
+        # Response-side equivalent. Inert until response evaluation lands (#69).
+        outbound: 4
       # Custom rule cache location — defaults to vendor/kanopi/crs-engine/rules
       # rules_path: /etc/firewall/crs-rules
 ```
+
+#### Anomaly scores and thresholds
+
+A matching rule adds points to the request's anomaly score, weighted by the rule's CRS severity — critical contributes 5, error 4, warning 3, notice 2. **Those per-severity weights are fixed by CRS and are not configurable here.**
+
+What *is* configurable is the two thresholds the score is compared against:
+
+| Key | Default | Controls |
+|---|---|---|
+| `inbound` | `5` | Request-side threshold — the score at or above which a request is rejected. Read the caveat below before tuning it. |
+| `outbound` | `4` | Response-side equivalent. Inert until response evaluation lands (issue #69). |
+
+The severity-named spellings `critical` (= `inbound`) and `error` (= `outbound`) are still accepted so existing config keeps working. Any other key — including `warning` and `notice`, which earlier versions of this document showed — is read nowhere; the plugin now logs a warning naming the keys it ignored instead of accepting them silently. If both spellings of a threshold are present, `inbound` / `outbound` win.
+
+**The threshold is not the false-positive lever it looks like.** A rule whose CRS action is `block`, `deny`, or `drop` rejects the request the moment it matches, without consulting the score at all — and in the rule set shipped with `crs-engine` today, *every* rule that contributes to the anomaly score carries such an action. The score therefore never reaches the threshold comparison in block mode, and in monitor mode nothing blocks either way. Raising `inbound` from 5 to 500 changes nothing:
+
+```php
+foreach ([5, 50, 500] as $threshold) {
+    $crs = new Crs([], ['mode' => 'block', 'anomaly_thresholds' => ['inbound' => $threshold]]);
+    var_dump($crs->evaluate(Request::create('/', 'GET', ['id' => "1' UNION SELECT 1,2,3--"])));
+}
+// true, true, true — blocked by rule 942190 every time, score 5.
+```
+
+This mirrors ModSecurity's `deny` actions rather than stock CRS, where blocking is routed through the anomaly-evaluation rules (949110 / 959100) and the threshold governs everything. The setting is honoured by the engine and matters for rule sets whose score-contributing rules use non-blocking actions (`rules_path`), but for the bundled set treat it as inert.
+
+So, to tune a false positive:
+
+- **`disabled_rules`** — the precise lever. The blocked request's log line carries `rule_id`; add it here.
+- **`disabled_categories`** — blunter, when a whole class of rules is wrong for your app.
+- **`paranoia`** — lower it to drop the aggressive rule tiers wholesale.
+- **`mode: monitor`** — the only setting that reliably stops CRS rejecting anything while you tune.
 
 #### Coverage
 
@@ -1907,8 +1940,9 @@ $crs = new Crs(metadata: [], config: [
     'mode' => 'monitor',   // Score and report without blocking.
 ]);
 
-// evaluate() returns FALSE when CRS would block the request.
-$allowed = $crs->evaluate($request);
+// evaluate() returns TRUE when the plugin matched — i.e. when CRS would
+// block the request. See PluginInterface::evaluate().
+$matched = $crs->evaluate($request);
 
 $verdict = $crs->getLastVerdict();
 if ($verdict !== null) {
