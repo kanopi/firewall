@@ -68,6 +68,9 @@ class Crs extends AbstractPluginBase
         $crsVerdict = $this->getEngine()->evaluate($this->adaptRequest($request));
         $this->lastVerdict = $crsVerdict;
 
+        // TRUE means "this plugin matched", not "allow the request" — the
+        // PluginManager applies the entry's `response:` when we return TRUE.
+        // See PluginInterface::evaluate().
         if ($crsVerdict->isBlocked()) {
             $this->getLogger()->info('CRS blocked request', $this->getContext($request, [
                 'rule_id'      => $crsVerdict->blockingRuleId,
@@ -76,9 +79,11 @@ class Crs extends AbstractPluginBase
                 'matched_rule' => $crsVerdict->matchedRules[0]['msg'] ?? '',
                 'matched_data' => $crsVerdict->matchedRules[0]['matched_data'] ?? '',
             ]));
-            return false;
+            return true;
         }
 
+        // Rules fired but the anomaly score stayed under threshold, or the
+        // plugin is in monitor mode. Report no match so the request proceeds.
         if ($crsVerdict->matchedRules !== []) {
             $this->getLogger()->debug('CRS matched but did not block', $this->getContext($request, [
                 'action'          => $crsVerdict->action,
@@ -87,7 +92,7 @@ class Crs extends AbstractPluginBase
             ]));
         }
 
-        return true;
+        return false;
     }
 
     /**
