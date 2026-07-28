@@ -412,10 +412,12 @@ plugins:
       # Paranoia level 1-4. 1 has the lowest false-positive rate; higher
       # levels enable progressively more aggressive rules.
       paranoia: 1
-      # `block` reports a match on any blocking-action rule so the firewall
-      # applies this entry's `response:`. `monitor` records the match in the
-      # logs but never reports one (useful for testing without impacting
-      # users).
+      # `block` reports a match once the anomaly score reaches the inbound
+      # threshold, so the firewall applies this entry's `response:`.
+      # `monitor` evaluates and records everything but never reports a
+      # match. Start on monitor: crs-engine 1.0.0 rejects traffic that
+      # earlier versions let through, so build an exclusion list from the
+      # logged contributing_rules before letting it block.
       mode: block
       # HTTP status returned for blocked requests.
       block_status: 403
@@ -431,26 +433,32 @@ plugins:
       # Whole categories to skip. Values:
       # sqli, xss, lfi, rfi, rce, php, java, session_fixation,
       # protocol_attack, protocol_enforcement, method_enforcement, scanner,
-      # multipart, generic, response_leak_sql, response_leak_java,
-      # response_leak_php, response_leak_iis, web_shell, correlation.
+      # multipart, generic, response_leak, response_leak_sql,
+      # response_leak_java, response_leak_php, response_leak_iis,
+      # response_leak_ruby, web_shell, correlation, blocking_evaluation.
+      # Leave blocking_evaluation alone — disabling it stops anomaly
+      # scoring rejecting anything at all.
       disabled_categories: []
       # Anomaly-score thresholds. There are exactly two, and only these two
       # keys are read — anything else (including the 'warning' and 'notice'
       # earlier versions of this file listed) is ignored and logged as such.
       # Per-severity score contributions are fixed by CRS, not set here.
       #
-      # Note the threshold is only consulted for requests that trip no rule
-      # carrying a block/deny/drop action, and in the bundled rule set every
-      # score-contributing rule carries one — so it is inert as shipped. The
-      # cause is an upstream crs-engine parser defect, not a design choice.
-      # Raising it will not quiet a false positive; use disabled_rules,
-      # disabled_categories, a lower paranoia, or mode: monitor.
+      # Matching rules accumulate a score; CRS rule 949110 rejects the
+      # request once it reaches the inbound threshold. At the default of 5 a
+      # single critical rule is enough. Raise it to require corroboration
+      # from several rules; lower it to reject on weaker evidence.
+      #
+      # A block is attributed to 949110, not to the rule that caught the
+      # payload. Never put 949110 in disabled_rules — it is how anomaly
+      # blocking works. The IDs worth excluding are on the log line as
+      # contributing_rules.
       anomaly_thresholds:
         # Request-side score at or above which the request is rejected.
         # Lower is stricter. The legacy spelling 'critical' still works.
         inbound: 5
-        # Response-side equivalent. Inert until response-side evaluation
-        # lands. The legacy spelling 'error' still works.
+        # Response-side equivalent. Not reached yet — this plugin does not
+        # run response-side evaluation. The legacy spelling 'error' works.
         outbound: 4
 
 # Loggers help log data in specific formats. Uses Monolog (https://seldaek.github.io/monolog/)

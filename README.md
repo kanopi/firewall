@@ -1836,6 +1836,12 @@ Evaluates each request against the [OWASP Core Rule Set](https://coreruleset.org
 - **In-process rule cache**: ~3-4 ms per request once warm (FPM worker steady state). Zero extension dependencies — no APCu / OPcache preload required.
 - **Auto-refreshed rules**: The `crs-engine` package CI fetches new CRS releases weekly and opens a reviewable PR; `composer update` pulls the latest curated bump.
 
+> ### Upgrading from a release built on `crs-engine` 0.1.0
+>
+> This plugin now requires `crs-engine` ^1.0, which is the first version where the engine actually enforces. In 0.1.0 the detection pipeline was substantially inert — the anomaly-evaluation rules could never fire, `TX:` targets never resolved, and `skipAfter` silently discarded the rest of the ruleset. **Traffic that used to pass will now be rejected**, because previously very little was.
+>
+> Roll it out with `mode: monitor` first. Let it run over real traffic, group the `contributing_rules` on the debug log lines by rule ID, and build your `disabled_rules` list from what you actually see before you let it block. CRS at paranoia 1 does flag some ordinary editorial content — a support ticket containing `cat /etc/hosts | grep` scores 15 and would be rejected — so on a CMS this step is not optional.
+
 #### Configuration Example
 
 ```yaml
@@ -1859,9 +1865,11 @@ plugins:
       # Or by category. Available categories:
       #   sqli, xss, lfi, rfi, rce, php, java, session_fixation,
       #   protocol_attack, protocol_enforcement, method_enforcement,
-      #   scanner, multipart, generic, response_leak_sql,
+      #   scanner, multipart, generic, response_leak, response_leak_sql,
       #   response_leak_java, response_leak_php, response_leak_iis,
-      #   web_shell, correlation
+      #   response_leak_ruby, web_shell, correlation, blocking_evaluation
+      # Do not disable blocking_evaluation — it is how anomaly scoring
+      # rejects anything at all.
       disabled_categories: []
       # Anomaly-score thresholds. There are exactly two — see
       # "Anomaly scores and thresholds" below before reaching for these.
@@ -1876,37 +1884,36 @@ plugins:
 
 #### Anomaly scores and thresholds
 
-A matching rule adds points to the request's anomaly score, weighted by the rule's CRS severity — critical contributes 5, error 4, warning 3, notice 2. **Those per-severity weights are fixed by CRS and are not configurable here.**
+A matching rule adds points to the request's anomaly score, weighted by the rule's CRS severity — critical contributes 5, error 4, warning 3, notice 2. Those per-severity weights are fixed by CRS and are not configurable through this plugin.
 
-What *is* configurable is the two thresholds the score is compared against:
+Once the accumulated score reaches the threshold, CRS rule 949110 rejects the request. The two thresholds are:
 
 | Key | Default | Controls |
 |---|---|---|
-| `inbound` | `5` | Request-side threshold — the score at or above which a request is rejected. Read the caveat below before tuning it. |
-| `outbound` | `4` | Response-side equivalent. Inert until response evaluation lands (issue #69). |
+| `inbound` | `5` | Request-side threshold — the score at or above which a request is rejected. |
+| `outbound` | `4` | Response-side equivalent. Not reached yet; this plugin does not call `evaluateResponse()` (issue #69). |
 
-The severity-named spellings `critical` (= `inbound`) and `error` (= `outbound`) are still accepted so existing config keeps working. Any other key — including `warning` and `notice`, which earlier versions of this document showed — is read nowhere; the plugin now logs a warning naming the keys it ignored instead of accepting them silently. If both spellings of a threshold are present, `inbound` / `outbound` win.
-
-**The threshold is not the false-positive lever it looks like.** A rule whose CRS action is `block`, `deny`, or `drop` rejects the request the moment it matches, without consulting the score at all — and in the rule set shipped with `crs-engine` today, *every* rule that contributes to the anomaly score carries such an action. The score therefore never reaches the threshold comparison in block mode, and in monitor mode nothing blocks either way. Raising `inbound` from 5 to 500 changes nothing:
+At the default of 5, a single critical rule is enough to reject. Raise it to require corroboration from several rules, lower it to reject on weaker evidence:
 
 ```php
-foreach ([5, 50, 500] as $threshold) {
-    $crs = new Crs([], ['mode' => 'block', 'anomaly_thresholds' => ['inbound' => $threshold]]);
-    var_dump($crs->evaluate(Request::create('/', 'GET', ['id' => "1' UNION SELECT 1,2,3--"])));
-}
-// true, true, true — blocked by rule 942190 every time, score 5.
+$payload = ['id' => "1' UNION SELECT 1,2,3--"];   // scores 10: rules 942190 + 942360
+
+(new Crs([], ['anomaly_thresholds' => ['inbound' => 5]]))->evaluate($request);    // true  — rejected
+(new Crs([], ['anomaly_thresholds' => ['inbound' => 500]]))->evaluate($request);  // false — allowed
 ```
 
-This is not a deliberate departure from stock CRS. The anomaly-evaluation rules that normally do the blocking are present in the bundled set — 949111 chained with 949110 inbound, 959101 with 959100 outbound — and they do compare `TX.BLOCKING_INBOUND_ANOMALY_SCORE` against `%{tx.inbound_anomaly_score_threshold}` with a `deny` action. They can never fire, because the aggregator rules that feed that variable (949052–949063) have their `setvar` values compiled to a literal `0`: `crs-engine`'s parser inlines `%{tx.*}` macros at build time, which is right for fixed seeds like `%{tx.critical_anomaly_score}` but flattens the runtime accumulators `%{tx.inbound_anomaly_score_plN}` — which have no seed value — to zero. With its input pinned at 0 the whole anomaly-evaluation path is dead, and blocking falls back entirely to per-rule `block` actions.
+The severity-named spellings `critical` (= `inbound`) and `error` (= `outbound`) are still accepted, so config written before the rename keeps working — the plugin translates them, which also keeps `crs-engine`'s deprecation notice out of your logs. Any other key, including the `warning` and `notice` that earlier versions of this document showed, has never had any effect; the plugin logs a warning naming what it ignored rather than accepting it silently. If both spellings of one threshold are present, `inbound` / `outbound` win.
 
-That is an upstream defect in `kanopi/crs-engine`, not something this plugin can fix. Note the threshold macro *is* preserved in the operator argument and resolved at runtime, so once the parser keeps those setvar macros, `inbound` becomes live and meaningful with no config change here.
+> **A block is attributed to rule 949110, not to the rule that caught the payload.**
+> 949110 is the CRS rule that compares the score to the threshold, so it is the `rule_id` on every anomaly-score block. **Never put it in `disabled_rules`** — that switches off anomaly blocking entirely. The rules worth excluding are in `contributing_rules` on the same log line.
 
-So, to tune a false positive:
+To tune a false positive, in rough order of precision:
 
-- **`disabled_rules`** — the precise lever. The blocked request's log line carries `rule_id`; add it here.
-- **`disabled_categories`** — blunter, when a whole class of rules is wrong for your app.
+- **`disabled_rules`** — the precise lever. Take the IDs from `contributing_rules` in the block's log line.
+- **`disabled_categories`** — blunter, when a whole class of rules is wrong for your app. Note `blocking_evaluation` is a category: disabling it turns off anomaly blocking, so treat it as off-limits.
+- **`anomaly_thresholds.inbound`** — raise it to require more corroboration before rejecting. Affects everything, so prefer the two above when you know which rule is wrong.
 - **`paranoia`** — lower it to drop the aggressive rule tiers wholesale.
-- **`mode: monitor`** — the only setting that reliably stops CRS rejecting anything while you tune.
+- **`mode: monitor`** — evaluates and logs but never rejects. The safe setting while you build an exclusion list.
 
 #### Coverage
 
@@ -1917,13 +1924,17 @@ The four CRS rules that rely on `libinjection` (`@detectSQLi` / `@detectXSS` —
 #### What gets logged
 
 Blocked requests log at `info` level with full context:
-- `rule_id` — the CRS rule that fired the block
+- `rule_id` — the CRS rule that fired the block. For an anomaly-score block this is always **949110**, the rule that compares the score to the threshold — not the rule that caught the payload, and not something to put in `disabled_rules`.
+- `contributing_rules` — the rules that actually detected something, in match order. **These are the IDs to feed to `disabled_rules`.**
 - `total_score` — accumulated anomaly score
 - `scores` — per-category breakdown (sqli, xss, lfi, etc.)
-- `matched_rule` — the rule's human-readable message
+- `matched_rule` — the first matching rule's human-readable message
 - `matched_data` — the substring of the request that matched
+- `operator_errors` / `truncations` — see below
 
-Non-blocking matches (monitor mode, or rules whose action is `pass`) log at `debug` level.
+Non-blocking matches (monitor mode, or a score under the threshold) log at `debug` level with the same `contributing_rules`, which is what makes monitor mode usable for building an exclusion list.
+
+Separately, the plugin logs at `warning` level when `operator_errors` or `truncations` is non-empty — a rule that could not run, or an inspection cap that engaged. Both mean part of the request went unexamined, so a clean verdict is weaker evidence than it looks. This fires even when nothing matched, because that is exactly when a silent gap in coverage is most likely to be believed.
 
 #### Inspecting the verdict programmatically
 

@@ -140,39 +140,40 @@ class CrsTest extends AbstractTestCase
     }
 
     /**
-     * #93: the engine reads exactly two thresholds, keyed by CRS severity
-     * names that read as though there were one per severity. `inbound` and
-     * `outbound` are the honest names, and they map onto those two keys.
+     * #93: there are exactly two thresholds and they are directional.
+     * crs-engine 1.0.0 keys them `inbound` / `outbound`; the pre-1.0
+     * severity spellings still work but make the engine emit a deprecation,
+     * so the plugin hands over the canonical names.
      */
     public function testCanonicalThresholdNamesMapToEngineKeys(): void
     {
         $plugin = $this->thresholdProbe(['inbound' => 9, 'outbound' => 7]);
-        $this->assertSame(['critical' => 9, 'error' => 7], $plugin->thresholds());
+        $this->assertSame(['inbound' => 9, 'outbound' => 7], $plugin->thresholds());
     }
 
     public function testLegacySeverityThresholdNamesStillWork(): void
     {
         $plugin = $this->thresholdProbe(['critical' => 9, 'error' => 7]);
-        $this->assertSame(['critical' => 9, 'error' => 7], $plugin->thresholds());
+        $this->assertSame(['inbound' => 9, 'outbound' => 7], $plugin->thresholds());
     }
 
     public function testCanonicalThresholdNameWinsOverLegacySpelling(): void
     {
         // Config migrated one key at a time must not depend on write order.
         $this->assertSame(
-            ['critical' => 9, 'error' => 4],
+            ['inbound' => 9, 'outbound' => 4],
             $this->thresholdProbe(['critical' => 3, 'inbound' => 9])->thresholds(),
         );
         $this->assertSame(
-            ['critical' => 9, 'error' => 4],
+            ['inbound' => 9, 'outbound' => 4],
             $this->thresholdProbe(['inbound' => 9, 'critical' => 3])->thresholds(),
         );
     }
 
     public function testOmittedThresholdsFallBackToDefaults(): void
     {
-        $this->assertSame(['critical' => 5, 'error' => 4], $this->thresholdProbe([])->thresholds());
-        $this->assertSame(['critical' => 9, 'error' => 4], $this->thresholdProbe(['inbound' => 9])->thresholds());
+        $this->assertSame(['inbound' => 5, 'outbound' => 4], $this->thresholdProbe([])->thresholds());
+        $this->assertSame(['inbound' => 9, 'outbound' => 4], $this->thresholdProbe(['inbound' => 9])->thresholds());
     }
 
     /**
@@ -192,7 +193,7 @@ class CrsTest extends AbstractTestCase
             'notice'   => 2,
         ]);
 
-        $this->assertSame(['critical' => 5, 'error' => 4], $plugin->thresholds());
+        $this->assertSame(['inbound' => 5, 'outbound' => 4], $plugin->thresholds());
         $this->assertTrue(
             $handler->hasRecordThatContains('CRS anomaly_thresholds keys are ignored', Level::Warning),
             'Keys the engine never reads must be reported, not silently accepted.',
@@ -222,7 +223,7 @@ class CrsTest extends AbstractTestCase
 
         $plugin = $this->thresholdProbe(['inbound' => 'high']);
 
-        $this->assertSame(['critical' => 5, 'error' => 4], $plugin->thresholds());
+        $this->assertSame(['inbound' => 5, 'outbound' => 4], $plugin->thresholds());
         $this->assertTrue(
             $handler->hasRecordThatContains('CRS anomaly threshold is not a number', Level::Warning),
         );
@@ -235,58 +236,78 @@ class CrsTest extends AbstractTestCase
 
         $plugin = $this->thresholdProbe(5);
 
-        $this->assertSame(['critical' => 5, 'error' => 4], $plugin->thresholds());
+        $this->assertSame(['inbound' => 5, 'outbound' => 4], $plugin->thresholds());
         $this->assertTrue(
             $handler->hasRecordThatContains('CRS anomaly_thresholds must be a mapping', Level::Warning),
         );
     }
 
     /**
-     * #93, the consequential half: a rule carrying a block / deny / drop
-     * action rejects on first match without consulting the score, so raising
-     * the threshold is not the false-positive lever it looks like. Pinning
-     * that here so the behaviour the README now describes cannot drift away
-     * from it silently.
+     * The inverse of what this test asserted against crs-engine 0.1.0, where
+     * the anomaly-evaluation rules could never fire and the threshold changed
+     * nothing. Since 1.0.0 the score governs: the same SQLi payload is
+     * rejected at the default threshold and allowed once the threshold is
+     * lifted above its score.
      */
-    public function testRaisingTheThresholdDoesNotDisarmBlockingRules(): void
+    public function testThresholdGovernsWhetherAPayloadIsRejected(): void
     {
-        foreach ([5, 50, 500] as $threshold) {
+        $payload = ['id' => "1' UNION SELECT 1,2,3--"];
+
+        $strict = new Crs([], ['paranoia' => 1, 'mode' => 'block', 'anomaly_thresholds' => ['inbound' => 5]]);
+        $this->assertTrue($strict->evaluate($this->request($payload)), 'SQLi must be rejected at the default threshold');
+
+        $lax = new Crs([], ['paranoia' => 1, 'mode' => 'block', 'anomaly_thresholds' => ['inbound' => 500]]);
+        $this->assertFalse($lax->evaluate($this->request($payload)), 'a threshold above the score must let it through');
+
+        // Same detections either way — only the verdict differs.
+        $this->assertSame($strict->getLastVerdict()->totalScore, $lax->getLastVerdict()->totalScore);
+    }
+
+    /**
+     * Monitor mode never rejects, whatever the score does.
+     */
+    public function testMonitorModeIgnoresTheThreshold(): void
+    {
+        foreach ([1, 100000] as $threshold) {
             $plugin = new Crs([], [
                 'paranoia' => 1,
-                'mode' => 'block',
+                'mode' => 'monitor',
                 'anomaly_thresholds' => ['inbound' => $threshold],
             ]);
 
-            $this->assertTrue(
+            $this->assertFalse(
                 $plugin->evaluate($this->request(['id' => "1' UNION SELECT 1,2,3--"])),
-                sprintf('SQLi is rejected on match, so threshold %d must change nothing', $threshold),
+                sprintf('monitor mode must not reject, threshold %d', $threshold),
             );
         }
     }
 
     /**
-     * Monitor mode does not rescue the threshold either: nothing blocks
-     * there, so both sides of the threshold comparison produce the same
-     * verdict.
-     *
-     * Together with the test above this pins the README's claim that the
-     * threshold is inert against the bundled rule set. If the engine ever
-     * routes blocking through the anomaly-evaluation rules (949110 / 959100)
-     * the way stock CRS does, these two tests fail — which is the signal to
-     * revisit that section, not to weaken the tests.
+     * An anomaly-score block is attributed to 949110, the CRS rule that
+     * compares the score to the threshold. Feeding that to `disabled_rules`
+     * would switch off anomaly blocking altogether, so the log has to carry
+     * the rules that actually detected something.
      */
-    public function testThresholdDoesNotChangeMonitorModeVerdicts(): void
+    public function testBlockLogNamesTheContributingRulesNotJust949110(): void
     {
-        $payload = ['q' => '/etc/passwd'];
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
 
-        $strict = new Crs([], ['paranoia' => 1, 'mode' => 'monitor', 'anomaly_thresholds' => ['inbound' => 1]]);
-        $lax    = new Crs([], ['paranoia' => 1, 'mode' => 'monitor', 'anomaly_thresholds' => ['inbound' => 100000]]);
+        $plugin = new Crs([], ['paranoia' => 1, 'mode' => 'block']);
+        $this->assertTrue($plugin->evaluate($this->request(['id' => "1' UNION SELECT 1,2,3--"])));
 
-        $strict->evaluate($this->request($payload));
-        $lax->evaluate($this->request($payload));
+        $this->assertSame(949110, $plugin->getLastVerdict()->blockingRuleId, 'guards the premise of this test');
 
-        $this->assertSame($strict->getLastVerdict()->action, $lax->getLastVerdict()->action);
-        $this->assertSame($strict->getLastVerdict()->totalScore, $lax->getLastVerdict()->totalScore);
+        $records = array_values(array_filter(
+            $handler->getRecords(),
+            static fn ($record): bool => str_contains((string) $record->message, 'CRS blocked request'),
+        ));
+        $this->assertCount(1, $records);
+
+        $contributing = $records[0]->context['contributing_rules'] ?? [];
+        $this->assertNotEmpty($contributing, 'the log must name the rules that detected the payload');
+        $this->assertNotContains(949110, $contributing, 'the blocking-evaluation rule is not a tuning target');
+        $this->assertContains(942190, $contributing);
     }
 
     /**

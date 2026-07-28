@@ -29,17 +29,18 @@ use Symfony\Component\HttpFoundation\Request;
  * Response-side evaluation (RESPONSE-* rules for SQL error / stack-trace
  * leakage) lives in a follow-up — see firewall issue #69.
  *
- * A note on thresholds, because it surprises people arriving from stock CRS:
- * a rule carrying a `block` / `deny` / `drop` action rejects on first match
- * without consulting the anomaly score, and in the bundled rule set every
- * score-contributing rule carries one. The threshold is therefore inert as
- * shipped, and raising it is not the false-positive lever it looks like —
- * `disabled_rules` / `disabled_categories` are. See anomalyThresholds().
+ * Requires crs-engine ^1.0. In 0.1.0 the anomaly-evaluation rules could never
+ * fire, so the threshold was inert and blocking came from whichever rule
+ * happened to carry a `block` action. 1.0.0 fixed that: score accumulates,
+ * 949110 denies once it crosses the threshold, and `anomaly_thresholds` is
+ * now the primary tuning lever. The practical effect of that upgrade is that
+ * traffic which used to pass is now blocked — see the README's CRS section
+ * before rolling it out.
  *
- * The cause is upstream: crs-engine's parser inlines `%{tx.*}` macros at
- * build time and flattens the runtime accumulators feeding 949110 / 959100
- * to a literal 0, so CRS's own anomaly-evaluation rules never fire. Nothing
- * here can fix that; when it is fixed the threshold goes live as-is.
+ * One consequence worth knowing when reading logs: an anomaly-score block is
+ * attributed to rule 949110, not to the rule that found the payload. The
+ * rules that actually contributed are in `contributing_rules` on the log
+ * context, and those are what belong in `disabled_rules`.
  */
 class Crs extends AbstractPluginBase
 {
@@ -57,17 +58,18 @@ class Crs extends AbstractPluginBase
      * Engine threshold key => the config spellings that set it, preferred
      * spelling first.
      *
-     * The engine names its two thresholds after CRS severities, which reads
-     * as though there is one threshold per severity. There is not: `critical`
-     * is the single inbound threshold and `error` the single outbound one.
-     * `inbound` / `outbound` are the honest names and the ones documented;
-     * the severity names stay accepted so existing config keeps working.
+     * There are two thresholds and they are directional. Before crs-engine
+     * 1.0.0 they were keyed `critical` / `error`, which read as though there
+     * were one per CRS severity; the engine still accepts those spellings but
+     * emits a deprecation for them. Translating here means config written
+     * either way keeps working without the host application seeing a
+     * deprecation on every request.
      *
      * @var array<string, list<string>>
      */
     protected const THRESHOLD_KEYS = [
-        'critical' => ['inbound', 'critical'],
-        'error'    => ['outbound', 'error'],
+        'inbound'  => ['inbound', 'critical'],
+        'outbound' => ['outbound', 'error'],
     ];
 
     /**
@@ -112,11 +114,14 @@ class Crs extends AbstractPluginBase
         // See PluginInterface::evaluate().
         if ($crsVerdict->isBlocked()) {
             $this->getLogger()->info('CRS blocked request', $this->getContext($request, [
-                'rule_id'      => $crsVerdict->blockingRuleId,
-                'total_score'  => $crsVerdict->totalScore,
-                'scores'       => $crsVerdict->scores,
-                'matched_rule' => $crsVerdict->matchedRules[0]['msg'] ?? '',
-                'matched_data' => $crsVerdict->matchedRules[0]['matched_data'] ?? '',
+                'rule_id'            => $crsVerdict->blockingRuleId,
+                'contributing_rules' => $this->contributingRuleIds($crsVerdict),
+                'total_score'        => $crsVerdict->totalScore,
+                'scores'             => $crsVerdict->scores,
+                'matched_rule'       => $crsVerdict->matchedRules[0]['msg'] ?? '',
+                'matched_data'       => $crsVerdict->matchedRules[0]['matched_data'] ?? '',
+                'operator_errors'    => $crsVerdict->operatorErrors,
+                'truncations'        => $crsVerdict->truncations,
             ]));
             return true;
         }
@@ -125,9 +130,22 @@ class Crs extends AbstractPluginBase
         // plugin is in monitor mode. Report no match so the request proceeds.
         if ($crsVerdict->matchedRules !== []) {
             $this->getLogger()->debug('CRS matched but did not block', $this->getContext($request, [
+                'action'             => $crsVerdict->action,
+                'matched_rules'      => count($crsVerdict->matchedRules),
+                'contributing_rules' => $this->contributingRuleIds($crsVerdict),
+                'total_score'        => $crsVerdict->totalScore,
+            ]));
+        }
+
+        // An operator error or a truncation means part of the request went
+        // uninspected, so "no match" is weaker evidence than it looks. Say so
+        // even when nothing fired — a clean verdict is the case where a silent
+        // gap in coverage is most likely to be believed.
+        if ($crsVerdict->hasOperatorErrors() || $crsVerdict->wasTruncated()) {
+            $this->getLogger()->warning('CRS inspected less of the request than it appears', $this->getContext($request, [
                 'action'          => $crsVerdict->action,
-                'matched_rules'   => count($crsVerdict->matchedRules),
-                'total_score'     => $crsVerdict->totalScore,
+                'operator_errors' => $crsVerdict->operatorErrors,
+                'truncations'     => $crsVerdict->truncations,
             ]));
         }
 
@@ -181,15 +199,45 @@ class Crs extends AbstractPluginBase
     }
 
     /**
+     * The rules that actually found something, in match order.
+     *
+     * `blockingRuleId` is 949110 for every anomaly-score block, because that
+     * is the CRS rule that compares the accumulated score to the threshold.
+     * It says nothing about what was detected and must never be fed to
+     * `disabled_rules` — doing so would switch off anomaly blocking wholesale.
+     * The IDs here are the ones worth excluding, so drop the blocking-
+     * evaluation bookkeeping and keep the detections.
+     *
+     * @return array<int, int>
+     */
+    protected function contributingRuleIds(CrsVerdict $crsVerdict): array
+    {
+        $ids = [];
+        foreach ($crsVerdict->matchedRules as $matchedRule) {
+            if ($matchedRule['category'] === 'blocking_evaluation') {
+                continue;
+            }
+
+            $ids[] = $matchedRule['id'];
+        }
+
+        return $ids;
+    }
+
+    /**
      * Normalise `anomaly_thresholds` into the two thresholds the engine reads.
      *
-     * The engine has exactly two: inbound (the request-side anomaly score at
-     * or above which a request is blocked) and outbound (the response-side
-     * equivalent, inert until response evaluation lands — see issue #69). It
-     * keys them `critical` and `error`, which invites operators to supply a
-     * `warning` and a `notice` alongside them and believe all four do
-     * something. They do not — anything beyond the two is read nowhere, so
-     * say so rather than accepting it in silence (#93).
+     * There are exactly two: inbound (the request-side score at or above which
+     * a request is rejected) and outbound (the response-side equivalent, which
+     * this plugin does not yet reach — see issue #69). Pre-1.0 config keyed
+     * them by CRS severity, which invited operators to supply a `warning` and
+     * a `notice` alongside and believe all four did something. They never did
+     * (#93), so name the inert ones rather than accepting them in silence.
+     *
+     * Deliberately more forgiving than the engine, which throws
+     * `ConfigurationException` on an unrecognised key. A typo in a YAML file
+     * should not take a site down: drop the key, say so at warning level, and
+     * carry on protecting the site with the rest of the config.
      *
      * @return array<string, int>
      *   Engine-shaped thresholds, always with both keys populated.
@@ -206,8 +254,8 @@ class Crs extends AbstractPluginBase
         }
 
         $thresholds = [
-            'critical' => self::DEFAULT_INBOUND_THRESHOLD,
-            'error'    => self::DEFAULT_OUTBOUND_THRESHOLD,
+            'inbound'  => self::DEFAULT_INBOUND_THRESHOLD,
+            'outbound' => self::DEFAULT_OUTBOUND_THRESHOLD,
         ];
 
         // The preferred spelling is tried first, so it wins when both are
@@ -238,11 +286,11 @@ class Crs extends AbstractPluginBase
         $inert = array_values(array_diff(array_map(strval(...), array_keys($configured)), $accepted));
 
         if ($inert !== []) {
-            $this->getLogger()->warning('CRS anomaly_thresholds keys are ignored — the engine has only an inbound and an outbound threshold', [
+            $this->getLogger()->warning('CRS anomaly_thresholds keys are ignored — there are only an inbound and an outbound threshold', [
                 'plugin'   => $this->getName(),
                 'ignored'  => $inert,
                 'accepted' => $accepted,
-                'hint'     => 'Per-severity score contributions are fixed by CRS and are not configurable. To silence a false positive use disabled_rules or disabled_categories.',
+                'hint'     => 'Severity names are not thresholds. Raise or lower `inbound` to tune sensitivity, or use disabled_rules / disabled_categories to silence a specific false positive.',
             ]);
         }
 
