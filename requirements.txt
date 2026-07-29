@@ -1,0 +1,24 @@
+# Documentation site toolchain.
+#
+# Install:   pip install -r docs/requirements.txt
+# Preview:   mkdocs serve
+# Build:     mkdocs build --strict
+#
+# Versions are pinned so a docs PR never fails because an upstream release
+# changed rendering out from under it. Bump them deliberately.
+#
+# pymdown-extensions is held below 11 on purpose: mkdocs-material declares
+# `pymdown-extensions~=10.2`, and 11.x installs over that without complaint
+# only to fail at render time.
+#
+# ghp-import arrives as an mkdocs dependency, but the docs deploy job calls it
+# directly, so it is listed and pinned here rather than left to whatever mkdocs
+# happens to resolve.
+
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+mkdocs-glightbox==0.5.2
+mkdocs-minify-plugin==0.8.0
+pymdown-extensions==10.21.3
+Pygments==2.20.0
+ghp-import==2.1.0

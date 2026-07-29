@@ -1,0 +1,78 @@
+/* Small overrides on top of the Material theme. Keep this file short — the
+   further it drifts from stock Material, the more every theme upgrade costs. */
+
+:root {
+  /* Slightly wider content column. The reference tables in this site are wide
+     and the stock 61rem forces horizontal scrolling on most of them. */
+  --md-content-width: 68rem;
+}
+
+.md-grid {
+  max-width: var(--md-content-width);
+}
+
+/* Code is read far more than prose here, so give it a touch more room. */
+.md-typeset code,
+.md-typeset pre > code {
+  font-size: 0.78rem;
+}
+
+/* Wide tables scroll inside their own container instead of pushing the page
+   sideways. Config-reference tables routinely exceed the content width. */
+.md-typeset__table {
+  min-width: 100%;
+}
+
+.md-typeset table:not([class]) {
+  display: table;
+}
+
+/* Make the first column of option/reference tables read as a key, not prose. */
+.md-typeset table:not([class]) td:first-child code {
+  white-space: nowrap;
+}
+
+/* Grid cards: even out heights so a row of cards lines up. */
+.md-typeset .grid.cards > ul > li {
+  display: flex;
+  flex-direction: column;
+}
+
+.md-typeset .grid.cards > ul > li > hr {
+  margin: 0.6rem 0;
+}
+
+.md-typeset .grid.cards > ul > li > p:last-child {
+  margin-top: auto;
+}
+
+/* Screenshots: a border keeps a light-background screenshot from bleeding into
+   the page, and the radius matches Material's code blocks. */
+.md-typeset img[src*="/assets/images/"] {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.2rem;
+}
+
+/* Mermaid diagrams sit centred with a little breathing room. */
+.md-typeset .mermaid {
+  margin: 1.2em auto;
+  text-align: center;
+}
+
+/* Tighten the gap admonitions leave when they open a section. */
+.md-typeset .admonition,
+.md-typeset details {
+  font-size: 0.72rem;
+}
+
+/* Deprecated / legacy markers. Usage: [Legacy]{.legacy} */
+.md-typeset .legacy {
+  background: var(--md-default-fg-color--lightest);
+  border-radius: 0.2rem;
+  font-size: 0.7em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.15em 0.45em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
