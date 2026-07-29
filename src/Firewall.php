@@ -142,6 +142,14 @@ final class Firewall
             isset($config['global']) && is_array($config['global']) ? $config['global'] : []
         );
 
+        // Same reason, and the same trap: `behind_proxy: false` is the whole
+        // point of the setting (#99), and array_filter() would strip it as a
+        // falsy value before checkTrustedProxiesPosture() ever saw it —
+        // leaving "asserted: no proxy" indistinguishable from "never said".
+        $behindProxy = self::behindProxy(
+            isset($config['global']) && is_array($config['global']) ? $config['global'] : []
+        );
+
         // Set the default values.
         $config['logger'] = isset($config['logger']) && is_array($config['logger']) ? array_filter($config['logger']) : [];
         $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
@@ -163,13 +171,22 @@ final class Firewall
         //
         // We can't detect "is there actually a proxy in front of me?" — that's
         // deployment-specific. What we can do is surface that the firewall is
-        // currently trusting whatever Symfony does by default. Operators who
-        // know they're not behind a proxy can silence the warning with
-        // `global.require_trusted_proxies: false` (the default). Operators
-        // who know they *are* behind a proxy should set it to `true` and
-        // configure `Request::setTrustedProxies(...)` — startup will then
-        // throw a clear error if the wiring is missing.
-        self::checkTrustedProxiesPosture($config['global']);
+        // currently trusting whatever Symfony does by default, and let the
+        // operator assert the fact we cannot observe:
+        //
+        //   * `global.behind_proxy: false` — asserted: nothing in front of this
+        //     deployment. The check is skipped silently.
+        //   * `global.behind_proxy: true` — asserted: there IS a proxy, so a
+        //     missing `Request::setTrustedProxies(...)` is a definite
+        //     misconfiguration and is logged at `error`.
+        //   * unset — the posture is genuinely unknown, so warn and continue.
+        //     This one still fires per request, deliberately: it is an
+        //     unresolved security question, and it is now resolvable from
+        //     config rather than something an operator has to live with.
+        //
+        // `global.require_trusted_proxies: true` escalates whichever of those
+        // applies into a startup `ConfigurationException`.
+        self::checkTrustedProxiesPosture($config['global'], $behindProxy);
 
         // Normalize configuration to the new plugins: array format.
         $config = PluginConfigNormalizer::normalize($config);
@@ -369,6 +386,45 @@ final class Firewall
     }
 
     /**
+     * Resolve `global.behind_proxy` into the operator's asserted posture.
+     *
+     * Must be called on the raw global config, before `create()` runs
+     * `array_filter()` over it — see the call site.
+     *
+     * Accepts the boolean-ish strings `filter_var()` understands ("false",
+     * "0", "no", "off" and their true counterparts) so a value arriving from
+     * an `%env()%` token or a quoted YAML scalar behaves like a real boolean.
+     *
+     * @param array<string, mixed> $globalConfig
+     *   The `global` config section, unfiltered.
+     *
+     * @return bool|null
+     *   TRUE or FALSE when the operator asserted a posture, NULL when the key
+     *   is absent or its value is not interpretable as a boolean. NULL means
+     *   "unknown", which warns — failing safe, because silencing a security
+     *   warning is the dangerous direction to guess in.
+     */
+    private static function behindProxy(array $globalConfig): ?bool
+    {
+        if (!array_key_exists('behind_proxy', $globalConfig)) {
+            return null;
+        }
+
+        $value = $globalConfig['behind_proxy'];
+
+        // `behind_proxy:` with nothing after it parses to NULL, and an
+        // `%env()%` token resolving to an unset variable gives ''. filter_var()
+        // reads both as FALSE, which would silence a security warning because
+        // someone left a key half-written. Neither is an assertion, so treat
+        // them as "unknown" and let the warning stand.
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    }
+
+    /**
      * Detect and warn (or fail) on a missing trusted-proxies posture.
      *
      * If `Request::getTrustedProxies()` returns an empty list, the firewall
@@ -379,37 +435,86 @@ final class Firewall
      * default could change that. Log a warning so operators behind a proxy
      * see the misconfiguration in their normal log channel.
      *
-     * Behaviour switches on `global.require_trusted_proxies`:
-     *   * `false` / unset (default) — warn only.
+     * Two settings interact, because they answer two different questions.
+     *
+     * `global.behind_proxy` states a fact about the deployment that the
+     * library cannot observe for itself (#99):
+     *   * `false` — asserted: no proxy in front of this deployment. Nothing
+     *     can spoof a forwarding header past a proxy that does not exist, so
+     *     the check returns silently. This is the only way to stop the
+     *     warning without lying to `Request::setTrustedProxies()`.
+     *   * `true` — asserted: there IS a proxy. Missing trusted proxies is
+     *     then a definite misconfiguration rather than an open question, so
+     *     it is logged at `error` instead of `warning`.
+     *   * unset — unknown. Warn, as 2.x always has.
+     *
+     * `global.require_trusted_proxies` decides how loud the unresolved cases
+     * are, and is unchanged from 2.x:
+     *   * `false` / unset (default) — log only.
      *   * `true` — throw `ConfigurationException` at startup so a missing
      *     trusted-proxies setup is a hard failure in production.
      *
+     * `behind_proxy: false` wins over `require_trusted_proxies: true`: an
+     * explicit assertion that there is no proxy makes the requirement moot,
+     * and throwing anyway would leave the operator with no way to run.
+     *
      * @param array<string, mixed> $globalConfig
      *   The `global` config section.
+     * @param bool|null $behindProxy
+     *   The operator's asserted posture, resolved by `behindProxy()` from the
+     *   unfiltered config. NULL when they did not say.
      *
      * @throws ConfigurationException
-     *   When `require_trusted_proxies` is true and no trusted proxies
-     *   have been configured before `Firewall::create()` runs.
+     *   When `require_trusted_proxies` is true, no trusted proxies have been
+     *   configured before `Firewall::create()` runs, and `behind_proxy` has
+     *   not asserted that there is no proxy.
      */
-    protected static function checkTrustedProxiesPosture(array $globalConfig): void
+    protected static function checkTrustedProxiesPosture(array $globalConfig, ?bool $behindProxy = null): void
     {
         if (Request::getTrustedProxies() !== []) {
             return;
         }
 
+        // Asserted "there is no proxy": nothing to spoof through, so there is
+        // nothing to report. Checked before `require_trusted_proxies` on
+        // purpose — see the docblock.
+        if ($behindProxy === false) {
+            return;
+        }
+
         $require = !empty($globalConfig['require_trusted_proxies']);
+
         $message = 'Symfony Request::getTrustedProxies() is empty. If this '
             . 'application sits behind a proxy / load balancer, the firewall '
             . 'cannot trust the client IP and IP-based block / allow / rate-'
             . 'limit rules can be bypassed via X-Forwarded-For. Call '
             . 'Request::setTrustedProxies(...) before Firewall::create() with '
-            . 'the proxy CIDRs and the header bitmask you trust. Set '
+            . 'the proxy CIDRs and the header bitmask you trust. If nothing '
+            . 'is in front of this deployment, set global.behind_proxy=false '
+            . 'to assert that and silence this message. Set '
             . 'global.require_trusted_proxies=true to make this a fatal '
             . 'startup error.';
+
+        if ($behindProxy === true) {
+            $message = 'global.behind_proxy is true but Symfony '
+                . 'Request::getTrustedProxies() is empty, so the firewall '
+                . 'cannot trust the client IP behind the proxy you have '
+                . 'declared: IP-based block / allow / rate-limit rules can be '
+                . 'bypassed via X-Forwarded-For. Call '
+                . 'Request::setTrustedProxies(...) before Firewall::create() '
+                . 'with the proxy CIDRs and the header bitmask you trust.';
+        }
 
         if ($require) {
             LoggingFactory::logger()->error($message);
             throw new ConfigurationException($message);
+        }
+
+        // An asserted-but-unwired proxy is a known defect, not an open
+        // question, so it earns `error` rather than `warning`.
+        if ($behindProxy === true) {
+            LoggingFactory::logger()->error($message);
+            return;
         }
 
         LoggingFactory::logger()->warning($message);
