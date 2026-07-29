@@ -16,6 +16,7 @@ use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -834,6 +835,222 @@ class FirewallTest extends AbstractTestCase
         } finally {
             Request::setTrustedProxies($previous, $previousHeaderSet);
         }
+    }
+
+    /**
+     * Regression for #99: `global.behind_proxy: false` asserts the fact the
+     * library cannot observe — that nothing sits in front of this deployment
+     * — and silences the check entirely.
+     *
+     * Before this existed there was no such setting. `create()` runs per
+     * request, so a site with no proxy logged an unsilenceable warning on
+     * 100% of requests, and the only escape was passing
+     * `Request::setTrustedProxies()` a value that was not true.
+     */
+    public function testCreateIsSilentWhenBehindProxyAssertedFalse(): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $handler = $this->captureLogger();
+            Firewall::create([
+                [
+                    'logger' => [['class' => $handler]],
+                    'global' => ['behind_proxy' => false],
+                ],
+            ]);
+
+            $this->assertFalse(
+                $handler->hasWarningContaining('getTrustedProxies() is empty'),
+                'behind_proxy: false must silence the trusted-proxies warning.'
+            );
+            $this->assertFalse(
+                $handler->hasErrorContaining('getTrustedProxies() is empty'),
+                'behind_proxy: false must not downgrade to an error either.'
+            );
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * Regression for #99: an explicit "there is no proxy" assertion wins over
+     * `require_trusted_proxies: true`.
+     *
+     * Throwing anyway would leave an operator who has told the truth about
+     * their deployment with no way to start the firewall at all.
+     */
+    public function testBehindProxyFalseOverridesRequireTrustedProxies(): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $firewall = Firewall::create([
+                [
+                    'global' => [
+                        'behind_proxy' => false,
+                        'require_trusted_proxies' => true,
+                    ],
+                ],
+            ]);
+
+            $this->assertInstanceOf(
+                Firewall::class,
+                $firewall,
+                'behind_proxy: false should make require_trusted_proxies moot, not fatal.'
+            );
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * Regression for #99: asserting `behind_proxy: true` without wiring
+     * `Request::setTrustedProxies()` is a definite misconfiguration rather
+     * than an open question, so it is logged at `error` — but it still does
+     * not throw unless `require_trusted_proxies` says so.
+     */
+    public function testCreateLogsErrorWhenBehindProxyAssertedButUnwired(): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $handler = $this->captureLogger();
+            Firewall::create([
+                [
+                    'logger' => [['class' => $handler]],
+                    'global' => ['behind_proxy' => true],
+                ],
+            ]);
+
+            $this->assertTrue(
+                $handler->hasErrorContaining('global.behind_proxy is true'),
+                'An asserted-but-unwired proxy should be reported at error level.'
+            );
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * Regression for #99: `behind_proxy: true` combined with
+     * `require_trusted_proxies: true` still refuses to start.
+     */
+    public function testBehindProxyTrueStillThrowsWhenRequired(): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            $this->expectExceptionMessage('global.behind_proxy is true');
+            Firewall::create([
+                [
+                    'global' => [
+                        'behind_proxy' => true,
+                        'require_trusted_proxies' => true,
+                    ],
+                ],
+            ]);
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * Regression for #99: an unparseable `behind_proxy` must fail safe.
+     *
+     * Silencing a security warning is the dangerous direction, so a value
+     * that is neither truthy nor falsy is treated as "posture unknown" and
+     * still warns rather than being read as `false`.
+     *
+     */
+    #[DataProvider('provideUnparseableBehindProxyValues')]
+    public function testUnparseableBehindProxyStillWarns(mixed $value): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $handler = $this->captureLogger();
+            Firewall::create([
+                [
+                    'logger' => [['class' => $handler]],
+                    'global' => ['behind_proxy' => $value],
+                ],
+            ]);
+
+            $this->assertTrue(
+                $handler->hasWarningContaining('getTrustedProxies() is empty'),
+                'An unparseable behind_proxy must not be read as a false assertion.'
+            );
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * @return array<string, array{mixed}>
+     */
+    public static function provideUnparseableBehindProxyValues(): array
+    {
+        return [
+            'empty string' => [''],
+            'arbitrary string' => ['maybe'],
+            'array' => [['10.0.0.0/8']],
+        ];
+    }
+
+    /**
+     * Regression for #99: YAML-ish string booleans are honoured, so a value
+     * arriving from an `%env()%` token or a quoted YAML scalar behaves the
+     * same as a real boolean.
+     *
+     */
+    #[DataProvider('provideFalsyBehindProxyStrings')]
+    public function testStringFalsyBehindProxyIsHonoured(string $value): void
+    {
+        $previous = Request::getTrustedProxies();
+        $previousHeaderSet = Request::getTrustedHeaderSet();
+        Request::setTrustedProxies([], 0);
+
+        try {
+            $handler = $this->captureLogger();
+            Firewall::create([
+                [
+                    'logger' => [['class' => $handler]],
+                    'global' => ['behind_proxy' => $value],
+                ],
+            ]);
+
+            $this->assertFalse(
+                $handler->hasWarningContaining('getTrustedProxies() is empty'),
+                sprintf('behind_proxy: "%s" should read as a false assertion.', $value)
+            );
+        } finally {
+            Request::setTrustedProxies($previous, $previousHeaderSet);
+        }
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function provideFalsyBehindProxyStrings(): array
+    {
+        return [
+            'false' => ['false'],
+            'zero' => ['0'],
+            'no' => ['no'],
+            'off' => ['off'],
+        ];
     }
 
     /**

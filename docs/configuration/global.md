@@ -8,6 +8,7 @@ global:
   mode: block
   banning_status_code: 429
   banning_message: '{{request.id}} Request Banned'
+  behind_proxy: false
   require_trusted_proxies: false
   require_config: false
   blocking_escalation:
@@ -26,12 +27,48 @@ global:
 
 ## Trusted Proxies
 
-`require_trusted_proxies` controls how `Firewall::create()` reacts when `Symfony\Component\HttpFoundation\Request::getTrustedProxies()` is empty:
+Every plugin reads `$request->getClientIp()`, and Symfony only honours proxy headers (`X-Forwarded-For`, `Forwarded`, …) once you have called `Request::setTrustedProxies(...)`. If the application sits behind a proxy and you have not, a client can spoof its source IP and walk past IP allowlists and per-IP rate limits.
+
+The library cannot detect whether a proxy is actually in front of it, so two settings cover the two separate questions.
+
+### `behind_proxy` — asserting the deployment fact
 
 | Value | Behaviour |
 |-------|-----------|
-| `false` (default) | Logs a `warning` and continues. Suitable for development or when the application is reachable only directly. |
+| unset (default) | The posture is unknown. Logs a `warning` when trusted proxies are empty, on every request, because the question is unresolved. |
+| `false` | Asserted: nothing sits in front of this deployment. The check is skipped silently — there is no proxy to spoof a forwarding header through. |
+| `true` | Asserted: there *is* a proxy. Empty trusted proxies is then a definite misconfiguration rather than an open question, so it is logged at `error` instead of `warning`. |
+
+`behind_proxy: false` is the supported way to silence the warning on a site with nothing in front of it:
+
+```yaml
+global:
+  behind_proxy: false
+```
+
+A value that is not interpretable as a boolean — including `behind_proxy:` with nothing after it, or an `%env()%` token that resolves to an empty string — is treated as *unknown* rather than as `false`, and still warns. Silencing a security warning because a key was left half-written is the wrong direction to fail in.
+
+### `require_trusted_proxies` — how loud the unresolved cases are
+
+| Value | Behaviour |
+|-------|-----------|
+| `false` (default) | Log only, at the level `behind_proxy` selects above. |
 | `true` | Throws `Kanopi\Firewall\Exception\ConfigurationException` and refuses to start. Recommended for production deployments behind a load balancer / CDN / reverse proxy. |
+
+`behind_proxy: false` wins over `require_trusted_proxies: true`. An explicit assertion that there is no proxy makes the requirement moot, and throwing anyway would leave an operator who told the truth about their deployment with no way to start.
+
+The two combine to cover the realistic postures:
+
+```yaml
+# No proxy. Silent.
+global:
+  behind_proxy: false
+
+# Behind a CDN, and a missing setTrustedProxies() should fail the deploy.
+global:
+  behind_proxy: true
+  require_trusted_proxies: true
+```
 
 See the trusted-proxies note in [Basic Implementation](../getting-started/quick-start.md#basic-implementation) for the `Request::setTrustedProxies(...)` call you need to add before `Firewall::create()`.
 
