@@ -43,8 +43,8 @@ require_once __DIR__ . '/vendor/autoload.php';
 
     ---
 
-    Nine built-in evaluators — IP, GeoLocation, URL, User Agent, ASN, Rate
-    Limit, Vulnerability Score, and OWASP CRS.
+    Ten built-in evaluators — IP, GeoLocation, URL, User Agent, ASN, Rate
+    Limit, Vulnerability Score, OWASP CRS, and AbuseIPDB.
 
     [:octicons-arrow-right-24: Browse plugins](plugins/index.md)
 
@@ -65,6 +65,7 @@ require_once __DIR__ . '/vendor/autoload.php';
 - **Multiple Storage Backends**: In-memory, file-based, and database storage for blocked clients, plus in-memory, file, database, PSR-6 cache, and Redis backends for rate-limit counters — or bring your own
 - **Comprehensive Request Analysis**: Evaluate requests based on IP, location, ASN, user agent, URL patterns, and more
 - **OWASP Core Rule Set**: Real CRS rules (SQLi, XSS, LFI/RFI, RCE, scanners) with tunable paranoia levels
+- **IP Reputation**: Turn away addresses reported to AbuseIPDB, cached to stay inside the free tier and failing open when the service is unreachable
 - **Vulnerability Scoring**: Advanced risk assessment based on multiple factors with configurable thresholds
 - **Rate Limiting**: Built-in rate limiting with configurable storage backends
 - **Challenge Responses**: Serve a proof-of-effort interstitial instead of a hard block, with HMAC-signed, IP-bound pass tokens

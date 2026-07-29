@@ -197,6 +197,7 @@ nav:
       - Rate Limit: plugins/rate-limit.md
       - Vulnerability Score: plugins/vulnerability-score.md
       - OWASP CRS: plugins/crs.md
+      - AbuseIPDB: plugins/abuseipdb.md
   - Presets:
       - presets/index.md
       - Available Presets: presets/available.md

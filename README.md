@@ -16,7 +16,7 @@ contribution guide — is on the docs site.
 |---|---|
 | [Getting Started](https://kanopi.github.io/firewall/getting-started/) | Install, configure, and block your first request |
 | [Configuration](https://kanopi.github.io/firewall/configuration/) | Every YAML key, with defaults |
-| [Plugins](https://kanopi.github.io/firewall/plugins/) | The nine built-in request evaluators |
+| [Plugins](https://kanopi.github.io/firewall/plugins/) | The ten built-in request evaluators |
 | [Presets](https://kanopi.github.io/firewall/presets/available/) | Ready-made rule sets you can include in one line |
 | [Guides](https://kanopi.github.io/firewall/guides/) | Error handling, custom plugins, custom storage, GeoIP setup |
 | [Reference](https://kanopi.github.io/firewall/reference/) | Rate-limit rules and the legacy config format |
@@ -32,6 +32,7 @@ to contribute a change.
 - **Multiple Storage Backends**: In-memory, file-based, and database storage for blocked clients, plus in-memory, file, database, PSR-6 cache, and Redis backends for rate-limit counters — or bring your own
 - **Comprehensive Request Analysis**: Evaluate requests based on IP, location, ASN, user agent, URL patterns, and more
 - **OWASP Core Rule Set**: Real CRS rules (SQLi, XSS, LFI/RFI, RCE, scanners) with tunable paranoia levels
+- **IP Reputation**: Turn away addresses reported to AbuseIPDB, cached to stay inside the free tier and failing open when the service is unreachable
 - **Vulnerability Scoring**: Advanced risk assessment based on multiple factors with configurable thresholds
 - **Rate Limiting**: Built-in rate limiting with configurable storage backends
 - **Challenge Responses**: Serve a proof-of-effort interstitial instead of a hard block, with HMAC-signed, IP-bound pass tokens
