@@ -1,0 +1,30 @@
+# Scenario: geolocation
+#
+# MaxMind mmdb lookup per request. The database is mounted at a fixed path by
+# docker-compose.yml, so this file needs no environment interpolation.
+#
+# The generated IP pool is spread across real allocations for each country,
+# so the reader does genuine b-tree descents rather than repeatedly resolving
+# one cached address. Observed block rate depends on the GeoLite2 vintage —
+# read it as a sanity check, not as an assertion.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    weight: 0
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: /geoip/GeoLite2-City.mmdb
+    config:
+      - "country:CN"
+      - "country:RU"
+      - "country:KP"
+      - "country:IR"

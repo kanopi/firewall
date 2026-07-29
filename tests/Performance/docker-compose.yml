@@ -1,0 +1,122 @@
+# Performance harness stack.
+#
+# nginx -> php-fpm -> firewall, with redis for the storage-backed scenarios
+# and k6 as the load generator. k6 runs inside the same compose network and
+# addresses nginx by service name, so no traffic crosses a published port and
+# the host's Docker NAT layer never becomes the bottleneck.
+#
+# Driven by bin/run.sh; running `docker compose up` here by hand gives you the
+# stack without any load on it, which is useful for debugging a scenario.
+name: firewall-perf
+
+services:
+  php:
+    build:
+      context: ../..
+      dockerfile: tests/Performance/Dockerfile
+      args:
+        PHP_VERSION: ${PERF_PHP_VERSION:-8.4}
+    entrypoint: ["/bin/sh", "/app/tests/Performance/conf/entrypoint.sh"]
+    working_dir: /app
+    environment:
+      # Arms app/prepend.php. Without this the harness cannot vary the client
+      # IP and half the plugins would be measured against a single address.
+      FIREWALL_PERF: "1"
+      FIREWALL_PERF_SCENARIO: ${PERF_SCENARIO:-baseline}
+      FIREWALL_PERF_IP_HEADER: ${PERF_IP_HEADER:-X-Perf-Client-Ip}
+      PERF_FPM_WORKERS: ${PERF_FPM_WORKERS:-64}
+      PERF_APP_WORK_MS: ${PERF_APP_WORK_MS:-0}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    volumes:
+      # Source is bind-mounted so an edit does not require an image rebuild.
+      # vendor/ is baked into the image and masked here by an anonymous volume
+      # so a host vendor/ directory (built with dev deps, or for a different
+      # PHP version) cannot leak into the measurement.
+      - ../..:/app
+      - /app/vendor
+      - ./conf/php.ini:/usr/local/etc/php/conf.d/zz-perf.ini:ro
+      - geoip:/geoip:ro
+      - perf-cache:/perf-cache
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "9000"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ../..:/app:ro
+      - ./conf/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      # Published only so you can curl the stack by hand while debugging.
+      # k6 does not use it.
+      - "${PERF_HOST_PORT:-8099}:80"
+    depends_on:
+      - php
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  redis:
+    image: redis:7-alpine
+    # Persistence off: this is a benchmark fixture, and a background rewrite
+    # landing mid-run would show up as a latency spike in whichever scenario
+    # was unlucky.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    expose:
+      - "6379"
+
+  k6:
+    image: grafana/k6:0.52.0
+    entrypoint: ["k6"]
+    environment:
+      PERF_TARGET: http://nginx
+      PERF_SCENARIO: ${PERF_SCENARIO:-baseline}
+      PERF_VUS: ${PERF_VUS:-200}
+      PERF_DURATION: ${PERF_DURATION:-45s}
+      PERF_RAMP: ${PERF_RAMP:-15s}
+      PERF_IP_HEADER: ${PERF_IP_HEADER:-X-Perf-Client-Ip}
+      PERF_RESULTS_DIR: /results
+    volumes:
+      - ./k6:/scripts:ro
+      - ./results:/results
+    depends_on:
+      - nginx
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  # One-shot helper container. Shares the php image so it has the firewall's
+  # autoloader available, and writes into the same volumes the php service
+  # reads — that is how the GeoIP databases and the AbuseIPDB cache get in.
+  seed:
+    build:
+      context: ../..
+      dockerfile: tests/Performance/Dockerfile
+      args:
+        PHP_VERSION: ${PERF_PHP_VERSION:-8.4}
+    entrypoint: ["php"]
+    working_dir: /app
+    profiles: ["tools"]
+    volumes:
+      - ../..:/app
+      - /app/vendor
+      - geoip:/geoip
+      - perf-cache:/perf-cache
+
+volumes:
+  geoip:
+  perf-cache:

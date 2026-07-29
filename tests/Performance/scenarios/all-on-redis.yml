@@ -1,0 +1,136 @@
+# Scenario: all-on-redis
+#
+# Identical to `all-on` except the rate limiter uses Redis instead of
+# per-request memory. Subtracting one from the other gives the per-request
+# cost of counters that are genuinely shared across workers — the number that
+# decides whether a load-balanced deployment can afford correct distributed
+# rate limiting or has to settle for per-node counters.
+#
+# WHY THE DURABLE BLOCKLIST STAYS IN MEMORY:
+# The repeat-offender store is deliberately NOT switched to a persistent
+# backend here. There is no Redis storage driver (only FileStorage,
+# DatabaseStorage and InMemoryStorage), and FileStorage would accumulate every
+# blocked address from the run into one file that is re-read on every request
+# — a file that grows without bound for the length of the benchmark. The
+# resulting curve would be dominated by that growth and would describe a
+# pathology rather than a deployment. Durable storage backends need their own
+# harness; see the README.
+configs:
+  - "{presets_dir}/wordpress.yml"
+  - "{presets_dir}/malicious-urls.yml"
+
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
+    weight: -100
+    enable: true
+    config:
+      - 203.0.113.0/24
+      - 198.51.100.0/24
+      - 185.220.100.0/22
+      - 89.248.165.0/24
+      - 162.142.125.0/24
+      - 167.94.138.0/24
+      - 205.210.31.0/24
+      - 218.92.0.0/16
+      - 222.186.0.0/16
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    weight: -80
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: /geoip/GeoLite2-City.mmdb
+    config:
+      - "country:CN"
+      - "country:RU"
+      - "country:KP"
+      - "country:IR"
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+    response: block
+    weight: -70
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: /geoip/GeoLite2-ASN.mmdb
+    config:
+      - "asn:14061"
+      - "asn:16276"
+      - "asn:24940"
+      - "asn:9009"
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: block
+    weight: -30
+    enable: true
+    config:
+      - "bot:true"
+      - "client.name@contains:sqlmap"
+      - "client.name@contains:nikto"
+      - "client.name@contains:masscan"
+      - "client.name@contains:nmap"
+      - "client.name@contains:zgrab"
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\AbuseIpdb"
+    response: block
+    weight: 40
+    enable: true
+    config:
+      api_key: "perf-harness-placeholder-key-never-sent"
+      threshold: 75
+      cache_ttl: 86400
+      error_cache_ttl: 300
+      timeout: 0.5
+      max_age_in_days: 30
+      cache_dir: /perf-cache/abuseipdb
+      block_status: 403
+      block_duration: 3600
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\Crs"
+    response: block
+    weight: 50
+    enable: true
+    config:
+      paranoia: 1
+      mode: block
+      block_status: 403
+      block_duration: 3600
+      anomaly_thresholds:
+        inbound: 5
+        outbound: 4
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100
+    enable: true
+    metadata:
+      default_rate: 60
+      default_sample: 60
+      default_expiration_time: 300
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        config:
+          redis:
+            host: redis
+            port: 6379
+    config:
+      - path: /login
+        rate: 5
+        sample: 60
+      - path: /api/*
+        rate: 100
+        sample: 60
+      - path: /admin/*
+        rate: 20
+        sample: 60

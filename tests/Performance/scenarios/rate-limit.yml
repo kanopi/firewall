@@ -1,0 +1,38 @@
+# Scenario: rate-limit (in-memory storage)
+#
+# InMemoryRateLimitStorage does not survive the request in php-fpm, so no
+# counter ever actually accumulates and nothing gets limited. That is the
+# point of this scenario: it measures the plugin's own per-request work —
+# rule matching, key derivation, storage instantiation — with the backend
+# I/O removed, giving a floor to compare rate-limit-redis against.
+#
+# Do NOT read this scenario as "rate limiting is nearly free". Read it
+# alongside rate-limit-redis; the difference between them is the real cost.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100
+    enable: true
+    metadata:
+      default_rate: 60
+      default_sample: 60
+      default_expiration_time: 300
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\InMemoryRateLimitStorage
+    config:
+      - path: /login
+        rate: 5
+        sample: 60
+      - path: /api/*
+        rate: 100
+        sample: 60
+      - path: /admin/*
+        rate: 20
+        sample: 60

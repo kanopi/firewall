@@ -114,7 +114,17 @@
             "docker compose -f example/demo/docker-compose.perf.yml up"
         ],
         "demo:perf:down": "docker compose -f example/demo/docker-compose.perf.yml down",
-        "demo:perf:restart": "docker compose -f example/demo/docker-compose.perf.yml restart php"
+        "demo:perf:restart": "docker compose -f example/demo/docker-compose.perf.yml restart php",
+        "perf": [
+            "Composer\\Config::disableProcessTimeout",
+            "bash tests/Performance/bin/run.sh"
+        ],
+        "perf:quick": [
+            "Composer\\Config::disableProcessTimeout",
+            "PERF_VUS=50 PERF_DURATION=15s PERF_RAMP=5s PERF_WARMUP=5 bash tests/Performance/bin/run.sh baseline bootstrap crs all-on"
+        ],
+        "perf:validate": "php tests/Performance/bin/validate-scenarios.php --skip-geoip",
+        "perf:down": "docker compose -f tests/Performance/docker-compose.yml down --volumes --remove-orphans"
     },
     "scripts-descriptions": {
         "demo": "Run the demo on PHP's built-in server (single-process) at http://localhost:8000",
@@ -122,7 +132,11 @@
         "demo:reset": "Delete the demo's FileStorage data file (/tmp/firewall-demo.data) so the next request starts with a clean slate",
         "demo:perf": "Run the production-shaped demo stack (nginx + php-fpm) at http://localhost:8000",
         "demo:perf:down": "Tear down the nginx + php-fpm demo stack",
-        "demo:perf:restart": "Restart only the php-fpm container (handy when opcache holds stale bytecode after edits)"
+        "demo:perf:restart": "Restart only the php-fpm container (handy when opcache holds stale bytecode after edits)",
+        "perf": "Run the full per-plugin performance benchmark (nginx + php-fpm + k6, ~20-40 min). Results in tests/Performance/results/",
+        "perf:quick": "Short benchmark over baseline, bootstrap, crs and all-on — enough to sanity check a change in a couple of minutes",
+        "perf:validate": "Check every performance scenario config loads and evaluates, in seconds. Run this before a full benchmark",
+        "perf:down": "Tear down the performance harness stack and drop its volumes (GeoIP databases and caches)"
     },
     "prefer-stable": true,
     "minimum-stability": "dev",

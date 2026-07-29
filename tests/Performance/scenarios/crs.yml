@@ -1,0 +1,40 @@
+# Scenario: crs
+#
+# The OWASP Core Rule Set, and almost certainly the most expensive plugin
+# here. docs/plugins/crs.md claims "~3-4 ms per request once warm (FPM worker
+# steady state)" — this scenario is the one that either substantiates that
+# number or doesn't, which makes it the most valuable measurement in the set.
+#
+# Two things to watch in the report:
+#   1. X-Fw-Eval-Us p50 vs p99. The rule cache warms per worker, so the first
+#      request each worker serves is far dearer than the rest. With
+#      pm.max_requests = 0 and a warmup phase, the steady state is what gets
+#      reported — but a wide p99 tail means the warm-up is not holding.
+#   2. Throughput vs baseline. If CRS costs ~3ms of CPU, a 64-worker pool
+#      saturates its cores at a much lower RPS than any other scenario.
+#
+# Left at paranoia 1 with no disabled rules: the shipped defaults are what
+# most deployments start from, and tuning the rule set for a benchmark would
+# measure a configuration nobody runs.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Crs"
+    response: block
+    weight: 50
+    enable: true
+    config:
+      paranoia: 1
+      mode: block
+      block_status: 403
+      block_duration: 3600
+      disabled_rules: []
+      disabled_categories: []
+      anomaly_thresholds:
+        inbound: 5
+        outbound: 4

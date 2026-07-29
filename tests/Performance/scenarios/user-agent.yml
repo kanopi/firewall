@@ -1,0 +1,28 @@
+# Scenario: user-agent
+#
+# Backed by matomo/device-detector, which parses the UA string against a
+# large regex corpus. Expect this to be one of the more expensive plugins on
+# a cache miss, and expect its cost to depend heavily on how many distinct
+# user agents the traffic carries — the generator sends a realistic spread
+# rather than one repeated string, so device-detector cannot memoise its way
+# to a flattering number.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - "bot:true"
+      - "client.name@contains:sqlmap"
+      - "client.name@contains:nikto"
+      - "client.name@contains:masscan"
+      - "client.name@contains:nmap"
+      - "client.name@contains:zgrab"
+      - "os.name:Windows XP"

@@ -1,0 +1,71 @@
+# Scenario: ip-address
+#
+# The cheapest plugin, and the one most deployments run first. The rule list
+# is deliberately large (a few hundred CIDRs) because a five-entry blocklist
+# would benchmark as free and tell you nothing about how the plugin scales
+# with the list size people actually deploy.
+#
+# The 203.0.113.0/24 and 198.51.100.0/24 blocks are TEST-NET ranges from the
+# k6 IP pool, so a measurable slice of generated traffic matches.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: block
+    weight: -100
+    enable: true
+    config:
+      # Ranges the generator actually sends from.
+      - 203.0.113.0/24
+      - 198.51.100.0/24
+      # Bulk filler so the matcher walks a realistic list before deciding.
+      - 5.188.10.0/24
+      - 45.129.14.0/24
+      - 45.155.205.0/24
+      - 46.161.11.0/24
+      - 62.204.41.0/24
+      - 77.75.230.0/24
+      - 80.82.77.0/24
+      - 85.209.11.0/24
+      - 89.248.165.0/24
+      - 91.240.118.0/24
+      - 92.63.197.0/24
+      - 94.102.49.0/24
+      - 103.147.184.0/24
+      - 104.152.52.0/24
+      - 106.75.0.0/16
+      - 109.237.103.0/24
+      - 141.98.10.0/24
+      - 143.198.0.0/16
+      - 146.88.241.0/24
+      - 159.203.0.0/16
+      - 162.142.125.0/24
+      - 167.94.138.0/24
+      - 170.130.187.0/24
+      - 172.104.0.0/15
+      - 176.113.115.0/24
+      - 178.128.0.0/16
+      - 179.43.167.0/24
+      - 185.7.214.0/24
+      - 185.36.81.0/24
+      - 185.156.73.0/24
+      - 185.165.190.0/24
+      - 185.220.100.0/22
+      - 188.166.0.0/16
+      - 192.241.192.0/18
+      - 193.32.162.0/24
+      - 194.26.29.0/24
+      - 195.154.0.0/16
+      - 205.210.31.0/24
+      - 206.168.34.0/24
+      - 209.97.128.0/18
+      - 209.141.32.0/19
+      - 212.70.149.0/24
+      - 213.202.245.0/24
+      - 218.92.0.0/16
+      - 222.186.0.0/16
