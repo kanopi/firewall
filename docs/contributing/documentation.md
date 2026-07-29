@@ -278,7 +278,12 @@ release, so a reader can trust it matches the version they installed. The
 tradeoff is that a merged documentation fix is not visible publicly until the
 next release goes out. Until then, the PR artifact is the way to read it.
 
-Mechanically, the `docs deploy` job hands the built site to `mkdocs gh-deploy`,
-which commits the rendered HTML to the `gh-pages` branch and pushes it. GitHub
-Pages serves that branch. Nothing on `2.x` changes — `gh-pages` holds only
-built output, never source.
+Mechanically, the `docs deploy` job hands the site that `docs-build` already
+produced to `ghp-import`, which commits the rendered HTML to the `gh-pages`
+branch and pushes it. GitHub Pages serves that branch. Nothing on `2.x` changes
+— `gh-pages` holds only built output, never source.
+
+It deliberately does not use `mkdocs gh-deploy`: that command always builds
+first, so it would throw away the artifact a reviewer approved and rebuild from
+source inside the deploy job. `ghp-import` is what `gh-deploy` calls underneath,
+so the published result is the same minus the rebuild.
