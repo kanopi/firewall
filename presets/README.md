@@ -5,16 +5,16 @@ included in your main configuration to block common attack patterns and
 malicious requests.
 
 **Full preset documentation:
-[kanopi.github.io/firewall/presets](https://kanopi.github.io/firewall/presets/)**
+[Presets](../docs/presets/index.md)**
 
 | Page | Covers |
 |---|---|
-| [Available Presets](https://kanopi.github.io/firewall/presets/available/) | What each shipped preset blocks, including the Pantheon platform presets |
-| [Using Presets](https://kanopi.github.io/firewall/presets/usage/) | Including, combining, and overriding presets; storage and GeoIP options |
-| [Tuning & False Positives](https://kanopi.github.io/firewall/presets/tuning/) | Regex delimiters, the generic PHP block, and common false positives |
-| [Testing Presets](https://kanopi.github.io/firewall/presets/testing/) | `curl` commands to verify each preset is doing its job |
-| [Custom Presets](https://kanopi.github.io/firewall/presets/custom/) | Writing your own reusable rule sets |
-| [Rate Limiting Reference](https://kanopi.github.io/firewall/reference/rate-limiting/) | Every rule in `rate-limiting.yml`, with the reasoning behind each limit |
+| [Available Presets](../docs/presets/available.md) | What each shipped preset blocks, including the Pantheon platform presets |
+| [Using Presets](../docs/presets/usage.md) | Including, combining, and overriding presets; storage and GeoIP options |
+| [Tuning & False Positives](../docs/presets/tuning.md) | Regex delimiters, the generic PHP block, and common false positives |
+| [Testing Presets](../docs/presets/testing.md) | `curl` commands to verify each preset is doing its job |
+| [Custom Presets](../docs/presets/custom.md) | Writing your own reusable rule sets |
+| [Rate Limiting Reference](../docs/reference/rate-limiting.md) | Every rule in `rate-limiting.yml`, with the reasoning behind each limit |
 
 ## Files in this directory
 
@@ -49,4 +49,4 @@ regardless of your vendor layout.
 
 The pages above are built from [`docs/presets/`](../docs/presets/). Change the
 Markdown there, not this file. See
-[Writing Documentation](https://kanopi.github.io/firewall/contributing/documentation/).
+[Writing Documentation](../docs/contributing/documentation.md).

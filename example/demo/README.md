@@ -7,7 +7,7 @@ production-shaped nginx → php-fpm stack so you can run perf experiments agains
 something that looks like a real deployment.
 
 **Full documentation:
-[Demo Application](https://kanopi.github.io/firewall/guides/demo/)** — routes,
+[Demo Application](../../docs/guides/demo.md)** — routes,
 all three run modes, the scripted challenge walkthrough, perf testing, and
 repeat-offender behavior.
 

@@ -2,7 +2,7 @@
 
 This reference has moved to the documentation site:
 
-**<https://kanopi.github.io/firewall/reference/rate-limiting/>**
+**[Rate Limiting Reference](../docs/reference/rate-limiting.md)**
 
 It documents every rule in [`rate-limiting.yml`](rate-limiting.yml) — default
 limits, per-category rules (authentication, API, WordPress, forms, admin, file

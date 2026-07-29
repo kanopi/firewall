@@ -6,24 +6,25 @@ It is framework agnostic — it works with Drupal, WordPress, Symfony, Laravel, 
 
 ## 📖 Documentation
 
-**Full documentation lives at [kanopi.github.io/firewall](https://kanopi.github.io/firewall/).**
+**Start at the [documentation index](docs/index.md).**
 
 This README is a short introduction. Everything else — the complete configuration
 reference, every plugin, the shipped presets, platform integration, and the
-contribution guide — is on the docs site.
+contribution guide — is in [`docs/`](docs/), and published at
+[kanopi.github.io/firewall](https://kanopi.github.io/firewall/).
 
 | | |
 |---|---|
-| [Getting Started](https://kanopi.github.io/firewall/getting-started/) | Install, configure, and block your first request |
-| [Configuration](https://kanopi.github.io/firewall/configuration/) | Every YAML key, with defaults |
-| [Plugins](https://kanopi.github.io/firewall/plugins/) | The ten built-in request evaluators |
-| [Presets](https://kanopi.github.io/firewall/presets/available/) | Ready-made rule sets you can include in one line |
-| [Guides](https://kanopi.github.io/firewall/guides/) | Error handling, custom plugins, custom storage, GeoIP setup |
-| [Reference](https://kanopi.github.io/firewall/reference/) | Rate-limit rules and the legacy config format |
-| [Contributing](https://kanopi.github.io/firewall/contributing/) | Development setup, tests, and the PR checklist |
+| [Getting Started](docs/getting-started/index.md) | Install, configure, and block your first request |
+| [Configuration](docs/configuration/index.md) | Every YAML key, with defaults |
+| [Plugins](docs/plugins/index.md) | The ten built-in request evaluators |
+| [Presets](docs/presets/available.md) | Ready-made rule sets you can include in one line |
+| [Guides](docs/guides/index.md) | Error handling, custom plugins, custom storage, GeoIP setup |
+| [Reference](docs/reference/index.md) | Rate-limit rules and the legacy config format |
+| [Contributing](docs/contributing/index.md) | Development setup, tests, and the PR checklist |
 
 The docs source is the [`docs/`](docs/) directory in this repository. See
-[Writing Documentation](https://kanopi.github.io/firewall/contributing/documentation/)
+[Writing Documentation](docs/contributing/documentation.md)
 to contribute a change.
 
 ## Features
@@ -82,7 +83,7 @@ if (class_exists('\Kanopi\Firewall\Firewall')) {
 > );
 > ```
 >
-> See [Trusted Proxies](https://kanopi.github.io/firewall/configuration/global/#trusted-proxies).
+> See [Trusted Proxies](docs/configuration/global.md#trusted-proxies).
 
 Create a `config/firewall.yml`:
 
@@ -117,8 +118,8 @@ configs:
   - "{presets_dir}/malicious-requests.yml"
 ```
 
-Continue with the [Quick Start](https://kanopi.github.io/firewall/getting-started/quick-start/)
-or the five-minute [Test Drive](https://kanopi.github.io/firewall/getting-started/test-drive/).
+Continue with the [Quick Start](docs/getting-started/quick-start.md)
+or the five-minute [Test Drive](docs/getting-started/test-drive.md).
 
 ## Local Development
 
@@ -142,13 +143,13 @@ mkdocs serve         # http://127.0.0.1:8000
 ## Contributing
 
 We welcome contributions. See the
-[Contributing Guide](https://kanopi.github.io/firewall/contributing/) for
+[Contributing Guide](docs/contributing/index.md) for
 development setup, branch and commit conventions, testing requirements, and
 the PR checklist.
 
 ## Support
 
-- **Documentation**: [kanopi.github.io/firewall](https://kanopi.github.io/firewall/)
+- **Documentation**: [kanopi.github.io/firewall](https://kanopi.github.io/firewall/) (source in [`docs/`](docs/))
 - **Issues**: [github.com/kanopi/firewall/issues](https://github.com/kanopi/firewall/issues)
 - **Discussions**: [github.com/kanopi/firewall/discussions](https://github.com/kanopi/firewall/discussions)
 

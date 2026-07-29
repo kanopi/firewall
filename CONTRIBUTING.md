@@ -3,15 +3,15 @@
 Thank you for your interest in contributing! We welcome contributions of all
 kinds — code, documentation, bug reports, and feature requests.
 
-**The full contributing guide lives at
-[kanopi.github.io/firewall/contributing](https://kanopi.github.io/firewall/contributing/).**
+**The full contributing guide lives in
+[the documentation site](docs/contributing/index.md).**
 
 | Page | Covers |
 |---|---|
-| [Contributing](https://kanopi.github.io/firewall/contributing/) | Git workflow, branch naming, commit conventions, the PR checklist, and how to report bugs or suggest features |
-| [Development Setup](https://kanopi.github.io/firewall/contributing/development/) | Local environment, and the PHPCS / PHPStan / Rector checks |
-| [Testing](https://kanopi.github.io/firewall/contributing/testing/) | Test requirements, structure, coverage, and running the suite |
-| [Writing Documentation](https://kanopi.github.io/firewall/contributing/documentation/) | How to change this documentation site |
+| [Contributing](docs/contributing/index.md) | Git workflow, branch naming, commit conventions, the PR checklist, and how to report bugs or suggest features |
+| [Development Setup](docs/contributing/development.md) | Local environment, and the PHPCS / PHPStan / Rector checks |
+| [Testing](docs/contributing/testing.md) | Test requirements, structure, coverage, and running the suite |
+| [Writing Documentation](docs/contributing/documentation.md) | How to change this documentation site |
 
 ## The short version
 
@@ -55,7 +55,7 @@ pip install -r docs/requirements.txt
 mkdocs serve
 ```
 
-See [Writing Documentation](https://kanopi.github.io/firewall/contributing/documentation/)
+See [Writing Documentation](docs/contributing/documentation.md)
 for page conventions, code-snippet options, and screenshot guidelines.
 
 ## Code of conduct
