@@ -342,18 +342,25 @@ jobs:
             gh pr comment --body-file /tmp/docs-preview.md
 
   # Publish the reviewed build to the gh-pages branch, which GitHub Pages
-  # serves at https://kanopi.github.io/firewall/. Deploys exactly the artifact
-  # docs-build produced (`--no-build`) rather than rebuilding, so what ships is
-  # what CI checked.
+  # serves at https://kanopi.github.io/firewall/. Deploys exactly the site/
+  # directory docs-build produced and attached to the workspace, rather than
+  # rebuilding, so what ships is what CI checked.
   #
   # Runs only on a stable release tag — see the workflow filters below. The
   # published site therefore describes the last release, not the current tip of
   # 2.x.
   #
-  # `mkdocs gh-deploy` hands the built site/ directory to ghp-import, which
-  # commits it to the gh-pages branch and pushes. That branch holds rendered
-  # HTML only, no source, and is created on the first successful deploy — there
-  # is nothing to set up beforehand beyond pointing Pages at it.
+  # Calls ghp-import directly rather than going through `mkdocs gh-deploy`.
+  # gh-deploy always builds first — it has no flag to skip that — so it would
+  # discard the reviewed artifact and rebuild from source in this job. ghp-import
+  # is the tool gh-deploy wraps, invoked with the same arguments it passes
+  # (including --no-jekyll, without which Pages' Jekyll pass drops files whose
+  # names begin with an underscore).
+  #
+  # ghp-import commits the directory to the gh-pages branch and pushes. That
+  # branch holds rendered HTML only, no source, and is created on the first
+  # successful deploy — there is nothing to set up beforehand beyond pointing
+  # Pages at it.
   docs-deploy:
     docker:
       - image: cimg/python:3.12
@@ -388,14 +395,24 @@ jobs:
             # so a git failure cannot echo the token back into the build log.
             git remote set-url origin \
               "https://x-access-token:${TOKEN}@github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
+            # Deploying an empty or missing site/ would replace the live docs
+            # with nothing, so fail loudly instead.
+            if [[ ! -f site/index.html ]]; then
+              echo "site/index.html is missing — the docs-build workspace did not attach."
+              echo "Nothing was deployed; gh-pages still holds the previous release."
+              exit 1
+            fi
             # `[ci skip]` keeps the gh-pages commit from triggering a build of
             # its own. The tag goes in the message so gh-pages history reads as
             # a list of releases rather than of SHAs.
-            mkdocs gh-deploy \
-              --no-build \
+            ghp-import \
+              --no-jekyll \
+              --push \
               --force \
-              --remote-name origin \
-              --message "docs: deploy ${CIRCLE_TAG:-${CIRCLE_SHA1:0:7}} [ci skip]"
+              --branch gh-pages \
+              --remote origin \
+              --message "docs: deploy ${CIRCLE_TAG:-${CIRCLE_SHA1:0:7}} [ci skip]" \
+              site
 
 workflows:
   test:
