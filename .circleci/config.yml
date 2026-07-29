@@ -293,6 +293,110 @@ jobs:
       - store_test_results:
           path: reports/performance
 
+  # Build the MkDocs site on every branch and PR. `--strict` promotes every
+  # MkDocs warning to a failure, so a broken cross-reference, a missing
+  # `--8<--` snippet, or a page absent from `nav:` fails the job rather than
+  # shipping quietly. The rendered HTML is stored as an artifact so a reviewer
+  # can read a docs change as a real page before approving it.
+  docs-build:
+    docker:
+      - image: cimg/python:3.12
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+    resource_class: small
+    steps:
+      - checkout
+      - ci-tools/install-github-cli
+      - restore_cache:
+          keys:
+            - docs-pip-{{ checksum "docs/requirements.txt" }}
+            - docs-pip-
+      - run:
+          name: Install docs toolchain
+          command: pip install --user -r docs/requirements.txt
+      - save_cache:
+          key: docs-pip-{{ checksum "docs/requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Build docs (strict)
+          command: mkdocs build --strict
+      - store_artifacts:
+          path: site
+          destination: docs
+      - persist_to_workspace:
+          root: .
+          paths:
+            - site
+      - run:
+          name: Comment preview link on PR
+          when: on_success
+          command: |
+            if [[ "${CI_PULL_REQUEST}" == "" ]]; then
+              echo "Not a PR — skipping preview comment."
+              exit 0
+            fi
+            PREVIEW="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/docs/index.html"
+            echo "📖 **Docs preview** for this PR: [${PREVIEW}](${PREVIEW})" > /tmp/docs-preview.md
+            gh pr comment --body-file /tmp/docs-preview.md
+
+  # Publish the reviewed build to the gh-pages branch, which GitHub Pages
+  # serves at https://kanopi.github.io/firewall/. Deploys exactly the artifact
+  # docs-build produced (`--no-build`) rather than rebuilding, so what ships is
+  # what CI checked.
+  #
+  # Runs only on a stable release tag — see the workflow filters below. The
+  # published site therefore describes the last release, not the current tip of
+  # 2.x.
+  #
+  # `mkdocs gh-deploy` hands the built site/ directory to ghp-import, which
+  # commits it to the gh-pages branch and pushes. That branch holds rendered
+  # HTML only, no source, and is created on the first successful deploy — there
+  # is nothing to set up beforehand beyond pointing Pages at it.
+  docs-deploy:
+    docker:
+      - image: cimg/python:3.12
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+    resource_class: small
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - restore_cache:
+          keys:
+            - docs-pip-{{ checksum "docs/requirements.txt" }}
+            - docs-pip-
+      - run:
+          name: Install docs toolchain
+          command: pip install --user -r docs/requirements.txt
+      - run:
+          name: Publish to gh-pages
+          command: |
+            TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+            if [[ -z "${TOKEN}" ]]; then
+              echo "Neither GITHUB_TOKEN nor GH_TOKEN is set in the CircleCI context."
+              echo "Add a token with 'contents: write' on kanopi/firewall to the"
+              echo "kanopi-code context, or swap this step for an SSH deploy key."
+              exit 1
+            fi
+            git config user.name "circleci"
+            git config user.email "engineering@kanopi.com"
+            # Put the credential on the remote rather than on the command line,
+            # so a git failure cannot echo the token back into the build log.
+            git remote set-url origin \
+              "https://x-access-token:${TOKEN}@github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
+            # `[ci skip]` keeps the gh-pages commit from triggering a build of
+            # its own. The tag goes in the message so gh-pages history reads as
+            # a list of releases rather than of SHAs.
+            mkdocs gh-deploy \
+              --no-build \
+              --force \
+              --remote-name origin \
+              --message "docs: deploy ${CIRCLE_TAG:-${CIRCLE_SHA1:0:7}} [ci skip]"
+
 workflows:
   test:
     jobs:
@@ -372,6 +476,35 @@ workflows:
               only: /.*/
             branches:
               only: /.*/
+      # Runs on every branch and PR as the strict-validation gate, and also on
+      # tags — not for its own sake, but because `docs deploy` requires it. A
+      # required job that filters tags out is absent from the tagged workflow,
+      # which would leave the deploy waiting on a job that never runs.
+      - docs-build:
+          name: docs
+          context: kanopi-code
+          filters:
+            tags:
+              only: /.*/
+            branches:
+              only: /.*/
+      # Publishing is tied to a release tag, not to a merge. `2.x` accumulates
+      # commits between releases, so deploying from it meant the site described
+      # unreleased behaviour — someone reading it had no way to tell which parts
+      # matched the version they had installed.
+      #
+      # Stable tags only: `v2.9.0` publishes, `v2.9.0-beta1` does not, so a
+      # prerelease cannot overwrite the docs for the current stable release.
+      - docs-deploy:
+          name: docs deploy
+          context: kanopi-code
+          requires:
+            - docs
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
       # - performance-test:
       #     name: "performance"
       #     context: kanopi-code
