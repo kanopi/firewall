@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
+use Kanopi\Firewall\Plugins\AbuseIpdb;
 use Kanopi\Firewall\Plugins\Crs;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
@@ -38,6 +39,16 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class PluginPolarityTest extends AbstractTestCase
 {
+    /**
+     * Address the AbuseIPDB case pre-scores above the threshold.
+     */
+    private const ABUSEIPDB_REPORTED_IP = '203.0.113.66';
+
+    /**
+     * Address the AbuseIPDB case pre-scores at zero.
+     */
+    private const ABUSEIPDB_CLEAN_IP = '203.0.113.77';
+
     /**
      * @return array<string, array{callable(): PluginInterface, callable(): Request, callable(): Request}>
      */
@@ -96,7 +107,52 @@ class PluginPolarityTest extends AbstractTestCase
                 fn (): Request => self::browserRequest('/?id=1 UNION SELECT password FROM users'),
                 fn (): Request => self::browserRequest('/?q=hello world'),
             ],
+            // Seeded through the cache rather than a stubbed subclass, so this
+            // exercises the shipped class and never touches the network: one
+            // address pre-scored above the threshold, one below.
+            'AbuseIpdb' => [
+                fn (): PluginInterface => new AbuseIpdb([], [
+                    'api_key'   => 'polarity-test-key',
+                    'threshold' => 75,
+                    'cache_dir' => self::seedAbuseIpdbCache(),
+                ]),
+                fn (): Request => self::browserRequest('/', ['REMOTE_ADDR' => self::ABUSEIPDB_REPORTED_IP]),
+                fn (): Request => self::browserRequest('/', ['REMOTE_ADDR' => self::ABUSEIPDB_CLEAN_IP]),
+            ],
         ];
+    }
+
+    /**
+     * Write the two AbuseIPDB cache entries the polarity case relies on.
+     *
+     * @return string
+     *   The cache directory to hand the plugin.
+     */
+    private static function seedAbuseIpdbCache(): string
+    {
+        $directory = sys_get_temp_dir() . '/abuseipdb-polarity';
+        if (!is_dir($directory)) {
+            mkdir($directory, 0775, true);
+        }
+
+        $entries = [
+            self::ABUSEIPDB_REPORTED_IP => 100,
+            self::ABUSEIPDB_CLEAN_IP    => 0,
+        ];
+
+        foreach ($entries as $ip => $score) {
+            file_put_contents(
+                $directory . '/abuseipdb-' . sha1((string) $ip) . '.json',
+                (string) json_encode(['report' => [
+                    'abuse_confidence_score' => $score,
+                    'is_whitelisted'         => false,
+                    'total_reports'          => $score > 0 ? 42 : 0,
+                    'country_code'           => 'RU',
+                ]]),
+            );
+        }
+
+        return $directory;
     }
 
     /**

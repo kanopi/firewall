@@ -461,6 +461,62 @@ plugins:
         # run response-side evaluation. The legacy spelling 'error' works.
         outbound: 4
 
+  # AbuseIPDB reputation plugin. Scores the client IP 0-100 by how
+  # confidently it has been reported for abuse, and matches once that score
+  # reaches the threshold. Needs a free API key from
+  # https://www.abuseipdb.com/account/api — with no api_key the plugin
+  # matches nothing, so it is safe to leave configured but unkeyed.
+  - plugin: "Kanopi\\Firewall\\Plugins\\AbuseIpdb"
+    response: block
+    # One cached lookup per visitor per day, so cheaper than CRS but dearer
+    # than the static IP / UA / ASN filters. Sits between them.
+    weight: 40
+    enable: false
+    config:
+      # Required. Use an %env()% token rather than committing the key.
+      api_key: "%env(ABUSEIPDB_API_KEY)%"
+      # Abuse confidence (0-100) at or above which this plugin matches.
+      # 75 is AbuseIPDB's own "strong enough to act on" mark. Going below
+      # about 25 will turn away real users on recycled residential IPs.
+      threshold: 75
+      # How long a verdict is reused before asking again. The free tier
+      # allows 1,000 checks a day, and clean results are cached too, so this
+      # is what keeps a normal site inside the quota. Lower it only if you
+      # have the quota to spare.
+      cache_ttl: 86400
+      # How long a *failed* lookup is remembered. Without this every request
+      # during an outage would wait out the full timeout below before
+      # failing open — availability on paper, a crawl in practice. Raise to
+      # be more patient during an outage, lower to notice recovery sooner.
+      error_cache_ttl: 300
+      # Seconds to wait on the API before giving up. This sits in the
+      # request path, so the ceiling on added latency matters more than
+      # getting an answer.
+      timeout: 2.0
+      # How far back AbuseIPDB should consider reports.
+      max_age_in_days: 30
+      # Where verdicts are cached. Defaults to the system temp directory, or
+      # KANOPI_FIREWALL_CACHE_DIR when that constant is defined. Entries are
+      # named by hash, so client IPs are not readable from a listing.
+      # cache_dir: /var/cache/firewall
+      # HTTP status returned for blocked requests.
+      block_status: 403
+      # How long the firewall keeps the offending IP on its blocklist.
+      block_duration: 3600
+      #
+      # Two behaviours with no config key, worth knowing:
+      #
+      # This plugin fails open. A timeout, a refused key or a spent quota
+      # reports no match, logs at warning level, and lets the request
+      # continue. Reputation is corroborating evidence, not the last line of
+      # defence — put addresses you want blocked unconditionally in the
+      # IpAddress plugin instead.
+      #
+      # Private and reserved ranges are never looked up, so a local or
+      # intranet deployment spends no quota, and addresses AbuseIPDB marks
+      # as whitelisted (search-engine crawlers and the like) never match
+      # however high they score.
+
 # Loggers help log data in specific formats. Uses Monolog (https://seldaek.github.io/monolog/)
 # Multiple loggers can be added as the following are structured but added as arrays under the logger section.
 logger:
