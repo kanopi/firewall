@@ -268,4 +268,17 @@ the rendered HTML as a build artifact, so a reviewer can read your change as a
 real page before approving it. Open the **Artifacts** tab on the `docs-build`
 job and click `docs/index.html`.
 
-Merging to `2.x` publishes to <https://kanopi.github.io/firewall/>.
+## When your change goes live
+
+Merging to `2.x` does **not** publish. The site is deployed only when a stable
+release tag is pushed — `v2.9.0` publishes, `v2.9.0-beta1` does not.
+
+That means <https://kanopi.github.io/firewall/> always describes the last
+release, so a reader can trust it matches the version they installed. The
+tradeoff is that a merged documentation fix is not visible publicly until the
+next release goes out. Until then, the PR artifact is the way to read it.
+
+Mechanically, the `docs deploy` job hands the built site to `mkdocs gh-deploy`,
+which commits the rendered HTML to the `gh-pages` branch and pushes it. GitHub
+Pages serves that branch. Nothing on `2.x` changes — `gh-pages` holds only
+built output, never source.
