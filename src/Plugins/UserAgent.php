@@ -17,6 +17,7 @@ use DeviceDetector\ClientHints;
 use DeviceDetector\DeviceDetector;
 use DeviceDetector\Parser\Device\AbstractDeviceParser;
 use Kanopi\Firewall\Traits\EvaluateTrait;
+use Kanopi\Firewall\Utility\SelectiveDeviceDetector;
 use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\HttpFoundation\Request;
@@ -50,6 +51,27 @@ class UserAgent extends AbstractPluginBase
      * adaptor is not free — it creates directories.
      */
     private bool $cacheResolved = false;
+
+    /**
+     * Deepest parse phase the configured rules need, resolved once (#108).
+     */
+    private ?string $requiredPhase = null;
+
+    /**
+     * Which parse phase produces each rule variable.
+     *
+     * Mirrors the switch in `getValue()`. Kept beside it deliberately: if a
+     * variable is added there without a line here it resolves to the deepest
+     * phase, so the new variable works and merely forgoes the optimisation.
+     */
+    private const VARIABLE_PHASES = [
+        'bot' => SelectiveDeviceDetector::PHASE_BOT,
+        'os' => SelectiveDeviceDetector::PHASE_OS,
+        'client' => SelectiveDeviceDetector::PHASE_CLIENT,
+        'device' => SelectiveDeviceDetector::PHASE_DEVICE,
+        'brand' => SelectiveDeviceDetector::PHASE_DEVICE,
+        'model' => SelectiveDeviceDetector::PHASE_DEVICE,
+    ];
 
     /**
      * {@inheritdoc}
@@ -107,7 +129,7 @@ class UserAgent extends AbstractPluginBase
         AbstractDeviceParser::setVersionTruncation(AbstractDeviceParser::VERSION_TRUNCATION_NONE);
         $clientHints = ClientHints::factory($_SERVER);
 
-        $deviceDetector = new DeviceDetector($userAgent, $clientHints);
+        $selectiveDeviceDetector = new SelectiveDeviceDetector($userAgent, $clientHints);
 
         // Without this, device-detector recompiles its regex corpus — 20 YAML
         // files, 1.7MB — on the first parse of every PHP process. That costs
@@ -117,11 +139,170 @@ class UserAgent extends AbstractPluginBase
         $cache = $this->cache();
 
         if ($cache instanceof CacheInterface) {
-            $deviceDetector->setCache($cache);
+            $selectiveDeviceDetector->setCache($cache);
         }
 
-        $deviceDetector->parse();
-        return $deviceDetector;
+        // Stop at the deepest phase the configured rules actually read (#108).
+        // A `bot:`-only config has no use for brand and model detection, which
+        // is the dearest phase remaining once the corpus is cached.
+        $selectiveDeviceDetector->parseUpTo($this->requiredPhase());
+
+        return $selectiveDeviceDetector;
+    }
+
+    /**
+     * The deepest parse phase the configured rules need.
+     *
+     * Cached per instance: the rules do not change between requests, and
+     * walking them per request would give back some of what this saves.
+     *
+     * @return string
+     *   One of the `SelectiveDeviceDetector::PHASE_*` constants.
+     */
+    protected function requiredPhase(): string
+    {
+        if ($this->requiredPhase !== null) {
+            return $this->requiredPhase;
+        }
+
+        $deepest = self::VARIABLE_PHASES['bot'];
+
+        foreach ($this->collectVariables($this->config) as $variable) {
+            $phase = $this->phaseForVariable($variable);
+
+            // Nothing is deeper than `device`, so stop looking.
+            if ($phase === SelectiveDeviceDetector::PHASE_DEVICE) {
+                $deepest = SelectiveDeviceDetector::PHASE_DEVICE;
+                break;
+            }
+
+            if ($this->isDeeper($phase, $deepest)) {
+                $deepest = $phase;
+            }
+        }
+
+        $this->getLogger()->debug('User Agent parse depth resolved', [
+            'phase' => $deepest,
+        ]);
+
+        return $this->requiredPhase = $deepest;
+    }
+
+    /**
+     * Map a rule variable onto the phase that produces it.
+     *
+     * Unknown variables resolve to the deepest phase. `getValue()` returns
+     * NULL for anything it does not recognise, so such a rule cannot match
+     * either way — but guessing shallow on an unrecognised name is how a rule
+     * silently stops matching after someone adds a variable here and forgets
+     * to update this map.
+     *
+     * @param string $variable
+     *   A rule variable, e.g. `client.name`.
+     *
+     * @return string
+     *   The phase that must have run for it to be readable.
+     */
+    protected function phaseForVariable(string $variable): string
+    {
+        $root = strtolower(trim((string) ($this->splitQuery($variable)[0] ?? '')));
+
+        return self::VARIABLE_PHASES[$root] ?? SelectiveDeviceDetector::PHASE_DEVICE;
+    }
+
+    /**
+     * Pull every variable name out of a rule tree.
+     *
+     * Handles the three shapes `EvaluateTrait` accepts: a shorthand string, a
+     * structured array with a `variable` key, and an `AND` / `OR` group with a
+     * nested `rules` list. Anything else yields a sentinel that resolves to
+     * the deepest phase, so an unfamiliar rule shape costs performance rather
+     * than correctness.
+     *
+     * @param array<int|string, mixed> $rules
+     *   Rules to walk.
+     *
+     * @return array<int, string>
+     *   Variable names, with duplicates left in — the caller only takes a max.
+     */
+    protected function collectVariables(array $rules): array
+    {
+        $variables = [];
+
+        foreach ($rules as $rule) {
+            if (is_string($rule)) {
+                $variables[] = $this->variableFromShorthand($rule);
+                continue;
+            }
+
+            if (!is_array($rule)) {
+                // Unrecognised: force the deepest phase.
+                $variables[] = '';
+                continue;
+            }
+
+            if (isset($rule['rules']) && is_array($rule['rules'])) {
+                $variables = array_merge($variables, $this->collectVariables($rule['rules']));
+                continue;
+            }
+
+            if (isset($rule['variable']) && is_string($rule['variable'])) {
+                $variables[] = $rule['variable'];
+                continue;
+            }
+
+            $variables[] = '';
+        }
+
+        return $variables;
+    }
+
+    /**
+     * Read the variable out of a shorthand rule string.
+     *
+     * Mirrors the prefixes `EvaluateTrait::parseSimpleStringRule()` strips:
+     * a leading `!` for negation, an `@operator` suffix, and the `>`/`<`
+     * comparison shorthand. It only needs the variable, so it does not attempt
+     * to parse the rest.
+     *
+     * @param string $rule
+     *   A shorthand rule such as `!client.version@less_than:80`.
+     *
+     * @return string
+     *   The variable name, or an empty string when the rule is malformed.
+     */
+    protected function variableFromShorthand(string $rule): string
+    {
+        $rule = ltrim(trim($rule), '!');
+
+        // "variable@operator:value"
+        if (str_contains($rule, '@')) {
+            return trim(strstr($rule, '@', true) ?: '');
+        }
+
+        // "variable > value" and friends, checked before the ':' form because
+        // this syntax carries no colon at all.
+        if (preg_match('/^([^><:]+)\s*(?:>=|<=|>|<)/', $rule, $matches) === 1) {
+            return trim($matches[1]);
+        }
+
+        // "variable:value"
+        if (str_contains($rule, ':')) {
+            return trim(strstr($rule, ':', true) ?: '');
+        }
+
+        return '';
+    }
+
+    /**
+     * Is $candidate deeper in the parse order than $current?
+     */
+    protected function isDeeper(string $candidate, string $current): bool
+    {
+        $phases = SelectiveDeviceDetector::PHASES;
+
+        return (array_search($candidate, $phases, true) ?: 0)
+            > (array_search($current, $phases, true) ?: 0);
     }
 
     /**

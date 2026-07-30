@@ -180,7 +180,11 @@ class UserAgentTest extends AbstractTestCase
      */
     public function testDetectDeviceParsesUserAgent(): void
     {
-        $plugin = new class([], []) extends UserAgent {
+        // The config matters since #108: detectDevice() now parses only as
+        // deep as the configured rules read, so a plugin with no rules never
+        // reaches device detection. A rule that asks for `device.type` is what
+        // makes a full parse the correct behaviour to assert here.
+        $plugin = new class([], ['device.type:desktop']) extends UserAgent {
             public function detectDeviceWrapper(string $ua): DeviceDetector
             {
                 return $this->detectDevice($ua);
