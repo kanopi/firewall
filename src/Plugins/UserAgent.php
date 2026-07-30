@@ -58,6 +58,45 @@ class UserAgent extends AbstractPluginBase
     private ?string $requiredPhase = null;
 
     /**
+     * Is this request automated, by any source we have (#109)?
+     *
+     * `bot:true` is device-detector's curated bot database, and it does not
+     * classify a good deal of the tooling a firewall exists to stop:
+     *
+     *   missed:  sqlmap, nikto, curl, python-requests, Go-http-client
+     *   caught:  masscan, nmap, zgrab, wpscan, nuclei, dirbuster,
+     *            googlebot, bingbot, ahrefs, gptbot
+     *
+     * `automated:true` is the union of that database and a broader crawler
+     * list which does catch them.
+     *
+     * WHY A SECOND VARIABLE RATHER THAN WIDENING `bot`:
+     *
+     * The wider list deliberately counts generic HTTP client libraries as
+     * automated. Redefining `bot:true` to include them would start blocking a
+     * partner integration or mobile app built on python-requests, on a rule
+     * the operator wrote long ago and has not touched — a behaviour change to
+     * a blocking rule, arriving in a minor release. As a distinct variable it
+     * is one line to opt into, and one line to leave alone.
+     *
+     * It is also why this is not a `metadata` setting: the plugin's vocabulary
+     * is its rules, and a rule reads better than a config knob that silently
+     * changes what an existing rule means.
+     *
+     * @return bool
+     *   Whether any source considers the agent automated.
+     */
+    protected function isAutomated(): bool
+    {
+        if ($this->deviceDetector->isBot()) {
+            return true;
+        }
+
+        return $this->deviceDetector instanceof SelectiveDeviceDetector
+            && $this->deviceDetector->isCrawler();
+    }
+
+    /**
      * Which parse phase produces each rule variable.
      *
      * Mirrors the switch in `getValue()`. Kept beside it deliberately: if a
@@ -66,6 +105,7 @@ class UserAgent extends AbstractPluginBase
      */
     private const VARIABLE_PHASES = [
         'bot' => SelectiveDeviceDetector::PHASE_BOT,
+        'automated' => SelectiveDeviceDetector::PHASE_BOT,
         'os' => SelectiveDeviceDetector::PHASE_OS,
         'client' => SelectiveDeviceDetector::PHASE_CLIENT,
         'device' => SelectiveDeviceDetector::PHASE_DEVICE,
@@ -486,6 +526,10 @@ class UserAgent extends AbstractPluginBase
         ]));
 
         switch (strtolower((string) $segments[0])) {
+            case 'automated':
+                // Any source. See the constant's docblock for why this is a
+                // separate variable rather than a redefinition of `bot`.
+                return $this->isAutomated() ? 'true' : 'false';
             case 'bot':
                 if (count($segments) === 1) {
                     return $this->deviceDetector->isBot() ? 'true' : 'false';

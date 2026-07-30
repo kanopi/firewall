@@ -42,6 +42,55 @@ plugins:
           - "client.version@less_than:80"
 ```
 
+## Catching automated traffic
+
+`bot:true` is backed by `matomo/device-detector`'s curated bot database, which has a blind spot — it does **not** classify a good deal of the tooling a firewall exists to stop.
+
+`automated:true` is the union of that database and a broader crawler list, and catches them:
+
+| | `bot:true` | `automated:true` |
+|---|---|---|
+| sqlmap, nikto | — | **matched** |
+| curl, python-requests, Go-http-client | — | **matched** |
+| masscan, nmap, zgrab, wpscan, nuclei, dirbuster | matched | matched |
+| Googlebot, bingbot, AhrefsBot, GPTBot | matched | matched |
+| real browsers | — | — |
+
+If you wrote `bot:true` expecting scanners to be stopped, **sqlmap is getting through today**. One line changes that:
+
+```yaml
+- plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+  response: block
+  enable: true
+  config:
+    - "automated:true"
+```
+
+It is an ordinary rule variable, so it composes like any other:
+
+```yaml
+config:
+  # Anything automated except your own monitoring.
+  - type: AND
+    rules:
+      - "automated:true"
+      - "!client.name@contains:StatusCake"
+```
+
+### Why not just widen `bot:`
+
+The broader list deliberately counts generic HTTP client libraries as automated. That is usually what a firewall wants — but if a partner integration, a mobile app, or your own monitoring runs on `python-requests` or `Go-http-client`, `automated:true` **will block traffic that `bot:true` let through**.
+
+Redefining `bot:true` would apply that to rules people wrote long ago and have not touched. As a separate variable it is one line to opt into, and one line to leave alone. `bot:` keeps exactly the meaning it always had.
+
+### `bot.name` and the other sub-keys
+
+`bot.name`, `bot.category` and `bot.producer` come from the curated database only. An agent that solely the wider list recognises will satisfy `automated:true` while exposing no name to match on — the wider list yields a matched pattern, not an identity.
+
+### Interaction with `client.*` rules
+
+Worth knowing if you use `client.name@contains:sqlmap`: it keeps working alongside `automated:true`. Detection stops as soon as an agent is identified as a bot, and a stopped parse exposes no client at all — so the wider list is deliberately kept out of that decision. Folding it in would have silently broken exactly that rule.
+
 ## Caching
 
 The plugin's detection is backed by `matomo/device-detector`, which compiles a 1.7&nbsp;MB corpus of regex files on the first parse in each PHP process. That costs **110–637&nbsp;ms** depending on the user agent — ordinary mobile browsers are among the worst cases, because brand and model detection walks the largest part of the corpus. Once warm it is roughly 4&nbsp;ms.
