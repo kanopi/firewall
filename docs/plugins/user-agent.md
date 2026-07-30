@@ -103,6 +103,26 @@ Detection is unchanged either way — only the speed differs.
 
 A cache that cannot be created never stops the plugin working: the failure is logged at `warning` and detection continues uncached. An optimisation should not be able to take a site down.
 
+### Only what your rules need
+
+Detection runs in four phases — bot, OS, client, then device (brand and model). Since the rules are known up front, the plugin stops at the deepest phase they actually read:
+
+| Deepest variable in your rules | Phases run | Typical per-request cost |
+|---|---|---|
+| `bot` | bot | ~0.5&nbsp;ms |
+| `os.*` | bot, OS | ~0.9&nbsp;ms |
+| `client.*` | bot, OS, client | ~2.8&nbsp;ms |
+| `device.type`, `brand`, `model` | all four | ~8.4&nbsp;ms |
+
+A config that only asks `bot:true` therefore costs a fraction of one that inspects `brand`. Nothing needs configuring — the depth is derived from your rules.
+
+Two properties are deliberate:
+
+- **Phases are cumulative, not individually selectable.** Device detection reads the OS and client results to infer a type — Android plus a browser becomes `smartphone`. Running it without them would produce a *wrong* device type, not just a faster one.
+- **Bot detection always runs.** Detection stops early once a bot is identified, so a bot never reaches client or device parsing. Skipping it would let bots through to phases they do not reach today, changing what `client.*` rules match.
+
+An unrecognised variable or rule shape falls back to running every phase, so the worst case is a lost optimisation rather than a rule that quietly stops matching.
+
 ## Available Variables
 
 - `bot` - Whether the user agent is a bot ("true" or "false")
