@@ -208,6 +208,7 @@ nav:
   - Guides:
       - guides/index.md
       - Error Handling: guides/error-handling.md
+      - Checking a Request: guides/checking-requests.md
       - Custom Plugins: guides/custom-plugins.md
       - Custom Storage: guides/custom-storage.md
       - Advanced Examples: guides/advanced-examples.md
