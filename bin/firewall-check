@@ -1,0 +1,507 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Ask whether a given request would be blocked, and by what (#105).
+ *
+ * Everything this needs already existed — `Firewall::evaluate()` takes a
+ * Request, and `PluginManager::evaluate()` already records every plugin's
+ * result and timing. What did not exist was a correct way to call it from a
+ * terminal, because assembling it by hand has three edges that fail *quietly*:
+ *
+ *   1. `evaluate()` returns TRUE immediately when PHP_SAPI is 'cli' unless the
+ *      mode is `exception`. Forget that and every request reports "allowed",
+ *      including ones that plainly block. A checker that always says "nothing
+ *      is blocked" is worse than no checker.
+ *
+ *   2. Overrides are PropertyAccess bracket paths, not nested arrays.
+ *      `['global' => ['mode' => 'exception']]` is silently ignored and lands
+ *      you back in (1).
+ *
+ *   3. A block has side effects: it writes to storage, records an offense and
+ *      applies `blocking_escalation`. Pointed at a production config, a naive
+ *      "check" bans the address it was asked about.
+ *
+ * This script handles all three. Storage is swapped for a throwaway by
+ * default, so a check cannot ban anyone; pass --live-storage when you
+ * deliberately want the durable blocklist consulted.
+ */
+
+use Kanopi\Firewall\Exception\ChallengeRequiredException;
+use Kanopi\Firewall\Exception\ChallengeSolvedException;
+use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\Storage\InMemoryStorage;
+use Kanopi\Firewall\Utility\PluginConfigNormalizer;
+use Monolog\Handler\TestHandler;
+use Monolog\Level;
+use Symfony\Component\HttpFoundation\Request;
+
+// Exit codes, chosen so the tool composes in scripts and CI. The verdict is
+// the exit status, which is why "blocked" is not lumped in with "error".
+const EXIT_ALLOWED = 0;
+const EXIT_BLOCKED = 1;
+const EXIT_CHALLENGED = 2;
+const EXIT_USAGE = 64;
+const EXIT_INTERNAL = 70;
+
+// Works both in this repository and when installed as a dependency, where the
+// script is symlinked into the consumer's vendor/bin.
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+$loaded = false;
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require $autoloader;
+        $loaded = true;
+        break;
+    }
+}
+
+if (!$loaded) {
+    fwrite(STDERR, "Could not locate the composer autoloader. Run `composer install`.\n");
+    exit(EXIT_INTERNAL);
+}
+
+$options = getopt('h', [
+    'config:',
+    'ip::',
+    'url::',
+    'method::',
+    'header:',
+    'body::',
+    'explain',
+    'json',
+    'live-storage',
+    'help',
+]);
+
+if ($options === false || isset($options['help']) || isset($options['h'])) {
+    usage();
+    exit($options === false ? EXIT_USAGE : EXIT_ALLOWED);
+}
+
+/**
+ * Print usage.
+ */
+function usage(): void
+{
+    $script = basename(__FILE__);
+
+    echo <<<TXT
+    Check whether a request would be blocked by a firewall configuration.
+
+    USAGE
+      {$script} --config=FILE [options]
+
+    REQUIRED
+      --config=FILE      Firewall config file. Repeatable; merged in order,
+                         exactly as Firewall::create() merges them.
+
+    REQUEST
+      --ip=ADDRESS       Client IP (IPv4 or IPv6). Default 127.0.0.1
+      --url=URL          Path, with optional query string. Default /
+      --method=VERB      HTTP method. Default GET, or POST when --body is given
+      --header=NAME:VAL  Request header. Repeatable
+      --body=STRING      Request body
+
+    OUTPUT
+      --explain          Show every plugin that evaluated, with result and
+                         timing, plus the plugins that never ran
+      --json             Machine-readable output
+
+    BEHAVIOUR
+      --live-storage     Use the configured storage backend instead of a
+                         throwaway. The durable blocklist is then consulted —
+                         but a block will also be RECORDED, which can ban the
+                         address you are asking about. Off by default.
+
+    EXIT CODES
+      0  allowed          64  usage error
+      1  blocked          70  internal error
+      2  challenged
+
+    EXAMPLES
+      {$script} --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/
+      {$script} --config=firewall.yml --url='/search?q=1%27+UNION+SELECT' --explain
+      {$script} --config=firewall.yml --header='User-Agent: sqlmap/1.8' --json
+
+    TXT;
+}
+
+/**
+ * Normalise a repeatable option into a list.
+ *
+ * getopt() hands back a string for one occurrence and an array for several,
+ * which is a reliable source of "works with two headers, breaks with one".
+ *
+ * @param array<string, mixed> $options
+ * @param string $name
+ *
+ * @return array<int, string>
+ */
+function repeatable(array $options, string $name): array
+{
+    if (!isset($options[$name])) {
+        return [];
+    }
+
+    $value = $options[$name];
+
+    return array_values(array_map('strval', is_array($value) ? $value : [$value]));
+}
+
+/**
+ * Read a single-valued option.
+ *
+ * getopt() hands back an array when a flag is repeated, so a bare
+ * `(string) $options['ip']` emits "Array to string conversion" the moment
+ * someone passes `--ip` twice. Last occurrence wins, which is what a reader
+ * would assume from the command line they typed.
+ *
+ * @param array<string, mixed> $options
+ * @param string $name
+ * @param string|null $default
+ *
+ * @return string|null
+ */
+function single(array $options, string $name, ?string $default = null): ?string
+{
+    if (!array_key_exists($name, $options)) {
+        return $default;
+    }
+
+    $value = $options[$name];
+
+    if (is_array($value)) {
+        $value = end($value);
+    }
+
+    return is_scalar($value) ? (string) $value : $default;
+}
+
+$configs = repeatable($options, 'config');
+
+if ($configs === []) {
+    fwrite(STDERR, "Error: at least one --config=FILE is required.\n\n");
+    usage();
+    exit(EXIT_USAGE);
+}
+
+foreach ($configs as $config) {
+    if (!is_file($config) || !is_readable($config)) {
+        fwrite(STDERR, "Error: config file not readable: {$config}\n");
+        exit(EXIT_USAGE);
+    }
+}
+
+$ip = (string) single($options, 'ip', '127.0.0.1');
+
+if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+    fwrite(STDERR, "Error: --ip is not a valid address: {$ip}\n");
+    exit(EXIT_USAGE);
+}
+
+$url = (string) single($options, 'url', '/');
+$body = array_key_exists('body', $options) ? (string) single($options, 'body', '') : null;
+// A body without a method almost always means POST; defaulting to GET would
+// quietly test something the caller did not describe.
+$method = strtoupper((string) single($options, 'method', $body === null ? 'GET' : 'POST'));
+
+$server = ['REMOTE_ADDR' => $ip];
+
+foreach (repeatable($options, 'header') as $header) {
+    if (!str_contains($header, ':')) {
+        fwrite(STDERR, "Error: --header must be NAME:VALUE, got: {$header}\n");
+        exit(EXIT_USAGE);
+    }
+
+    [$name, $value] = explode(':', $header, 2);
+    $name = strtoupper(str_replace('-', '_', trim($name)));
+    $value = ltrim($value);
+
+    // Content-Type and Content-Length are CGI variables in their own right,
+    // not HTTP_ prefixed. Symfony reads them from those exact keys, so a
+    // --header='Content-Type: application/json' would otherwise be ignored and
+    // the body would parse as the wrong type.
+    $server[in_array($name, ['CONTENT_TYPE', 'CONTENT_LENGTH'], true) ? $name : 'HTTP_' . $name] = $value;
+}
+
+$handler = new TestHandler(Level::Debug);
+
+// The two overrides that make this work at all. Bracket paths, not nested
+// arrays — see the header comment.
+$overrides = [
+    // Without this, evaluate() short-circuits in CLI and reports everything as
+    // allowed.
+    '[global][mode]' => 'exception',
+];
+
+$liveStorage = isset($options['live-storage']);
+
+if ($liveStorage) {
+    // On stderr so it cannot corrupt --json on stdout. Worth saying out loud:
+    // the block path records an offense and applies blocking_escalation, so a
+    // "check" against live storage can ban the address being asked about.
+    fwrite(
+        STDERR,
+        "Warning: --live-storage is on. A blocked verdict will be RECORDED in the\n"
+        . "         configured backend, which can ban the address you are testing.\n",
+    );
+}
+
+if (!$liveStorage) {
+    // A check must not be able to ban anyone. The block path writes to
+    // storage, records an offense and escalates; swapping in a per-process
+    // store makes all of that inert.
+    $overrides['[storage][type]'] = InMemoryStorage::class;
+}
+
+try {
+    $inputs = $configs;
+    $inputs[] = ['logger' => [['class' => $handler]]];
+
+    $firewall = Firewall::create($inputs, $overrides);
+} catch (Throwable $exception) {
+    fwrite(STDERR, sprintf(
+        "Error: could not build the firewall from that configuration.\n  %s: %s\n",
+        $exception::class,
+        $exception->getMessage(),
+    ));
+    exit(EXIT_INTERNAL);
+}
+
+$request = Request::create($url, $method, [], [], [], $server, $body);
+
+$verdict = 'allowed';
+$status = null;
+$reason = null;
+
+try {
+    $firewall->evaluate($request);
+} catch (FirewallBlockedException $exception) {
+    $verdict = 'blocked';
+    $status = $exception->getCode();
+    $reason = $exception->getMessage();
+} catch (ChallengeRequiredException $exception) {
+    $verdict = 'challenged';
+    $reason = $exception->getMessage();
+} catch (ChallengeSolvedException) {
+    $verdict = 'allowed';
+    $reason = 'a challenge solution was accepted';
+} catch (Throwable $exception) {
+    fwrite(STDERR, sprintf(
+        "Error: evaluation threw unexpectedly.\n  %s: %s\n",
+        $exception::class,
+        $exception->getMessage(),
+    ));
+    exit(EXIT_INTERNAL);
+}
+
+// -----------------------------------------------------------------------
+// Attribution and per-plugin detail, read back out of the log.
+//
+// FirewallBlockedException carries only a message and a status code, so the
+// responsible plugin comes from the log line the block path already writes.
+// Reading the log rather than re-evaluating each plugin matters: a second pass
+// would repeat every side effect, including any outbound reputation lookup.
+// -----------------------------------------------------------------------
+
+$plugin = null;
+$pluginRole = null;
+$lastMatched = null;
+$evaluated = [];
+
+foreach ($handler->getRecords() as $record) {
+    $context = $record->context;
+
+    // Attribution is keyed on the firewall's own decision messages, NOT on the
+    // mere presence of a `plugin` context key. Individual plugins log their own
+    // debug lines carrying that key, so a looser match reports a "matched
+    // plugin" on requests where nothing matched at all.
+    $decision = match (true) {
+        str_contains($record->message, 'Request blocked by plugin') => 'blocked by',
+        str_contains($record->message, 'Request bypassed') => 'allowed by',
+        str_contains($record->message, 'would be blocked') => 'would be blocked by',
+        str_contains($record->message, 'would be challenged') => 'would be challenged by',
+        default => null,
+    };
+
+    if ($decision !== null && isset($context['plugin_name']) && is_string($context['plugin_name'])) {
+        $plugin = $context['plugin_name'];
+        $pluginRole = $decision;
+    }
+
+    // PluginManager logs this only when a plugin actually returns TRUE, so it
+    // is a safe fallback for paths that do not emit one of the messages above
+    // — the challenge flow among them.
+    if (str_contains($record->message, 'Plugin evaluation matched')
+        && isset($context['plugin'])
+        && is_string($context['plugin'])
+    ) {
+        $lastMatched = $context['plugin'];
+    }
+
+    if (isset($context['evaluated_plugins']) && is_array($context['evaluated_plugins'])) {
+        foreach ($context['evaluated_plugins'] as $entry) {
+            if (is_array($entry) && isset($entry['plugin'])) {
+                $evaluated[] = [
+                    'plugin' => (string) $entry['plugin'],
+                    'matched' => (bool) ($entry['result'] ?? false),
+                    'time_ms' => is_numeric($entry['time_ms'] ?? null) ? (float) $entry['time_ms'] : 0.0,
+                ];
+            }
+        }
+    }
+}
+
+// A verdict that is not "allowed" must have had something behind it; fall back
+// to the last confirmed plugin match rather than reporting no attribution.
+if ($plugin === null && $verdict !== 'allowed' && $lastMatched !== null) {
+    $plugin = $lastMatched;
+    $pluginRole = $verdict === 'challenged' ? 'challenged by' : 'blocked by';
+}
+
+// Configured inventory, so --explain can also show what never ran.
+$configured = [];
+
+try {
+    $merged = PluginConfigNormalizer::normalize(
+        \Kanopi\Firewall\Utility\Config::load(
+            array_merge([__DIR__ . '/../config/config.yml'], $configs),
+            $overrides,
+        )
+    );
+
+    foreach (PluginConfigNormalizer::partitionAndSort($merged['plugins'] ?? []) as $response => $plugins) {
+        foreach ($plugins as $entry) {
+            $class = is_string($entry['plugin'] ?? null) ? $entry['plugin'] : '';
+
+            if ($class !== '') {
+                $configured[] = [
+                    'response' => (string) $response,
+                    'class' => $class,
+                    'weight' => is_numeric($entry['weight'] ?? null) ? (int) $entry['weight'] : 0,
+                ];
+            }
+        }
+    }
+} catch (Throwable) {
+    // Inventory is a convenience for --explain; the verdict above stands
+    // regardless, and failing here must not change the exit code.
+    $configured = [];
+}
+
+$evaluatedNames = array_column($evaluated, 'plugin');
+
+$result = [
+    'verdict' => $verdict,
+    'plugin' => $plugin,
+    'status' => $status,
+    'reason' => $reason,
+    'request' => [
+        'ip' => $ip,
+        'method' => $request->getMethod(),
+        'path' => $request->getPathInfo(),
+        'query' => $request->getQueryString(),
+    ],
+    'storage' => $liveStorage ? 'configured backend' : 'throwaway (in-memory)',
+];
+
+if (isset($options['explain'])) {
+    $result['evaluated'] = $evaluated;
+    $result['configured'] = $configured;
+}
+
+// -----------------------------------------------------------------------
+// Output
+// -----------------------------------------------------------------------
+
+if (isset($options['json'])) {
+    echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), "\n";
+} else {
+    $label = ['allowed' => 'ALLOWED', 'blocked' => 'BLOCKED', 'challenged' => 'CHALLENGED'][$verdict];
+
+    printf("%s  %s %s\n", $label, $request->getMethod(), $url);
+    printf("  client            %s\n", $ip);
+
+    if ($plugin !== null) {
+        printf("  %-17s %s\n", $pluginRole ?? 'matched plugin', $plugin);
+    }
+
+    if ($status !== null) {
+        printf("  status            %d\n", $status);
+    }
+
+    if ($reason !== null && $reason !== '') {
+        printf("  reason            %s\n", $reason);
+    }
+
+    printf("  storage           %s\n", $result['storage']);
+
+    if (isset($options['explain'])) {
+        echo "\nPlugins evaluated, in order:\n";
+
+        if ($evaluated === []) {
+            echo "  (none — no plugins were reached)\n";
+        }
+
+        foreach ($evaluated as $entry) {
+            printf(
+                "  %-7s %-28s %6.2f ms\n",
+                $entry['matched'] ? 'MATCH' : 'pass',
+                $entry['plugin'],
+                $entry['time_ms'],
+            );
+        }
+
+        // What did not run is often the actual answer to "why wasn't this
+        // caught?" — an earlier plugin matched and short-circuited the chain.
+        //
+        // The log records a plugin's *display* name ("IP Address") while the
+        // config carries its FQCN (...\IpAddress), so both sides are reduced to
+        // lowercase alphanumerics before comparing. A case-sensitive match here
+        // reported every plugin as unreached, including ones that had visibly
+        // just run.
+        $fold = static fn(string $value): string
+            => strtolower((string) preg_replace('/[^A-Za-z0-9]/', '', $value));
+
+        $ran = array_map($fold, $evaluatedNames);
+
+        $skipped = array_values(array_filter(
+            $configured,
+            static fn(array $entry): bool => !in_array(
+                $fold(substr((string) strrchr('\\' . $entry['class'], '\\'), 1)),
+                $ran,
+                true,
+            ),
+        ));
+
+        if ($skipped !== []) {
+            echo "\nConfigured but not reached:\n";
+
+            foreach ($skipped as $entry) {
+                printf("  %-9s %-40s weight %d\n", $entry['response'], $entry['class'], $entry['weight']);
+            }
+        }
+    }
+}
+
+exit(match ($verdict) {
+    'blocked' => EXIT_BLOCKED,
+    'challenged' => EXIT_CHALLENGED,
+    default => EXIT_ALLOWED,
+});

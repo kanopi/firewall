@@ -13,6 +13,9 @@
         }
     ],
     "license": "MIT",
+    "bin": [
+        "bin/firewall-check"
+    ],
     "autoload": {
         "psr-4": {
             "Kanopi\\Firewall\\": "src/"
@@ -124,7 +127,8 @@
             "PERF_VUS=50 PERF_DURATION=15s PERF_RAMP=5s PERF_WARMUP=5 bash tests/Performance/bin/run.sh baseline bootstrap crs all-on"
         ],
         "perf:validate": "php tests/Performance/bin/validate-scenarios.php --skip-geoip",
-        "perf:down": "docker compose -f tests/Performance/docker-compose.yml down --volumes --remove-orphans"
+        "perf:down": "docker compose -f tests/Performance/docker-compose.yml down --volumes --remove-orphans",
+        "check:request": "php bin/firewall-check"
     },
     "scripts-descriptions": {
         "demo": "Run the demo on PHP's built-in server (single-process) at http://localhost:8000",
@@ -136,7 +140,8 @@
         "perf": "Run the full per-plugin performance benchmark (nginx + php-fpm + k6, ~20-40 min). Results in tests/Performance/results/",
         "perf:quick": "Short benchmark over baseline, bootstrap, crs and all-on — enough to sanity check a change in a couple of minutes",
         "perf:validate": "Check every performance scenario config loads and evaluates, in seconds. Run this before a full benchmark",
-        "perf:down": "Tear down the performance harness stack and drop its volumes (GeoIP databases and caches)"
+        "perf:down": "Tear down the performance harness stack and drop its volumes (GeoIP databases and caches)",
+        "check:request": "Ask whether a given request would be blocked, and by what. Pass options after `--`, e.g. `composer check:request -- --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/`"
     },
     "prefer-stable": true,
     "minimum-stability": "dev",
