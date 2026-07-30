@@ -11,11 +11,15 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Storage;
 
+use Kanopi\Firewall\Traits\AddressMatchTrait;
+
 /**
  * In-memory key-value store for temporary runtime use.
  */
-class InMemoryStorage extends AbstractStorageBase
+class InMemoryStorage extends AbstractStorageBase implements QueryableStorageInterface
 {
+    use AddressMatchTrait;
+
     /**
      * Stores the data.
      * @var array<string, mixed>
@@ -195,5 +199,112 @@ class InMemoryStorage extends AbstractStorageBase
         return count(array_filter($this->offenses[$key] ?? [], function (array $item) use ($start, $end): bool {
             return strtotime((string) $item['timestamp']) >= $start && strtotime((string) $item['timestamp']) <= $end;
         }));
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function find(string $pattern): array
+    {
+        if (!$this->isValidPattern($pattern)) {
+            $this->getLogger()->warning('Storage find skipped - not a valid address or CIDR range', [
+                'pattern' => $pattern,
+            ]);
+            return [];
+        }
+
+        $now = time();
+        $matches = [];
+
+        foreach ($this->store as $address => $record) {
+            // $store values are `mixed`, so the shape genuinely has to be
+            // checked; the keys are already typed `string` and do not.
+            if (!is_array($record)) {
+                continue;
+            }
+
+            $expire = (int) ($record['expire'] ?? 0);
+
+            // Skip blocks that have lapsed but not yet been collected. An
+            // operator asking "why is this customer blocked?" must not be
+            // shown a block that expired an hour ago.
+            if ($expire > 0 && $expire < $now) {
+                continue;
+            }
+
+            if (!$this->addressMatches($address, $pattern)) {
+                continue;
+            }
+
+            $matches[$address] = [
+                'value' => $record['value'] ?? null,
+                'expire' => $expire,
+                'expires_at' => $expire > 0 ? date('c', $expire) : null,
+                'offenses' => count($this->offenses[$address] ?? []),
+            ];
+        }
+
+        $this->getLogger()->debug('Storage find completed', [
+            'pattern' => $pattern,
+            'matches' => count($matches),
+        ]);
+
+        return $matches;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function deleteMatching(array $patterns): int
+    {
+        $patterns = $this->validPatterns($patterns);
+
+        if ($patterns === []) {
+            return 0;
+        }
+
+        // Collected before deleting rather than unsetting mid-iteration, so
+        // the traversal is not mutated underneath itself.
+        $doomed = [];
+
+        foreach (array_keys($this->store) as $address) {
+            foreach ($patterns as $pattern) {
+                if ($this->addressMatches($address, $pattern)) {
+                    $doomed[] = $address;
+                    break;
+                }
+            }
+        }
+
+        $deleted = 0;
+
+        foreach ($doomed as $address) {
+            // Offenses are dropped alongside the block. Leaving them behind
+            // would mean an address un-blocked by an operator gets escalated
+            // straight back to a longer ban by `blocking_escalation` on its
+            // next offence — the block would look lifted and would not be.
+            unset($this->offenses[$address]);
+
+            // Unset directly rather than calling $this->delete().
+            //
+            // FileStorage overrides delete() to take an exclusive lock, and
+            // its deleteMatching() override already holds that same lock.
+            // withExclusiveLock() opens a fresh handle per call, and flock()
+            // locks attach to the open file description, so a nested call
+            // blocks on a lock this very process is holding — a permanent
+            // self-deadlock, not a slow path. Verified: a second
+            // LOCK_EX|LOCK_NB on the same file in one process returns false.
+            if (array_key_exists($address, $this->store)) {
+                unset($this->store[$address]);
+                $deleted++;
+            }
+        }
+
+        $this->getLogger()->info('Storage records deleted by pattern', [
+            'patterns' => $patterns,
+            'deleted' => $deleted,
+        ]);
+
+        return $deleted;
     }
 }

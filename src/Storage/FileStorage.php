@@ -195,4 +195,62 @@ class FileStorage extends InMemoryStorage
         $this->loadOffenseFile();
         return parent::countOffenses($key, $start, $end);
     }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function find(string $pattern): array
+    {
+        // Both files, because find() reports an offense count alongside each
+        // block. Unlocked, matching get() and countOffenses(): a read that is
+        // a snapshot is acceptable here, and taking an exclusive lock for it
+        // would serialise every lookup against live traffic.
+        $this->loadStorageFile();
+        $this->loadOffenseFile();
+
+        return parent::find($pattern);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function deleteMatching(array $patterns): int
+    {
+        // Both files are written, so both locks are held. The nesting order —
+        // storage first, offenses second — is the order set() already
+        // establishes by taking the storage lock and then calling
+        // recordOffense(). Acquiring them the other way round anywhere would
+        // invite a deadlock between two concurrent processes; matching the
+        // existing order is what avoids it.
+        //
+        // The two locks are distinct files, so this nesting is safe where a
+        // second lock on the *same* file would not be: flock() is not
+        // reentrant within a process.
+        return (int) $this->withExclusiveLock($this->filePath, fn(): int
+            => (int) $this->withExclusiveLock($this->offensesFilePath, function () use ($patterns): int {
+                $this->loadStorageFile();
+                $this->loadOffenseFile();
+
+                // parent::deleteMatching() mutates $this->store and
+                // $this->offenses directly rather than routing through
+                // delete(), which would try to re-take the storage lock this
+                // closure already holds.
+                $deleted = parent::deleteMatching($patterns);
+
+                if ($deleted > 0) {
+                    $this->persistStorageFile();
+                    // Offenses are pruned by parent::deleteMatching(); without
+                    // persisting them they would survive the un-block and
+                    // re-escalate the address on its next hit.
+                    $this->persistOffenseFile();
+
+                    $this->getLogger()->info('Records deleted by pattern from file storage', [
+                        'deleted' => $deleted,
+                        'file' => $this->filePath,
+                    ]);
+                }
+
+                return $deleted;
+            }));
+    }
 }
