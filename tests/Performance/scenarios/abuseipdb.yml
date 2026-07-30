@@ -1,0 +1,43 @@
+# Scenario: abuseipdb
+#
+# This plugin calls a third-party HTTP API on a cache miss. Benchmarking that
+# would measure AbuseIPDB's response time and burn the daily quota, so the
+# harness pre-seeds the file cache for every address in the generated IP pool
+# (bin/seed-abuseipdb-cache.php runs before this scenario). Every lookup is
+# therefore a cache hit.
+#
+# That is not a dodge — the cache-hit path is the one a production site takes
+# for essentially all of its traffic, with cache_ttl at 24h and a client
+# population that repeats. What this scenario measures is the real steady-state
+# cost: a stat, a file read, a JSON decode, and a threshold compare.
+#
+# The cold-miss path is a network round trip and is not benchmarkable here in
+# any meaningful way. If you need that number, measure your own API latency
+# and add it — the plugin fails open after `timeout` seconds either way.
+#
+# The api_key below is deliberately a non-secret placeholder. It is never sent
+# anywhere, because the cache never misses. The short timeout is a guard: if a
+# seeding gap did cause a miss, the request fails open quickly instead of
+# stalling a worker for seconds and poisoning the latency distribution.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\AbuseIpdb"
+    response: block
+    weight: 40
+    enable: true
+    config:
+      api_key: "perf-harness-placeholder-key-never-sent"
+      threshold: 75
+      cache_ttl: 86400
+      error_cache_ttl: 300
+      timeout: 0.5
+      max_age_in_days: 30
+      cache_dir: /perf-cache/abuseipdb
+      block_status: 403
+      block_duration: 3600

@@ -1,0 +1,18 @@
+# Scenario: bootstrap
+#
+# The firewall is wired up but has no plugins. Subtracting `baseline` from
+# this isolates the fixed cost every integration pays no matter how it is
+# configured: YAML parse, config merge, logger construction, plugin-manager
+# setup, Request::createFromGlobals(), and the storage blocklist check.
+#
+# If this number is large, no amount of plugin tuning will help — the fix
+# would be config caching, not rule pruning. That distinction is why this
+# scenario exists separately from the per-plugin ones.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins: []

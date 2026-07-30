@@ -1,0 +1,29 @@
+# Scenario: asn
+#
+# Same shape as the geolocation scenario but against the ASN database, so the
+# two are directly comparable: any difference between them is the cost of the
+# database itself, not of the plugin scaffolding around it.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+    response: block
+    weight: 0
+    enable: true
+    metadata:
+      reader:
+        type: reader
+        db: /geoip/GeoLite2-ASN.mmdb
+    config:
+      # Hosting and VPN networks that show up in scanner traffic.
+      - "asn:14061"
+      - "asn:16276"
+      - "asn:24940"
+      - "asn:9009"
+      - "asn_org@contains:DIGITALOCEAN"
+      - "asn_org@contains:OVH"

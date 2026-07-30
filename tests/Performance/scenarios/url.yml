@@ -1,0 +1,16 @@
+# Scenario: url
+#
+# Pulls in the two shipped URL presets rather than a hand-written short list.
+# These are what people actually deploy, they contain a few hundred rules
+# including a large number of regexes, and regex count is the dominant term
+# in this plugin's cost. Benchmarking a trimmed-down list would flatter it.
+configs:
+  - "{presets_dir}/wordpress.yml"
+  - "{presets_dir}/malicious-urls.yml"
+
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage

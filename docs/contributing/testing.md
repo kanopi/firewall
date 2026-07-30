@@ -90,11 +90,30 @@ It copies the working tree into the container, discards `composer.lock` and `ven
 
 ## Performance Benchmarks
 
-The repository ships a load-testing harness that measures throughput, latency, memory, and false-positive rate under mixed legitimate/malicious traffic. See [tests/Performance/README.md](https://github.com/kanopi/firewall/blob/2.x/tests/Performance/README.md).
+The repository ships a containerised load-testing harness — nginx → php-fpm → firewall, driven by [k6](https://k6.io/) — that measures each plugin's per-request cost under concurrent load. It answers three questions: what each plugin costs, whether the firewall reduces the throughput a fixed worker pool can serve, and whether blocking still behaves correctly while saturated.
+
+The only host requirement is Docker with Compose v2.
 
 ```bash
-bash tests/Performance/run-local-test.sh
+composer perf:validate  # seconds: check every scenario config loads
+composer perf:quick     # minutes: baseline, bootstrap, crs, all-on
+composer perf           # 20-40 min: all 14 scenarios
+composer perf:down      # tear the stack down and drop its volumes
 ```
+
+Results are written to `tests/Performance/results/` as `report.md`, `report.html`, and `summary.json`.
+
+Each scenario runs against a freshly recreated php-fpm container so that opcache, the CRS rule cache, and the worker pool cannot carry one scenario's warm-up into the next. A PHP `auto_prepend_file` rewrites `REMOTE_ADDR` from a header, which is how a single load generator presents thousands of distinct client IPs to the IP-, geo-, and rate-limit-based plugins.
+
+The benchmark **reports rather than gates** — CI runners are shared hardware, so an absolute latency threshold would flake more often than it would catch a regression. It runs nightly on `2.x`; the much cheaper scenario validation runs on every PR.
+
+Set `PERF_APP_WORK_MS` to your application's median response time to get overhead percentages representative of a real app rather than of a hello-world:
+
+```bash
+PERF_APP_WORK_MS=120 bash tests/Performance/bin/run.sh
+```
+
+See [tests/Performance/README.md](https://github.com/kanopi/firewall/blob/2.x/tests/Performance/README.md) for the scenario list, what is deliberately not measured and why, and how to read the report.
 
 ## Example Test Case
 

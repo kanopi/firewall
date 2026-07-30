@@ -1,0 +1,44 @@
+# Scenario: rate-limit (Redis storage)
+#
+# The realistic deployment: counters shared across workers, so limits are
+# actually enforced and every request costs at least one Redis round trip.
+#
+# This is the scenario most likely to expose a bottleneck under load, because
+# it is the only per-plugin scenario that does blocking network I/O inside the
+# request. If php-fpm workers pile up anywhere, expect it to be here — watch
+# the gap between X-Fw-Eval-Us and total request latency as VUs climb.
+#
+# The generator's `burst` profile hammers /login from a small slice of the IP
+# pool specifically so this scenario has something real to enforce against.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    weight: 100
+    enable: true
+    metadata:
+      default_rate: 60
+      default_sample: 60
+      default_expiration_time: 300
+      storage:
+        type: Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage
+        config:
+          redis:
+            host: redis
+            port: 6379
+    config:
+      - path: /login
+        rate: 5
+        sample: 60
+      - path: /api/*
+        rate: 100
+        sample: 60
+      - path: /admin/*
+        rate: 20
+        sample: 60
