@@ -47,3 +47,50 @@ storage:
       # port: 3306
       # driver: 'pdo_mysql'
 ```
+
+## Searching and Un-blocking
+
+`StorageInterface` gives you keyed access — `get()`, `set()`, `delete()` for an address you already know. That covers the firewall's own hot path, but it leaves two operational questions unanswered: *who is currently blocked?*, and *how do I lift a block that should not have been applied?*
+
+Storages that can answer those implement `Kanopi\Firewall\Storage\QueryableStorageInterface`, which adds two methods:
+
+| Method | Purpose |
+|---|---|
+| `find(string $pattern): array` | Records matching a single address or a CIDR range, keyed by address |
+| `deleteMatching(array $patterns): int` | Delete everything matching any of the given addresses / ranges; returns the count |
+
+All three shipped storages implement it. `FileStorage` inherits the behaviour from `InMemoryStorage`.
+
+```php
+use Kanopi\Firewall\Storage\QueryableStorageInterface;
+use Kanopi\Firewall\Storage\StorageFactory;
+
+$storage = StorageFactory::create($config);
+
+if ($storage instanceof QueryableStorageInterface) {
+    // Who is blocked in this range, and why?
+    foreach ($storage->find('203.0.113.0/24') as $address => $record) {
+        printf(
+            "%s — expires %s, %d offense(s)\n",
+            $address,
+            $record['expires_at'] ?? 'never',
+            $record['offenses']
+        );
+    }
+
+    // Lift a block that should not have been applied.
+    $lifted = $storage->deleteMatching(['203.0.113.5', '198.51.100.0/24']);
+}
+```
+
+### Why a separate interface
+
+Not every backend can enumerate its own keys — Memcached, the worked example in [Custom Storage Backends](../guides/custom-storage.md), cannot list keys at all. Folding these methods into `StorageInterface` would oblige every implementation to supply something it may be unable to implement honestly, and would break existing custom storages on upgrade. Enumeration is a capability, so it is modelled as one, and callers check with `instanceof` before using it.
+
+### Behaviour worth knowing
+
+- **Both IPv4 and IPv6 ranges** are supported: `203.0.113.0/24`, `2001:db8::/32`.
+- **A malformed pattern matches nothing**, never everything. An out-of-range prefix such as `/33` on IPv4 is treated as invalid rather than silently clamped to a single host — otherwise you would clear one record believing you had cleared a range.
+- **One bad pattern does not abort the rest.** Invalid entries are skipped and logged, so a typo in one of twenty ranges still lifts the other nineteen. The return count tells you what actually happened.
+- **`find()` hides expired records** so you are not shown a block that lapsed an hour ago, but **`deleteMatching()` still removes them** — otherwise an un-block would report nothing matched while the row was still on disk.
+- **Offense history is cleared alongside the block.** Left behind, [`blocking_escalation`](global.md#multiple-offenses-defense) would escalate the address straight back to a longer ban on its next request, and the un-block would appear not to have worked.

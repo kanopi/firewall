@@ -135,3 +135,30 @@ Firewall::create([__DIR__ . '/firewall.yml'], [
     '[plugins][0][metadata][storage][type]' => $myRateLimitStorage,
 ]);
 ```
+
+## Optional: Searching and Un-blocking
+
+`AbstractStorageBase` gives your backend the firewall's hot path. If it can also enumerate its own keys, implement `QueryableStorageInterface` so operators can answer "who is blocked?" and lift a block across a range:
+
+```php
+use Kanopi\Firewall\Storage\AbstractStorageBase;
+use Kanopi\Firewall\Storage\QueryableStorageInterface;
+use Kanopi\Firewall\Traits\AddressMatchTrait;
+
+class MyStorage extends AbstractStorageBase implements QueryableStorageInterface
+{
+    // AddressMatchTrait supplies addressMatches(), isValidPattern() and
+    // validPatterns(), so every backend agrees on what `203.0.113.0/24`
+    // means. A range that matched here but not elsewhere would make an
+    // un-block silently partial.
+    use AddressMatchTrait;
+
+    public function find(string $pattern): array { /* … */ }
+
+    public function deleteMatching(array $patterns): int { /* … */ }
+}
+```
+
+**This is deliberately optional.** The Memcached example above cannot reliably list keys, and a backend that cannot enumerate should simply not implement the interface rather than return an empty set that reads as "nothing is blocked". Callers are expected to check with `instanceof` — see [Searching and Un-blocking](../configuration/storage.md#searching-and-un-blocking).
+
+If you do implement it, two behaviours are worth matching so operators get consistent results across backends: `find()` should exclude records whose expiry has lapsed, and `deleteMatching()` should clear the address's offense history alongside the block.

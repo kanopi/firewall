@@ -15,14 +15,16 @@ use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Index;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Type;
+use Kanopi\Firewall\Traits\AddressMatchTrait;
 use Kanopi\Firewall\Traits\DatabaseTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Connection to Database Storage related items.
  */
-class DatabaseStorage extends AbstractStorageBase
+class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInterface
 {
+    use AddressMatchTrait;
     use DatabaseTrait;
 
     /**
@@ -362,5 +364,176 @@ class DatabaseStorage extends AbstractStorageBase
         }
 
         return count($results);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function find(string $pattern): array
+    {
+        if (!$this->isValidPattern($pattern)) {
+            $this->getLogger()->warning('Storage find skipped - not a valid address or CIDR range', [
+                'pattern' => $pattern,
+            ]);
+            return [];
+        }
+
+        $now = time();
+
+        try {
+            $builder = $this->connection->createQueryBuilder()
+                ->select('*')
+                ->from($this->config['storage_table'])
+                // Lapsed-but-uncollected rows are excluded here rather than in
+                // PHP so the database does the filtering it is good at, and so
+                // an operator is never shown a block that is no longer in force.
+                ->where('expire = 0 OR expire >= :now')
+                ->setParameter('now', $now);
+
+            // A bare address is an indexed equality lookup — `remote_address`
+            // carries a unique index, so this is a single row fetch rather
+            // than a table scan. Only a CIDR range needs every candidate
+            // pulled back for matching in PHP, because CIDR containment is not
+            // portable SQL across MySQL, PostgreSQL and SQLite.
+            if (!str_contains($pattern, '/')) {
+                $builder->andWhere('remote_address = :remote_address')
+                    ->setParameter('remote_address', $pattern);
+            }
+
+            $rows = $builder->executeQuery()->fetchAllAssociative();
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to search database storage', [
+                'table' => $this->config['storage_table'],
+                'pattern' => $pattern,
+                'error' => $exception->getMessage(),
+            ]);
+            return [];
+        }
+
+        $matches = [];
+
+        foreach ($rows as $row) {
+            $address = (string) ($row['remote_address'] ?? '');
+            if ($address === '') {
+                continue;
+            }
+
+            if (!$this->addressMatches($address, $pattern)) {
+                continue;
+            }
+
+            $expire = (int) ($row['expire'] ?? 0);
+
+            $matches[$address] = [
+                'value' => $row,
+                'expire' => $expire,
+                'expires_at' => $expire > 0 ? date('c', $expire) : null,
+                'offenses' => $this->countOffenses($address),
+            ];
+        }
+
+        $this->getLogger()->debug('Storage find completed', [
+            'pattern' => $pattern,
+            'candidates' => count($rows),
+            'matches' => count($matches),
+        ]);
+
+        return $matches;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function deleteMatching(array $patterns): int
+    {
+        $patterns = $this->validPatterns($patterns);
+
+        if ($patterns === []) {
+            return 0;
+        }
+
+        // Resolve every pattern to concrete addresses first, then delete by
+        // exact key. Two reasons: CIDR containment has no portable SQL form
+        // across the supported drivers, and deleting by resolved address keeps
+        // the offense cleanup below operating on the same set the storage
+        // delete did.
+        $addresses = [];
+
+        foreach ($patterns as $pattern) {
+            if (!str_contains($pattern, '/')) {
+                // Exact addresses do not need resolving. Taking them straight
+                // through also means an un-block still works for a row whose
+                // expiry has already lapsed, which find() deliberately hides.
+                $addresses[$pattern] = true;
+                continue;
+            }
+
+            try {
+                $rows = $this->connection->createQueryBuilder()
+                    ->select('remote_address')
+                    ->from($this->config['storage_table'])
+                    ->executeQuery()
+                    ->fetchAllAssociative();
+            } catch (\Exception $exception) {
+                $this->getLogger()->error('Failed to resolve pattern against database storage', [
+                    'table' => $this->config['storage_table'],
+                    'pattern' => $pattern,
+                    'error' => $exception->getMessage(),
+                ]);
+                continue;
+            }
+
+            foreach ($rows as $row) {
+                $address = (string) ($row['remote_address'] ?? '');
+
+                if ($address !== '' && $this->addressMatches($address, $pattern)) {
+                    $addresses[$address] = true;
+                }
+            }
+        }
+
+        $deleted = 0;
+
+        foreach (array_keys($addresses) as $address) {
+            try {
+                $affected = $this->connection->delete($this->config['storage_table'], [
+                    'remote_address' => $address,
+                ]);
+            } catch (\Exception $exception) {
+                $this->getLogger()->error('Failed to delete matched record from database storage', [
+                    'table' => $this->config['storage_table'],
+                    'address' => $address,
+                    'error' => $exception->getMessage(),
+                ]);
+                continue;
+            }
+
+            if ($affected > 0) {
+                $deleted++;
+            }
+
+            // Offenses are cleared alongside the block. Left behind, an
+            // address an operator just un-blocked would be escalated straight
+            // back to a longer ban by `blocking_escalation` on its next
+            // offence, and the un-block would appear not to have worked.
+            try {
+                $this->connection->delete($this->config['offenses_table'], [
+                    'remote_address' => $address,
+                ]);
+            } catch (\Exception $exception) {
+                $this->getLogger()->warning('Deleted the block but failed to clear its offense history', [
+                    'table' => $this->config['offenses_table'],
+                    'address' => $address,
+                    'error' => $exception->getMessage(),
+                ]);
+            }
+        }
+
+        $this->getLogger()->info('Storage records deleted by pattern', [
+            'patterns' => $patterns,
+            'deleted' => $deleted,
+        ]);
+
+        return $deleted;
     }
 }

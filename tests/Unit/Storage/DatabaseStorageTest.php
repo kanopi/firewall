@@ -657,4 +657,114 @@ class DatabaseStorageTest extends AbstractTestCase
         };
         $this->assertIsInt($plugin->getConfig()['connection']['port']);
     }
+
+    /**
+     * Point the mocked query builder at a fixed set of rows.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function stubRows(array $rows): void
+    {
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('andWhere')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn($rows);
+    }
+
+    /**
+     * #26: CIDR containment has no portable SQL form across MySQL, PostgreSQL
+     * and SQLite, so candidate rows are matched in PHP. Rows outside the range
+     * must be filtered out rather than returned.
+     */
+    public function testFindFiltersCandidateRowsByCidr(): void
+    {
+        $this->stubRows([
+            ['remote_address' => '203.0.113.5', 'expire' => 0],
+            ['remote_address' => '203.0.113.99', 'expire' => 0],
+            ['remote_address' => '8.8.8.8', 'expire' => 0],
+        ]);
+
+        $found = $this->storage->find('203.0.113.0/24');
+
+        $this->assertEqualsCanonicalizing(['203.0.113.5', '203.0.113.99'], array_keys($found));
+    }
+
+    /**
+     * #26: a malformed pattern must not reach the database at all, and must
+     * match nothing — the caller's next move is usually to delete the result.
+     */
+    public function testFindRejectsMalformedPatternWithoutQuerying(): void
+    {
+        $this->mockConnection->expects($this->never())->method('createQueryBuilder');
+
+        $this->assertSame([], $this->storage->find('not-a-range'));
+    }
+
+    /**
+     * #26: a failed query reports nothing found rather than surfacing a
+     * partial result an operator might then delete against.
+     */
+    public function testFindReturnsEmptyOnQueryFailure(): void
+    {
+        $this->mockConnection->method('createQueryBuilder')->willThrowException(new \Exception('boom'));
+
+        $this->assertSame([], $this->storage->find('203.0.113.0/24'));
+    }
+
+    /**
+     * #26: deleting by range removes each matched address, and clears its
+     * offense history alongside so `blocking_escalation` cannot re-escalate an
+     * address an operator just un-blocked.
+     */
+    public function testDeleteMatchingRemovesBlocksAndOffenses(): void
+    {
+        $this->stubRows([
+            ['remote_address' => '203.0.113.5'],
+            ['remote_address' => '203.0.113.99'],
+            ['remote_address' => '8.8.8.8'],
+        ]);
+
+        $deletes = [];
+        $this->mockConnection->method('delete')
+            ->willReturnCallback(function (string $table, array $criteria) use (&$deletes): int {
+                $deletes[] = $table . ':' . $criteria['remote_address'];
+                return 1;
+            });
+
+        $deleted = $this->storage->deleteMatching(['203.0.113.0/24']);
+
+        $this->assertSame(2, $deleted);
+        $this->assertContains('firewall_storage:203.0.113.5', $deletes);
+        $this->assertContains('firewall_storage:203.0.113.99', $deletes);
+        $this->assertContains('firewall_offense:203.0.113.5', $deletes);
+        // Outside the range, so untouched in both tables.
+        $this->assertNotContains('firewall_storage:8.8.8.8', $deletes);
+        $this->assertNotContains('firewall_offense:8.8.8.8', $deletes);
+    }
+
+    /**
+     * #26: a bare address is an indexed equality lookup, so it must not
+     * trigger the full-table enumeration that only CIDR ranges require.
+     */
+    public function testDeleteMatchingByExactAddressSkipsEnumeration(): void
+    {
+        $this->mockConnection->expects($this->never())->method('createQueryBuilder');
+        $this->mockConnection->method('delete')->willReturn(1);
+
+        $this->assertSame(1, $this->storage->deleteMatching(['203.0.113.5']));
+    }
+
+    /**
+     * #26: one bad range must not strand the good ones.
+     */
+    public function testDeleteMatchingSkipsMalformedPatterns(): void
+    {
+        $this->mockConnection->method('delete')->willReturn(1);
+
+        $this->assertSame(0, $this->storage->deleteMatching(['garbage', '', '203.0.113.0/33']));
+    }
 }
