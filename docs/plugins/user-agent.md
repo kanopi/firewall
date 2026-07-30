@@ -152,6 +152,16 @@ Detection is unchanged either way — only the speed differs.
 
 A cache that cannot be created never stops the plugin working: the failure is logged at `warning` and detection continues uncached. An optimisation should not be able to take a site down.
 
+!!! warning "Check the log if you suspect the cache is not working"
+
+    Constructing a cache proves nothing — a filesystem pool is created quite happily against an unwritable directory and only fails later, on each write. The plugin therefore writes and reads back a probe value before trusting a cache, and logs this when it cannot:
+
+    ```
+    User Agent regex cache is not writable - every request will re-parse the detection corpus
+    ```
+
+    That message means roughly **600 ms per request instead of ~20 ms**. Point `metadata.cache.dir` at a writable directory, define `KANOPI_FIREWALL_CACHE_DIR`, or set `metadata.cache: false` if you want to accept the cost deliberately and stop the warning.
+
 ### Only what your rules need
 
 Detection runs in four phases — bot, OS, client, then device (brand and model). Since the rules are known up front, the plugin stops at the deepest phase they actually read:
