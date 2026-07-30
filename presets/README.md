@@ -26,7 +26,7 @@ malicious requests.
 | `wordpress.yml` | WordPress-specific hardening. |
 | `storage-pantheon.yml` | Storage wiring for Pantheon-hosted sites. |
 | `logging-pantheon.yml` | Logging wiring for Pantheon-hosted sites. |
-| `config.yml` | Composed preset that pulls in the recommended set. |
+| `config.yml` | Convenience bundle of the two URL-pattern presets (`malicious-urls.yml` + `wordpress.yml`). No rate limiting or vulnerability scoring. |
 | `example-*.yml` | Worked examples referenced from the docs. |
 
 ## Quick start
