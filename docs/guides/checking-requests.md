@@ -96,6 +96,12 @@ If that records a block you did not want, clearing it means removing the entry f
 vendor/bin/firewall-check --config=firewall.yml --ip=203.0.113.5 --json | jq -r .plugin
 ```
 
+The tool redirects its own diagnostics to stderr so stdout carries nothing but the JSON document. One case is outside its control: PHP's CLI SAPI prints **startup** warnings to stdout before any script runs, so a duplicate `extension=` line in your `php.ini` would land ahead of the JSON and break the pipe. If you hit that, run it as:
+
+```bash
+php -d display_errors=stderr vendor/bin/firewall-check --config=firewall.yml --json
+```
+
 ```json
 {
     "verdict": "blocked",

@@ -60,7 +60,16 @@ final class FirewallCheckCommandTest extends AbstractTestCase
      */
     private function runCheck(array $args): array
     {
-        $command = array_merge([PHP_BINARY, $this->script()], $args);
+        // -d display_errors=stderr isolates the subprocess from the host's
+        // own PHP startup diagnostics, which the CLI SAPI otherwise prints to
+        // STDOUT. CI installs pdo_mysql/mysqli/pdo_pgsql over an image that
+        // already has them, so every run emits 'Module "..." is already
+        // loaded' — which would land ahead of the JSON document and make these
+        // assertions measure the environment rather than the tool.
+        $command = array_merge(
+            [PHP_BINARY, '-d', 'display_errors=stderr', $this->script()],
+            $args,
+        );
         $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open($command, $descriptors, $pipes);
 
@@ -302,7 +311,8 @@ final class FirewallCheckCommandTest extends AbstractTestCase
         ]);
 
         $this->assertStringContainsString('Warning', $result['stderr']);
-        $this->assertStringNotContainsString('Warning', $result['stdout']);
+        // stdout must be the JSON document and nothing else, or `| jq` breaks.
+        $this->assertStringStartsWith('{', ltrim($result['stdout']));
         $this->assertIsArray(json_decode($result['stdout'], true, 512, JSON_THROW_ON_ERROR));
     }
 
@@ -319,6 +329,9 @@ final class FirewallCheckCommandTest extends AbstractTestCase
             '--json',
         ]);
 
+        // Assert the whole of stdout parses, not merely that it contains JSON
+        // somewhere — anything printed alongside would break a `| jq` pipeline.
+        $this->assertStringStartsWith('{', ltrim($result['stdout']));
         $decoded = json_decode($result['stdout'], true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame('blocked', $decoded['verdict']);

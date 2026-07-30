@@ -54,6 +54,18 @@ const EXIT_CHALLENGED = 2;
 const EXIT_USAGE = 64;
 const EXIT_INTERNAL = 70;
 
+// Keep stdout clean for --json.
+//
+// PHP's CLI SAPI sends diagnostics to STDOUT by default, so a notice raised
+// anywhere during evaluation — by a plugin, by a dependency — would be
+// interleaved with the JSON document and break `| jq`. Runtime diagnostics are
+// this script's business, so they are redirected here.
+//
+// Startup warnings emitted *before* this line (a duplicate `extension=` in
+// php.ini, for instance) cannot be caught from inside the script. If your PHP
+// prints those, run with `php -d display_errors=stderr`. See the guide.
+ini_set('display_errors', 'stderr');
+
 // Works both in this repository and when installed as a dependency, where the
 // script is symlinked into the consumer's vendor/bin.
 $autoloaders = [
