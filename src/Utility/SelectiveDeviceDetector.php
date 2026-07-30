@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Utility;
 
 use DeviceDetector\DeviceDetector;
+use Jaybizzle\CrawlerDetect\CrawlerDetect;
 
 /**
  * A DeviceDetector that stops once it has parsed as much as was asked for (#108).
@@ -142,6 +143,51 @@ class SelectiveDeviceDetector extends DeviceDetector
         }
 
         $this->parseDevice();
+    }
+
+    /**
+     * Shared crawler matcher (#109).
+     *
+     * Static because it is stateless for this use and constructing it costs
+     * ~0.4ms plus ~1.9ms on its first match, against ~0.05ms once warm. A
+     * fresh instance per request would hand back a noticeable slice of what
+     * #108 just saved on a `bot:`-only config.
+     */
+    private static ?CrawlerDetect $crawlerDetect = null;
+
+    /**
+     * Does a broader crawler list consider this agent automated?
+     *
+     * DELIBERATELY NOT AN OVERRIDE OF isBot(), AND THIS MATTERS:
+     *
+     * `parseUpTo()` — like `DeviceDetector::parse()` — stops as soon as
+     * `isBot()` is true, because a bot has no client or device worth parsing.
+     * Widening `isBot()` to include this list would therefore suppress client
+     * parsing for everything the broader list catches, and `getClient()`
+     * returns NULL once that happens. Verified:
+     *
+     *   masscan  (device-detector calls it a bot)  client = null
+     *   sqlmap   (it does not)                     client = {"name":"sqlmap",…}
+     *
+     * So folding this into `isBot()` would silently break
+     * `client.name@contains:sqlmap` — which is both the rule in the shipped
+     * example config and the documented workaround for the very gap this
+     * addresses. It stays a separate signal that no parse decision reads.
+     *
+     * @return bool
+     *   TRUE when the crawler list matches the user agent.
+     */
+    public function isCrawler(): bool
+    {
+        $userAgent = $this->getUserAgent();
+
+        if ($userAgent === '') {
+            return false;
+        }
+
+        self::$crawlerDetect ??= new CrawlerDetect();
+
+        return self::$crawlerDetect->isCrawler($userAgent);
     }
 
     /**
