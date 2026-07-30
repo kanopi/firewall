@@ -324,4 +324,57 @@ final class UserAgentCacheTest extends AbstractTestCase
     {
         $this->assertStringStartsWith(sys_get_temp_dir(), $this->plugin()->resolvedCacheDir());
     }
+
+    /**
+     * Regression for the defect shipped in v2.11.0.
+     *
+     * `FilesystemAdapter` constructs happily against an unwritable directory
+     * and only fails later, per write. The plugin therefore logged
+     * "cache initialized" at debug and every request paid the full uncached
+     * parse — roughly 645ms instead of ~20ms — silently, forever.
+     */
+    public function testUnwritableCacheIsDetectedAndWarnedAboutLoudly(): void
+    {
+        $handler = new TestLogHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->plugin(['cache' => ['dir' => '/proc/definitely-not-writable/nope']], ['bot:true']);
+
+        $this->assertNull(
+            $plugin->resolvedCache(),
+            'A cache that cannot persist must not be reported as usable.',
+        );
+        $this->assertTrue(
+            $handler->hasWarningContaining('not writable'),
+            'An unusable cache must warn, not pass silently at debug level.',
+        );
+    }
+
+    /**
+     * The probe must not reject a cache that works.
+     */
+    public function testUsableCacheIsNotRejectedByTheProbe(): void
+    {
+        $handler = new TestLogHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->plugin(['cache' => ['dir' => $this->tempDir()]], ['bot:true']);
+
+        $this->assertInstanceOf(CacheInterface::class, $plugin->resolvedCache());
+        $this->assertFalse($handler->hasWarningContaining('not writable'));
+    }
+
+    /**
+     * The probe leaves nothing behind that could be mistaken for corpus data.
+     */
+    public function testProbeDoesNotDisturbTheCachedCorpus(): void
+    {
+        $dir = $this->tempDir();
+
+        $first = $this->plugin(['cache' => ['dir' => $dir]], ['bot:true']);
+        $this->assertTrue($first->evaluate($this->request(self::GOOGLEBOT)));
+
+        $second = $this->plugin(['cache' => ['dir' => $dir]], ['bot:true']);
+        $this->assertTrue($second->evaluate($this->request(self::GOOGLEBOT)));
+    }
 }

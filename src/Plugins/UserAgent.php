@@ -405,11 +405,64 @@ class UserAgent extends AbstractPluginBase
             return null;
         }
 
+        // Constructing a pool proves nothing. FilesystemAdapter succeeds on an
+        // unwritable directory and only fails later, per write — so without
+        // this the plugin reported a healthy cache while every request paid
+        // the full uncached parse, ~645ms, forever and silently.
+        if (!$this->cacheIsUsable($pool)) {
+            $this->getLogger()->warning(
+                'User Agent regex cache is not writable - every request will re-parse the detection corpus',
+                [
+                    'pool' => $pool::class,
+                    'impact' => 'Roughly 600ms per request instead of ~20ms.',
+                    'hint' => 'Point metadata.cache.dir at a writable directory, define '
+                        . 'KANOPI_FIREWALL_CACHE_DIR, or set metadata.cache: false to accept the cost silently.',
+                ],
+            );
+
+            return null;
+        }
+
         $this->getLogger()->debug('User Agent regex cache initialized', [
             'pool' => $pool::class,
         ]);
 
         return new PSR6Bridge($pool);
+    }
+
+    /**
+     * Does this pool actually persist anything?
+     *
+     * A round trip rather than a permissions check: the pool may be a
+     * filesystem directory, Redis, APCu or something a consumer injected, and
+     * the only property that matters is whether a value written now can be
+     * read back. Cheap — sub-millisecond on every backend — and it runs once
+     * per plugin instance, not once per evaluation.
+     *
+     * @param CacheItemPoolInterface $cacheItemPool
+     *   The pool to probe.
+     *
+     * @return bool
+     *   TRUE when a written value came back.
+     */
+    protected function cacheIsUsable(CacheItemPoolInterface $cacheItemPool): bool
+    {
+        try {
+            $item = $cacheItemPool->getItem('kanopi_firewall_cache_probe');
+            $item->set(true);
+
+            if (!$cacheItemPool->save($item)) {
+                return false;
+            }
+
+            return $cacheItemPool->getItem('kanopi_firewall_cache_probe')->isHit();
+        } catch (\Throwable $throwable) {
+            $this->getLogger()->debug('User Agent regex cache probe threw', [
+                'error' => $throwable->getMessage(),
+            ]);
+
+            return false;
+        }
     }
 
     /**
