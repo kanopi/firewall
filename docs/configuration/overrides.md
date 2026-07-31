@@ -55,3 +55,21 @@ if (($config['storage']['config']['file'] ?? null) !== $expectedPath) {
     throw new \RuntimeException('Firewall storage override did not apply.');
 }
 ```
+
+## Reading a value from a file
+
+Overrides are ordinary PHP, so a value that lives in a file needs nothing more than `file_get_contents()`:
+
+```php
+<?php
+Firewall::create([__DIR__ . '/firewall.yml'], [
+    // Secrets mounted by the orchestrator, read at bootstrap.
+    '[challenge][secret]' => trim(file_get_contents('/run/secrets/firewall_hmac')),
+    '[global][banning_message]' => file_get_contents('/etc/firewall/banned.html'),
+]);
+```
+
+This is usually the better route for a secret from a known path. Compared with the [`file:` processor](environment-variables.md#filesystem-processors-opt-in) it needs no opt-in, no base-directory allowlist, and no environment variable — and it is not affected by the colon limitation that applies to tokens, so any path works.
+
+The `trim()` is worth keeping for keys and secrets: a file written by an editor or a secrets mount usually ends with a newline, and an HMAC secret with a stray `\n` fails in a way that is annoying to diagnose.
+

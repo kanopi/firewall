@@ -93,7 +93,9 @@ app:
 
 ## Filesystem Processors (opt-in)
 
-The `file:` (read a file's contents) and `require:` (include a PHP file and use its return value) processors are **disabled by default**. Because their path comes from an environment variable, enabling them turns any env-var injection into a local file inclusion — or, for `require:`, remote code execution.
+The `file:` (read a file's contents) and `require:` (include a PHP file and use its return value) processors are **disabled by default**. Their path *typically* comes from an environment variable, and where it does, enabling them turns any env-var injection into a local file inclusion — or, for `require:`, remote code execution.
+
+The path does not have to come from a variable — see [Reading from a known path](#reading-from-a-known-path) below, which is the lower-risk form when you already know where the file is.
 
 Using either one without opting in raises `ConfigurationException` from `TokenSubstitute`. Note where that exception ends up:
 
@@ -120,6 +122,44 @@ global:
 - **Second argument** — absolute base directories. The resolved `realpath()` of the target must sit under one of them, otherwise loading fails. Passing an empty list disables the prefix check entirely and is **not recommended in production** — do it only if you have vetted every path your environment variables can produce.
 - Base directories must already exist; a directory that does not resolve throws `ConfigurationException`.
 - `TokenSubstitute::resetUnsafeProcessors()` clears the opt-in again. It exists for test suites, not for request-time use.
+
+### Reading from a known path
+
+When the path is known up front, you do not need an environment variable at all. `default:` supplies the path and `file:` reads it:
+
+```yaml
+challenge:
+  secret: '%env(file:default:/etc/firewall/hmac.key:UNUSED)%'
+```
+
+`UNUSED` is a variable name that must **never be defined**. The chain reads left to right: the variable is unset, so `default:` yields `/etc/firewall/hmac.key`, and `file:` reads that path.
+
+This is the safer of the two forms — an attacker who can influence the environment cannot redirect a path that is written in the config file. Two caveats before you rely on it:
+
+!!! warning "The named variable must stay undefined"
+
+    If anything ever defines `UNUSED` — a platform injecting variables, a `.env` file, a colleague reusing the name — the path silently becomes that value and the file read silently changes. Nothing in the config signals that dependency. Choose a name you are confident nothing else will use, and treat it as part of the configuration.
+
+    This is where the base-directory allowlist earns its keep. With `enableUnsafeProcessors(['file'], ['/etc/firewall'])` in place, a hijacked variable pointing at `/etc/passwd` fails loudly instead of being read:
+
+    ```
+    ConfigurationException: Path for file processor escapes the configured allowlist: /etc/passwd
+    ```
+
+    Do not pass an empty allowlist when using this form.
+
+!!! warning "A colon truncates the path"
+
+    Tokens are split on `:`, so a path containing one is cut short:
+
+    ```
+    %env(file:default:/tmp/sec:rets/key.txt:UNUSED)%
+      -> ConfigurationException: Path for file processor does not resolve: /tmp/sec
+    ```
+
+    This is the same limitation `raw_key:` exists to work around for keys, but there is no equivalent escape for paths. If your path contains a colon, use a [configuration override](overrides.md#reading-a-value-from-a-file) instead.
+
+If neither caveat sits well, reading the file in PHP and passing it as an [override](overrides.md#reading-a-value-from-a-file) avoids both.
 
 Prefer `file:` over `require:` whenever you can — reading a secret is far less dangerous than executing a path an attacker may influence.
 
