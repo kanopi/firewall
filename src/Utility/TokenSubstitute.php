@@ -210,12 +210,78 @@ final class TokenSubstitute
             return self::resolveEnvTokenTyped($m[1]);
         }
 
+        if (\preg_match('/^%file\((.+)\)%$/', $value, $m)) {
+            return self::readLiteralPath($m[1]);
+        }
+
         // Interpolate within string → cast to string
+        $value = \preg_replace_callback(
+            '/%file\((.+?)\)%/',
+            fn(array $m): string => self::readLiteralPath($m[1]),
+            $value
+        );
+
         return \preg_replace_callback(
             '/%env\(([^)]+)\)%/',
             fn(array $m): string => (string) self::resolveEnvTokenTyped($m[1]),
-            $value
+            (string) $value
         );
+    }
+
+    /**
+     * Read a file named by a literal path (#116).
+     *
+     * `%file(/etc/firewall/hmac.key)%` exists because every other route to a
+     * file's contents runs through an environment variable — `$var` in an
+     * `%env(...)%` chain is always the last colon-separated segment — which
+     * left two poor options for a path known up front:
+     *
+     *   %env(file:default:/etc/firewall/hmac.key:UNUSED)%
+     *
+     * That works, and is what the documentation had to recommend, but it
+     * depends on `UNUSED` never being defined by anything, ever. Define it and
+     * the path silently becomes that value. It also truncates on any path
+     * containing a colon, because the chain is split on `:`.
+     *
+     * Neither applies here: the token content is the whole path, and there is
+     * no variable to keep undefined.
+     *
+     * The same opt-in and base-directory allowlist as the `file:` processor
+     * still apply. A literal path in a config file is only as trustworthy as
+     * that file — and if an attacker can edit your firewall config the file
+     * read is the least of it — but keeping one mental model is worth more
+     * than the small convenience of exempting this form, and the allowlist is
+     * cheap insurance in a security package.
+     *
+     * Contents are returned verbatim, newline included, matching `file:`.
+     *
+     * @param string $path
+     *   The path to read.
+     *
+     * @return string
+     *   The file's contents.
+     *
+     * @throws ConfigurationException
+     *   When the processor is disabled, the path escapes the allowlist, or the
+     *   file cannot be read.
+     */
+    private static function readLiteralPath(string $path): string
+    {
+        $path = \trim($path);
+
+        self::assertUnsafePathAllowed('file', $path);
+
+        if (!\is_file($path) || !\is_readable($path)) {
+            throw new ConfigurationException(\sprintf('%%file(%s)%% not found or unreadable', $path));
+        }
+
+        $contents = \file_get_contents($path);
+
+        if ($contents === false) {
+            throw new ConfigurationException(\sprintf('Failed reading %%file(%s)%%', $path));
+        }
+
+        return $contents;
     }
 
     /**
