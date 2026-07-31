@@ -125,41 +125,49 @@ global:
 
 ### Reading from a known path
 
-When the path is known up front, you do not need an environment variable at all. `default:` supplies the path and `file:` reads it:
+When you already know the path, use `%file(...)%` rather than an environment variable:
 
 ```yaml
 challenge:
-  secret: '%env(file:default:/etc/firewall/hmac.key:UNUSED)%'
+  secret: '%file(/etc/firewall/hmac.key)%'
+
+global:
+  banning_message: '%file(/etc/firewall/banned.html)%'
 ```
 
-`UNUSED` is a variable name that must **never be defined**. The chain reads left to right: the variable is unset, so `default:` yields `/etc/firewall/hmac.key`, and `file:` reads that path.
+The token content is the whole path, so unlike the `file:` processor there is **no colon limitation** — `%file(/tmp/sec:rets/key.txt)%` works. There is also no environment variable involved, so nothing in the environment can redirect the read.
 
-This is the safer of the two forms — an attacker who can influence the environment cannot redirect a path that is written in the config file. Two caveats before you rely on it:
+The same opt-in and base-directory allowlist apply:
 
-!!! warning "The named variable must stay undefined"
+```php
+TokenSubstitute::enableUnsafeProcessors(['file'], ['/etc/firewall']);
+```
 
-    If anything ever defines `UNUSED` — a platform injecting variables, a `.env` file, a colleague reusing the name — the path silently becomes that value and the file read silently changes. Nothing in the config signals that dependency. Choose a name you are confident nothing else will use, and treat it as part of the configuration.
+A literal path in a config file is only as trustworthy as that file, so this form is lower risk than the env-var one — but it is held to the same controls so there is a single mental model, and the allowlist still limits the blast radius if a config file is ever compromised.
 
-    This is where the base-directory allowlist earns its keep. With `enableUnsafeProcessors(['file'], ['/etc/firewall'])` in place, a hijacked variable pointing at `/etc/passwd` fails loudly instead of being read:
+Contents come back **verbatim**, newline included, exactly as `file:` returns them. A key file written by an editor usually ends with `\n`, and an HMAC secret carrying a stray newline fails in a way that is annoying to diagnose — if that matters, read it through a [configuration override](overrides.md#reading-a-value-from-a-file) where you can `trim()` it.
+
+`%file(...)%` interpolates inside a larger string and resolves inside nested arrays, like `%env(...)%`.
+
+!!! note "The older workaround, and why to move off it"
+
+    Before this token existed, the only way to use a literal path was to chain `default:` into `file:`:
+
+    ```yaml
+    secret: '%env(file:default:/etc/firewall/hmac.key:UNUSED)%'
+    ```
+
+    It still works, and you will meet it in existing configs, but it carries two hazards that `%file(...)%` does not.
+
+    **`UNUSED` must never be defined by anything.** Define it — a platform injecting variables, a `.env` file, a colleague reusing the name — and the path silently becomes that value. Nothing in the config file signals the dependency. This is where the base-directory allowlist earns its keep: with `enableUnsafeProcessors(['file'], ['/etc/firewall'])` in place, a hijacked variable pointing at `/etc/passwd` fails loudly rather than being read:
 
     ```
     ConfigurationException: Path for file processor escapes the configured allowlist: /etc/passwd
     ```
 
-    Do not pass an empty allowlist when using this form.
+    Never pass an empty allowlist when using that form.
 
-!!! warning "A colon truncates the path"
-
-    Tokens are split on `:`, so a path containing one is cut short:
-
-    ```
-    %env(file:default:/tmp/sec:rets/key.txt:UNUSED)%
-      -> ConfigurationException: Path for file processor does not resolve: /tmp/sec
-    ```
-
-    This is the same limitation `raw_key:` exists to work around for keys, but there is no equivalent escape for paths. If your path contains a colon, use a [configuration override](overrides.md#reading-a-value-from-a-file) instead.
-
-If neither caveat sits well, reading the file in PHP and passing it as an [override](overrides.md#reading-a-value-from-a-file) avoids both.
+    **A colon truncates the path.** Tokens are split on `:`, so `%env(file:default:/tmp/sec:rets/key.txt:UNUSED)%` resolves the path as `/tmp/sec`. This is the same limitation `raw_key:` exists to work around for keys; there is no equivalent escape for paths.
 
 Prefer `file:` over `require:` whenever you can — reading a secret is far less dangerous than executing a path an attacker may influence.
 
