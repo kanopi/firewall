@@ -116,15 +116,22 @@ jobs:
             curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
             chmod +x /tmp/xidel && sudo mv /tmp/xidel /usr/sbin/
             cp .circleci/phpunit.env ./.env
+      # Keyed per PHP version: composer.lock is not committed, so each PHP
+      # version resolves a different Symfony line (8.1 -> 6.4, 8.2/8.3 -> 7.4,
+      # 8.4/8.5 -> 8.1). One shared key would restore a vendor/ built against
+      # the wrong line.
       - restore_cache:
           keys:
-            - composer-cache-{{ checksum "composer.json" }}
-            - composer-cache-
+            - composer-cache-<<parameters.php>>-{{ checksum "composer.json" }}
+            - composer-cache-<<parameters.php>>-
       - run:
           name: build assets
-          command: composer install --optimize-autoloader
+          command: |
+            composer install --optimize-autoloader
+            # Record which Symfony line this run actually exercised.
+            composer show symfony/http-foundation | grep -E '^versions'
       - save_cache:
-          key: composer-cache-{{ checksum "composer.json" }}
+          key: composer-cache-<<parameters.php>>-{{ checksum "composer.json" }}
           paths:
             - vendor
       - run:
