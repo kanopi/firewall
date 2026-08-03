@@ -28,10 +28,8 @@
     },
     "require": {
         "php": ">=8.1",
-        "amphp/dns": "^2.4",
         "doctrine/dbal": "^4.2",
         "geoip2/geoip2": "~2 || ^3",
-        "guzzlehttp/guzzle": "^7.9",
         "jaybizzle/crawler-detect": "^1.4",
         "kanopi/crs-engine": "^1.0",
         "matomo/device-detector": "^6.4",
