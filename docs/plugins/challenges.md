@@ -14,8 +14,8 @@ The pass token is:
 
 ```yaml
 challenge:
-  provider: math                # 'math' is the built-in; or a FQCN that implements ChallengeProviderInterface
-  secret: "${FIREWALL_SECRET}"  # REQUIRED. Long random string, ideally from an env var.
+  provider: math                # 'math', 'altcha' or 'turnstile'; or a FQCN implementing ChallengeProviderInterface
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'   # REQUIRED. Long random string, ideally from an env var.
   cookie_name: fw_challenge_pass
   header_name: X-Firewall-Challenge
   path: /_firewall/challenge    # The URL the interstitial POSTs to
@@ -57,7 +57,7 @@ If you run **the same provider** in several places with the same secret — say 
 ```yaml
 challenge:
   provider: altcha
-  secret: "${FIREWALL_SECRET}"
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'
   audience: admin-portal   # defaults to the provider name
 ```
 
@@ -67,7 +67,7 @@ The alternative is to give each instance its own `challenge.secret`, which isola
 
 ## Built-in providers
 
-Two providers ship with the firewall — set `challenge.provider` to either short name:
+Three providers ship with the firewall — set `challenge.provider` to a short name:
 
 === "math"
 
@@ -84,8 +84,24 @@ Two providers ship with the firewall — set `challenge.provider` to either shor
     **Continue** on its own. The visitor clicks nothing; a bot pays CPU for
     every solve.
 
-Both screenshots come from the [demo application](../guides/demo.md), which
-serves each provider on its own route.
+=== "turnstile"
+
+    Cloudflare's Turnstile widget, verified server-side against their
+    siteverify API. The strongest bot resistance of the three, and the only
+    one that depends on a third party being reachable — from the visitor's
+    browser *and* from your server.
+
+The math and ALTCHA screenshots come from the [demo application](../guides/demo.md), which serves each provider on its own route.
+
+Which to pick is mostly a question of what you are willing to depend on:
+
+| | `math` | `altcha` | `turnstile` |
+|---|---|---|---|
+| Third-party script | none | CDN (self-hostable) | Cloudflare only |
+| Outbound call from your server | none | none | one per submission |
+| Subresource Integrity | n/a | yes, pinned | not possible |
+| Bot resistance | lowest | CPU cost per solve | highest |
+| Fails if the third party is down | n/a | interstitial degrades | nobody can pass (default) |
 
 - **`math`** — asks "What is A + B?" with single-digit operands. Low-friction proof-of-effort, no JS bundle, no external script load. Defeats the laziest bots; trivial for a human.
 - **`altcha`** — embeds the [ALTCHA](https://altcha.org/docs/v2/) v2 widget with a pre-computed challenge (no server round-trip to fetch one). The visitor's browser brute-forces `SHA-256(salt + N) == challenge`; the salt embeds an expiry and the challenge is HMAC-signed with `challenge.secret`, so the server stays stateless. Privacy-respecting, and imposes a per-solve CPU cost on bots. Solved challenges are single-use — see [Single-use solutions](#single-use-solutions).
@@ -102,7 +118,49 @@ serves each provider on its own route.
 
   The bundle is an ES module, so it is loaded with `<script type="module">`. If you host it yourself, keep that in mind: a classic script tag fails with `Unexpected token 'export'`.
 
-For stronger bot resistance (Turnstile, hCaptcha, reCAPTCHA, etc.), implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` and set `challenge.provider` to its FQCN.
+- **`turnstile`** — renders the [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) widget and verifies the token it produces against Cloudflare's siteverify API. Free and unmetered, and the widget adapts on its own from an invisible check to an interactive one based on how suspicious the client looks.
+
+  Create a widget in the **Turnstile** section of the Cloudflare dashboard, add the hostnames it may run on, and configure both keys:
+
+  ```yaml
+  challenge:
+    provider: turnstile
+    secret: '%env(FIREWALL_CHALLENGE_SECRET)%'     # pass-token HMAC key — NOT a Turnstile key
+    provider_options:
+      site_key: '%env(TURNSTILE_SITE_KEY)%'        # public; rendered into the page
+      secret_key: '%env(TURNSTILE_SECRET_KEY)%'    # private; only ever sent to Cloudflare
+  ```
+
+  Two names worth reading twice. `challenge.secret` signs pass tokens and has nothing to do with Cloudflare — it is still required. And despite looking like a pair, `site_key` is public while `secret_key` must never reach the browser; the provider never renders it.
+
+  Both keys are required. Omitting either throws `ConfigurationException` at startup rather than serving a widget every visitor would fail.
+
+  Optional settings:
+
+  | Option | Default | Purpose |
+  |---|---|---|
+  | `theme` | `auto` | Widget colour scheme: `auto`, `light` or `dark`. |
+  | `timeout` | `2` | Seconds to wait for siteverify, clamped to 1–10. |
+  | `on_error` | `block` | What happens when siteverify cannot be reached — see below. |
+  | `send_remoteip` | `false` | Forward the visitor's IP to Cloudflare. |
+  | `widget_src` | Cloudflare's URL | Override to serve the bundle through a first-party proxy. |
+
+  **When Cloudflare cannot be reached, the default is to refuse the submission.** A verdict you could not obtain is not a pass, and failing open would turn any disruption of siteverify — an outage, a DNS failure, egress filtering on your host — into a bypass for every challenged route, available to anyone who can cause it. The cost of that choice is real, though: while siteverify is unreachable, challenged routes are impassable. Set `on_error: allow` if you would rather absorb the risk than lock visitors out. It only governs unreachability — a token Cloudflare actively rejects is always refused.
+
+  **`send_remoteip` is off for a reason.** Forwarding the client IP sharpens Cloudflare's signal, but `getClientIp()` is only trustworthy when [`global.require_trusted_proxies`](../configuration/global.md) is configured. Behind an unconfigured proxy it returns whatever `X-Forwarded-For` claimed, so a spoofed header sends Cloudflare an address unrelated to the visitor and can fail verification for legitimate people. Turn it on only once your proxy configuration is right.
+
+  **Two limitations to plan around.** Cloudflare serves the widget from an unversioned, mutable URL, so unlike `altcha` there is no Subresource Integrity digest to pin — a digest would block the script the first time Cloudflare ships a change. And your Content-Security-Policy needs Cloudflare in two directives:
+
+  ```
+  script-src https://challenges.cloudflare.com;
+  frame-src  https://challenges.cloudflare.com;
+  ```
+
+  Replay needs no configuration: Cloudflare answers `timeout-or-duplicate` to a token that has already been validated, so a solve cannot be redistributed. That is why this provider does not implement [`SingleUseSolutionInterface`](#single-use-solutions) or touch storage at all.
+
+  For local development, Cloudflare publishes [dummy keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) — `1x00000000000000000000AA` with secret `1x0000000000000000000000000000000AA` always passes. The siteverify call still goes over the network, so they do not make the flow work offline.
+
+For hCaptcha, reCAPTCHA, or anything else, implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` and set `challenge.provider` to its FQCN.
 
 ## Writing a custom provider
 
@@ -114,20 +172,20 @@ A provider owns both halves of the round-trip: rendering the interstitial, and v
 namespace App\Firewall;
 
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
-use Kanopi\Firewall\Challenge\TokenManager;
 use Symfony\Component\HttpFoundation\Request;
 
-class TurnstileProvider implements ChallengeProviderInterface
+class HCaptchaProvider implements ChallengeProviderInterface
 {
-    // The factory passes the shared TokenManager to every provider. Use it
-    // to sign your own per-challenge state; ignore it if you don't need to.
-    public function __construct(private readonly TokenManager $tokenManager)
+    // Parameters are matched by declared type: a TokenManager parameter
+    // receives the shared HMAC manager, an array parameter receives
+    // challenge.provider_options. Declare only what you need.
+    public function __construct(private readonly array $options = [])
     {
     }
 
     public function getName(): string
     {
-        return 'turnstile';
+        return 'hcaptcha';
     }
 
     public function renderInterstitial(Request $request, array $context): string
@@ -135,46 +193,59 @@ class TurnstileProvider implements ChallengeProviderInterface
         // $context carries: submit_url, redirect_to, ttl, cookie_name, header_name.
         // Echo redirect_to and ttl back as hidden fields — the Firewall reads
         // them off the POST to size and target the pass token.
+        $siteKey = htmlspecialchars($this->options['site_key'], ENT_QUOTES, 'UTF-8');
+        $submitUrl = htmlspecialchars($context['submit_url'], ENT_QUOTES, 'UTF-8');
+        $redirectTo = htmlspecialchars($context['redirect_to'], ENT_QUOTES, 'UTF-8');
+        $ttl = htmlspecialchars($context['ttl'], ENT_QUOTES, 'UTF-8');
+
         return <<<HTML
         <!DOCTYPE html>
         <html lang="en"><body>
-          <form method="post" action="{$context['submit_url']}">
-            <div class="cf-turnstile" data-sitekey="YOUR_SITE_KEY"></div>
-            <input type="hidden" name="redirect_to" value="{$context['redirect_to']}">
-            <input type="hidden" name="ttl" value="{$context['ttl']}">
+          <form method="post" action="{$submitUrl}">
+            <div class="h-captcha" data-sitekey="{$siteKey}"></div>
+            <input type="hidden" name="redirect_to" value="{$redirectTo}">
+            <input type="hidden" name="ttl" value="{$ttl}">
             <button type="submit">Continue</button>
           </form>
-          <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+          <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
         </body></html>
         HTML;
     }
 
     public function verifySolution(Request $request): bool
     {
-        $token = (string) $request->request->get('cf-turnstile-response', '');
+        // Read from the raw bag: InputBag::get() throws on a non-scalar, and
+        // this method runs on attacker-controlled input.
+        $token = $request->request->all()['h-captcha-response'] ?? '';
 
         // Verify server-side against the provider's siteverify endpoint.
         // Return FALSE on any failure — never throw.
-        return $token !== '' && $this->verifyWithCloudflare($token, $request);
+        return is_string($token) && $token !== '' && $this->verifyWithHCaptcha($token);
     }
 }
 ```
 
 ```yaml
 challenge:
-  provider: "App\\Firewall\\TurnstileProvider"
-  secret: "${FIREWALL_SECRET}"
+  provider: "App\\Firewall\\HCaptchaProvider"
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'
   path: /_firewall/challenge
+  provider_options:
+    site_key: '%env(HCAPTCHA_SITE_KEY)%'
+    secret_key: '%env(HCAPTCHA_SECRET_KEY)%'
 ```
+
+For a fuller worked example of this shape — widget rendering, server-side verification, timeouts, and what to do when the remote service is unreachable — read [`TurnstileChallengeProvider`](https://github.com/kanopi/firewall/blob/2.x/src/Challenge/TurnstileChallengeProvider.php).
 
 Requirements and gotchas:
 
-- **Escape everything you interpolate.** `redirect_to` originates from the request URI. The built-in `MathChallengeProvider` runs every substitution through `htmlspecialchars()`; do the same.
+- **Escape everything you interpolate.** `redirect_to` originates from the request URI. The built-in providers run every substitution through `InterstitialRenderer::escapeHtml()`; do the same. Values landing inside a `<script>` block need `escapeJs()` instead — HTML entities are not decoded there.
 - **Echo back `redirect_to` and `ttl`** as form fields named exactly that. The Firewall reads them from the POST to decide where to send the visitor and how long to mint the pass token for. Omit them and you get `/` and 3600s.
-- **`verifySolution()` must never throw.** It runs on attacker-controlled input; return `false` for anything you don't like.
-- **Register via FQCN**, not a short name. `challenge.provider` only resolves `math` as a built-in; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
-- **The constructor signature is fixed** — `ChallengeProviderFactory` always calls `new $class($tokenManager)`. Read any further configuration from your own environment or constants.
-- Use `$this->tokenManager->sign()` / `verifySignature()` if you need tamper-proof state in the form. You do **not** need to mint the pass token — the Firewall does that once `verifySolution()` returns `true`.
+- **`verifySolution()` must never throw.** It runs on attacker-controlled input; return `false` for anything you don't like. Note that `$request->request->get()` raises `BadRequestException` on an array value, so read hostile fields off `->all()` instead.
+- **Register via FQCN**, not a short name. `challenge.provider` resolves `math`, `altcha` and `turnstile` as built-ins; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
+- **Declare the collaborators you want.** `ChallengeProviderFactory` matches constructor parameters by declared type — a `TokenManager` parameter gets the shared manager, an `array` parameter gets `challenge.provider_options`, and a provider needing neither can declare no constructor at all. Untyped parameters receive the `TokenManager`, so providers written against the older fixed `new $class($tokenManager)` signature keep working unchanged.
+- Use `$tokenManager->sign()` / `verifySignature()` if you need tamper-proof state in the form. You do **not** need to mint the pass token — the Firewall does that once `verifySolution()` returns `true`.
+- **Reuse the shared interstitial** via `InterstitialRenderer::render()` rather than hand-rolling a document. It owns the submit JS, the two token-delivery paths, and the escaping rules those depend on. Providers whose challenge token is spent by a failed attempt can pass a `submit_failure` snippet to reset the widget.
 
 ## How dispatch interacts with allow / block
 

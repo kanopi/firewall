@@ -72,15 +72,23 @@ storage:
 # plugin does, `secret` is REQUIRED — startup throws ConfigurationException
 # if it is empty.
 challenge:
-  # Short name of a built-in provider ("math", "altcha") or FQCN of a class
-  # that implements Kanopi\Firewall\Challenge\ChallengeProviderInterface.
-  #   math   — "What is A + B?" with single-digit operands. Low-friction
-  #            proof-of-effort, no JS bundle, no external script load.
-  #   altcha — Embeds the ALTCHA v2 widget with a pre-computed challenge.
-  #            The browser brute-forces SHA-256(salt + N) == challenge;
-  #            challenge is HMAC-signed with `secret`. Privacy-respecting,
-  #            per-solve CPU cost on bots, solved challenges are single-use.
-  #            See https://altcha.org/docs/v2/.
+  # Short name of a built-in provider ("math", "altcha", "turnstile") or FQCN
+  # of a class implementing
+  # Kanopi\Firewall\Challenge\ChallengeProviderInterface.
+  #   math      — "What is A + B?" with single-digit operands. Low-friction
+  #               proof-of-effort, no JS bundle, no external script load.
+  #   altcha    — Embeds the ALTCHA v2 widget with a pre-computed challenge.
+  #               The browser brute-forces SHA-256(salt + N) == challenge;
+  #               challenge is HMAC-signed with `secret`. Privacy-respecting,
+  #               per-solve CPU cost on bots, solved challenges are
+  #               single-use. See https://altcha.org/docs/v2/.
+  #   turnstile — Embeds the Cloudflare Turnstile widget and verifies its
+  #               token against Cloudflare's siteverify API. Strongest bot
+  #               resistance, and the only provider that needs a third party
+  #               reachable from BOTH the browser and this server. Requires
+  #               provider_options.site_key and .secret_key. Replay is
+  #               handled by Cloudflare, so no storage is involved.
+  #               See https://developers.cloudflare.com/turnstile/.
   provider: math
   # Optional per-provider settings, forwarded to the provider constructor.
   # Unknown keys are ignored, so this is safe to leave empty.
@@ -95,6 +103,37 @@ challenge:
   #                      a mismatched digest would block the script.
   #                      Generate with:
   #                        openssl dgst -sha384 -binary FILE | openssl base64 -A
+  #
+  # turnstile accepts:
+  #   site_key         — REQUIRED. Turnstile site key. PUBLIC: it is rendered
+  #                      into the interstitial.
+  #   secret_key       — REQUIRED. Turnstile secret key. PRIVATE: only ever
+  #                      sent server-to-server to siteverify. Note this is
+  #                      NOT the same thing as `challenge.secret` below.
+  #                      Omitting either key throws at startup rather than
+  #                      serving a widget nobody could pass.
+  #   theme            — Widget colour scheme: auto (default), light, dark.
+  #   timeout          — Seconds to wait for siteverify. Clamped to 1-10,
+  #                      default 2. This runs while the visitor waits.
+  #   on_error         — What to do when siteverify cannot be REACHED:
+  #                      block (default) or allow. Blocking is the safe
+  #                      default — a verdict you could not obtain is not a
+  #                      pass, and failing open would make any siteverify
+  #                      disruption a bypass for every challenged route. The
+  #                      trade-off is that challenged routes are impassable
+  #                      while Cloudflare is unreachable. This never applies
+  #                      to a token Cloudflare actively rejected.
+  #   send_remoteip    — Forward the visitor's IP to Cloudflare. Default
+  #                      false, because getClientIp() is only trustworthy
+  #                      when global.require_trusted_proxies is configured;
+  #                      behind an unconfigured proxy a spoofed
+  #                      X-Forwarded-For would send Cloudflare an unrelated
+  #                      address and fail verification for real visitors.
+  #   widget_src       — Override the widget bundle URL, e.g. to serve it via
+  #                      a first-party proxy. No SRI digest is emitted for
+  #                      any value: Cloudflare's URL is unversioned and
+  #                      mutable, so a pinned digest would break on their
+  #                      next deploy.
   provider_options: {}
   # Scopes pass tokens to this instance. Tokens carry the value as an `aud`
   # claim and only verify against a firewall configured with the same one,
@@ -104,8 +143,10 @@ challenge:
   # share passes (e.g. a public site and an admin portal).
   audience: ''
   # HMAC secret used to sign pass tokens. MUST be a long, random value. The
-  # `${VAR}` syntax loads it from an env var so it stays out of source control.
-  secret: '${FIREWALL_CHALLENGE_SECRET}'
+  # `%env(VAR)%` syntax loads it from an env var so it stays out of source
+  # control. Note `${VAR}` is NOT substituted — it would be taken literally,
+  # giving every deployment that copied it the same known secret.
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'
   # URL the interstitial form POSTs to. Configurable so it can avoid colliding
   # with application routes.
   path: /_firewall/challenge
