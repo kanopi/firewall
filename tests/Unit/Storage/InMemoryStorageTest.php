@@ -303,4 +303,65 @@ final class InMemoryStorageTest extends AbstractTestCase
         $storage->set('127.0.0.1', ['test' => 1]);
         $this->assertEquals(['test' => 1], $storage->get('127.0.0.1'));
     }
+
+    /**
+     * A record that is not an array is skipped rather than trusted.
+     *
+     * `set()` only accepts arrays, so this shape cannot arise through the
+     * public API — but the store is `mixed` and a subclass or a corrupted
+     * import can put anything in it. The guard exists so `find()` cannot be
+     * made to read `$record['expire']` off a string.
+     */
+    public function testFindSkipsRecordsThatAreNotArrays(): void
+    {
+        $storage = new class () extends InMemoryStorage {
+            protected array $store = [
+                '127.0.0.1' => 'not-a-record',
+                '127.0.0.2' => ['value' => ['ok' => true], 'expire' => 0],
+            ];
+        };
+
+        $matches = $storage->find('127.0.0.0/24');
+
+        $this->assertArrayNotHasKey('127.0.0.1', $matches, 'A non-array record must not be returned.');
+        $this->assertArrayHasKey('127.0.0.2', $matches, 'Valid records alongside it must still match.');
+    }
+
+    /**
+     * An empty stored key cannot be matched by any pattern.
+     *
+     * `getKey()` returns a client IP so this should not happen, but a custom
+     * storage backend or a bad import can leave an empty key behind, and
+     * matching it against a CIDR range would be meaningless.
+     */
+    public function testFindIgnoresAnEmptyStoredKey(): void
+    {
+        $storage = new class () extends InMemoryStorage {
+            protected array $store = [
+                '' => ['value' => ['orphan' => true], 'expire' => 0],
+                '10.0.0.7' => ['value' => ['ok' => true], 'expire' => 0],
+            ];
+        };
+
+        $matches = $storage->find('10.0.0.0/8');
+
+        $this->assertArrayNotHasKey('', $matches);
+        $this->assertArrayHasKey('10.0.0.7', $matches);
+    }
+
+    /**
+     * A CIDR pattern whose network part is not an address is not a pattern.
+     *
+     * `10.0.0.0/8` is valid; `nonsense/8` has the right shape but cannot be
+     * compared to anything, so it is refused before any record is examined
+     * rather than silently matching nothing.
+     */
+    public function testFindRejectsCidrWithANonAddressSubnet(): void
+    {
+        $storage = new class () extends InMemoryStorage {
+            protected array $store = ['10.0.0.7' => ['value' => ['ok' => true], 'expire' => 0]];
+        };
+
+        $this->assertSame([], $storage->find('nonsense/8'));
+    }
 }

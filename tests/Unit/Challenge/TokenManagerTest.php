@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit\Challenge;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 
 final class TokenManagerTest extends AbstractTestCase
@@ -203,5 +204,54 @@ final class TokenManagerTest extends AbstractTestCase
 
         $altcha = new TokenManager(self::SECRET, 'altcha');
         $this->assertFalse($altcha->verify($tampered . '.' . $signature, $request));
+    }
+
+    /**
+     * Payloads that survive the signature check but are still not tokens.
+     *
+     * Signature verification happens before the payload is parsed, so a
+     * caller who holds the secret can present correctly-signed rubbish. The
+     * decode and shape checks after `hash_equals()` are the last line of
+     * defence, and each needs its own exercise. Every case here is signed
+     * with the real secret precisely so the test reaches past the HMAC.
+     *
+     * @return array<string, array{0: string}>
+     *   Keyed by what is wrong with the payload.
+     */
+    public static function correctlySignedRubbishProvider(): array
+    {
+        return [
+            // Outside the base64url alphabet, so strict decoding refuses it.
+            'not base64url' => ['@@@@'],
+            'valid base64, not json' => [self::encode('definitely not json')],
+            'json scalar rather than object' => [self::encode('"a string"')],
+            'json null' => [self::encode('null')],
+            'object missing ip' => [self::encode('{"exp":9999999999,"aud":""}')],
+            'object missing exp' => [self::encode('{"ip":"10.1.2.3","aud":""}')],
+            // `exp` has to be an integer: a numeric string would otherwise
+            // reach the comparison against time() and behave unpredictably.
+            'exp as a numeric string' => [self::encode('{"ip":"10.1.2.3","exp":"9999999999","aud":""}')],
+            'exp as a float' => [self::encode('{"ip":"10.1.2.3","exp":9999999999.5,"aud":""}')],
+        ];
+    }
+
+    #[DataProvider('correctlySignedRubbishProvider')]
+    public function testCorrectlySignedRubbishIsStillRejected(string $payloadEncoded): void
+    {
+        $manager = new TokenManager(self::SECRET);
+
+        // sign() covers exactly the string verify() signs, so this token has
+        // a genuinely valid signature over an invalid payload.
+        $token = $payloadEncoded . '.' . $manager->sign($payloadEncoded);
+
+        $this->assertFalse($manager->verify($token, $this->getRequest('10.1.2.3')));
+    }
+
+    /**
+     * base64url-encode without padding, matching TokenManager's wire format.
+     */
+    private static function encode(string $raw): string
+    {
+        return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
     }
 }
