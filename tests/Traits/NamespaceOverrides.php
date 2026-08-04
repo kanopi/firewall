@@ -7,13 +7,13 @@ $GLOBALS['simulate_file_put_contents_failure'] = false;
 $GLOBALS['simulate_is_readable_failure'] = false;
 $GLOBALS['simulate_is_writeable_failure'] = false;
 
-function file_put_contents($filename, $data, $flags = 0)
+function file_put_contents($filename, $data, ...$args)
 {
     if (!empty($GLOBALS['simulate_file_put_contents_failure'])) {
         return false;
     }
 
-    return \file_put_contents($filename, $data, $flags);
+    return \file_put_contents($filename, $data, ...$args);
 }
 
 function is_readable($filename)
@@ -43,13 +43,13 @@ function flock($filename, $operation)
     return \flock($filename, $operation);
 }
 
-function fopen($filename, $mode, $flags = 0, $context = null)
+function fopen($filename, $mode, ...$args)
 {
     if (!empty($GLOBALS['simulate_fopen_failure'])) {
         return false;
     }
 
-    return \fopen($filename, $mode, $flags, $context);
+    return \fopen($filename, $mode, ...$args);
 }
 
 function fgets($handle)
@@ -61,11 +61,31 @@ function fgets($handle)
     return \fgets($handle);
 }
 
-function fwrite($handle, $string, $length = null)
+function fwrite($handle, $string, ...$args)
 {
     if (!empty($GLOBALS['simulate_fwrite_failure'])) {
         return false;
     }
 
-    return \fwrite($handle, $string, $length);
+    return \fwrite($handle, $string, ...$args);
+}
+
+/**
+ * Forcing this false is how the mkdir() branch in FileTrait is reached: the
+ * per-user temp directory survives between runs, so after the first test in
+ * any environment the directory already exists and the branch never executes.
+ *
+ * @param string $filename
+ *   Path to test.
+ *
+ * @return bool
+ *   Whether the path is a directory, or FALSE when the flag is set.
+ */
+function is_dir($filename)
+{
+    if (!empty($GLOBALS['simulate_is_dir_failure'])) {
+        return false;
+    }
+
+    return \is_dir($filename);
 }

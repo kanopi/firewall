@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Traits;
 
+require_once __DIR__ . '/../../Traits/NamespaceOverrides.php';
+
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Traits\FileTrait;
@@ -362,5 +364,33 @@ class FileTraitTest extends TestCase
         $secondPath = $defaultRef->invoke($this->subject, 'storage_data.json');
         $this->assertSame($path, $secondPath);
         $this->assertSame($dirPerms, fileperms($directory) & 0777);
+    }
+
+    /**
+     * The create-the-directory branch, forced to run.
+     *
+     * The per-user temp directory survives between runs, so on any machine
+     * that has executed this suite before, `is_dir()` is already true and the
+     * `mkdir()` call never executes — the branch is invisible precisely
+     * because the test above just created it. Shadowing `is_dir()` in the
+     * Traits namespace runs it deterministically.
+     */
+    public function testDefaultStoragePathCreatesTheDirectoryWhenAbsent(): void
+    {
+        $defaultRef = new \ReflectionMethod($this->subject, 'defaultStoragePath');
+
+        $GLOBALS['simulate_is_dir_failure'] = true;
+
+        try {
+            $path = $defaultRef->invoke($this->subject, 'storage_data.json');
+        } finally {
+            $GLOBALS['simulate_is_dir_failure'] = false;
+        }
+
+        $this->assertStringContainsString('kanopi-firewall-', $path);
+        $this->assertStringEndsWith(DIRECTORY_SEPARATOR . 'storage_data.json', $path);
+        // mkdir() is suppressed and its result ignored, so an already-present
+        // directory must not change the answer.
+        $this->assertDirectoryExists(dirname($path));
     }
 }
