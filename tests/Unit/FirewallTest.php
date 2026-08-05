@@ -15,6 +15,7 @@ use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Tests\Challenge\ReceiptlessSingleUseProvider;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
@@ -1326,6 +1327,98 @@ class FirewallTest extends AbstractTestCase
         $method = new \ReflectionMethod(Firewall::class, 'sanitizeRedirect');
 
         $this->assertSame($target, $method->invoke($this->minimalFirewall(), $target));
+    }
+
+    /**
+     * A provider that declines to identify a solution is not a replay.
+     *
+     * `getSolutionReceipt()` returning NULL opts one request out of replay
+     * tracking, which a provider whose solutions are not unique per render
+     * needs. Treating that as "already spent" would reject a legitimate
+     * solver, so the submission has to be waved through.
+     */
+    public function testSolutionWithNoReceiptIsNotTreatedAsAReplay(): void
+    {
+        $firewall = $this->minimalFirewall();
+
+        $this->setPrivate($firewall, 'challengeProvider', new ReceiptlessSingleUseProvider());
+
+        $method = new \ReflectionMethod(Firewall::class, 'consumeSingleUseSolution');
+
+        $this->assertTrue(
+            $method->invoke($firewall, Request::create('/_firewall/challenge', 'POST')),
+            'A NULL receipt opts out of tracking; it does not mean the solution was spent.'
+        );
+    }
+
+    /**
+     * A challenge plugin matching with no provider wired up fails loud.
+     *
+     * `create()` rejects that combination first, so this is a last resort —
+     * but the alternative is serving an empty page to every challenged
+     * visitor, which looks like the site is broken rather than misconfigured.
+     */
+    public function testChallengeWithNoProviderRaisesRatherThanServingNothing(): void
+    {
+        $firewall = $this->minimalFirewall();
+        $plugin = $this->createMock(PluginInterface::class);
+
+        $method = new \ReflectionMethod(Firewall::class, 'sendChallengeResponse');
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('no ChallengeProviderInterface is configured');
+
+        $method->invoke($firewall, Request::create('/protected'), $plugin);
+    }
+
+    /**
+     * A plugin reporting a non-positive TTL gets the one-hour default.
+     *
+     * A zero or negative TTL would mint a pass token that is already expired,
+     * so the visitor would solve the challenge and be challenged again
+     * immediately — an infinite loop rather than a short-lived pass.
+     */
+    public function testNonPositiveExpirationFallsBackToAnHour(): void
+    {
+        $firewall = $this->minimalFirewall();
+        $this->setPrivate($firewall, 'challengeProvider', new ReceiptlessSingleUseProvider());
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Challenger');
+        $plugin->method('getExpirationTime')->willReturn(0);
+
+        $handler = new \Monolog\Handler\TestHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new \Monolog\Logger('test', [$handler]));
+
+        $method = new \ReflectionMethod(Firewall::class, 'sendChallengeResponse');
+
+        try {
+            $method->invoke($firewall, Request::create('/protected'), $plugin);
+            $this->fail('Expected ChallengeRequiredException in exception mode');
+        } catch (\Kanopi\Firewall\Exception\ChallengeRequiredException) {
+            $this->addToAssertionCount(1);
+        }
+
+        $ttls = array_map(
+            static fn ($record): mixed => $record->context['ttl'] ?? null,
+            $handler->getRecords()
+        );
+
+        $this->assertContains(
+            3600,
+            $ttls,
+            'A non-positive TTL must be replaced with the 3600s default, not passed through.'
+        );
+    }
+
+    /**
+     * Set a private Firewall property that has no setter.
+     */
+    private function setPrivate(Firewall $firewall, string $property, mixed $value): void
+    {
+        $ref = new \ReflectionProperty(Firewall::class, $property);
+        $ref->setAccessible(true);
+        $ref->setValue($firewall, $value);
     }
 
     /**

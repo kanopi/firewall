@@ -12,6 +12,7 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Tests\Firewall\EvaluatingFirewall;
+use Kanopi\Firewall\Tests\Firewall\ProviderlessSubmissionFirewall;
 use Monolog\Handler\TestHandler;
 use Monolog\Level;
 use Monolog\Logger;
@@ -308,6 +309,36 @@ class FirewallModeTest extends AbstractTestCase
         $this->assertTrue(
             $handler->hasWarningThatContains('Request would be challenged (log mode)'),
         );
+    }
+
+    /**
+     * A submission with no provider wired up returns quietly.
+     *
+     * `isChallengeSubmission()` already returns FALSE when there is no
+     * provider, so the guard inside `handleChallengeSubmission()` cannot be
+     * reached through the real path — the conditions contradict each other.
+     * The guard is insurance against that invariant being broken later, and
+     * what matters is that it returns rather than dereferencing a null
+     * provider and making every POST to the challenge path fatal.
+     */
+    public function testChallengeSubmissionWithNoProviderReturnsQuietly(): void
+    {
+        $this->storage->method('getKey')->willReturn('1.2.3.4');
+        $this->storage->method('isBlocked')->willReturn(false);
+
+        // Never reaches plugin evaluation: the submission path returns first.
+        $this->bypassManager->expects($this->never())->method('evaluate');
+        $this->blockManager->expects($this->never())->method('evaluate');
+
+        $firewall = ProviderlessSubmissionFirewall::make(
+            $this->storage,
+            $this->blockManager,
+            $this->bypassManager,
+            $this->challengeManager,
+            ['mode' => 'exception']
+        );
+
+        $this->assertTrue($firewall->evaluate($this->request()));
     }
 
     /**
