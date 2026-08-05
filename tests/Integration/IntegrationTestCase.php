@@ -79,6 +79,29 @@ abstract class IntegrationTestCase extends TestCase
     }
     
     /**
+     * Is this run collecting code coverage?
+     *
+     * Wall-clock assertions cannot be trusted when it is: Xdebug's
+     * line-by-line tracing multiplies execution time several-fold, so a
+     * timing threshold ends up measuring the profiler rather than the code
+     * under test. Callers use this to record timings without asserting on
+     * them, keeping the work itself running so it still counts toward
+     * coverage.
+     *
+     * Both engines are checked because either can be the active driver:
+     * Xdebug is what this project uses, PCOV is the common alternative.
+     */
+    protected static function coverageIsActive(): bool
+    {
+        $xdebugMode = (string) (getenv('XDEBUG_MODE') ?: ini_get('xdebug.mode'));
+        if (str_contains($xdebugMode, 'coverage')) {
+            return true;
+        }
+
+        return extension_loaded('pcov') && (bool) ini_get('pcov.enabled');
+    }
+
+    /**
      * Check if a test group should be skipped.
      */
     protected function skipIfGroupDisabled(string $group): void

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+require_once __DIR__ . '/../../Traits/UtilityNamespaceOverrides.php';
+
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\TokenSubstitute;
@@ -1483,5 +1485,94 @@ class TokenSubstituteTest extends AbstractTestCase
         $result = TokenSubstitute::substitute('%env(safe:fallback:json:trim:TRIM_VAR)%');
         $this->assertIsArray($result);
         $this->assertEquals([1, 2, 3], $result);
+    }
+
+    public function testLiteralFilePathThatDoesNotExistIsRejected(): void
+    {
+        $this->enableUnsafeProcessors();
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessageMatches('/not found or unreadable/');
+
+        TokenSubstitute::substitute('%file(' . sys_get_temp_dir() . '/fw-absent-' . uniqid() . ')%');
+    }
+
+    /**
+     * A read that fails after is_file() and is_readable() both passed.
+     *
+     * Only reachable if a permissions change or an unlink lands between the
+     * check and the read, so the suite shadows `file_get_contents()` in the
+     * Utility namespace rather than trying to win that race. The point of the
+     * branch is that a failed read must raise rather than substitute an empty
+     * string into config — silently emptying a secret would be worse than
+     * failing to start.
+     */
+    public function testLiteralFilePathRaisesWhenTheReadItselfFails(): void
+    {
+        $this->enableUnsafeProcessors();
+
+        $file = tempnam(sys_get_temp_dir(), 'fw-tok-');
+        $this->assertIsString($file);
+        file_put_contents($file, 'a-secret-value');
+
+        $GLOBALS['simulate_utility_file_get_contents_failure'] = true;
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            $this->expectExceptionMessageMatches('/Failed reading/');
+            TokenSubstitute::substitute('%file(' . $file . ')%');
+        } finally {
+            $GLOBALS['simulate_utility_file_get_contents_failure'] = false;
+            @unlink($file);
+        }
+    }
+
+    /**
+     * Same failure through the `file:` processor rather than `%file(...)%`.
+     *
+     * Two separate call sites with the same guard, so one test each.
+     */
+    public function testFileProcessorRaisesWhenTheReadItselfFails(): void
+    {
+        $this->enableUnsafeProcessors();
+
+        $file = tempnam(sys_get_temp_dir(), 'fw-tok-');
+        $this->assertIsString($file);
+        file_put_contents($file, 'a-secret-value');
+
+        putenv('FW_FILE_PROCESSOR_PATH=' . $file);
+        $GLOBALS['simulate_utility_file_get_contents_failure'] = true;
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            $this->expectExceptionMessageMatches('/Failed reading file for/');
+            TokenSubstitute::substitute('%env(file:FW_FILE_PROCESSOR_PATH)%');
+        } finally {
+            $GLOBALS['simulate_utility_file_get_contents_failure'] = false;
+            putenv('FW_FILE_PROCESSOR_PATH');
+            @unlink($file);
+        }
+    }
+
+    /**
+     * The `safe:` path reads $_SERVER when getenv() has nothing.
+     *
+     * The non-safe path has its own copy of this fallback and was already
+     * covered; this is the same lookup inside the safe-processor branch.
+     */
+    public function testSafeProcessorFallsBackToServerSuperglobal(): void
+    {
+        putenv('FW_SERVER_ONLY_VAR');
+        unset($_ENV['FW_SERVER_ONLY_VAR']);
+        $_SERVER['FW_SERVER_ONLY_VAR'] = 'from-server';
+
+        try {
+            $this->assertSame(
+                'from-server',
+                TokenSubstitute::substitute('%env(safe:a-fallback:FW_SERVER_ONLY_VAR)%')
+            );
+        } finally {
+            unset($_SERVER['FW_SERVER_ONLY_VAR']);
+        }
     }
 }

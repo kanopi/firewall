@@ -767,4 +767,148 @@ class DatabaseStorageTest extends AbstractTestCase
 
         $this->assertSame(0, $this->storage->deleteMatching(['garbage', '', '203.0.113.0/33']));
     }
+
+    /**
+     * An exact address is looked up with a WHERE clause, not a table scan.
+     *
+     * The distinction is the point of the branch: `remote_address` carries a
+     * unique index, so a single address is one row fetch. Only a CIDR range
+     * has to pull every candidate back and match in PHP, because CIDR
+     * containment is not portable SQL across MySQL, PostgreSQL and SQLite.
+     * Losing the narrowing would turn every exact lookup into a full scan.
+     */
+    public function testFindByExactAddressNarrowsInSql(): void
+    {
+        $this->stubQueryBuilderChain([]);
+
+        $this->mockBuilder->expects($this->once())
+            ->method('andWhere')
+            ->with('remote_address = :remote_address')
+            ->willReturnSelf();
+
+        $this->assertSame([], $this->storage->find('203.0.113.7'));
+    }
+
+    /**
+     * The counterpart: a CIDR range must NOT narrow in SQL.
+     *
+     * Pinning both directions is what makes the pair meaningful — asserting
+     * only that an exact address narrows would still pass if the code narrowed
+     * unconditionally, which would make every range query return nothing.
+     */
+    public function testFindByCidrRangeDoesNotNarrowInSql(): void
+    {
+        $this->stubQueryBuilderChain([]);
+
+        $this->mockBuilder->expects($this->never())->method('andWhere');
+
+        $this->assertSame([], $this->storage->find('203.0.113.0/24'));
+    }
+
+    /**
+     * A row with no address is skipped rather than keyed on an empty string.
+     *
+     * The column is NOT NULL in the schema this creates, but the table may
+     * predate it or have been written to by something else, and an empty key
+     * in the result map would be matched by nothing and confuse the caller.
+     */
+    public function testFindSkipsRowsWithAnEmptyAddress(): void
+    {
+        // A matching row alongside them, so an empty result cannot pass by
+        // accident — the point is that the good row survives and the blank
+        // ones do not.
+        $this->stubQueryBuilderChain([
+            ['remote_address' => '', 'expire' => 0, 'value' => '[]'],
+            ['remote_address' => null, 'expire' => 0, 'value' => '[]'],
+            ['remote_address' => '203.0.113.7', 'expire' => 0, 'value' => '[]'],
+        ]);
+
+        $matches = $this->storage->find('203.0.113.0/24');
+
+        $this->assertSame(['203.0.113.7'], array_keys($matches));
+    }
+
+    /**
+     * A failed pattern query is logged and skipped, not fatal.
+     *
+     * `deleteMatching()` takes several patterns. One unusable pattern — a
+     * table that vanished mid-run, a lost connection — must not abandon the
+     * others, or an operator un-blocking a list of addresses would silently
+     * get a partial result.
+     */
+    public function testDeleteMatchingContinuesWhenAPatternQueryFails(): void
+    {
+        $this->mockConnection->method('createQueryBuilder')
+            ->willThrowException(new \RuntimeException('connection lost'));
+
+        $this->assertSame(0, $this->storage->deleteMatching(['203.0.113.0/24']));
+    }
+
+    /**
+     * A delete that throws is logged and skipped, and the count stays honest.
+     *
+     * Reporting a deletion that did not happen would tell an operator an
+     * address was un-blocked while it is still blocked.
+     */
+    public function testDeleteMatchingReportsNothingWhenTheDeleteFails(): void
+    {
+        $this->stubQueryBuilderChain([['remote_address' => '203.0.113.7']]);
+        $this->mockConnection->method('delete')
+            ->willThrowException(new \RuntimeException('table is read-only'));
+
+        $this->assertSame(0, $this->storage->deleteMatching(['203.0.113.0/24']));
+    }
+
+    /**
+     * Failing to clear offense history warns but keeps the deletion.
+     *
+     * Deliberately not an error: the block itself is gone, which is what the
+     * operator asked for. The leftover history matters because
+     * `blocking_escalation` would escalate this address straight back to a
+     * longer ban on its next offence — so it has to be visible — but undoing
+     * the successful delete would be worse.
+     */
+    public function testDeleteMatchingWarnsWhenOffenseHistoryCannotBeCleared(): void
+    {
+        $this->stubQueryBuilderChain([['remote_address' => '203.0.113.7']]);
+
+        // First delete (the block) succeeds; the second (offenses) throws.
+        $this->mockConnection->method('delete')
+            ->willReturnCallback(function (string $table): int {
+                if ($table === 'firewall_offense') {
+                    throw new \RuntimeException('offense table is gone');
+                }
+
+                return 1;
+            });
+
+        $this->assertSame(
+            1,
+            $this->storage->deleteMatching(['203.0.113.0/24']),
+            'The block was removed, so it still counts as deleted.'
+        );
+    }
+
+    /**
+     * Stub the whole QueryBuilder chain so `$builder` stays this mock.
+     *
+     * Every fluent method has to be stubbed, not just the ones a test cares
+     * about: PHPUnit auto-generates a return value for a typed return, so an
+     * unstubbed `where()` hands back a *different* QueryBuilder mock and the
+     * assertions are made against an object the code under test never used.
+     * That failure mode is silent — the test passes while exercising nothing.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     *   Rows the query should return.
+     */
+    private function stubQueryBuilderChain(array $rows): void
+    {
+        foreach (['select', 'from', 'where', 'andWhere', 'setParameter'] as $fluent) {
+            $this->mockBuilder->method($fluent)->willReturnSelf();
+        }
+
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn($rows);
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+    }
 }

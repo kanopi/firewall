@@ -582,4 +582,32 @@ final class PluginConfigNormalizerTest extends AbstractTestCase
         $this->assertEquals('Kanopi\Firewall\Plugins\Url', $partitioned['block'][0]['plugin']);
         $this->assertEquals('Kanopi\Firewall\Plugins\RateLimit', $partitioned['block'][1]['plugin']);
     }
+
+    /**
+     * A legacy `bypass:` entry whose value is not an array is skipped.
+     *
+     * The legacy format keyed plugin class names to config arrays, so a
+     * scalar there is a hand-edited mistake. Skipping it keeps the rest of
+     * the file usable rather than failing the whole normalisation — but it
+     * must not be converted into a plugin either, because a bypass entry that
+     * silently became malformed would be a plugin that allows traffic.
+     */
+    public function testLegacyBypassEntryWithNonArrayConfigIsSkipped(): void
+    {
+        $normalized = PluginConfigNormalizer::normalize([
+            'bypass' => [
+                'Kanopi\Firewall\Plugins\IpAddress' => ['127.0.0.1'],
+                'Kanopi\Firewall\Plugins\UserAgent' => 'not-an-array',
+            ],
+        ]);
+
+        $classes = array_column($normalized['plugins'] ?? [], 'plugin');
+
+        $this->assertContains('Kanopi\Firewall\Plugins\IpAddress', $classes);
+        $this->assertNotContains(
+            'Kanopi\Firewall\Plugins\UserAgent',
+            $classes,
+            'A malformed bypass entry must not become an allow plugin.'
+        );
+    }
 }

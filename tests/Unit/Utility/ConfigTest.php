@@ -2,6 +2,8 @@
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+require_once __DIR__ . '/../../Traits/UtilityNamespaceOverrides.php';
+
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\Config;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
@@ -1004,6 +1006,39 @@ class ConfigTest extends AbstractTestCase
         $this->assertCount(1, $errors);
         $this->assertSame($missing, $errors[0]['file']);
         $this->assertStringContainsString('does not exist', $errors[0]['message']);
+    }
+
+    /**
+     * Something that exists and is not a directory, but is not a regular file.
+     *
+     * A FIFO or a socket, in practice. Both are awkward and platform-specific
+     * to create, so `is_file()` is shadowed in the Utility namespace instead:
+     * the file genuinely exists and genuinely is not a directory, so only the
+     * regular-file question is forced. The distinct message matters because
+     * "not a regular file" and "not readable" send an operator looking in
+     * completely different places.
+     */
+    public function testLoadFileDistinguishesANonRegularFile(): void
+    {
+        Config::clearLoadErrors();
+
+        $file = tempnam(sys_get_temp_dir(), 'fw-cfg-');
+        $this->assertIsString($file);
+        file_put_contents($file, "global: ~\n");
+
+        $GLOBALS['simulate_utility_is_file_failure'] = true;
+
+        try {
+            $this->assertSame([], Config::loadFile($file));
+
+            $errors = Config::getLoadErrors();
+            $this->assertCount(1, $errors);
+            $this->assertSame($file, $errors[0]['file']);
+            $this->assertStringContainsString('not a regular file', $errors[0]['message']);
+        } finally {
+            $GLOBALS['simulate_utility_is_file_failure'] = false;
+            @unlink($file);
+        }
     }
 
     /**

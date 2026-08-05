@@ -324,4 +324,25 @@ final class UserAgentSelectiveParseTest extends AbstractTestCase
         $this->assertSame(SelectiveDeviceDetector::PHASE_DEVICE, $plugin->phase());
         $this->assertTrue($plugin->evaluate($this->request(self::PIXEL)));
     }
+
+    /**
+     * A second parseUpTo() is a no-op rather than a re-parse.
+     *
+     * Two plugins sharing one detector both ask it to parse, and device
+     * detection is the expensive part of evaluating a request — re-running it
+     * per plugin is the cost this class exists to avoid. The guard also has to
+     * hold when the second call asks for a *deeper* phase, which is the case
+     * that would otherwise quietly do the work twice.
+     */
+    public function testParseUpToIsIdempotent(): void
+    {
+        $selective = new SelectiveDeviceDetector(self::PIXEL);
+
+        $selective->parseUpTo(SelectiveDeviceDetector::PHASE_BOT);
+        $this->assertTrue($selective->isParsed());
+
+        $selective->parseUpTo(SelectiveDeviceDetector::PHASE_DEVICE);
+
+        $this->assertTrue($selective->isParsed(), 'A repeat call must not reset the parsed state.');
+    }
 }

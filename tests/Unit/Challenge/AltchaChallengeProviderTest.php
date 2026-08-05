@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit\Challenge;
 use Kanopi\Firewall\Challenge\AltchaChallengeProvider;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 
 final class AltchaChallengeProviderTest extends AbstractTestCase
@@ -296,6 +297,122 @@ final class AltchaChallengeProviderTest extends AbstractTestCase
             'number' => $number,
             'salt' => $salt,
             'signature' => $signature,
+        ]));
+
+        $this->assertFalse($provider->verifySolution($this->makeSubmissionRequest($payload)));
+    }
+
+    public function testVerifyRejectsPayloadMissingARequiredKey(): void
+    {
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        [$challenge, $number] = $this->renderAndSolve($provider);
+
+        // Every field is required; dropping any one of them must not be
+        // treated as an absent-but-acceptable value.
+        foreach (['algorithm', 'challenge', 'number', 'salt', 'signature'] as $missing) {
+            $payload = [
+                'algorithm' => $challenge['algorithm'],
+                'challenge' => $challenge['challenge'],
+                'number' => $number,
+                'salt' => $challenge['salt'],
+                'signature' => $challenge['signature'],
+            ];
+            unset($payload[$missing]);
+
+            $encoded = base64_encode((string) json_encode($payload));
+            $this->assertFalse(
+                $provider->verifySolution($this->makeSubmissionRequest($encoded)),
+                sprintf('A payload without "%s" was accepted', $missing)
+            );
+        }
+    }
+
+    public function testVerifyRejectsNonScalarFieldValue(): void
+    {
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        [$challenge, $number] = $this->renderAndSolve($provider);
+        $challenge['salt'] = ['nested'];
+
+        $this->assertFalse($provider->verifySolution(
+            $this->makeSubmissionRequest($this->encodeSolution($challenge, $number))
+        ));
+    }
+
+    public function testVerifyAcceptsNumberAsANumericString(): void
+    {
+        // The widget posts JSON it built itself, and a JSON number may arrive
+        // as a string depending on how the client serialised it. A correct
+        // solve must not be rejected over its wire type.
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        [$challenge, $number] = $this->renderAndSolve($provider);
+
+        $payload = base64_encode((string) json_encode([
+            'algorithm' => $challenge['algorithm'],
+            'challenge' => $challenge['challenge'],
+            'number' => (string) $number,
+            'salt' => $challenge['salt'],
+            'signature' => $challenge['signature'],
+        ]));
+
+        $this->assertTrue($provider->verifySolution($this->makeSubmissionRequest($payload)));
+    }
+
+    /**
+     * `number` values that are scalar but cannot be a proof-of-work answer.
+     *
+     * @return array<string, array{0: string|bool|float}>
+     */
+    public static function unusableNumberProvider(): array
+    {
+        return [
+            'non-numeric string' => ['not-a-number'],
+            'float' => [1.5],
+            'boolean' => [true],
+            'negative' => ['-42'],
+            'numeric with whitespace' => [' 42'],
+            'hex' => ['0x2a'],
+        ];
+    }
+
+    #[DataProvider('unusableNumberProvider')]
+    public function testVerifyRejectsUnusableNumber(string|bool|float $number): void
+    {
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        [$challenge, ] = $this->renderAndSolve($provider);
+
+        $payload = base64_encode((string) json_encode([
+            'algorithm' => $challenge['algorithm'],
+            'challenge' => $challenge['challenge'],
+            'number' => $number,
+            'salt' => $challenge['salt'],
+            'signature' => $challenge['signature'],
+        ]));
+
+        $this->assertFalse($provider->verifySolution($this->makeSubmissionRequest($payload)));
+    }
+
+    public function testVerifyRejectsNonNumericExpiryInSalt(): void
+    {
+        // Distinct from a salt with no `?expires` at all: the parameter is
+        // present but unusable, so the expiry cannot be established and the
+        // solution must not be given the benefit of the doubt.
+        $tokenManager = new TokenManager(self::SECRET);
+        $provider = new AltchaChallengeProvider($tokenManager);
+
+        $salt = bin2hex(random_bytes(8)) . '?expires=not-a-timestamp';
+        $number = 11;
+        $challenge = hash('sha256', $salt . $number);
+
+        $payload = base64_encode((string) json_encode([
+            'algorithm' => 'SHA-256',
+            'challenge' => $challenge,
+            'number' => $number,
+            'salt' => $salt,
+            'signature' => $tokenManager->sign($challenge),
         ]));
 
         $this->assertFalse($provider->verifySolution($this->makeSubmissionRequest($payload)));

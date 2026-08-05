@@ -75,4 +75,48 @@ final class LoggingTraitTest extends TestCase
         $this->assertStringNotContainsString("\r", (string) $context['extra']);
         $this->assertStringNotContainsString("\n", (string) $context['extra']);
     }
+
+    /**
+     * Stringable objects are sanitised, not passed through.
+     *
+     * An object is not a string, so the string branch skips it — but a
+     * formatter will call `__toString()` on it downstream and emit whatever
+     * comes back. If that includes CRLF the log line is forgeable, which is
+     * exactly the injection #64 closed for plain strings. The value must be
+     * stringified and cleaned here, while the object stays out of the log
+     * otherwise untouched.
+     */
+    public function testSanitizeContextStripsCrlfFromStringableObjects(): void
+    {
+        $user = new LoggingTraitUser();
+
+        $stringable = new class () {
+            public function __toString(): string
+            {
+                return "legit\r\nfake-line: injected";
+            }
+        };
+
+        $sanitized = $user->publicSanitizeContext(['token' => $stringable]);
+
+        $this->assertSame('legitfake-line: injected', $sanitized['token']);
+    }
+
+    /**
+     * An object with no __toString() is left alone rather than coerced.
+     *
+     * Casting it would raise; the sanitiser has to fall through to the
+     * pass-through branch instead.
+     */
+    public function testSanitizeContextLeavesNonStringableObjectsAlone(): void
+    {
+        $user = new LoggingTraitUser();
+
+        $plain = new \stdClass();
+        $plain->field = 'value';
+
+        $sanitized = $user->publicSanitizeContext(['obj' => $plain]);
+
+        $this->assertSame($plain, $sanitized['obj']);
+    }
 }

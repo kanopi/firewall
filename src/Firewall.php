@@ -547,9 +547,8 @@ final class Firewall
      */
     public function evaluate(?Request $request = null): bool
     {
-        // Skip in CLI (Drush, cron, WP-CLI) unless mode is 'exception' (PHPUnit/framework use).
         // @codeCoverageIgnoreStart
-        if (PHP_SAPI === 'cli' && $this->firewallMode !== FirewallMode::Exception) {
+        if ($this->shouldBypassForCli()) {
             $this->getLogger()->debug('CLI mode detected, bypassing firewall');
             return true;
         }
@@ -628,6 +627,29 @@ final class Firewall
         $this->getLogger()->debug('Request allowed', $this->getContext($request));
 
         return true;
+    }
+
+    /**
+     * Should this invocation skip evaluation because it is a CLI process?
+     *
+     * Drush, cron and WP-CLI have no visitor to protect and no response to
+     * write, so evaluating them is at best wasted work and at worst a
+     * blocked deploy script. `mode: exception` opts out because that is the
+     * mode frameworks and test suites use, where the caller handles the
+     * outcome itself rather than relying on the process exiting.
+     *
+     * Extracted into a method purely so it can be overridden. Every mode but
+     * `exception` returns early here under PHP_SAPI === 'cli', which meant the
+     * `log` and `disabled` branches in `evaluate()` could not be reached from
+     * a test at all — the mode tests that appeared to cover them were passing
+     * on this return instead, asserting nothing about the behaviour they named.
+     *
+     * @return bool
+     *   TRUE when evaluation should be skipped entirely.
+     */
+    protected function shouldBypassForCli(): bool
+    {
+        return PHP_SAPI === 'cli' && $this->firewallMode !== FirewallMode::Exception;
     }
 
     /**
