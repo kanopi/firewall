@@ -6,6 +6,7 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\Crs;
+use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Monolog\Handler\TestHandler;
 use Monolog\Level;
@@ -376,6 +377,49 @@ class CrsTest extends AbstractTestCase
     /**
      * Build a Symfony Request shaped like a normal browser would send.
      */
+    /**
+     * A request the engine could only partly inspect is reported as such.
+     *
+     * The engine caps how many arguments it enumerates (255 by default) so
+     * that evaluation cost stays bounded on attacker-controlled input. Past
+     * that cap part of the request is simply never examined, which makes a
+     * clean verdict weaker evidence than it looks — and a clean verdict is
+     * exactly where a silent gap is most likely to be believed. Hence the
+     * warning, even though nothing matched and the plugin returns FALSE.
+     */
+    public function testTruncatedRequestWarnsEvenWhenNothingMatched(): void
+    {
+        $handler = new TestLogHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        // Comfortably past DEFAULT_MAX_ARGS, all benign.
+        $args = [];
+        for ($i = 0; $i < 300; $i++) {
+            $args['field' . $i] = 'harmless';
+        }
+
+        // CRS has its own protocol rule about argument counts, which would
+        // block and return before the truncation branch is reached. The
+        // threshold is lifted so the request stays unblocked and the "clean
+        // verdict, incomplete inspection" case — the one actually at issue —
+        // is what gets exercised.
+        $plugin = new Crs([], [
+            'paranoia' => 1,
+            'anomaly_thresholds' => ['inbound' => 100000, 'outbound' => 100000],
+        ]);
+
+        $this->assertFalse($plugin->evaluate($this->request($args)), 'nothing should block below the threshold');
+
+        $verdict = $plugin->getLastVerdict();
+        $this->assertNotNull($verdict);
+        $this->assertFalse($verdict->isBlocked(), 'guards the premise: this must be the non-blocked path');
+        $this->assertTrue($verdict->wasTruncated(), 'guards the premise: the engine must have truncated');
+        $this->assertTrue(
+            $handler->hasWarningContaining('inspected less of the request'),
+            'A partly-inspected request must say so rather than read as clean.',
+        );
+    }
+
     private function request(array $queryArgs, array $serverOverrides = []): Request
     {
         return new Request(

@@ -6,11 +6,16 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use DeviceDetector\Cache\CacheInterface;
 use Kanopi\Firewall\Plugins\UserAgent;
+use Kanopi\Firewall\Tests\Cache\NonSavingCachePool;
+use Kanopi\Firewall\Tests\Cache\ThrowingCachePool;
+use Kanopi\Firewall\Tests\Cache\ThrowingOnGetCachePool;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Monolog\Logger;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\HttpFoundation\Request;
@@ -376,5 +381,133 @@ final class UserAgentCacheTest extends AbstractTestCase
 
         $second = $this->plugin(['cache' => ['dir' => $dir]], ['bot:true']);
         $this->assertTrue($second->evaluate($this->request(self::GOOGLEBOT)));
+    }
+
+    /**
+     * An adaptor that blows up while constructing degrades, it does not fail.
+     *
+     * The cache is a performance optimisation — losing it costs roughly 600ms
+     * per request instead of ~20ms, which is bad but survivable. Taking the
+     * site down because a cache directory moved would not be.
+     */
+    public function testAdaptorThatThrowsOnConstructionFallsBackAndWarns(): void
+    {
+        $handler = new TestLogHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->plugin(['cache' => ['adaptor' => ThrowingCachePool::class]], ['bot:true']);
+
+        $this->assertNull($plugin->resolvedCache(), 'A pool that cannot be built must not be used.');
+        $this->assertTrue(
+            $handler->hasWarningContaining('cache could not be created'),
+            'Failing to build the pool should warn rather than pass silently.',
+        );
+        // And detection still works, uncached.
+        $this->assertTrue($plugin->evaluate($this->request(self::GOOGLEBOT)));
+    }
+
+    /**
+     * A pool whose save() reports failure is treated as unusable.
+     *
+     * `FilesystemAdapter` constructs happily against an unwritable directory
+     * and only fails per write, which is why the probe is a round trip rather
+     * than a permissions check. A pool that cannot persist is worse than no
+     * pool, because the plugin would otherwise report a healthy cache while
+     * every request paid the full parse.
+     */
+    public function testPoolThatCannotSaveIsRejectedAndWarns(): void
+    {
+        $handler = new TestLogHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->plugin(['cache' => new NonSavingCachePool()], ['bot:true']);
+
+        $this->assertNull($plugin->resolvedCache());
+        $this->assertTrue(
+            $handler->hasWarningContaining('not writable'),
+            'A pool that silently discards writes must be called out.',
+        );
+    }
+
+    /**
+     * A pool that throws mid-probe is unusable rather than fatal.
+     *
+     * Injected pools are third-party code — Redis going away mid-probe must
+     * not become an exception out of plugin construction.
+     */
+    public function testPoolThatThrowsDuringTheProbeIsRejected(): void
+    {
+        $handler = new TestLogHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->plugin(['cache' => new ThrowingOnGetCachePool()], ['bot:true']);
+
+        $this->assertNull($plugin->resolvedCache());
+        $this->assertTrue($handler->hasWarningContaining('not writable'));
+    }
+
+    /**
+     * KANOPI_FIREWALL_CACHE_DIR overrides the default location.
+     *
+     * The point of the constant is deployments that cannot pass metadata —
+     * an auto-prepend or a platform bootstrap — so it has to work without
+     * any plugin config. It runs in a separate process because `define()`
+     * cannot be undone, and leaking it would silently redirect the cache for
+     * every test that ran afterwards.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testCacheDirHonoursTheGlobalConstant(): void
+    {
+        $dir = sys_get_temp_dir() . '/fw-const-cache-' . uniqid();
+        define('KANOPI_FIREWALL_CACHE_DIR', $dir);
+
+        $this->assertSame($dir, $this->plugin([], ['bot:true'])->resolvedCacheDir());
+    }
+
+    /**
+     * Explicit config still wins over the constant.
+     *
+     * Ordering matters: a platform-wide default must not override what an
+     * operator asked for in their own firewall config.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testConfiguredCacheDirBeatsTheGlobalConstant(): void
+    {
+        define('KANOPI_FIREWALL_CACHE_DIR', sys_get_temp_dir() . '/fw-const-loses');
+
+        $explicit = sys_get_temp_dir() . '/fw-explicit-wins';
+        $plugin = $this->plugin(['cache' => ['dir' => $explicit]], ['bot:true']);
+
+        $this->assertSame($explicit, $plugin->resolvedCacheDir());
+    }
+
+    /**
+     * When no pool can be resolved at all, detection proceeds uncached.
+     *
+     * `cachePool()` is typed `?CacheItemPoolInterface`, so a null return is a
+     * legitimate outcome and the caller has to cope with it rather than
+     * assuming a pool exists.
+     */
+    public function testNoResolvablePoolLeavesDetectionUncached(): void
+    {
+        $plugin = new class ([], ['bot:true']) extends UserAgent {
+            public function resolvedCache(): ?CacheInterface
+            {
+                return $this->cache();
+            }
+
+            /**
+             * {@inheritdoc}
+             */
+            protected function cachePool(mixed $configured): ?\Psr\Cache\CacheItemPoolInterface
+            {
+                return null;
+            }
+        };
+
+        $this->assertNull($plugin->resolvedCache());
+        $this->assertTrue($plugin->evaluate($this->request(self::GOOGLEBOT)));
     }
 }
