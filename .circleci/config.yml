@@ -138,21 +138,50 @@ jobs:
           name: Run PHPUnit
           command: composer -n phpunit
       - run:
-          name: Check Overage
+          name: Check Coverage
           command: |
-            PERCENTAGE=$(xidel -s --xpath "string(//phpunit/project/directory/totals/lines/@percent)" reports/xml/index.xml)
-            PASSING=85
-            OUTCOME=$(echo "${PERCENTAGE} < ${PASSING}" | bc)
-            echo "# PHPUnit Code Coverage" | tee -a /tmp/report.md
-            echo "PHP Version: <<parameters.php>>" | tee -a /tmp/report.md
-            echo "Percent: ${PERCENTAGE}" | tee -a /tmp/report.md
-            echo "Passing: ${PASSING}" | tee -a /tmp/report.md
-            echo "" | tee -a /tmp/report.md
-            echo "[Report](https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/reports/index.html)" | tee -a /tmp/report.md
-#            if [[ "${OUTCOME}" == "1" ]]; then
-#              echo "Percentage does not pass threshold."
-#              exit 1
-#            fi
+            # Read and compare with PHP rather than xidel + bc. Both were
+            # installed by curl'ing binaries mid-build — one of them a
+            # version-pinned .deb over plain HTTP from archive.ubuntu.com,
+            # which has already failed a build with "Connection reset by
+            # peer". A gate that can fail for reasons unrelated to the code
+            # under test is worse than no gate, and PHP is definitionally
+            # present in a PHP image.
+            # Ratchet, not a target. Set below the figure measured when
+            # coverage started including the integration suite, so the gain
+            # cannot silently regress. Raise it as coverage improves; see the
+            # tracking issue for where the remaining gaps are.
+            PASSING=90
+            # Read, report and compare entirely inside PHP. Nothing parses
+            # PHP's stdout in the shell, because on this image every `php`
+            # invocation prints "Module ... is already loaded" warnings to
+            # stdout — captured into a variable they prefix the value, and
+            # `(float) "Warning: ..."` is 0.0, which failed the gate against
+            # a real 95.90%. display_errors=stderr keeps them out of the way
+            # as well, but the comparison no longer depends on that.
+            php -d display_errors=stderr -r '
+              $min = (float) $argv[1];
+              $xml = simplexml_load_file("reports/xml/index.xml");
+              if ($xml === false) {
+                fwrite(STDERR, "Could not read reports/xml/index.xml — did the coverage run produce a report?\n");
+                exit(1);
+              }
+              $pct = (float) $xml->project->directory->totals->lines["percent"];
+              $report = sprintf(
+                "# PHPUnit Code Coverage\nPHP Version: %s\nPercent: %.2f\nPassing: %.2f\n\n[Report](https://output.circle-artifacts.com/output/job/%s/artifacts/0/reports/index.html)\n",
+                $argv[2],
+                $pct,
+                $min,
+                $argv[3]
+              );
+              file_put_contents("/tmp/report.md", $report, FILE_APPEND);
+              echo $report;
+              if ($pct < $min) {
+                printf("Line coverage %.2f%% is below the %.2f%% floor.\n", $pct, $min);
+                exit(1);
+              }
+              printf("Line coverage %.2f%% meets the %.2f%% floor.\n", $pct, $min);
+            ' "${PASSING}" "<<parameters.php>>" "${CIRCLE_WORKFLOW_JOB_ID}"
       - ci-tools/post-to-github-commit:
           body: '@/tmp/report.md'
           when: always

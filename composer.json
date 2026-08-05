@@ -69,11 +69,9 @@
         "check:code:circleci": "vendor/bin/phpcs --standard=phpcs_ruleset.xml --report=junit --report-file=phpcs-report.xml src",
         "check:code": "vendor/bin/phpcs --standard=phpcs_ruleset.xml src",
         "fix:code": "vendor/bin/phpcbf --standard=phpcs_ruleset.xml src",
-        "phpunit": [
-            "@phpunit:unit",
-            "@phpunit:integration"
-        ],
-        "phpunit:unit": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --testsuite unit --do-not-cache-result",
+        "phpunit": "@phpunit:coverage",
+        "phpunit:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --do-not-cache-result",
+        "phpunit:unit": "vendor/bin/phpunit -c ./phpunit.xml --testsuite unit --do-not-cache-result --no-coverage",
         "phpunit:integration": "vendor/bin/phpunit -c ./phpunit.xml --testsuite integration --do-not-cache-result --no-coverage",
         "fix:php": "find config src tests -name '*.php' -exec php -l {} \\;",
         "check:security": "vendor/bin/phpstan analyse src --level max --memory-limit=-1",
@@ -95,6 +93,7 @@
             "@phpunit:unit",
             "@phpunit:integration"
         ],
+        "test:gate": "@phpunit:coverage",
         "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --coverage-html reports/ --coverage-text",
         "cs": "@check:code",
         "cs:fix": "@fix:code",
@@ -129,6 +128,9 @@
         "check:request": "php bin/firewall-check"
     },
     "scripts-descriptions": {
+        "test": "Run both suites without coverage — the fast loop for local development",
+        "phpunit:coverage": "Run both suites in a single pass with coverage. Coverage MUST be measured across both suites: running them separately leaves integration tests out of the figure entirely, which understated Firewall.php by 20 percentage points",
+        "test:gate": "Alias for phpunit:coverage — the run the CI coverage gate reads",
         "demo": "Run the demo on PHP's built-in server (single-process) at http://localhost:8000",
         "demo:workers": "Same as `demo` but with PHP_CLI_SERVER_WORKERS=8 for concurrent request handling",
         "demo:reset": "Delete the demo's FileStorage data file (/tmp/firewall-demo.data) so the next request starts with a clean slate",

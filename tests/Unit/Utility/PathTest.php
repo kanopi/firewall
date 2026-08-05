@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Utility;
 
+require_once __DIR__ . '/../../Traits/UtilityNamespaceOverrides.php';
+
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\Path;
@@ -305,6 +307,49 @@ class PathTest extends AbstractTestCase
         } finally {
             @unlink($symlinkPath);
             @unlink($tempFile);
+        }
+    }
+
+    /**
+     * A path that exists but cannot be canonicalised is returned as given.
+     *
+     * The real triggers are stream wrappers, phar and certain permission
+     * setups — the two tests above that aim at them skip on most machines,
+     * which is why this branch stayed uncovered. Shadowing `realpath()` in
+     * the Utility namespace reaches it deterministically instead. The path
+     * genuinely exists, so `file_exists()` is left to answer honestly and
+     * only the canonicalisation is forced to fail.
+     */
+    public function testRealOrGivenReturnsThePathWhenRealpathFails(): void
+    {
+        $tempFile = tempnam(sys_get_temp_dir(), 'fw-path-');
+        $this->assertIsString($tempFile);
+
+        $GLOBALS['simulate_utility_realpath_failure'] = true;
+
+        try {
+            $this->assertSame($tempFile, Path::realOrGiven($tempFile));
+        } finally {
+            $GLOBALS['simulate_utility_realpath_failure'] = false;
+            @unlink($tempFile);
+        }
+    }
+
+    /**
+     * With canonicalisation failing AND the path absent, the error still wins.
+     *
+     * Guards the ordering: the fallback above must not become a way to smuggle
+     * a non-existent path through.
+     */
+    public function testRealOrGivenStillThrowsWhenTheFileIsAbsent(): void
+    {
+        $GLOBALS['simulate_utility_realpath_failure'] = true;
+
+        try {
+            $this->expectException(ConfigurationException::class);
+            Path::realOrGiven('/definitely/not/here/' . uniqid());
+        } finally {
+            $GLOBALS['simulate_utility_realpath_failure'] = false;
         }
     }
 }

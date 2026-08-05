@@ -442,6 +442,21 @@ class StorageIntegrationTest extends IntegrationTestCase
             // The write threshold was bumped from 10s after a PHP 8.2
             // CircleCI run landed at 10.002s — pure timing flake, not a
             // real regression signal.
+            //
+            // Under coverage instrumentation they are recorded but not
+            // asserted. Xdebug's line-by-line tracing multiplies execution
+            // time several-fold, so what a threshold would measure is the
+            // profiler rather than the storage backend — a CI run landed at
+            // 15.16s against the 15s write threshold the moment this suite
+            // started being instrumented. Raising the number again would be
+            // the second such bump and would only defer the problem while
+            // eroding whatever regression signal is left. The loop above
+            // still executes, so the storage code it exercises still counts
+            // toward coverage; only the wall-clock claims are dropped.
+            if (self::coverageIsActive()) {
+                continue;
+            }
+
             $this->assertLessThan(15, $writeTime, "$type: Write time should be under 15 seconds");
             $this->assertLessThan(5, $readTime, "$type: Read time should be under 5 seconds");
             $this->assertLessThan(8, $cleanTime, "$type: Clean time should be under 8 seconds");

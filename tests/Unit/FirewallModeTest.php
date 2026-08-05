@@ -11,6 +11,8 @@ use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Tests\Firewall\EvaluatingFirewall;
+use Kanopi\Firewall\Tests\Firewall\ProviderlessSubmissionFirewall;
 use Monolog\Handler\TestHandler;
 use Monolog\Level;
 use Monolog\Logger;
@@ -237,5 +239,130 @@ class FirewallModeTest extends AbstractTestCase
     public function testFirewallModeTryFromInvalid(): void
     {
         $this->assertNull(FirewallMode::tryFrom('invalid'));
+    }
+
+    // -------------------------------------------------------------------
+    // Modes reached with the CLI short-circuit disabled
+    //
+    // `evaluate()` returns early under PHP_SAPI === 'cli' for every mode but
+    // `exception`, so `log` and `disabled` were previously asserted only
+    // through that return — the tests passed without the behaviour they named
+    // ever running. These use a subclass that declines the CLI bypass, which
+    // is the only way to exercise those branches from a CLI test process.
+    // -------------------------------------------------------------------
+
+    public function testDisabledModeReturnsBeforeAnyPluginRuns(): void
+    {
+        $this->bypassManager->expects($this->never())->method('evaluate');
+        $this->blockManager->expects($this->never())->method('evaluate');
+        $this->challengeManager->expects($this->never())->method('evaluate');
+        $this->storage->expects($this->never())->method('isBlocked');
+
+        $firewall = $this->createEvaluatingFirewall(['mode' => 'disabled']);
+
+        $this->assertTrue($firewall->evaluate($this->request()));
+    }
+
+    public function testLogModeWarnsAboutABlockWithoutBlocking(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Blocker');
+        $plugin->method('getStatusCode')->willReturn(403);
+
+        $this->bypassManager->method('evaluate')->willReturn(false);
+        $this->challengeManager->method('evaluate')->willReturn(false);
+        $this->blockManager->method('evaluate')->willReturn($plugin);
+
+        // A dry run must not record the offence: #44 was an audit-only
+        // deployment hard-blocking every repeat offender and extending bans.
+        $this->storage->expects($this->never())->method('recordOffense');
+
+        $firewall = $this->createEvaluatingFirewall(['mode' => 'log']);
+
+        $this->assertTrue($firewall->evaluate($this->request()));
+        $this->assertTrue(
+            $handler->hasWarningThatContains('Request would be blocked (log mode)'),
+            'Log mode has to say what it would have done, or it reports nothing at all.',
+        );
+    }
+
+    public function testLogModeWarnsAboutAChallengeWithoutServingOne(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Challenger');
+
+        $this->bypassManager->method('evaluate')->willReturn(false);
+        $this->challengeManager->method('evaluate')->willReturn($plugin);
+        $this->blockManager->method('evaluate')->willReturn(false);
+
+        $firewall = $this->createEvaluatingFirewall(['mode' => 'log']);
+
+        // Returns true rather than serving an interstitial, and never reaches
+        // the block bucket — a would-be challenge ends evaluation.
+        $this->assertTrue($firewall->evaluate($this->request()));
+        $this->assertTrue(
+            $handler->hasWarningThatContains('Request would be challenged (log mode)'),
+        );
+    }
+
+    /**
+     * A submission with no provider wired up returns quietly.
+     *
+     * `isChallengeSubmission()` already returns FALSE when there is no
+     * provider, so the guard inside `handleChallengeSubmission()` cannot be
+     * reached through the real path — the conditions contradict each other.
+     * The guard is insurance against that invariant being broken later, and
+     * what matters is that it returns rather than dereferencing a null
+     * provider and making every POST to the challenge path fatal.
+     */
+    public function testChallengeSubmissionWithNoProviderReturnsQuietly(): void
+    {
+        $this->storage->method('getKey')->willReturn('1.2.3.4');
+        $this->storage->method('isBlocked')->willReturn(false);
+
+        // Never reaches plugin evaluation: the submission path returns first.
+        $this->bypassManager->expects($this->never())->method('evaluate');
+        $this->blockManager->expects($this->never())->method('evaluate');
+
+        $firewall = ProviderlessSubmissionFirewall::make(
+            $this->storage,
+            $this->blockManager,
+            $this->bypassManager,
+            $this->challengeManager,
+            ['mode' => 'exception']
+        );
+
+        $this->assertTrue($firewall->evaluate($this->request()));
+    }
+
+    /**
+     * A firewall that evaluates rather than short-circuiting on CLI.
+     *
+     * @param array<string, mixed> $config
+     *   Firewall config, e.g. `['mode' => 'log']`.
+     */
+    private function createEvaluatingFirewall(array $config = []): Firewall
+    {
+        return EvaluatingFirewall::make(
+            $this->storage,
+            $this->blockManager,
+            $this->bypassManager,
+            $this->challengeManager,
+            $config
+        );
+    }
+
+    private function request(string $ip = '1.2.3.4'): Request
+    {
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => $ip]);
+        $request->attributes->set('x-request-id', 'mode-test');
+
+        return $request;
     }
 }

@@ -27,6 +27,13 @@
       <bootstrap class="DG\BypassFinals\PHPUnitExtension"/>
   </extensions>
   <php>
+    <!--
+      Covering both suites in one run needs more than the default 128M:
+      report generation holds the whole coverage set in memory and dies
+      partway through writing the HTML with "Allowed memory size exhausted",
+      which looks like a test failure but is not one.
+    -->
+    <ini name="memory_limit" value="512M" />
     <env name="FIREWALL_BYPASS_CLI" value="1" />
     <env name="FIREWALL_TEST" value="1" />
   </php>

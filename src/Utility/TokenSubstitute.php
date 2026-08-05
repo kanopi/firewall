@@ -275,7 +275,12 @@ final class TokenSubstitute
             throw new ConfigurationException(\sprintf('%%file(%s)%% not found or unreadable', $path));
         }
 
-        $contents = \file_get_contents($path);
+        // Unqualified on purpose so the suite can shadow it. This call has
+        // already passed is_file() and is_readable(), so a false return needs
+        // the read to fail between the check and the read — a permissions
+        // change or an unlink landing in that window. Not something a test
+        // can arrange. See tests/Traits/UtilityNamespaceOverrides.php.
+        $contents = file_get_contents($path);
 
         if ($contents === false) {
             throw new ConfigurationException(\sprintf('Failed reading %%file(%s)%%', $path));
@@ -508,7 +513,8 @@ final class TokenSubstitute
                         throw new ConfigurationException(\sprintf('file:%s not found or unreadable (from %s)', $p, $var));
                     }
 
-                    $c = \file_get_contents($p);
+                    // Unqualified for the same reason as readLiteralPath().
+                    $c = file_get_contents($p);
                     if ($c === false) {
                         throw new ConfigurationException(\sprintf('Failed reading file for %s', $var));
                     }

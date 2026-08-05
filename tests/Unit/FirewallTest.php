@@ -15,6 +15,7 @@ use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Tests\Challenge\ReceiptlessSingleUseProvider;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
@@ -1261,5 +1262,183 @@ class FirewallTest extends AbstractTestCase
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('global.require_config is enabled');
         Firewall::create([sys_get_temp_dir() . '/fw78-constant-missing.yml']);
+    }
+
+    /**
+     * Redirect targets that must not survive sanitisation.
+     *
+     * This is the open-redirect guard on the challenge flow. `redirect_to`
+     * comes off the interstitial's POST, so an attacker picks it — and the
+     * value is handed to `window.location.href` after a successful solve. A
+     * protocol-relative `//evil.test` is the case worth naming: it looks like
+     * a path, passes a naive "starts with /" check, and navigates off-site.
+     *
+     * @return array<string, array{0: string}>
+     */
+    public static function hostileRedirectTargetProvider(): array
+    {
+        return [
+            'empty' => [''],
+            'no leading slash' => ['wp-admin'],
+            'absolute url' => ['https://evil.test/'],
+            'scheme relative' => ['//evil.test/'],
+            'scheme relative with path' => ['//evil.test/steal'],
+            'backslash escape' => ['/\\evil.test'],
+            'javascript scheme' => ['javascript:alert(1)'],
+            'data scheme' => ['data:text/html,<script>alert(1)</script>'],
+        ];
+    }
+
+    #[DataProvider('hostileRedirectTargetProvider')]
+    public function testSanitizeRedirectRefusesOffSiteTargets(string $target): void
+    {
+        $method = new \ReflectionMethod(Firewall::class, 'sanitizeRedirect');
+
+        $this->assertSame(
+            '/',
+            $method->invoke($this->minimalFirewall(), $target),
+            sprintf('"%s" must not be used as a redirect target', $target)
+        );
+    }
+
+    /**
+     * Same-origin paths are passed through unchanged.
+     *
+     * The guard has to be narrow enough to still work: sending every solver
+     * back to `/` instead of the page they asked for would make the challenge
+     * flow useless.
+     *
+     * @return array<string, array{0: string}>
+     */
+    public static function safeRedirectTargetProvider(): array
+    {
+        return [
+            'root' => ['/'],
+            'path' => ['/wp-admin/'],
+            'path with query' => ['/search?q=hello'],
+            'path with fragment' => ['/page#section'],
+            'single slash then text' => ['/evil.test'],
+        ];
+    }
+
+    #[DataProvider('safeRedirectTargetProvider')]
+    public function testSanitizeRedirectKeepsSameOriginPaths(string $target): void
+    {
+        $method = new \ReflectionMethod(Firewall::class, 'sanitizeRedirect');
+
+        $this->assertSame($target, $method->invoke($this->minimalFirewall(), $target));
+    }
+
+    /**
+     * A provider that declines to identify a solution is not a replay.
+     *
+     * `getSolutionReceipt()` returning NULL opts one request out of replay
+     * tracking, which a provider whose solutions are not unique per render
+     * needs. Treating that as "already spent" would reject a legitimate
+     * solver, so the submission has to be waved through.
+     */
+    public function testSolutionWithNoReceiptIsNotTreatedAsAReplay(): void
+    {
+        $firewall = $this->minimalFirewall();
+
+        $this->setPrivate($firewall, 'challengeProvider', new ReceiptlessSingleUseProvider());
+
+        $method = new \ReflectionMethod(Firewall::class, 'consumeSingleUseSolution');
+
+        $this->assertTrue(
+            $method->invoke($firewall, Request::create('/_firewall/challenge', 'POST')),
+            'A NULL receipt opts out of tracking; it does not mean the solution was spent.'
+        );
+    }
+
+    /**
+     * A challenge plugin matching with no provider wired up fails loud.
+     *
+     * `create()` rejects that combination first, so this is a last resort —
+     * but the alternative is serving an empty page to every challenged
+     * visitor, which looks like the site is broken rather than misconfigured.
+     */
+    public function testChallengeWithNoProviderRaisesRatherThanServingNothing(): void
+    {
+        $firewall = $this->minimalFirewall();
+        $plugin = $this->createMock(PluginInterface::class);
+
+        $method = new \ReflectionMethod(Firewall::class, 'sendChallengeResponse');
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('no ChallengeProviderInterface is configured');
+
+        $method->invoke($firewall, Request::create('/protected'), $plugin);
+    }
+
+    /**
+     * A plugin reporting a non-positive TTL gets the one-hour default.
+     *
+     * A zero or negative TTL would mint a pass token that is already expired,
+     * so the visitor would solve the challenge and be challenged again
+     * immediately — an infinite loop rather than a short-lived pass.
+     */
+    public function testNonPositiveExpirationFallsBackToAnHour(): void
+    {
+        $firewall = $this->minimalFirewall();
+        $this->setPrivate($firewall, 'challengeProvider', new ReceiptlessSingleUseProvider());
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Challenger');
+        $plugin->method('getExpirationTime')->willReturn(0);
+
+        $handler = new \Monolog\Handler\TestHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new \Monolog\Logger('test', [$handler]));
+
+        $method = new \ReflectionMethod(Firewall::class, 'sendChallengeResponse');
+
+        try {
+            $method->invoke($firewall, Request::create('/protected'), $plugin);
+            $this->fail('Expected ChallengeRequiredException in exception mode');
+        } catch (\Kanopi\Firewall\Exception\ChallengeRequiredException) {
+            $this->addToAssertionCount(1);
+        }
+
+        $ttls = array_map(
+            static fn ($record): mixed => $record->context['ttl'] ?? null,
+            $handler->getRecords()
+        );
+
+        $this->assertContains(
+            3600,
+            $ttls,
+            'A non-positive TTL must be replaced with the 3600s default, not passed through.'
+        );
+    }
+
+    /**
+     * Set a private Firewall property that has no setter.
+     */
+    private function setPrivate(Firewall $firewall, string $property, mixed $value): void
+    {
+        $ref = new \ReflectionProperty(Firewall::class, $property);
+        $ref->setAccessible(true);
+        $ref->setValue($firewall, $value);
+    }
+
+    /**
+     * A Firewall with no plugins, for exercising its protected helpers.
+     */
+    private function minimalFirewall(): Firewall
+    {
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $ref->newInstanceWithoutConstructor();
+        $constructor = $ref->getConstructor();
+        $constructor->setAccessible(true);
+        $constructor->invoke(
+            $firewall,
+            new InMemoryStorage(),
+            PluginManager::createFromPluginsArray([]),
+            PluginManager::createFromPluginsArray([]),
+            PluginManager::createFromPluginsArray([]),
+            ['mode' => 'exception']
+        );
+
+        return $firewall;
     }
 }

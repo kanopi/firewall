@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Traits;
 
+require_once __DIR__ . '/../../Traits/NamespaceOverrides.php';
+
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Traits\FileTrait;
@@ -362,5 +364,93 @@ class FileTraitTest extends TestCase
         $secondPath = $defaultRef->invoke($this->subject, 'storage_data.json');
         $this->assertSame($path, $secondPath);
         $this->assertSame($dirPerms, fileperms($directory) & 0777);
+    }
+
+    /**
+     * The create-the-directory branch, forced to run.
+     *
+     * The per-user temp directory survives between runs, so on any machine
+     * that has executed this suite before, `is_dir()` is already true and the
+     * `mkdir()` call never executes — the branch is invisible precisely
+     * because the test above just created it. Shadowing `is_dir()` in the
+     * Traits namespace runs it deterministically.
+     */
+    public function testDefaultStoragePathCreatesTheDirectoryWhenAbsent(): void
+    {
+        $defaultRef = new \ReflectionMethod($this->subject, 'defaultStoragePath');
+
+        $GLOBALS['simulate_is_dir_failure'] = true;
+
+        try {
+            $path = $defaultRef->invoke($this->subject, 'storage_data.json');
+        } finally {
+            $GLOBALS['simulate_is_dir_failure'] = false;
+        }
+
+        $this->assertStringContainsString('kanopi-firewall-', $path);
+        $this->assertStringEndsWith(DIRECTORY_SEPARATOR . 'storage_data.json', $path);
+        // mkdir() is suppressed and its result ignored, so an already-present
+        // directory must not change the answer.
+        $this->assertDirectoryExists(dirname($path));
+    }
+
+    /**
+     * The mask arithmetic that tightens a loose pre-existing file.
+     *
+     * `testExistingFileWithLoosePermsIsTightened()` above asserts the real
+     * filesystem outcome, but skips wherever `chmod()` is not honoured — which
+     * includes the CircleCI cimg/php images, so on CI it never runs and this
+     * branch went unexercised there. Whether the branch is entered at all also
+     * depends on the ambient umask, since it only fires for a file that is
+     * already group- or world-readable.
+     *
+     * This asserts the mode *requested*, which is portable, and pins the two
+     * things the arithmetic has to get right:
+     *
+     *   - `& 07777` strips the file-type bits `fileperms()` returns alongside
+     *     the mode. Without it the value carries S_IFREG, and the comment in
+     *     `validateFilePath()` records that some platforms — that CI image
+     *     among them — refuse a chmod carrying those bits outright, so the
+     *     tightening silently did nothing.
+     *   - `& ~0077` clears group and other, and only those: an operator who
+     *     deliberately set the owner bits keeps them.
+     */
+    public function testLoosePermissionsAreTightenedWithFileTypeBitsStripped(): void
+    {
+        // 0100644 is what fileperms() actually returns for a 0644 regular
+        // file: S_IFREG (0100000) plus the mode.
+        $GLOBALS['fake_fileperms'] = 0100644;
+        $GLOBALS['record_chmod_calls'] = true;
+        $GLOBALS['recorded_chmod_calls'] = [];
+
+        try {
+            $this->subject->validate($this->tempFile);
+        } finally {
+            unset($GLOBALS['fake_fileperms']);
+            $GLOBALS['record_chmod_calls'] = false;
+        }
+
+        $modes = array_column(
+            array_filter(
+                $GLOBALS['recorded_chmod_calls'],
+                fn (array $call): bool => $call['path'] === $this->tempFile
+            ),
+            'mode'
+        );
+
+        $this->assertNotEmpty($modes, 'A loose pre-existing file must be chmod()ed.');
+
+        $requested = end($modes);
+        $this->assertSame(
+            0,
+            $requested & ~07777,
+            sprintf('File-type bits must be stripped before chmod, got 0%o', $requested)
+        );
+        $this->assertSame(
+            0,
+            $requested & 0077,
+            sprintf('Group/other bits must be cleared, got 0%o', $requested)
+        );
+        $this->assertSame(0600, $requested, 'Owner read/write must survive.');
     }
 }

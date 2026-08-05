@@ -58,7 +58,13 @@ final class Path
      */
     public static function realOrGiven(string $path): string
     {
-        $real = \realpath($path);
+        // Called unqualified on purpose. The branch below — realpath() failing
+        // on a path that exists — only happens for stream wrappers, phar and
+        // certain permission setups, none of which can be produced reliably
+        // in a test. Leaving the call namespace-resolvable lets the suite
+        // shadow it and exercise the fallback. See
+        // tests/Traits/UtilityNamespaceOverrides.php.
+        $real = realpath($path);
         if ($real !== false) {
             return $real;
         }

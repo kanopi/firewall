@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit\Challenge;
 use Kanopi\Firewall\Challenge\MathChallengeProvider;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 
 final class MathChallengeProviderTest extends AbstractTestCase
@@ -146,6 +147,40 @@ final class MathChallengeProviderTest extends AbstractTestCase
         [$answer, ] = explode('|', $data, 2);
 
         return [$state, $answer];
+    }
+
+    /**
+     * Signed state whose data half is not `answer|expiry`.
+     *
+     * @return array<string, array{0: string}>
+     */
+    public static function malformedStateDataProvider(): array
+    {
+        return [
+            'no separator' => ['7'],
+            'two separators' => ['7|9999999999|extra'],
+            'empty' => [''],
+            'separator only' => ['|'],
+        ];
+    }
+
+    /**
+     * A correctly signed state can still be the wrong shape.
+     *
+     * The signature is checked before the payload is split, so anyone holding
+     * the secret — including a future bug in this class — can present signed
+     * state that does not parse. Signing each case with the real secret is
+     * the point: it reaches the shape check rather than stopping at the HMAC.
+     */
+    #[DataProvider('malformedStateDataProvider')]
+    public function testCorrectlySignedMalformedStateIsRejected(string $data): void
+    {
+        $tokenManager = new TokenManager(self::SECRET);
+        $provider = new MathChallengeProvider($tokenManager);
+
+        $state = $data . '.' . $tokenManager->sign($data);
+
+        $this->assertFalse($provider->verifySolution($this->makeSubmissionRequest($state, '7')));
     }
 
     private function makeSubmissionRequest(string $state, string $answer): Request
