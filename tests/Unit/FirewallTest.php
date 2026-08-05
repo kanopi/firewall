@@ -1262,4 +1262,90 @@ class FirewallTest extends AbstractTestCase
         $this->expectExceptionMessage('global.require_config is enabled');
         Firewall::create([sys_get_temp_dir() . '/fw78-constant-missing.yml']);
     }
+
+    /**
+     * Redirect targets that must not survive sanitisation.
+     *
+     * This is the open-redirect guard on the challenge flow. `redirect_to`
+     * comes off the interstitial's POST, so an attacker picks it — and the
+     * value is handed to `window.location.href` after a successful solve. A
+     * protocol-relative `//evil.test` is the case worth naming: it looks like
+     * a path, passes a naive "starts with /" check, and navigates off-site.
+     *
+     * @return array<string, array{0: string}>
+     */
+    public static function hostileRedirectTargetProvider(): array
+    {
+        return [
+            'empty' => [''],
+            'no leading slash' => ['wp-admin'],
+            'absolute url' => ['https://evil.test/'],
+            'scheme relative' => ['//evil.test/'],
+            'scheme relative with path' => ['//evil.test/steal'],
+            'backslash escape' => ['/\\evil.test'],
+            'javascript scheme' => ['javascript:alert(1)'],
+            'data scheme' => ['data:text/html,<script>alert(1)</script>'],
+        ];
+    }
+
+    #[DataProvider('hostileRedirectTargetProvider')]
+    public function testSanitizeRedirectRefusesOffSiteTargets(string $target): void
+    {
+        $method = new \ReflectionMethod(Firewall::class, 'sanitizeRedirect');
+
+        $this->assertSame(
+            '/',
+            $method->invoke($this->minimalFirewall(), $target),
+            sprintf('"%s" must not be used as a redirect target', $target)
+        );
+    }
+
+    /**
+     * Same-origin paths are passed through unchanged.
+     *
+     * The guard has to be narrow enough to still work: sending every solver
+     * back to `/` instead of the page they asked for would make the challenge
+     * flow useless.
+     *
+     * @return array<string, array{0: string}>
+     */
+    public static function safeRedirectTargetProvider(): array
+    {
+        return [
+            'root' => ['/'],
+            'path' => ['/wp-admin/'],
+            'path with query' => ['/search?q=hello'],
+            'path with fragment' => ['/page#section'],
+            'single slash then text' => ['/evil.test'],
+        ];
+    }
+
+    #[DataProvider('safeRedirectTargetProvider')]
+    public function testSanitizeRedirectKeepsSameOriginPaths(string $target): void
+    {
+        $method = new \ReflectionMethod(Firewall::class, 'sanitizeRedirect');
+
+        $this->assertSame($target, $method->invoke($this->minimalFirewall(), $target));
+    }
+
+    /**
+     * A Firewall with no plugins, for exercising its protected helpers.
+     */
+    private function minimalFirewall(): Firewall
+    {
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $ref->newInstanceWithoutConstructor();
+        $constructor = $ref->getConstructor();
+        $constructor->setAccessible(true);
+        $constructor->invoke(
+            $firewall,
+            new InMemoryStorage(),
+            PluginManager::createFromPluginsArray([]),
+            PluginManager::createFromPluginsArray([]),
+            PluginManager::createFromPluginsArray([]),
+            ['mode' => 'exception']
+        );
+
+        return $firewall;
+    }
 }
