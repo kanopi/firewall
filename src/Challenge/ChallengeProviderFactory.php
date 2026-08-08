@@ -31,6 +31,7 @@ final class ChallengeProviderFactory
         'math' => MathChallengeProvider::class,
         'altcha' => AltchaChallengeProvider::class,
         'turnstile' => TurnstileChallengeProvider::class,
+        'recaptcha' => RecaptchaChallengeProvider::class,
     ];
 
     /**

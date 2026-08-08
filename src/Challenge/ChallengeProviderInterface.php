@@ -14,7 +14,7 @@ namespace Kanopi\Firewall\Challenge;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * Contract for challenge providers (math, Turnstile, hCaptcha, …).
+ * Contract for challenge providers (math, Turnstile, reCAPTCHA, …).
  *
  * A provider owns two halves of the challenge round-trip:
  *   1. Rendering the interstitial body that asks the visitor to prove they

@@ -14,7 +14,7 @@ The pass token is:
 
 ```yaml
 challenge:
-  provider: math                # 'math', 'altcha' or 'turnstile'; or a FQCN implementing ChallengeProviderInterface
+  provider: math                # 'math', 'altcha', 'turnstile' or 'recaptcha'; or a FQCN implementing ChallengeProviderInterface
   secret: '%env(FIREWALL_CHALLENGE_SECRET)%'   # REQUIRED. Long random string, ideally from an env var.
   cookie_name: fw_challenge_pass
   header_name: X-Firewall-Challenge
@@ -67,7 +67,7 @@ The alternative is to give each instance its own `challenge.secret`, which isola
 
 ## Built-in providers
 
-Three providers ship with the firewall — set `challenge.provider` to a short name:
+Four providers ship with the firewall — set `challenge.provider` to a short name:
 
 === "math"
 
@@ -87,21 +87,27 @@ Three providers ship with the firewall — set `challenge.provider` to a short n
 === "turnstile"
 
     Cloudflare's Turnstile widget, verified server-side against their
-    siteverify API. The strongest bot resistance of the three, and the only
-    one that depends on a third party being reachable — from the visitor's
+    siteverify API. The strongest bot resistance of the four, and one of two
+    that depend on a third party being reachable — from the visitor's
     browser *and* from your server.
+
+=== "recaptcha"
+
+    Google's reCAPTCHA, in either the v2 "I'm not a robot" checkbox (the
+    default) or the invisible, score-based v3. Verified server-side against
+    Google's siteverify API.
 
 The math and ALTCHA screenshots come from the [demo application](../guides/demo.md), which serves each provider on its own route.
 
 Which to pick is mostly a question of what you are willing to depend on:
 
-| | `math` | `altcha` | `turnstile` |
-|---|---|---|---|
-| Third-party script | none | CDN (self-hostable) | Cloudflare only |
-| Outbound call from your server | none | none | one per submission |
-| Subresource Integrity | n/a | yes, pinned | not possible |
-| Bot resistance | lowest | CPU cost per solve | highest |
-| Fails if the third party is down | n/a | interstitial degrades | nobody can pass (default) |
+| | `math` | `altcha` | `turnstile` | `recaptcha` |
+|---|---|---|---|---|
+| Third-party script | none | CDN (self-hostable) | Cloudflare only | Google only |
+| Outbound call from your server | none | none | one per submission | one per submission |
+| Subresource Integrity | n/a | yes, pinned | not possible | not possible |
+| Bot resistance | lowest | CPU cost per solve | highest | high |
+| Fails if the third party is down | n/a | interstitial degrades | nobody can pass (default) | nobody can pass (default) |
 
 - **`math`** — asks "What is A + B?" with single-digit operands. Low-friction proof-of-effort, no JS bundle, no external script load. Defeats the laziest bots; trivial for a human.
 - **`altcha`** — embeds the [ALTCHA](https://altcha.org/docs/v2/) v2 widget with a pre-computed challenge (no server round-trip to fetch one). The visitor's browser brute-forces `SHA-256(salt + N) == challenge`; the salt embeds an expiry and the challenge is HMAC-signed with `challenge.secret`, so the server stays stateless. Privacy-respecting, and imposes a per-solve CPU cost on bots. Solved challenges are single-use — see [Single-use solutions](#single-use-solutions).
@@ -160,7 +166,68 @@ Which to pick is mostly a question of what you are willing to depend on:
 
   For local development, Cloudflare publishes [dummy keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) — `1x00000000000000000000AA` with secret `1x0000000000000000000000000000000AA` always passes. The siteverify call still goes over the network, so they do not make the flow work offline.
 
-For hCaptcha, reCAPTCHA, or anything else, implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` and set `challenge.provider` to its FQCN.
+- **`recaptcha`** — renders a [Google reCAPTCHA](https://developers.google.com/recaptcha/) widget and verifies the token it produces against Google's siteverify API. Shares its shape with `turnstile`; the differences are that it offers two incompatible versions and that one of them returns a score rather than a verdict.
+
+  Create a site at [google.com/recaptcha/admin](https://www.google.com/recaptcha/admin), pick the version there, add the domains it may run on, and configure both keys:
+
+  ```yaml
+  challenge:
+    provider: recaptcha
+    secret: '%env(FIREWALL_CHALLENGE_SECRET)%'     # pass-token HMAC key — NOT a reCAPTCHA key
+    provider_options:
+      site_key: '%env(RECAPTCHA_SITE_KEY)%'        # public; rendered into the page
+      secret_key: '%env(RECAPTCHA_SECRET_KEY)%'    # private; only ever sent to Google
+  ```
+
+  As with Turnstile: `challenge.secret` signs pass tokens and has nothing to do with Google, and despite looking like a pair, `site_key` is public while `secret_key` must never reach the browser. Both keys are required; omitting either throws `ConfigurationException` at startup.
+
+  **The keys and the `version` must agree.** A v2 key pair registered at Google returns no score, and a v3 pair does not render a checkbox. The provider refuses a scoreless response on `version: v3` rather than treating "well-formed token" as "trustworthy visitor", and logs it at `error` with a hint — that message means the keys are v2.
+
+  Optional settings:
+
+  | Option | Default | Applies to | Purpose |
+  |---|---|---|---|
+  | `version` | `v2` | both | `v2` (checkbox) or `v3` (invisible, scored). |
+  | `theme` | `light` | v2 | Widget colour scheme: `light` or `dark`. reCAPTCHA has no `auto`. |
+  | `size` | `normal` | v2 | `normal` or `compact`. |
+  | `min_score` | `0.5` | v3 | Lowest score that passes, 0.0–1.0. Clamped into range. |
+  | `action` | `firewall` | v3 | Action name minted and required back. See below. |
+  | `timeout` | `2` | both | Seconds to wait for siteverify, clamped to 1–10. |
+  | `on_error` | `block` | both | What happens when siteverify cannot be reached. |
+  | `send_remoteip` | `false` | both | Forward the visitor's IP to Google. |
+  | `use_recaptcha_net` | `false` | both | Serve and verify via `www.recaptcha.net` instead of `www.google.com`, for networks where google.com is blocked. Moves both halves together. |
+  | `widget_src` | Google's URL | both | Override to serve the bundle through a first-party proxy. On v3 the `render` parameter is appended unless the URL already has one. |
+
+  `on_error` and `send_remoteip` behave exactly as they do for `turnstile`, and for the same reasons — read those two paragraphs above; they apply here unchanged.
+
+  **Prefer v2 unless you have a reason not to.** v3 never asks the visitor for anything, which sounds strictly better and is not: `success: true` on v3 only means the token was well-formed and unspent, and the actual accept/reject is your `min_score` threshold. A human who scores below it has no puzzle to solve and no retry that helps — they simply cannot reach the route. Pick the threshold from observed traffic rather than from the 0.5 in Google's documentation, and think twice before putting v3 in front of anything real people need.
+
+  **`action` is a security control on v3, not a label.** A v3 token is minted by the site key, not by a page, so without binding it to an action a token produced by *any other* reCAPTCHA v3 call on your site — a newsletter signup, a search box, anything an attacker can trigger without friction — would satisfy the firewall challenge too. The provider requires the `action` Google echoes back to equal the configured one. Google drops characters outside alphanumerics, slashes and underscores, so the configured value is filtered the same way before it is compared.
+
+  **v2 and v3 instances sharing a `challenge.secret` need an explicit `audience`.** The `aud` claim defaults to the `challenge.provider` config string, which is `recaptcha` for both versions — so a pass earned on a v3 route would open a v2 route, and a v3 pass is the weaker claim of the two. Set [`challenge.audience`](#scoping-tokens-across-instances) on at least one of them:
+
+  ```yaml
+  challenge:
+    provider: recaptcha
+    audience: recaptcha-v3   # keeps v3 passes out of v2-protected routes
+    provider_options:
+      version: v3
+  ```
+
+  **Content-Security-Policy** needs Google in two directives, and one host more than you would expect — api.js bootstraps a second bundle from `gstatic.com`:
+
+  ```
+  script-src https://www.google.com https://www.gstatic.com;
+  frame-src  https://www.google.com;
+  ```
+
+  Substitute `https://www.recaptcha.net` for `https://www.google.com` if you set `use_recaptcha_net`.
+
+  Replay needs no configuration: Google answers `timeout-or-duplicate` to a token that has already been redeemed or has aged out, so a solve cannot be redistributed. That is why this provider does not implement [`SingleUseSolutionInterface`](#single-use-solutions) or touch storage at all. Tokens also go stale about two minutes after they are minted — the interstitial handles that itself, via v2's expiry callback and a periodic re-execute on v3.
+
+  For local development, Google publishes [test keys](https://developers.google.com/recaptcha/docs/faq) — site key `6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI` with secret `6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe` always passes, and the widget renders with a visible testing warning. They are v2 only; there is no v3 test pair, and the siteverify call still goes over the network.
+
+For hCaptcha or anything else, implement `Kanopi\Firewall\Challenge\ChallengeProviderInterface` and set `challenge.provider` to its FQCN.
 
 ## Writing a custom provider
 
@@ -242,7 +309,7 @@ Requirements and gotchas:
 - **Escape everything you interpolate.** `redirect_to` originates from the request URI. The built-in providers run every substitution through `InterstitialRenderer::escapeHtml()`; do the same. Values landing inside a `<script>` block need `escapeJs()` instead — HTML entities are not decoded there.
 - **Echo back `redirect_to` and `ttl`** as form fields named exactly that. The Firewall reads them from the POST to decide where to send the visitor and how long to mint the pass token for. Omit them and you get `/` and 3600s.
 - **`verifySolution()` must never throw.** It runs on attacker-controlled input; return `false` for anything you don't like. Note that `$request->request->get()` raises `BadRequestException` on an array value, so read hostile fields off `->all()` instead.
-- **Register via FQCN**, not a short name. `challenge.provider` resolves `math`, `altcha` and `turnstile` as built-ins; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
+- **Register via FQCN**, not a short name. `challenge.provider` resolves `math`, `altcha`, `turnstile` and `recaptcha` as built-ins; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
 - **Declare the collaborators you want.** `ChallengeProviderFactory` matches constructor parameters by declared type — a `TokenManager` parameter gets the shared manager, an `array` parameter gets `challenge.provider_options`, and a provider needing neither can declare no constructor at all. Untyped parameters receive the `TokenManager`, so providers written against the older fixed `new $class($tokenManager)` signature keep working unchanged.
 - Use `$tokenManager->sign()` / `verifySignature()` if you need tamper-proof state in the form. You do **not** need to mint the pass token — the Firewall does that once `verifySolution()` returns `true`.
 - **Reuse the shared interstitial** via `InterstitialRenderer::render()` rather than hand-rolling a document. It owns the submit JS, the two token-delivery paths, and the escaping rules those depend on. Providers whose challenge token is spent by a failed attempt can pass a `submit_failure` snippet to reset the widget.

@@ -8,6 +8,7 @@ use Kanopi\Firewall\Challenge\AltchaChallengeProvider;
 use Kanopi\Firewall\Challenge\ChallengeProviderFactory;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
 use Kanopi\Firewall\Challenge\MathChallengeProvider;
+use Kanopi\Firewall\Challenge\RecaptchaChallengeProvider;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Challenge\TurnstileChallengeProvider;
 use Kanopi\Firewall\Exception\ConfigurationException;
@@ -106,6 +107,36 @@ final class ChallengeProviderFactoryTest extends AbstractTestCase
         $this->expectException(ConfigurationException::class);
 
         ChallengeProviderFactory::create('turnstile', new TokenManager('secret-value'));
+    }
+
+    public function testResolvesRecaptchaShortName(): void
+    {
+        $provider = ChallengeProviderFactory::create(
+            'recaptcha',
+            new TokenManager('secret-value'),
+            ['site_key' => 'site', 'secret_key' => 'secret']
+        );
+
+        $this->assertInstanceOf(RecaptchaChallengeProvider::class, $provider);
+        $this->assertSame('recaptcha', $provider->getName());
+    }
+
+    public function testRecaptchaVersionReachesTheProviderThroughOptions(): void
+    {
+        $provider = ChallengeProviderFactory::create(
+            'recaptcha',
+            new TokenManager('secret-value'),
+            ['site_key' => 'site', 'secret_key' => 'secret', 'version' => 'v3']
+        );
+
+        $this->assertSame('recaptcha-v3', $provider->getName());
+    }
+
+    public function testRecaptchaMisconfigurationSurfacesAtCreation(): void
+    {
+        $this->expectException(ConfigurationException::class);
+
+        ChallengeProviderFactory::create('recaptcha', new TokenManager('secret-value'));
     }
 
     public function testProvidersMayDeclineTheTokenManager(): void
