@@ -1,6 +1,6 @@
 # Lite Firewall local demo
 
-A throwaway harness for poking at the firewall in a browser. Demonstrates all three response modes (`allow`, `block`, `challenge`) and all three built-in challenge providers (`math`, `altcha` and `turnstile`) side by side, and ships a production-shaped nginx → php-fpm stack so you can run perf experiments against something that looks like a real deployment.
+A throwaway harness for poking at the firewall in a browser. Demonstrates all three response modes (`allow`, `block`, `challenge`) and all four built-in challenge providers (`math`, `altcha`, `turnstile` and `recaptcha`) side by side, and ships a production-shaped nginx → php-fpm stack so you can run perf experiments against something that looks like a real deployment.
 
 ## TL;DR — composer shortcuts
 
@@ -24,7 +24,8 @@ The config keys rules off the URL so behavior is identical on any networking set
 | `/admin`          | Blocked — a `response: block` URL plugin returns 400 with the configured banning message.       |
 | `/secure`         | Challenged via the **math** provider. Solve "What is A + B?" → 60s pass cookie (`fw_challenge_pass`). |
 | `/secure-altcha`  | Challenged via the **ALTCHA** provider. The widget solves a SHA-256 proof-of-work automatically → 60s pass cookie (`fw_challenge_altcha_pass`). |
-| `/secure-turnstile` | Challenged via the **Cloudflare Turnstile** provider, using Cloudflare's always-passes [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) → 60s pass cookie (`fw_challenge_turnstile_pass`). Unlike the other routes this one needs outbound network access: the widget loads from Cloudflare and the token is verified against their siteverify API. |
+| `/secure-turnstile` | Challenged via the **Cloudflare Turnstile** provider, using Cloudflare's always-passes [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) → 60s pass cookie (`fw_challenge_turnstile_pass`). Like the reCAPTCHA route, this one needs outbound network access: the widget loads from Cloudflare and the token is verified against their siteverify API. |
+| `/secure-recaptcha` | Challenged via the **Google reCAPTCHA** provider in its v2 checkbox mode, using Google's always-passes [test keys](https://developers.google.com/recaptcha/docs/faq) → 60s pass cookie (`fw_challenge_recaptcha_pass`). Also needs outbound network access: the widget loads from Google and the token is verified against their siteverify API. |
 
 ### What each route looks like
 
@@ -55,9 +56,9 @@ The config keys rules off the URL so behavior is identical on any networking set
     request to any route is rejected by the blocklist before plugins run. Run
     `composer demo:reset` between experiments to start clean.
 
-Only one `challenge.provider` is configurable per Firewall instance, so the demo ships three configs (`config.yml` for math, `config.altcha.yml` for ALTCHA, `config.turnstile.yml` for Turnstile) and `index.php` dispatches between them based on the request path. Each pass token lives in its own cookie and submit path so they coexist in one browser session.
+Only one `challenge.provider` is configurable per Firewall instance, so the demo ships four configs (`config.yml` for math, `config.altcha.yml` for ALTCHA, `config.turnstile.yml` for Turnstile, `config.recaptcha.yml` for reCAPTCHA) and `index.php` dispatches between them based on the request path. Each pass token lives in its own cookie and submit path so they coexist in one browser session.
 
-Note that the distinct cookie names are ergonomics, not a security boundary. The two instances share a `challenge.secret`, so what actually stops a token earned on the easy math challenge from opening `/secure-altcha` is the `aud` claim, which defaults to the provider name — see [Scoping tokens across instances](../plugins/challenges.md#scoping-tokens-across-instances). Try it: solve `/secure`, copy `fw_challenge_pass` into `fw_challenge_altcha_pass`, and `/secure-altcha` still challenges you.
+Note that the distinct cookie names are ergonomics, not a security boundary. The instances share a `challenge.secret`, so what actually stops a token earned on the easy math challenge from opening `/secure-altcha` is the `aud` claim, which defaults to the provider name — see [Scoping tokens across instances](../plugins/challenges.md#scoping-tokens-across-instances). Try it: solve `/secure`, copy `fw_challenge_pass` into `fw_challenge_altcha_pass`, and `/secure-altcha` still challenges you.
 
 ## Option 1 — PHP built-in server (quick)
 

@@ -1,8 +1,9 @@
 # Lite Firewall local demo
 
 A throwaway harness for poking at the firewall in a browser. Demonstrates all
-three response modes (`allow`, `block`, `challenge`) and both built-in
-challenge providers (`math` and `altcha`) side by side, and ships a
+three response modes (`allow`, `block`, `challenge`) and all four built-in
+challenge providers (`math`, `altcha`, `turnstile` and `recaptcha`) side by
+side, and ships a
 production-shaped nginx → php-fpm stack so you can run perf experiments against
 something that looks like a real deployment.
 

@@ -72,8 +72,8 @@ storage:
 # plugin does, `secret` is REQUIRED — startup throws ConfigurationException
 # if it is empty.
 challenge:
-  # Short name of a built-in provider ("math", "altcha", "turnstile") or FQCN
-  # of a class implementing
+  # Short name of a built-in provider ("math", "altcha", "turnstile",
+  # "recaptcha") or FQCN of a class implementing
   # Kanopi\Firewall\Challenge\ChallengeProviderInterface.
   #   math      — "What is A + B?" with single-digit operands. Low-friction
   #               proof-of-effort, no JS bundle, no external script load.
@@ -89,6 +89,15 @@ challenge:
   #               provider_options.site_key and .secret_key. Replay is
   #               handled by Cloudflare, so no storage is involved.
   #               See https://developers.cloudflare.com/turnstile/.
+  #   recaptcha — Embeds a Google reCAPTCHA widget and verifies its token
+  #               against Google's siteverify API. Same shape as turnstile,
+  #               and the same third-party dependency in both directions.
+  #               Offers two versions: v2 (the "I'm not a robot" checkbox,
+  #               the default) and v3 (invisible, returns a 0.0-1.0 score
+  #               this provider compares against min_score). Requires
+  #               provider_options.site_key and .secret_key. Replay is
+  #               handled by Google, so no storage is involved.
+  #               See https://developers.google.com/recaptcha/.
   provider: math
   # Optional per-provider settings, forwarded to the provider constructor.
   # Unknown keys are ignored, so this is safe to leave empty.
@@ -134,6 +143,57 @@ challenge:
   #                      any value: Cloudflare's URL is unversioned and
   #                      mutable, so a pinned digest would break on their
   #                      next deploy.
+  #
+  # recaptcha accepts:
+  #   site_key          — REQUIRED. reCAPTCHA site key. PUBLIC: it is
+  #                       rendered into the interstitial.
+  #   secret_key        — REQUIRED. reCAPTCHA secret key. PRIVATE: only ever
+  #                       sent server-to-server to siteverify. NOT the same
+  #                       thing as `challenge.secret` below. Omitting either
+  #                       key throws at startup rather than serving a widget
+  #                       nobody could pass.
+  #   version           — v2 (default) or v3. The key pair registered with
+  #                       Google has to match: a v2 pair returns no score,
+  #                       which v3 refuses rather than treating a well-formed
+  #                       token as a trustworthy visitor.
+  #                       Prefer v2. v3 never asks the visitor for anything,
+  #                       so a human scoring below min_score has no puzzle to
+  #                       solve and no retry that helps — they simply cannot
+  #                       reach the route.
+  #   theme             — v2 only. light (default) or dark. reCAPTCHA has no
+  #                       `auto` value.
+  #   size              — v2 only. normal (default) or compact.
+  #   min_score         — v3 only. Lowest passing score, 0.0-1.0, default
+  #                       0.5. Clamped into range. Pick it from observed
+  #                       traffic, not from the 0.5 in Google's docs.
+  #   action            — v3 only, default `firewall`. A security control,
+  #                       not a label: a v3 token is minted by the site key
+  #                       rather than by a page, so without binding it to an
+  #                       action a token from any other reCAPTCHA call on the
+  #                       site would satisfy this challenge too.
+  #   timeout           — Seconds to wait for siteverify. Clamped to 1-10,
+  #                       default 2. This runs while the visitor waits.
+  #   on_error          — What to do when siteverify cannot be REACHED:
+  #                       block (default) or allow. Same trade-off, and the
+  #                       same reasoning, as turnstile above.
+  #   send_remoteip     — Forward the visitor's IP to Google. Default false,
+  #                       for the same proxy-trust reason as turnstile above.
+  #   use_recaptcha_net — Serve the widget from and verify against
+  #                       www.recaptcha.net instead of www.google.com, for
+  #                       networks where google.com is blocked. Moves both
+  #                       halves together; a widget the visitor can load is
+  #                       useless if this server cannot verify its output.
+  #   widget_src        — Override the widget bundle URL, e.g. to serve it
+  #                       via a first-party proxy. On v3 the `render`
+  #                       parameter is appended unless the URL already
+  #                       carries one. No SRI digest is emitted: api.js is
+  #                       unversioned and bootstraps further scripts.
+  #
+  # NOTE for recaptcha: `audience` below defaults to this `provider` string,
+  # which is `recaptcha` for BOTH versions. Two instances sharing a `secret`
+  # but running v2 and v3 will therefore honour each other's pass tokens —
+  # and a v3 pass is the weaker claim. Set `audience` explicitly on at least
+  # one of them.
   provider_options: {}
   # Scopes pass tokens to this instance. Tokens carry the value as an `aud`
   # claim and only verify against a firewall configured with the same one,

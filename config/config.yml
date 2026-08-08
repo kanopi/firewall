@@ -16,7 +16,8 @@ plugins: []
 #                plugins are active. Use a long random string, typically
 #                injected from an env var (`%env(VAR)%`). Unrelated to any
 #                third-party challenge service's secret key.
-#   provider:    Built-in short name (`math`, `altcha`, `turnstile`) or a
+#   provider:    Built-in short name (`math`, `altcha`, `turnstile`,
+#                `recaptcha`) or a
 #                FQCN that implements
 #                Kanopi\Firewall\Challenge\ChallengeProviderInterface.
 #   path:        URL the interstitial form POSTs to.
@@ -28,11 +29,14 @@ plugins: []
 #   provider_options:
 #                Optional per-provider settings forwarded to the provider
 #                constructor. `altcha` accepts `widget_src` and
-#                `widget_integrity`; `turnstile` REQUIRES `site_key` and
-#                `secret_key`. See example/config.notes.yml.
+#                `widget_integrity`; `turnstile` and `recaptcha` REQUIRE
+#                `site_key` and `secret_key`, and `recaptcha` also takes
+#                `version` (v2 or v3). See example/config.notes.yml.
 #   audience:    Scopes pass tokens to this instance so two firewalls
 #                sharing a secret do not accept each other's tokens.
-#                Defaults to the provider name when left empty.
+#                Defaults to the `provider` value above when left empty --
+#                so instances running the SAME provider (including
+#                `recaptcha` at v2 and v3) must set this explicitly.
 challenge:
   provider: math
   secret: ''

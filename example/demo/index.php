@@ -5,23 +5,25 @@ declare(strict_types=1);
 /*
  * Front controller for the Lite Firewall demo.
  *
- * Five demo routes — see example/demo/config.yml, config.altcha.yml and
- * config.turnstile.yml for the rules:
+ * Six demo routes — see example/demo/config.yml, config.altcha.yml,
+ * config.turnstile.yml and config.recaptcha.yml for the rules:
  *
  *   /                  allowed
  *   /admin             blocked
  *   /secure            challenged via the math provider
  *   /secure-altcha     challenged via the ALTCHA provider
  *   /secure-turnstile  challenged via the Cloudflare Turnstile provider
+ *   /secure-recaptcha  challenged via the Google reCAPTCHA provider
  *
  * Only one ChallengeProviderInterface is wired per Firewall instance,
- * so the three challenge providers live in separate config files and we
- * dispatch by path: anything touching /secure-altcha or /secure-turnstile
- * (or their submit endpoints) loads the matching config; everything else
- * loads config.yml.
+ * so the four challenge providers live in separate config files and we
+ * dispatch by path: anything touching /secure-altcha, /secure-turnstile or
+ * /secure-recaptcha (or their submit endpoints) loads the matching config;
+ * everything else loads config.yml.
  *
- * The Turnstile route needs outbound network access — the widget loads
- * from Cloudflare and the token is verified against their siteverify API.
+ * The Turnstile and reCAPTCHA routes need outbound network access — the
+ * widget loads from a third party and the token is verified against their
+ * siteverify API.
  *
  * Run with the PHP built-in server (single-process):
  *
@@ -42,9 +44,13 @@ $useAltcha = str_starts_with($requestPath, '/secure-altcha')
 $useTurnstile = str_starts_with($requestPath, '/secure-turnstile')
     || $requestPath === '/_firewall/challenge-turnstile';
 
+$useRecaptcha = str_starts_with($requestPath, '/secure-recaptcha')
+    || $requestPath === '/_firewall/challenge-recaptcha';
+
 $configFile = match (true) {
     $useAltcha => 'config.altcha.yml',
     $useTurnstile => 'config.turnstile.yml',
+    $useRecaptcha => 'config.recaptcha.yml',
     default => 'config.yml',
 };
 
@@ -57,6 +63,7 @@ $path = $_SERVER['REQUEST_URI'] ?? '/';
 $mathCookie = isset($_COOKIE['fw_challenge_pass']);
 $altchaCookie = isset($_COOKIE['fw_challenge_altcha_pass']);
 $turnstileCookie = isset($_COOKIE['fw_challenge_turnstile_pass']);
+$recaptchaCookie = isset($_COOKIE['fw_challenge_recaptcha_pass']);
 
 header('Content-Type: text/html; charset=utf-8');
 
@@ -90,13 +97,14 @@ header('Content-Type: text/html; charset=utf-8');
       <tr><td><a href="/secure">/secure</a></td><td>Challenged via the <strong>math</strong> provider — "What is A + B?" interstitial. 60s pass cookie.</td></tr>
       <tr><td><a href="/secure-altcha">/secure-altcha</a></td><td>Challenged via the <strong>ALTCHA</strong> provider — proof-of-work widget solves automatically. 60s pass cookie.</td></tr>
       <tr><td><a href="/secure-turnstile">/secure-turnstile</a></td><td>Challenged via the <strong>Cloudflare Turnstile</strong> provider, using Cloudflare's always-passes test keys. 60s pass cookie. <strong>Needs outbound network access</strong> — the widget loads from Cloudflare and the token is verified against their API.</td></tr>
+      <tr><td><a href="/secure-recaptcha">/secure-recaptcha</a></td><td>Challenged via the <strong>Google reCAPTCHA</strong> provider (v2 checkbox), using Google's always-passes test keys. 60s pass cookie. <strong>Needs outbound network access</strong> — the widget loads from Google and the token is verified against their API.</td></tr>
     </tbody>
   </table>
 
   <h2>Re-triggering the challenge</h2>
   <p>The pass token TTL is 60s in this demo. To force the interstitial again sooner:</p>
   <ul>
-    <li>Delete the <code>fw_challenge_pass</code> / <code>fw_challenge_altcha_pass</code> / <code>fw_challenge_turnstile_pass</code> cookie via browser dev tools, or</li>
+    <li>Delete the <code>fw_challenge_pass</code> / <code>fw_challenge_altcha_pass</code> / <code>fw_challenge_turnstile_pass</code> / <code>fw_challenge_recaptcha_pass</code> cookie via browser dev tools, or</li>
     <li>Reload the route in an incognito window.</li>
   </ul>
 
@@ -105,7 +113,8 @@ header('Content-Type: text/html; charset=utf-8');
     Client IP (as the firewall sees it): <code><?= htmlspecialchars($ip, ENT_QUOTES, 'UTF-8') ?></code><br>
     Math pass cookie present: <code><?= $mathCookie ? 'yes' : 'no' ?></code><br>
     ALTCHA pass cookie present: <code><?= $altchaCookie ? 'yes' : 'no' ?></code><br>
-    Turnstile pass cookie present: <code><?= $turnstileCookie ? 'yes' : 'no' ?></code>
+    Turnstile pass cookie present: <code><?= $turnstileCookie ? 'yes' : 'no' ?></code><br>
+    reCAPTCHA pass cookie present: <code><?= $recaptchaCookie ? 'yes' : 'no' ?></code>
   </p>
 </body>
 </html>

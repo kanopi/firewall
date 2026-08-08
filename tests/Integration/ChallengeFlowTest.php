@@ -6,13 +6,17 @@ namespace Kanopi\Firewall\Tests\Integration;
 
 use Kanopi\Firewall\Challenge\AltchaChallengeProvider;
 use Kanopi\Firewall\Challenge\MathChallengeProvider;
+use Kanopi\Firewall\Challenge\RecaptchaChallengeProvider;
 use Kanopi\Firewall\Challenge\TurnstileChallengeProvider;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\Tests\Challenge\AlwaysVerifyingRecaptchaProvider;
 use Kanopi\Firewall\Tests\Challenge\AlwaysVerifyingTurnstileProvider;
+use Kanopi\Firewall\Tests\Challenge\LowScoringRecaptchaProvider;
+use Kanopi\Firewall\Tests\Challenge\UnreachableRecaptchaProvider;
 use Kanopi\Firewall\Tests\Challenge\UnreachableTurnstileProvider;
 use Kanopi\Firewall\Traits\FileTrait;
 use PHPUnit\Framework\TestCase;
@@ -33,6 +37,13 @@ class ChallengeFlowTest extends TestCase
     private string $tempDir;
 
     private const SECRET = 'integration-test-secret-value';
+
+    /**
+     * Google's documented always-passes reCAPTCHA v2 test pair.
+     */
+    private const RECAPTCHA_SITE_KEY = '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI';
+
+    private const RECAPTCHA_SECRET_KEY = '6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe';
 
     protected function setUp(): void
     {
@@ -906,6 +917,331 @@ class ChallengeFlowTest extends TestCase
                 TurnstileChallengeProvider::PAYLOAD_FIELD => $token,
                 TurnstileChallengeProvider::REDIRECT_FIELD => '/protected',
                 TurnstileChallengeProvider::TTL_FIELD => '600',
+            ],
+            [],
+            [],
+            ['REMOTE_ADDR' => $ip]
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // reCAPTCHA
+    // -------------------------------------------------------------------
+
+    public function testRecaptchaChallengePluginThrowsRequired(): void
+    {
+        $firewall = Firewall::create([$this->configWithRecaptchaChallenge()]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->blockedRequest('10.0.0.60', '/protected'));
+    }
+
+    public function testRecaptchaInterstitialCarriesTheWidgetAndTheRedirect(): void
+    {
+        $firewall = Firewall::create([$this->configWithRecaptchaChallenge()]);
+        $provider = $this->recaptchaProvider($firewall);
+
+        $html = $provider->renderInterstitial(
+            Request::create('/protected', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.60']),
+            [
+                'submit_url' => '/_firewall/challenge',
+                'redirect_to' => '/protected',
+                'ttl' => '600',
+                'header_name' => 'X-Firewall-Challenge-Recaptcha',
+            ]
+        );
+
+        $this->assertStringContainsString('class="g-recaptcha"', $html);
+        $this->assertStringContainsString('data-sitekey="' . self::RECAPTCHA_SITE_KEY . '"', $html);
+        $this->assertStringContainsString('value="/protected"', $html);
+        $this->assertStringNotContainsString(self::RECAPTCHA_SECRET_KEY, $html);
+    }
+
+    public function testVerifiedRecaptchaTokenMintsAPassToken(): void
+    {
+        $firewall = Firewall::create([$this->configWithRecaptchaChallenge()]);
+
+        try {
+            $firewall->evaluate($this->recaptchaSubmission('a-token-google-likes', '10.0.0.60'));
+            $this->fail('Expected ChallengeSolvedException');
+        } catch (ChallengeSolvedException $e) {
+            $this->assertNotEmpty($e->getToken());
+            $this->assertSame('/protected', $e->getRedirect());
+        }
+    }
+
+    public function testRecaptchaPassTokenAllowsTheNextRequest(): void
+    {
+        $config = $this->configWithRecaptchaChallenge();
+        $token = '';
+
+        try {
+            Firewall::create([$config])->evaluate(
+                $this->recaptchaSubmission('a-token-google-likes', '10.0.0.60')
+            );
+        } catch (ChallengeSolvedException $e) {
+            $token = $e->getToken();
+        }
+
+        $this->assertNotEmpty($token);
+
+        $request = Request::create('/protected', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.60']);
+        $request->cookies->set('fw_challenge_recaptcha_pass', $token);
+
+        // No exception: the pass token short-circuits the challenge bucket.
+        Firewall::create([$config])->evaluate($request);
+        $this->addToAssertionCount(1);
+    }
+
+    public function testEmptyRecaptchaTokenIsRefused(): void
+    {
+        $firewall = Firewall::create([$this->configWithRecaptchaChallenge()]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->recaptchaSubmission('', '10.0.0.60'));
+    }
+
+    public function testUnreachableRecaptchaSiteverifyRefusesTheSubmission(): void
+    {
+        // Fail closed: the default must not hand out a pass token when
+        // Google's verdict could not be obtained.
+        $firewall = Firewall::create([
+            $this->configWithRecaptchaChallenge(
+                UnreachableRecaptchaProvider::class,
+                'recaptcha_down.yml'
+            ),
+        ]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->recaptchaSubmission('a-token-nobody-can-check', '10.0.0.60'));
+    }
+
+    public function testUnreachableRecaptchaMintsATokenWhenConfiguredToAllow(): void
+    {
+        $firewall = Firewall::create([
+            $this->configWithRecaptchaChallenge(
+                UnreachableRecaptchaProvider::class,
+                'recaptcha_down_allow.yml',
+                ['on_error' => 'allow']
+            ),
+        ]);
+
+        $this->expectException(ChallengeSolvedException::class);
+        $firewall->evaluate($this->recaptchaSubmission('a-token-nobody-can-check', '10.0.0.60'));
+    }
+
+    public function testRecaptchaWithoutKeysFailsAtStartup(): void
+    {
+        $config = $this->writeConfig([
+            'global' => ['mode' => 'exception'],
+            'challenge' => [
+                'provider' => 'recaptcha',
+                'secret' => self::SECRET,
+                'path' => '/_firewall/challenge',
+            ],
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\Url',
+                    'response' => 'challenge',
+                    'weight' => 0,
+                    'enable' => true,
+                    'config' => ['path@starts_with:/protected'],
+                ],
+            ],
+        ], 'recaptcha_keyless.yml');
+
+        $this->expectException(ConfigurationException::class);
+        Firewall::create([$config]);
+    }
+
+    public function testVerifiedV3TokenMintsAPassToken(): void
+    {
+        $firewall = Firewall::create([
+            $this->configWithRecaptchaChallenge(
+                AlwaysVerifyingRecaptchaProvider::class,
+                'recaptcha_v3.yml',
+                ['version' => 'v3']
+            ),
+        ]);
+
+        $this->expectException(ChallengeSolvedException::class);
+        $firewall->evaluate($this->recaptchaV3Submission('a-token-google-likes', '10.0.0.60'));
+    }
+
+    public function testLowScoringV3TokenIsRefusedDespiteGooglesYes(): void
+    {
+        // The case unique to v3: siteverify was reachable and the token was
+        // genuine, and the visitor is still refused — by the threshold, not
+        // by Google. That has to arrive as a failed challenge, not a pass.
+        $firewall = Firewall::create([
+            $this->configWithRecaptchaChallenge(
+                LowScoringRecaptchaProvider::class,
+                'recaptcha_v3_low.yml',
+                ['version' => 'v3', 'min_score' => 0.5]
+            ),
+        ]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->recaptchaV3Submission('a-token-google-likes', '10.0.0.60'));
+    }
+
+    public function testV3TokenPostedUnderTheV2FieldIsRefused(): void
+    {
+        // v3 reads its own field precisely so api.js's injected
+        // `g-recaptcha-response` textarea cannot be what gets verified.
+        $firewall = Firewall::create([
+            $this->configWithRecaptchaChallenge(
+                AlwaysVerifyingRecaptchaProvider::class,
+                'recaptcha_v3_wrong_field.yml',
+                ['version' => 'v3']
+            ),
+        ]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->recaptchaSubmission('a-token-google-likes', '10.0.0.60'));
+    }
+
+    public function testExplicitAudienceKeepsAV3PassOutOfAV2Route(): void
+    {
+        // A v3 pass is the weaker claim — the visitor cleared a score, not a
+        // checkbox — so it must not open a v2-protected route. The `aud`
+        // claim is built from the `challenge.provider` config string, which
+        // is identical for both versions, so the separation has to be
+        // configured rather than inferred. This is the documented fix.
+        $v3Config = $this->configWithRecaptchaChallenge(
+            AlwaysVerifyingRecaptchaProvider::class,
+            'recaptcha_v3_audience.yml',
+            ['version' => 'v3'],
+            'recaptcha-v3'
+        );
+        $token = '';
+
+        try {
+            Firewall::create([$v3Config])->evaluate(
+                $this->recaptchaV3Submission('a-token-google-likes', '10.0.0.60')
+            );
+        } catch (ChallengeSolvedException $e) {
+            $token = $e->getToken();
+        }
+
+        $this->assertNotEmpty($token);
+
+        $request = Request::create('/protected', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.60']);
+        $request->cookies->set('fw_challenge_recaptcha_pass', $token);
+
+        $this->expectException(ChallengeRequiredException::class);
+        Firewall::create([$this->configWithRecaptchaChallenge()])->evaluate($request);
+    }
+
+    public function testWithoutAnExplicitAudienceAV3PassOpensAV2Route(): void
+    {
+        // The sharp edge the test above configures around, asserted so it
+        // stays a known and documented limitation rather than a surprise.
+        // `getName()` being version-scoped does NOT change this: the
+        // audience comes from the config string, before any provider exists.
+        $v3Config = $this->configWithRecaptchaChallenge(
+            AlwaysVerifyingRecaptchaProvider::class,
+            'recaptcha_v3_shared_audience.yml',
+            ['version' => 'v3']
+        );
+        $token = '';
+
+        try {
+            Firewall::create([$v3Config])->evaluate(
+                $this->recaptchaV3Submission('a-token-google-likes', '10.0.0.60')
+            );
+        } catch (ChallengeSolvedException $e) {
+            $token = $e->getToken();
+        }
+
+        $request = Request::create('/protected', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.60']);
+        $request->cookies->set('fw_challenge_recaptcha_pass', $token);
+
+        // No exception: the two instances share an audience.
+        Firewall::create([$this->configWithRecaptchaChallenge()])->evaluate($request);
+        $this->addToAssertionCount(1);
+    }
+
+    /**
+     * Config using a reCAPTCHA provider whose siteverify call is stubbed.
+     *
+     * @param class-string $provider
+     *   Provider FQCN — a subclass standing in for one Google behaviour.
+     * @param string $filename
+     *   Config filename, unique per case so the files do not collide.
+     * @param array<string, mixed> $extraOptions
+     *   Extra `provider_options` merged over the test keys.
+     * @param string $audience
+     *   `challenge.audience`. Empty means the default, which is the
+     *   `provider` config string and therefore shared across versions.
+     */
+    private function configWithRecaptchaChallenge(
+        string $provider = AlwaysVerifyingRecaptchaProvider::class,
+        string $filename = 'recaptcha_config.yml',
+        array $extraOptions = [],
+        string $audience = ''
+    ): string {
+        return $this->writeConfig([
+            'global' => ['mode' => 'exception'],
+            'storage' => [
+                'type' => 'Kanopi\Firewall\Storage\FileStorage',
+                'config' => ['storage_file' => $this->tempDir . '/recaptcha-storage.data'],
+            ],
+            'challenge' => [
+                'provider' => $provider,
+                'secret' => self::SECRET,
+                'cookie_name' => 'fw_challenge_recaptcha_pass',
+                'header_name' => 'X-Firewall-Challenge-Recaptcha',
+                'path' => '/_firewall/challenge',
+                'audience' => $audience,
+                'provider_options' => $extraOptions + [
+                    'site_key' => self::RECAPTCHA_SITE_KEY,
+                    'secret_key' => self::RECAPTCHA_SECRET_KEY,
+                ],
+            ],
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\Url',
+                    'response' => 'challenge',
+                    'weight' => 0,
+                    'enable' => true,
+                    'metadata' => ['default_expiration_time' => 600],
+                    'config' => ['path@starts_with:/protected'],
+                ],
+            ],
+        ], $filename);
+    }
+
+    /**
+     * Reach the provider the Firewall built from config.
+     */
+    private function recaptchaProvider(Firewall $firewall): RecaptchaChallengeProvider
+    {
+        $provider = (new \ReflectionProperty($firewall, 'challengeProvider'))->getValue($firewall);
+        $this->assertInstanceOf(RecaptchaChallengeProvider::class, $provider);
+
+        return $provider;
+    }
+
+    private function recaptchaSubmission(string $token, string $ip): Request
+    {
+        return $this->recaptchaPost(RecaptchaChallengeProvider::PAYLOAD_FIELD, $token, $ip);
+    }
+
+    private function recaptchaV3Submission(string $token, string $ip): Request
+    {
+        return $this->recaptchaPost(RecaptchaChallengeProvider::V3_PAYLOAD_FIELD, $token, $ip);
+    }
+
+    private function recaptchaPost(string $field, string $token, string $ip): Request
+    {
+        return Request::create(
+            '/_firewall/challenge',
+            'POST',
+            [
+                $field => $token,
+                RecaptchaChallengeProvider::REDIRECT_FIELD => '/protected',
+                RecaptchaChallengeProvider::TTL_FIELD => '600',
             ],
             [],
             [],
