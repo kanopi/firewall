@@ -8,6 +8,7 @@ use Kanopi\Firewall\Challenge\AltchaChallengeProvider;
 use Kanopi\Firewall\Challenge\InterstitialRenderer;
 use Kanopi\Firewall\Challenge\MathChallengeProvider;
 use Kanopi\Firewall\Challenge\TokenManager;
+use Kanopi\Firewall\Challenge\TurnstileChallengeProvider;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -61,6 +62,23 @@ final class InterstitialRendererTest extends AbstractTestCase
     public function testAltchaInterstitialStaysSyntacticallyValid(string $redirect): void
     {
         $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+        $html = $provider->renderInterstitial($this->getRequest('10.0.0.5'), [
+            'submit_url' => '/_firewall/challenge',
+            'redirect_to' => $redirect,
+            'ttl' => '60',
+            'header_name' => 'X-FW',
+        ]);
+
+        $this->assertInlineScriptParses($html);
+    }
+
+    #[DataProvider('hostileRedirectProvider')]
+    public function testTurnstileInterstitialStaysSyntacticallyValid(string $redirect): void
+    {
+        $provider = new TurnstileChallengeProvider([
+            'site_key' => '1x00000000000000000000AA',
+            'secret_key' => '1x0000000000000000000000000000000AA',
+        ]);
         $html = $provider->renderInterstitial($this->getRequest('10.0.0.5'), [
             'submit_url' => '/_firewall/challenge',
             'redirect_to' => $redirect,

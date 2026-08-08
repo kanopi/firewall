@@ -5,18 +5,23 @@ declare(strict_types=1);
 /*
  * Front controller for the Lite Firewall demo.
  *
- * Four demo routes — see example/demo/config.yml and config.altcha.yml
- * for the rules:
+ * Five demo routes — see example/demo/config.yml, config.altcha.yml and
+ * config.turnstile.yml for the rules:
  *
- *   /                allowed
- *   /admin           blocked
- *   /secure          challenged via the math provider
- *   /secure-altcha   challenged via the ALTCHA provider
+ *   /                  allowed
+ *   /admin             blocked
+ *   /secure            challenged via the math provider
+ *   /secure-altcha     challenged via the ALTCHA provider
+ *   /secure-turnstile  challenged via the Cloudflare Turnstile provider
  *
  * Only one ChallengeProviderInterface is wired per Firewall instance,
- * so the two challenge providers live in separate config files and we
- * dispatch by path: anything touching /secure-altcha (or its submit
- * endpoint) loads config.altcha.yml; everything else loads config.yml.
+ * so the three challenge providers live in separate config files and we
+ * dispatch by path: anything touching /secure-altcha or /secure-turnstile
+ * (or their submit endpoints) loads the matching config; everything else
+ * loads config.yml.
+ *
+ * The Turnstile route needs outbound network access — the widget loads
+ * from Cloudflare and the token is verified against their siteverify API.
  *
  * Run with the PHP built-in server (single-process):
  *
@@ -34,7 +39,14 @@ $requestPath = strtok((string) ($_SERVER['REQUEST_URI'] ?? '/'), '?') ?: '/';
 $useAltcha = str_starts_with($requestPath, '/secure-altcha')
     || $requestPath === '/_firewall/challenge-altcha';
 
-$configFile = $useAltcha ? 'config.altcha.yml' : 'config.yml';
+$useTurnstile = str_starts_with($requestPath, '/secure-turnstile')
+    || $requestPath === '/_firewall/challenge-turnstile';
+
+$configFile = match (true) {
+    $useAltcha => 'config.altcha.yml',
+    $useTurnstile => 'config.turnstile.yml',
+    default => 'config.yml',
+};
 
 \Kanopi\Firewall\Firewall::create([__DIR__ . '/' . $configFile])->evaluate();
 
@@ -44,6 +56,7 @@ $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 $path = $_SERVER['REQUEST_URI'] ?? '/';
 $mathCookie = isset($_COOKIE['fw_challenge_pass']);
 $altchaCookie = isset($_COOKIE['fw_challenge_altcha_pass']);
+$turnstileCookie = isset($_COOKIE['fw_challenge_turnstile_pass']);
 
 header('Content-Type: text/html; charset=utf-8');
 
@@ -76,13 +89,14 @@ header('Content-Type: text/html; charset=utf-8');
       <tr><td><a href="/admin">/admin</a></td><td>Blocked — the URL plugin rejects anything under <code>/admin</code> with a 400.</td></tr>
       <tr><td><a href="/secure">/secure</a></td><td>Challenged via the <strong>math</strong> provider — "What is A + B?" interstitial. 60s pass cookie.</td></tr>
       <tr><td><a href="/secure-altcha">/secure-altcha</a></td><td>Challenged via the <strong>ALTCHA</strong> provider — proof-of-work widget solves automatically. 60s pass cookie.</td></tr>
+      <tr><td><a href="/secure-turnstile">/secure-turnstile</a></td><td>Challenged via the <strong>Cloudflare Turnstile</strong> provider, using Cloudflare's always-passes test keys. 60s pass cookie. <strong>Needs outbound network access</strong> — the widget loads from Cloudflare and the token is verified against their API.</td></tr>
     </tbody>
   </table>
 
   <h2>Re-triggering the challenge</h2>
   <p>The pass token TTL is 60s in this demo. To force the interstitial again sooner:</p>
   <ul>
-    <li>Delete the <code>fw_challenge_pass</code> / <code>fw_challenge_altcha_pass</code> cookie via browser dev tools, or</li>
+    <li>Delete the <code>fw_challenge_pass</code> / <code>fw_challenge_altcha_pass</code> / <code>fw_challenge_turnstile_pass</code> cookie via browser dev tools, or</li>
     <li>Reload the route in an incognito window.</li>
   </ul>
 
@@ -90,7 +104,8 @@ header('Content-Type: text/html; charset=utf-8');
     Request path: <code><?= htmlspecialchars($path, ENT_QUOTES, 'UTF-8') ?></code><br>
     Client IP (as the firewall sees it): <code><?= htmlspecialchars($ip, ENT_QUOTES, 'UTF-8') ?></code><br>
     Math pass cookie present: <code><?= $mathCookie ? 'yes' : 'no' ?></code><br>
-    ALTCHA pass cookie present: <code><?= $altchaCookie ? 'yes' : 'no' ?></code>
+    ALTCHA pass cookie present: <code><?= $altchaCookie ? 'yes' : 'no' ?></code><br>
+    Turnstile pass cookie present: <code><?= $turnstileCookie ? 'yes' : 'no' ?></code>
   </p>
 </body>
 </html>

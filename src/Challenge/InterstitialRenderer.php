@@ -65,10 +65,10 @@ final class InterstitialRenderer
     /**
      * Build the interstitial document.
      *
-     * `form_fields`, `extra_script`, `extra_head`, `extra_styles` and
-     * `submit_guard` are injected verbatim — the calling provider owns
-     * escaping anything it interpolates into them. Every other value is
-     * escaped here.
+     * `form_fields`, `extra_script`, `extra_head`, `extra_styles`,
+     * `submit_guard` and `submit_failure` are injected verbatim — the
+     * calling provider owns escaping anything it interpolates into them.
+     * Every other value is escaped here.
      *
      * @param array{
      *   intro: string,
@@ -84,9 +84,12 @@ final class InterstitialRenderer
      *   ttl: string|int,
      *   header_name: string|int,
      *   redirect_field: string|int,
-     *   ttl_field: string|int
+     *   ttl_field: string|int,
+     *   submit_failure?: string
      * } $parts
-     *   Provider-supplied document pieces.
+     *   Provider-supplied document pieces. `submit_failure` is optional and
+     *   defaults to none, so providers written before it existed are
+     *   unaffected.
      */
     public static function render(array $parts): string
     {
@@ -108,6 +111,12 @@ final class InterstitialRenderer
         $submitGuard = $parts['submit_guard'];
         $extraScript = $parts['extra_script'];
         $disabled = $parts['submit_disabled'] ? ' disabled' : '';
+
+        // Runs whenever a submission is refused. Providers whose challenge
+        // token is spent by the attempt (Turnstile) need to issue a fresh
+        // one here, otherwise clicking Continue again re-posts a token the
+        // remote service has already marked as used and can never succeed.
+        $submitFailure = $parts['submit_failure'] ?? '';
 
         return <<<HTML
 <!DOCTYPE html>
@@ -149,6 +158,11 @@ final class InterstitialRenderer
       var submit = document.getElementById('submit');
       var headerName = {$headerNameJs};
       var redirectTo = {$redirectToJs};
+
+      function fail() {
+        err.classList.add('visible');
+{$submitFailure}
+      }
 {$extraScript}
       form.addEventListener('submit', function (event) {
         event.preventDefault();
@@ -165,7 +179,7 @@ final class InterstitialRenderer
           return resp.json().then(function (body) { return { ok: resp.ok, body: body }; });
         }).then(function (result) {
           if (!result.ok || !result.body || !result.body.token) {
-            err.classList.add('visible');
+            fail();
             return;
           }
           try {
@@ -175,7 +189,7 @@ final class InterstitialRenderer
           } catch (e) { /* localStorage blocked — cookie still works */ }
           window.location.href = result.body.redirect || redirectTo;
         }).catch(function () {
-          err.classList.add('visible');
+          fail();
         });
       });
     })();

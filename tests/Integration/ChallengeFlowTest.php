@@ -6,11 +6,14 @@ namespace Kanopi\Firewall\Tests\Integration;
 
 use Kanopi\Firewall\Challenge\AltchaChallengeProvider;
 use Kanopi\Firewall\Challenge\MathChallengeProvider;
+use Kanopi\Firewall\Challenge\TurnstileChallengeProvider;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\Tests\Challenge\AlwaysVerifyingTurnstileProvider;
+use Kanopi\Firewall\Tests\Challenge\UnreachableTurnstileProvider;
 use Kanopi\Firewall\Traits\FileTrait;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Request;
@@ -703,6 +706,206 @@ class ChallengeFlowTest extends TestCase
                 AltchaChallengeProvider::PAYLOAD_FIELD => $payload,
                 AltchaChallengeProvider::REDIRECT_FIELD => '/protected',
                 AltchaChallengeProvider::TTL_FIELD => '600',
+            ],
+            [],
+            [],
+            ['REMOTE_ADDR' => $ip]
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Turnstile
+    // -------------------------------------------------------------------
+
+    public function testTurnstileChallengePluginThrowsRequired(): void
+    {
+        $firewall = Firewall::create([$this->configWithTurnstileChallenge()]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->blockedRequest('10.0.0.50', '/protected'));
+    }
+
+    public function testTurnstileInterstitialCarriesTheWidgetAndTheRedirect(): void
+    {
+        $firewall = Firewall::create([$this->configWithTurnstileChallenge()]);
+        $provider = $this->challengeProvider($firewall);
+
+        $html = $provider->renderInterstitial(
+            Request::create('/protected', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.50']),
+            [
+                'submit_url' => '/_firewall/challenge',
+                'redirect_to' => '/protected',
+                'ttl' => '600',
+                'header_name' => 'X-Firewall-Challenge-Turnstile',
+            ]
+        );
+
+        $this->assertStringContainsString('class="cf-turnstile"', $html);
+        $this->assertStringContainsString('data-sitekey="1x00000000000000000000AA"', $html);
+        $this->assertStringContainsString('value="/protected"', $html);
+        $this->assertStringNotContainsString('1x0000000000000000000000000000000AA', $html);
+    }
+
+    public function testVerifiedTurnstileTokenMintsAPassToken(): void
+    {
+        $firewall = Firewall::create([$this->configWithTurnstileChallenge()]);
+
+        try {
+            $firewall->evaluate($this->turnstileSubmission('a-token-cloudflare-likes', '10.0.0.50'));
+            $this->fail('Expected ChallengeSolvedException');
+        } catch (ChallengeSolvedException $e) {
+            $this->assertNotEmpty($e->getToken());
+            $this->assertSame('/protected', $e->getRedirect());
+        }
+    }
+
+    public function testTurnstilePassTokenAllowsTheNextRequest(): void
+    {
+        $config = $this->configWithTurnstileChallenge();
+        $token = '';
+
+        try {
+            Firewall::create([$config])->evaluate(
+                $this->turnstileSubmission('a-token-cloudflare-likes', '10.0.0.50')
+            );
+        } catch (ChallengeSolvedException $e) {
+            $token = $e->getToken();
+        }
+
+        $this->assertNotEmpty($token);
+
+        $request = Request::create('/protected', 'GET', [], [], [], ['REMOTE_ADDR' => '10.0.0.50']);
+        $request->cookies->set('fw_challenge_turnstile_pass', $token);
+
+        // No exception: the pass token short-circuits the challenge bucket.
+        Firewall::create([$config])->evaluate($request);
+        $this->addToAssertionCount(1);
+    }
+
+    public function testEmptyTurnstileTokenIsRefused(): void
+    {
+        $firewall = Firewall::create([$this->configWithTurnstileChallenge()]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->turnstileSubmission('', '10.0.0.50'));
+    }
+
+    public function testUnreachableSiteverifyRefusesTheSubmission(): void
+    {
+        // Fail closed: the default must not hand out a pass token when
+        // Cloudflare's verdict could not be obtained.
+        $firewall = Firewall::create([
+            $this->configWithTurnstileChallenge(UnreachableTurnstileProvider::class, 'turnstile_down.yml'),
+        ]);
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($this->turnstileSubmission('a-token-nobody-can-check', '10.0.0.50'));
+    }
+
+    public function testUnreachableSiteverifyMintsATokenWhenConfiguredToAllow(): void
+    {
+        $firewall = Firewall::create([
+            $this->configWithTurnstileChallenge(
+                UnreachableTurnstileProvider::class,
+                'turnstile_down_allow.yml',
+                ['on_error' => 'allow']
+            ),
+        ]);
+
+        $this->expectException(ChallengeSolvedException::class);
+        $firewall->evaluate($this->turnstileSubmission('a-token-nobody-can-check', '10.0.0.50'));
+    }
+
+    public function testTurnstileWithoutKeysFailsAtStartup(): void
+    {
+        $config = $this->writeConfig([
+            'global' => ['mode' => 'exception'],
+            'challenge' => [
+                'provider' => 'turnstile',
+                'secret' => self::SECRET,
+                'path' => '/_firewall/challenge',
+            ],
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\Url',
+                    'response' => 'challenge',
+                    'weight' => 0,
+                    'enable' => true,
+                    'config' => ['path@starts_with:/protected'],
+                ],
+            ],
+        ], 'turnstile_keyless.yml');
+
+        $this->expectException(ConfigurationException::class);
+        Firewall::create([$config]);
+    }
+
+    /**
+     * Config using a Turnstile provider whose siteverify call is stubbed.
+     *
+     * @param class-string $provider
+     *   Provider FQCN — a subclass standing in for one Cloudflare behaviour.
+     * @param string $filename
+     *   Config filename, unique per case so the files do not collide.
+     * @param array<string, mixed> $extraOptions
+     *   Extra `provider_options` merged over the dummy keys.
+     */
+    private function configWithTurnstileChallenge(
+        string $provider = AlwaysVerifyingTurnstileProvider::class,
+        string $filename = 'turnstile_config.yml',
+        array $extraOptions = []
+    ): string {
+        return $this->writeConfig([
+            'global' => ['mode' => 'exception'],
+            'storage' => [
+                'type' => 'Kanopi\Firewall\Storage\FileStorage',
+                'config' => ['storage_file' => $this->tempDir . '/turnstile-storage.data'],
+            ],
+            'challenge' => [
+                'provider' => $provider,
+                'secret' => self::SECRET,
+                'cookie_name' => 'fw_challenge_turnstile_pass',
+                'header_name' => 'X-Firewall-Challenge-Turnstile',
+                'path' => '/_firewall/challenge',
+                'provider_options' => $extraOptions + [
+                    // Cloudflare's documented always-passes test pair.
+                    'site_key' => '1x00000000000000000000AA',
+                    'secret_key' => '1x0000000000000000000000000000000AA',
+                ],
+            ],
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\Url',
+                    'response' => 'challenge',
+                    'weight' => 0,
+                    'enable' => true,
+                    'metadata' => ['default_expiration_time' => 600],
+                    'config' => ['path@starts_with:/protected'],
+                ],
+            ],
+        ], $filename);
+    }
+
+    /**
+     * Reach the provider the Firewall built from config.
+     */
+    private function challengeProvider(Firewall $firewall): TurnstileChallengeProvider
+    {
+        $provider = (new \ReflectionProperty($firewall, 'challengeProvider'))->getValue($firewall);
+        $this->assertInstanceOf(TurnstileChallengeProvider::class, $provider);
+
+        return $provider;
+    }
+
+    private function turnstileSubmission(string $token, string $ip): Request
+    {
+        return Request::create(
+            '/_firewall/challenge',
+            'POST',
+            [
+                TurnstileChallengeProvider::PAYLOAD_FIELD => $token,
+                TurnstileChallengeProvider::REDIRECT_FIELD => '/protected',
+                TurnstileChallengeProvider::TTL_FIELD => '600',
             ],
             [],
             [],

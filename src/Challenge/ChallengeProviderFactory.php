@@ -30,6 +30,7 @@ final class ChallengeProviderFactory
     private const BUILTINS = [
         'math' => MathChallengeProvider::class,
         'altcha' => AltchaChallengeProvider::class,
+        'turnstile' => TurnstileChallengeProvider::class,
     ];
 
     /**
@@ -41,11 +42,8 @@ final class ChallengeProviderFactory
      *   Shared HMAC manager. Providers that need to sign per-challenge
      *   state (like MathChallengeProvider) receive it via constructor.
      * @param array<string, mixed> $options
-     *   Contents of `challenge.provider_options`, passed as a second
-     *   constructor argument to providers that declare one. Providers
-     *   taking only a TokenManager — including every custom provider
-     *   written against the original single-argument signature — are
-     *   constructed unchanged, so this stays backward compatible.
+     *   Contents of `challenge.provider_options`, passed to providers that
+     *   declare an `array` constructor parameter.
      *
      * @throws ConfigurationException
      *   When the provider name resolves to nothing or to a class that
@@ -84,17 +82,30 @@ final class ChallengeProviderFactory
     }
 
     /**
-     * Construct the provider, passing options only when it accepts them.
+     * Construct the provider, giving it only the collaborators it declares.
      *
-     * `ChallengeProviderInterface` cannot describe a constructor, so the
-     * arity is checked directly rather than assumed. A provider written
-     * against the original `__construct(TokenManager $tm)` signature keeps
-     * working; one that declares a second parameter receives the options.
+     * `ChallengeProviderInterface` cannot describe a constructor, so what to
+     * pass is read off the signature rather than assumed. Each parameter is
+     * matched by declared type: an `array` receives
+     * `challenge.provider_options`, anything else receives the shared
+     * `TokenManager`.
+     *
+     * Reading types rather than counting parameters is what lets a provider
+     * decline the TokenManager altogether. `TurnstileChallengeProvider` has
+     * no per-challenge state to sign — Cloudflare owns the only thing that
+     * has to survive from render to verify — and accepting a collaborator it
+     * never uses would be a lie in its signature.
+     *
+     * Backward compatible in both directions: an untyped parameter is
+     * treated as wanting the TokenManager, so providers written against the
+     * original `__construct(TokenManager $tm)` or
+     * `__construct(TokenManager $tm, array $opts)` signatures are
+     * constructed exactly as before.
      *
      * @param class-string<ChallengeProviderInterface> $class
      *   Resolved provider class.
      * @param array<string, mixed> $options
-     *   Provider options to forward when supported.
+     *   Provider options to forward to an `array` parameter.
      */
     private static function instantiate(
         string $class,
@@ -103,10 +114,18 @@ final class ChallengeProviderFactory
     ): ChallengeProviderInterface {
         $constructor = (new \ReflectionClass($class))->getConstructor();
 
-        if ($constructor instanceof \ReflectionMethod && $constructor->getNumberOfParameters() >= 2) {
-            return new $class($tokenManager, $options);
+        if (!$constructor instanceof \ReflectionMethod) {
+            return new $class();
         }
 
-        return new $class($tokenManager);
+        $arguments = [];
+        foreach ($constructor->getParameters() as $reflectionParameter) {
+            $type = $reflectionParameter->getType();
+            $arguments[] = $type instanceof \ReflectionNamedType && $type->getName() === 'array'
+                ? $options
+                : $tokenManager;
+        }
+
+        return new $class(...$arguments);
     }
 }

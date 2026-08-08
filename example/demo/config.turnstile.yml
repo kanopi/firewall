@@ -1,0 +1,52 @@
+# Cloudflare Turnstile variant of the demo config.
+#
+# Loaded by example/demo/index.php whenever the request touches the Turnstile
+# routes (/secure-turnstile or /_firewall/challenge-turnstile) — see that file
+# for the dispatch logic. Everything else falls back to config.yml.
+#
+# Each provider gets a distinct challenge submit path, cookie name, and header
+# name so pass tokens from the three providers can co-exist in one browser
+# session without overwriting each other.
+#
+# Unlike the math and ALTCHA routes, this one is NOT self-contained: the
+# widget loads from challenges.cloudflare.com and the submitted token is
+# verified server-to-server against Cloudflare's siteverify API. The demo will
+# not work without outbound network access.
+
+global:
+  banning_message: "Blocked: {{request.path}} is restricted (request {{request.id}})."
+
+# Same storage file as config.yml so a block recorded by one Firewall
+# instance is observed by the other (repeat-offender behavior).
+storage:
+  type: Kanopi\Firewall\Storage\FileStorage
+  config:
+    storage_file: /tmp/firewall-demo.data
+
+challenge:
+  provider: turnstile
+  secret: 'demo-secret-do-not-reuse-in-prod'
+  cookie_name: fw_challenge_turnstile_pass
+  header_name: X-Firewall-Challenge-Turnstile
+  path: /_firewall/challenge-turnstile
+  provider_options:
+    # Cloudflare's documented test keys: the widget always passes and
+    # siteverify always accepts the token. Swap in real keys from the
+    # Turnstile section of the Cloudflare dashboard to see the genuine
+    # behaviour, including the interactive challenge.
+    #   https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+    # To watch a rejection instead, set secret_key to
+    # 2x0000000000000000000000000000000AA (always fails) or
+    # 3x0000000000000000000000000000000AA (token already spent).
+    site_key: '1x00000000000000000000AA'
+    secret_key: '1x0000000000000000000000000000000AA'
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: challenge
+    weight: 0
+    enable: true
+    metadata:
+      default_expiration_time: 60
+    config:
+      - "path@starts_with:/secure-turnstile"
