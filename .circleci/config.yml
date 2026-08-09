@@ -99,11 +99,9 @@ jobs:
       - run:
           name: Setup
           command: |
-            # Install BC Tool
+            # Database CLI clients
             sudo apt update
             sudo apt install mariadb-client postgresql-client
-            curl -o /tmp/bc.deb -fsSL http://archive.ubuntu.com/ubuntu/pool/main/b/bc/bc_1.07.1-3build1_amd64.deb
-            sudo dpkg -i /tmp/bc.deb 
             # Set Hostname
             echo "127.0.0.1 web" | sudo tee -a /etc/hosts
             # Install XDebug
@@ -112,9 +110,6 @@ jobs:
             printf "no\nno\n" | sudo pecl install redis
             sudo docker-php-ext-install pdo_mysql mysqli pdo_pgsql
             #sudo cp .circleci/config/*.ini /etc/php.d/
-            # Install Xidel
-            curl -fsSL https://github.com/benibela/xidel/releases/download/Xidel_0.9.8/xidel-0.9.8.linux64.tar.gz | tar xvz -C /tmp/
-            chmod +x /tmp/xidel && sudo mv /tmp/xidel /usr/sbin/
             cp .circleci/phpunit.env ./.env
       # Keyed per PHP version: composer.lock is not committed, so each PHP
       # version resolves a different Symfony line (8.1 -> 6.4, 8.2/8.3 -> 7.4,
