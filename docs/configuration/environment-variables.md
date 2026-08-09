@@ -6,6 +6,24 @@ You can reference OS environment variables inside YAML using Symfony‑style tok
 - When a token appears **inside a larger string**, it is interpolated as text.
 - Remember to **quote** tokens in YAML (e.g., `' %env(...)% '`) because `%` is a reserved indicator in YAML.
 
+## `${VAR}` Is Not Supported
+
+`%env(NAME)%` is the **only** substitution syntax this library implements. The shell-style form `${NAME}` is the more intuitive guess, but nothing resolves it — the value is loaded as the literal string `${NAME}`:
+
+```yaml
+# WRONG — loaded as the literal string "${FIREWALL_CHALLENGE_SECRET}"
+challenge:
+  secret: '${FIREWALL_CHALLENGE_SECRET}'
+
+# Correct
+challenge:
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'
+```
+
+This matters most for secrets, because the failure is not always loud. A rejected API key surfaces quickly as an error from the remote service, but a signing key set to the literal `${FIREWALL_CHALLENGE_SECRET}` keeps working — using a value that is identical across every deployment that copy-pasted it, which anyone can then use to forge a valid token.
+
+If you see `${...}` in a config example, it is either a mistake or it belongs to a different tool. Docker Compose, shell scripts, and CI configuration substitute `${VAR}` themselves before this library ever sees the file; inside a firewall YAML config, it is always wrong.
+
 ## Variable Resolution with `$_SERVER` Fallback
 
 The firewall checks environment variables in the following order:
