@@ -104,7 +104,7 @@ logger:
   - class: Monolog\Handler\SendGridHandler
     args:
       - apikey                     # SendGrid API user (use "apikey" for API key auth)
-      - "${SENDGRID_API_KEY}"      # API key
+      - "%env(SENDGRID_API_KEY)%"  # API key
       - noreply@example.com        # from
       - security@example.com       # to (string or list)
       - "Firewall Alert"           # subject
@@ -119,7 +119,7 @@ Post directly to a Slack channel through an [Incoming Webhook](https://api.slack
 logger:
   - class: Monolog\Handler\SlackWebhookHandler
     args:
-      - "${SLACK_WEBHOOK_URL}"     # webhook URL
+      - "%env(SLACK_WEBHOOK_URL)%" # webhook URL
       - "#security-alerts"         # channel override (or null)
       - "Firewall"                 # bot username
       - true                       # useAttachment
@@ -135,7 +135,7 @@ If you prefer the Slack Web API (legacy token-based handler):
 logger:
   - class: Monolog\Handler\SlackHandler
     args:
-      - "${SLACK_BOT_TOKEN}"       # Slack bot token
+      - "%env(SLACK_BOT_TOKEN)%"   # Slack bot token
       - "#security-alerts"         # channel
       - "Firewall"                 # username
       - true                       # useAttachment
@@ -151,9 +151,9 @@ Send mobile push notifications via [Pushover](https://pushover.net/):
 logger:
   - class: Monolog\Handler\PushoverHandler
     args:
-      - "${PUSHOVER_APP_TOKEN}"    # application API token
-      - "${PUSHOVER_USER_KEY}"     # user/group key (string or list)
-      - "Firewall Alert"           # notification title
+      - "%env(PUSHOVER_APP_TOKEN)%"  # application API token
+      - "%env(PUSHOVER_USER_KEY)%"   # user/group key (string or list)
+      - "Firewall Alert"             # notification title
       - Monolog\Level::Critical
 ```
 
@@ -166,7 +166,7 @@ logger:
   - class: Monolog\Handler\IFTTTHandler
     args:
       - firewall_alert             # event name configured in the IFTTT applet
-      - "${IFTTT_MAKER_KEY}"       # Maker webhook key
+      - "%env(IFTTT_MAKER_KEY)%"   # Maker webhook key
       - Monolog\Level::Error
 ```
 
@@ -180,8 +180,8 @@ Send messages to a Telegram channel or chat via a bot token:
 logger:
   - class: Monolog\Handler\TelegramBotHandler
     args:
-      - "${TELEGRAM_BOT_TOKEN}"    # bot token from @BotFather
-      - "@my_security_channel"     # chat ID or @channel
+      - "%env(TELEGRAM_BOT_TOKEN)%"  # bot token from @BotFather
+      - "@my_security_channel"       # chat ID or @channel
       - Monolog\Level::Critical
 ```
 
@@ -229,7 +229,7 @@ logger:
   # Critical events ping the on-call channel
   - class: Monolog\Handler\SlackWebhookHandler
     args:
-      - "${SLACK_WEBHOOK_URL}"
+      - "%env(SLACK_WEBHOOK_URL)%"
       - "#security-oncall"
       - "Firewall"
       - true
@@ -241,8 +241,8 @@ logger:
   # And buzz a phone if no one acks
   - class: Monolog\Handler\PushoverHandler
     args:
-      - "${PUSHOVER_APP_TOKEN}"
-      - "${PUSHOVER_USER_KEY}"
+      - "%env(PUSHOVER_APP_TOKEN)%"
+      - "%env(PUSHOVER_USER_KEY)%"
       - "Firewall CRITICAL"
       - Monolog\Level::Critical
 ```
