@@ -2,186 +2,186 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://kanopi.github.io/firewall/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/conditional-logic/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/environment-variables/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/global/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/loading-and-includes/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/logging/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/overrides/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/configuration/storage/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/contributing/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/contributing/development/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/contributing/documentation/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/contributing/testing/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/getting-started/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/getting-started/platform-integration/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/getting-started/quick-start/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/getting-started/test-drive/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/advanced-examples/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/checking-requests/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/custom-plugins/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/custom-storage/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/demo/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/error-handling/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/example-environment/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/guides/geoip-setup/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/abuseipdb/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/asn/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/challenges/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/crs/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/geolocation/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/ip-address/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/rate-limit/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/url/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/user-agent/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/plugins/vulnerability-score/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/presets/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/presets/available/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/presets/custom/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/presets/testing/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/presets/tuning/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/presets/usage/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/reference/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/reference/legacy-format/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
     <url>
          <loc>https://kanopi.github.io/firewall/reference/rate-limiting/</loc>
-         <lastmod>2026-08-03</lastmod>
+         <lastmod>2026-08-09</lastmod>
     </url>
 </urlset>
