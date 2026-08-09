@@ -102,6 +102,12 @@ jobs:
             # Database CLI clients
             sudo apt update
             sudo apt install mariadb-client postgresql-client
+            # InterstitialRendererTest parse-checks the generated inline
+            # scripts with `node --check`, and fails rather than skips when
+            # CI is set. Conditional because the cimg images may already
+            # ship node -- installing over an existing one is the only way
+            # this could conflict.
+            command -v node >/dev/null || sudo apt install -y nodejs
             # Set Hostname
             echo "127.0.0.1 web" | sudo tee -a /etc/hosts
             # Install XDebug
