@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Challenge;
 
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Logging\LoggingFactory;
+use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -61,6 +62,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final class TurnstileChallengeProvider implements ChallengeProviderInterface
 {
+    use RequestFieldTrait;
+
     /**
      * Form field carrying the widget's token.
      *
@@ -498,9 +501,7 @@ FAILURE,
      */
     private function postedToken(Request $request): string
     {
-        $raw = $request->request->all()[self::PAYLOAD_FIELD] ?? '';
-
-        return is_string($raw) ? trim($raw) : '';
+        return $this->postedString($request, self::PAYLOAD_FIELD);
     }
 
     /**

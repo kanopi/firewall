@@ -25,6 +25,7 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Symfony\Component\HttpFoundation\Request;
@@ -35,6 +36,7 @@ use Symfony\Component\HttpFoundation\Request;
 final class Firewall
 {
     use LoggingTrait;
+    use RequestFieldTrait;
 
     /**
      * Firewall Mode.
@@ -725,11 +727,19 @@ final class Firewall
             // @codeCoverageIgnoreEnd
         }
 
-        $ttl = max(0, (int) $request->request->get(ChallengeProviderInterface::TTL_FIELD, 3600));
+        // Both fields ride in on the interstitial's POST, so both are
+        // attacker-chosen. Read them off the raw bag — InputBag::get() throws
+        // on an array value, and nothing above this frame catches it (#130).
+        // An absent or non-string ttl falls back to the default hour; an
+        // absent or non-string redirect falls back to the site root, which is
+        // what sanitizeRedirect() would have reduced a hostile one to anyway.
+        $rawTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
+        $ttl = $rawTtl === '' ? 3600 : max(0, (int) $rawTtl);
+
         $token = $this->tokenManager->mint($request, $ttl);
-        $redirect = $this->sanitizeRedirect(
-            (string) $request->request->get(ChallengeProviderInterface::REDIRECT_FIELD, '/')
-        );
+
+        $rawRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
+        $redirect = $this->sanitizeRedirect($rawRedirect === '' ? '/' : $rawRedirect);
 
         $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
             'provider' => $this->challengeProvider->getName(),
@@ -1150,15 +1160,21 @@ final class Firewall
                 }
 
                 // 3. request.query.<param>
+                //
+                // Read off the raw bag rather than through InputBag::get(),
+                // which throws on an array value — `?q[]=1` against a template
+                // using this token would otherwise turn a block page into an
+                // uncaught exception (#130). $sanitize() already renders a
+                // non-scalar as '', so an array simply interpolates empty.
                 if (str_starts_with($key, 'request.query.')) {
                     $param = substr($key, 14);
-                    return $sanitize($request->query->get($param, ''));
+                    return $sanitize($request->query->all()[$param] ?? '');
                 }
 
-                // 4. request.post.<param>  (body fields)
+                // 4. request.post.<param>  (body fields), same treatment
                 if (str_starts_with($key, 'request.post.')) {
                     $param = substr($key, 13);
-                    return $sanitize($request->request->get($param, ''));
+                    return $sanitize($request->request->all()[$param] ?? '');
                 }
 
                 // 5. request.cookie.<name>

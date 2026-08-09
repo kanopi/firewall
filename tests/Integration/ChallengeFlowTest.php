@@ -384,6 +384,73 @@ class ChallengeFlowTest extends TestCase
         $this->assertTrue($firewall->evaluate($request));
     }
 
+    /**
+     * A crafted array field is a rejected submission, not a 500 (#130).
+     *
+     * `InputBag::get()` throws BadRequestException on a non-scalar and
+     * nothing between here and the host application catches it, so before the
+     * fix one unauthenticated POST to any route serving `response: challenge`
+     * produced an uncaught exception and a stack trace — repeatable at
+     * whatever volume the caller cared to generate.
+     */
+    public function testArrayValuedSolutionFieldIsRejectedNotFatal(): void
+    {
+        $firewall = Firewall::create([$this->configWithChallenge()]);
+
+        $request = Request::create(
+            '/_firewall/challenge',
+            'POST',
+            [
+                MathChallengeProvider::STATE_FIELD => ['x'],
+                MathChallengeProvider::ANSWER_FIELD => ['7'],
+                MathChallengeProvider::REDIRECT_FIELD => '/protected',
+                MathChallengeProvider::TTL_FIELD => '600',
+            ],
+            [],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50']
+        );
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($request);
+    }
+
+    /**
+     * The firewall reads `ttl` and `redirect_to` itself, outside any provider,
+     * and they arrive on the same attacker-chosen POST (#130). Array values
+     * fall back to the defaults rather than throwing — and the fallback
+     * redirect is the site root, which is where sanitizeRedirect() sends
+     * anything off-site anyway.
+     */
+    public function testArrayValuedTtlAndRedirectFallBackToDefaults(): void
+    {
+        $firewall = Firewall::create([$this->configWithChallenge()]);
+
+        [$state, $answer] = $this->generateSolvedState($firewall, '10.0.0.50');
+
+        $request = Request::create(
+            '/_firewall/challenge',
+            'POST',
+            [
+                MathChallengeProvider::STATE_FIELD => $state,
+                MathChallengeProvider::ANSWER_FIELD => $answer,
+                MathChallengeProvider::REDIRECT_FIELD => ['/protected'],
+                MathChallengeProvider::TTL_FIELD => ['600'],
+            ],
+            [],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50']
+        );
+
+        try {
+            $firewall->evaluate($request);
+            $this->fail('Expected ChallengeSolvedException');
+        } catch (ChallengeSolvedException $e) {
+            $this->assertNotEmpty($e->getToken());
+            $this->assertSame('/', $e->getRedirect());
+        }
+    }
+
     public function testMissingSecretWithChallengePluginsThrowsAtStartup(): void
     {
         $configFile = $this->writeConfig([
@@ -631,6 +698,35 @@ class ChallengeFlowTest extends TestCase
                 $this->assertNotEmpty($e->getToken());
             }
         }
+    }
+
+    /**
+     * `altcha[]=x` is a rejected submission, not an uncaught exception (#130).
+     *
+     * Worth asserting through the firewall as well as at the provider: the
+     * ALTCHA payload is read twice per submission — once by
+     * `verifySolution()` and once by `getSolutionReceipt()` on the
+     * single-use path — and only the full flow exercises both.
+     */
+    public function testArrayValuedAltchaPayloadIsRejectedNotFatal(): void
+    {
+        $firewall = Firewall::create([$this->configWithAltchaChallenge()]);
+
+        $request = Request::create(
+            '/_firewall/challenge',
+            'POST',
+            [
+                AltchaChallengeProvider::PAYLOAD_FIELD => ['x'],
+                AltchaChallengeProvider::REDIRECT_FIELD => '/protected',
+                AltchaChallengeProvider::TTL_FIELD => '600',
+            ],
+            [],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.50']
+        );
+
+        $this->expectException(ChallengeRequiredException::class);
+        $firewall->evaluate($request);
     }
 
     /**

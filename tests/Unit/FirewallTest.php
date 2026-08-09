@@ -387,6 +387,31 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Array-valued query and body params interpolate empty, not fatally.
+     *
+     * Same defect as #130 one layer out: `InputBag::get()` throws on a
+     * non-scalar, and these tokens are read while building a *blocking*
+     * response, so `?q[]=1` against a config using `{{request.query.q}}`
+     * would have replaced the block page with an uncaught exception.
+     */
+    public function testInterpolateRendersArrayValuedParamsAsEmpty(): void
+    {
+        $request = Request::create('/', 'POST', ['name' => ['x']], [], [], [
+            'REMOTE_ADDR' => '8.8.8.8',
+        ], null);
+        $request->query->set('q', ['y']);
+
+        $ref = new \ReflectionClass(Firewall::class);
+        $firewall = $this->createFirewall();
+        $method = $ref->getMethod('interpolateTemplate');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($firewall, '[{{request.query.q}}][{{request.post.name}}]', $request);
+
+        $this->assertSame('[][]', $result);
+    }
+
+    /**
      * Attacker-controlled cookie values must be HTML-escaped.
      */
     public function testInterpolateEscapesHtmlInCookie(): void

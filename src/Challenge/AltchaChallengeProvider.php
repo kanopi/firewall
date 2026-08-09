@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Challenge;
 
+use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -50,6 +51,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final class AltchaChallengeProvider implements ChallengeProviderInterface, SingleUseSolutionInterface
 {
+    use RequestFieldTrait;
+
     /**
      * Form field that carries the base64-encoded solution payload posted
      * back from the widget. Name is fixed by the ALTCHA widget itself.
@@ -239,7 +242,9 @@ SCRIPT,
      */
     private function validate(Request $request): ?array
     {
-        $encoded = trim((string) $request->request->get(self::PAYLOAD_FIELD, ''));
+        // Read through the raw bag: an array-valued `altcha` field would make
+        // InputBag::get() throw, and neither caller may (#130).
+        $encoded = $this->postedString($request, self::PAYLOAD_FIELD);
         if ($encoded === '') {
             return null;
         }

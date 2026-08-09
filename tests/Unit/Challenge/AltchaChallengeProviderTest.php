@@ -513,6 +513,32 @@ final class AltchaChallengeProviderTest extends AbstractTestCase
         ]));
     }
 
+    /**
+     * An array-valued payload is a rejection, not an exception (#130).
+     *
+     * `InputBag::get()` raises BadRequestException on a non-scalar, and both
+     * callers of validate() are forbidden from throwing — `verifySolution()`
+     * by the interface contract, `getSolutionReceipt()` because
+     * `Firewall::consumeSingleUseSolution()` does not catch either. One
+     * crafted `altcha[]=x` would otherwise be a 500.
+     */
+    public function testArrayValuedPayloadIsRejectedWithoutThrowing(): void
+    {
+        $provider = new AltchaChallengeProvider(new TokenManager(self::SECRET));
+
+        $request = Request::create(
+            '/_firewall/challenge',
+            'POST',
+            [AltchaChallengeProvider::PAYLOAD_FIELD => ['nested']],
+            [],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.5']
+        );
+
+        $this->assertFalse($provider->verifySolution($request));
+        $this->assertNull($provider->getSolutionReceipt($request));
+    }
+
     private function makeSubmissionRequest(string $payload): Request
     {
         return Request::create(

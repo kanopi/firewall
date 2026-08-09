@@ -183,6 +183,56 @@ final class MathChallengeProviderTest extends AbstractTestCase
         $this->assertFalse($provider->verifySolution($this->makeSubmissionRequest($state, '7')));
     }
 
+    /**
+     * Each hostile field on its own, so neither can mask the other.
+     *
+     * @return array<string, array{0: array<string, mixed>}>
+     */
+    public static function arrayValuedFieldProvider(): array
+    {
+        return [
+            'state is an array' => [[
+                MathChallengeProvider::STATE_FIELD => ['x'],
+                MathChallengeProvider::ANSWER_FIELD => '7',
+            ]],
+            'answer is an array' => [[
+                MathChallengeProvider::STATE_FIELD => '7|9999999999.sig',
+                MathChallengeProvider::ANSWER_FIELD => ['7'],
+            ]],
+            'both are arrays' => [[
+                MathChallengeProvider::STATE_FIELD => ['x'],
+                MathChallengeProvider::ANSWER_FIELD => ['7'],
+            ]],
+        ];
+    }
+
+    /**
+     * An array-valued field is a rejection, not an exception (#130).
+     *
+     * `InputBag::get()` raises BadRequestException on a non-scalar, and
+     * `verifySolution()` is contractually forbidden from throwing —
+     * `Firewall::handleChallengeSubmission()` does not catch, so a throw here
+     * reaches the host application as a 500 for one crafted POST field.
+     *
+     * @param array<string, mixed> $fields
+     */
+    #[DataProvider('arrayValuedFieldProvider')]
+    public function testArrayValuedFieldIsRejectedWithoutThrowing(array $fields): void
+    {
+        $provider = new MathChallengeProvider(new TokenManager(self::SECRET));
+
+        $request = Request::create(
+            '/_firewall/challenge',
+            'POST',
+            $fields,
+            [],
+            [],
+            ['REMOTE_ADDR' => '10.0.0.5']
+        );
+
+        $this->assertFalse($provider->verifySolution($request));
+    }
+
     private function makeSubmissionRequest(string $state, string $answer): Request
     {
         return Request::create(
