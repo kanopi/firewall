@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Challenge;
 
+use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -38,6 +39,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final class MathChallengeProvider implements ChallengeProviderInterface
 {
+    use RequestFieldTrait;
+
     /**
      * Form field that carries the signed `answer|exp.signature` payload
      * from render → verify.
@@ -125,8 +128,10 @@ FIELDS,
      */
     public function verifySolution(Request $request): bool
     {
-        $state = (string) $request->request->get(self::STATE_FIELD, '');
-        $answer = trim((string) $request->request->get(self::ANSWER_FIELD, ''));
+        // Read through the raw bag: an array-valued field would make
+        // InputBag::get() throw, and this method may not (#130).
+        $state = $this->postedString($request, self::STATE_FIELD, false);
+        $answer = $this->postedString($request, self::ANSWER_FIELD);
 
         if ($state === '' || $answer === '' || substr_count($state, '.') !== 1) {
             return false;

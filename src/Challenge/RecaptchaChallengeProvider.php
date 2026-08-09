@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Challenge;
 
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Logging\LoggingFactory;
+use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -90,6 +91,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final class RecaptchaChallengeProvider implements ChallengeProviderInterface
 {
+    use RequestFieldTrait;
+
     /**
      * Form field carrying a v2 widget's token.
      *
@@ -901,9 +904,7 @@ FAILURE,
      */
     private function postedToken(Request $request): string
     {
-        $raw = $request->request->all()[$this->getPayloadField()] ?? '';
-
-        return is_string($raw) ? trim($raw) : '';
+        return $this->postedString($request, $this->getPayloadField());
     }
 
     /**
