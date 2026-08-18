@@ -288,16 +288,28 @@ class Config
     {
         $config = [];
 
+        // Files the firewall reads. These resolve only when the target exists:
+        // a wrong path here stays relative and is reported by whatever tried to
+        // read it. `metadata.config.*` in particular is a wildcard over plugin
+        // config *files*, so it must not rewrite a value that is not one.
         $replacementPaths = [
-            'storage.config.(storage_file|offense_file)',
             // Legacy format paths
-            '(allow|block).*.metadata.storage.config.file',
             '(allow|block).*.metadata.config.*',
             '(allow|block).*.metadata.(asn_reader|reader|country_reader).db',
             // New plugins: array format paths
-            'plugins.*.metadata.storage.config.file',
             'plugins.*.metadata.config.*',
             'plugins.*.metadata.(asn_reader|reader|country_reader).db',
+        ];
+
+        // Files the firewall *writes*: block-list state, the offense sidecar,
+        // and rate-limit data. None of them exist on a first run, which is
+        // exactly when resolution is needed, so these resolve unconditionally
+        // (#142). A genuinely bad path is reported by the storage layer, which
+        // now sees the same absolute path the config author meant.
+        $creatablePaths = [
+            'storage.config.(storage_file|offense_file)',
+            '(allow|block).*.metadata.storage.config.file',
+            'plugins.*.metadata.storage.config.file',
         ];
 
         if (Path::looksLikeUrl($file)) {
@@ -308,14 +320,14 @@ class Config
                     return [];
                 }
 
-                $config = ConfigLoader::parse($contents, $file, $replacementPaths);
+                $config = ConfigLoader::parse($contents, $file, $replacementPaths, $creatablePaths);
             } catch (\Exception $exception) {
                 self::recordLoadError($file, $exception->getMessage());
             }
         } elseif (file_exists($file) && is_file($file) && !is_dir($file) && is_readable($file)) {
             try {
                 // Load the file and parse as YAML.
-                $config = ConfigLoader::load($file, $replacementPaths);
+                $config = ConfigLoader::load($file, $replacementPaths, $creatablePaths);
             } catch (\Exception $exception) {
                 // Everything ConfigLoader is careful to raise — malformed
                 // YAML, circular `configs:` includes, depth overflow, an

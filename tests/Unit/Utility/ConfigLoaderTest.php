@@ -287,6 +287,223 @@ YML
         self::assertStringStartsWith($tmpBase, $cfg['logger']['main']['args'][2]); // rewritten
     }
 
+    /**
+     * A path the library will create resolves before it exists (#142).
+     *
+     * The existence gate meant these keys — every one of which names a file the
+     * firewall writes — only resolved on a later run, so a first run resolved
+     * them against the process CWD instead.
+     */
+    public function testCreatablePathResolvesWhenTargetDoesNotExist(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+storage:
+  config:
+    storage_file: data/blocked.data
+YML
+        );
+        mkdir($this->tmp . '/data');
+
+        $cfg = ConfigLoader::load($main, [], ['storage.config.storage_file']);
+
+        $expected = ($this->realTmp()) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'blocked.data';
+        self::assertSame($expected, $cfg['storage']['config']['storage_file']);
+        self::assertFileDoesNotExist($expected, 'Resolution must not create the file.');
+    }
+
+    /**
+     * The parent directory does not have to exist either.
+     *
+     * Whatever creates the file reports a bad path, and now reports the path the
+     * config author actually wrote rather than a CWD-relative one.
+     */
+    public function testCreatablePathResolvesWhenParentDirectoryDoesNotExist(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+storage:
+  config:
+    offense_file: nope/deeper/offenses.json
+YML
+        );
+
+        $cfg = ConfigLoader::load($main, [], ['storage.config.(storage_file|offense_file)']);
+
+        self::assertSame(
+            $this->realTmp() . '/nope/deeper/offenses.json',
+            $cfg['storage']['config']['offense_file']
+        );
+    }
+
+    /**
+     * Read-target keys keep the existence gate.
+     *
+     * `metadata.config.*` is a wildcard over plugin config *files*, so resolving
+     * it unconditionally would rewrite any non-path value sitting under that key.
+     */
+    public function testReadPathIsLeftRelativeWhenTargetDoesNotExist(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+plugins:
+  - plugin: Some\\Plugin
+    metadata:
+      reader:
+        db: geo/GeoLite2-Country.mmdb
+YML
+        );
+
+        $cfg = ConfigLoader::load($main, ['plugins.*.metadata.(asn_reader|reader|country_reader).db']);
+
+        self::assertSame('geo/GeoLite2-Country.mmdb', $cfg['plugins'][0]['metadata']['reader']['db']);
+    }
+
+    /**
+     * A relative StreamHandler log path resolves against the YAML (#143).
+     */
+    public function testLoggerStreamPathResolvesAgainstConfigDirectory(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+logger:
+  - class: Monolog\\Handler\\StreamHandler
+    args:
+      - logs/firewall.log
+      - Monolog\\Level::Info
+YML
+        );
+
+        $cfg = ConfigLoader::load($main);
+
+        self::assertSame($this->realTmp() . '/logs/firewall.log', $cfg['logger'][0]['args'][0]);
+        // Untouched: only the path argument is rewritten.
+        self::assertSame('Monolog\Level::Info', $cfg['logger'][0]['args'][1]);
+    }
+
+    /**
+     * RotatingFileHandler takes a filename in the same slot, and `args` may be
+     * spread by parameter name rather than by position.
+     */
+    public function testLoggerNamedArgumentAndRotatingHandlerResolve(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+logger:
+  - class: Monolog\\Handler\\RotatingFileHandler
+    args:
+      filename: logs/rotating.log
+      maxFiles: 7
+  - class: Monolog\\Handler\\StreamHandler
+    args:
+      stream: logs/named.log
+YML
+        );
+
+        $cfg = ConfigLoader::load($main);
+
+        self::assertSame($this->realTmp() . '/logs/rotating.log', $cfg['logger'][0]['args']['filename']);
+        self::assertSame(7, $cfg['logger'][0]['args']['maxFiles']);
+        self::assertSame($this->realTmp() . '/logs/named.log', $cfg['logger'][1]['args']['stream']);
+    }
+
+    /**
+     * `args.0` is only a path for the handlers that take one.
+     *
+     * SyslogHandler's first argument is an ident string and StreamHandler
+     * accepts stream URIs, neither of which may be rewritten.
+     */
+    public function testLoggerLeavesNonFileHandlersAndStreamUrisAlone(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+logger:
+  - class: Monolog\\Handler\\SyslogHandler
+    args:
+      - firewall
+  - class: Monolog\\Handler\\StreamHandler
+    args:
+      - php://stdout
+  - class: Monolog\\Handler\\StreamHandler
+    args:
+      - /var/log/firewall.log
+  - class: Not\\A\\Handler
+    args:
+      - logs/whatever.log
+YML
+        );
+
+        $cfg = ConfigLoader::load($main);
+
+        self::assertSame('firewall', $cfg['logger'][0]['args'][0]);
+        self::assertSame('php://stdout', $cfg['logger'][1]['args'][0]);
+        self::assertSame('/var/log/firewall.log', $cfg['logger'][2]['args'][0]);
+        self::assertSame('logs/whatever.log', $cfg['logger'][3]['args'][0]);
+    }
+
+    /**
+     * Malformed logger entries must not break loading.
+     */
+    public function testLoggerResolverToleratesMalformedEntries(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+logger:
+  - not-an-array
+  - class: Monolog\\Handler\\StreamHandler
+  - class: Monolog\\Handler\\StreamHandler
+    args: not-an-array
+  - class: 42
+    args:
+      - logs/firewall.log
+YML
+        );
+
+        $cfg = ConfigLoader::load($main);
+
+        self::assertSame('not-an-array', $cfg['logger'][0]);
+        self::assertSame('not-an-array', $cfg['logger'][2]['args']);
+        self::assertSame('logs/firewall.log', $cfg['logger'][3]['args'][0]);
+    }
+
+    /**
+     * Resolved paths in an included file are based on that file's own directory.
+     */
+    public function testCreatableAndLoggerPathsResolveInsideIncludes(): void
+    {
+        $main = $this->tmp . '/main.yml';
+        $this->write($main, <<<YML
+configs:
+  - config/included.yml
+YML
+        );
+        $this->write($this->sub . '/included.yml', <<<YML
+storage:
+  config:
+    storage_file: data/blocked.data
+logger:
+  - class: Monolog\\Handler\\StreamHandler
+    args:
+      - logs/firewall.log
+YML
+        );
+
+        $cfg = ConfigLoader::load($main, [], ['storage.config.storage_file']);
+
+        $subBase = realpath($this->sub) ?: $this->sub;
+        self::assertSame($subBase . '/data/blocked.data', $cfg['storage']['config']['storage_file']);
+        self::assertSame($subBase . '/logs/firewall.log', $cfg['logger'][0]['args'][0]);
+    }
+
+    /**
+     * Resolve the temp directory the way the loader does, so comparisons hold on
+     * platforms where the temp path is itself a symlink (macOS /tmp).
+     */
+    private function realTmp(): string
+    {
+        return realpath($this->tmp) ?: $this->tmp;
+    }
+
     public function testMergeConfigsReplacesLists(): void
     {
         $a = $this->tmp . '/a.yml';

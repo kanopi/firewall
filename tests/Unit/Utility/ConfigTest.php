@@ -549,6 +549,70 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
+     * The paths the firewall writes resolve against the YAML, not the CWD.
+     *
+     * Covers both halves of the reported behaviour: storage state and the
+     * offense sidecar resolve before they exist (#142), and a StreamHandler log
+     * path resolves at all (#143). A GeoIP database that is not on disk still
+     * stays relative — a read target the loader has no business inventing.
+     */
+    public function testLoadFileResolvesWritePathsIndependentlyOfCwd(): void
+    {
+        $dir = sys_get_temp_dir() . '/config_cwd_' . bin2hex(random_bytes(4));
+        $cwd = $dir . '/cwd';
+        mkdir($dir . '/conf', 0777, true);
+        mkdir($cwd, 0777, true);
+
+        $file = $dir . '/conf/fw.yml';
+        file_put_contents($file, Yaml::dump([
+            'storage' => [
+                'config' => [
+                    'storage_file' => 'data/blocked.data',
+                    'offense_file' => 'data/offenses.json',
+                ],
+            ],
+            'logger' => [
+                [
+                    'class' => 'Monolog\Handler\StreamHandler',
+                    'args' => ['logs/firewall.log'],
+                ],
+            ],
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\GeoLocation',
+                    'metadata' => ['reader' => ['db' => 'geo/GeoLite2-Country.mmdb']],
+                ],
+            ],
+        ]));
+
+        $base = realpath($dir . '/conf');
+        $previousCwd = getcwd();
+        chdir($cwd);
+
+        try {
+            $config = Config::loadFile($file);
+        } finally {
+            if (is_string($previousCwd)) {
+                chdir($previousCwd);
+            }
+        }
+
+        $this->assertSame($base . '/data/blocked.data', $config['storage']['config']['storage_file']);
+        $this->assertSame($base . '/data/offenses.json', $config['storage']['config']['offense_file']);
+        $this->assertSame($base . '/logs/firewall.log', $config['logger'][0]['args'][0]);
+        $this->assertSame(
+            'geo/GeoLite2-Country.mmdb',
+            $config['plugins'][0]['metadata']['reader']['db'],
+            'A read target that does not exist is left for its reader to report.'
+        );
+
+        @unlink($file);
+        @rmdir($dir . '/conf');
+        @rmdir($cwd);
+        @rmdir($dir);
+    }
+
+    /**
      * Test remote file caching with custom cache directory
      *
      * Confirms that KANOPI_FIREWALL_CACHE_DIR constant is respected
