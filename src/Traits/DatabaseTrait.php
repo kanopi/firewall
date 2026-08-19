@@ -16,6 +16,7 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
+use Kanopi\Firewall\Exception\StorageConnectionException;
 use Kanopi\Firewall\Logging\LoggingTrait;
 
 /**
@@ -32,6 +33,21 @@ trait DatabaseTrait
 
     /**
      * Create the Connection.
+     *
+     * @param array<string, mixed>|Connection $connectionParams
+     *   Doctrine connection parameters, a `dsn` to parse, or a ready Connection.
+     *
+     * @throws StorageConnectionException
+     *   When the connection cannot be built, the schema manager cannot be
+     *   created, or the database cannot be reached while setting up the schema.
+     *   Pre-fix this was logged and swallowed while `$connection` and
+     *   `$schemaManager` — both typed and non-nullable — were left
+     *   uninitialized, and the method returned as if it had succeeded. The
+     *   first storage call then died with `Typed property ...$schemaManager
+     *   must not be accessed before initialization`, a `\Error` that
+     *   `catch (\Exception)` guards downstream do not catch, and the real
+     *   reason (bad credentials, unreachable host, unresolved env token) never
+     *   reached the caller.
      */
     protected function createConnection(array|Connection $connectionParams): void
     {
@@ -61,11 +77,87 @@ trait DatabaseTrait
 
             $this->schemaManager = $this->connection->createSchemaManager();
             $this->createTable();
-        } catch (\Exception $exception) {
+        } catch (\Throwable $throwable) {
+            // `\Throwable`, not `\Exception`: the failure has to be reported
+            // whatever its shape, and callers get a typed exception either way.
+            $target = self::describeConnectionTarget($connectionParams);
+
             $this->getLogger()->error('Failed to create database connection', [
-                'error' => $exception->getMessage(),
+                'error' => $throwable->getMessage(),
+                'target' => $target,
             ]);
+
+            // The code is cast: `PDOException` can carry a string SQLSTATE, and a
+            // `TypeError` from the constructor here would bury the real reason
+            // the same way the swallowed exception used to.
+            throw new StorageConnectionException(sprintf('Firewall database storage could not connect (%s): %s', $target, $throwable->getMessage()), (int) $throwable->getCode(), previous: $throwable);
         }
+    }
+
+    /**
+     * Describe where a failed connection was pointed, for logs and messages.
+     *
+     * Only non-secret parameters are reported: an operator needs to see which
+     * host and database the firewall tried, and must not find the credentials
+     * for it in an error log or an admin screen. A `dsn` is reduced the same
+     * way, since it can carry a username and password inline.
+     *
+     * @param array<string, mixed>|Connection $connectionParams
+     *   Parameters the connection was attempted with.
+     *
+     * @return string
+     *   Redacted description, e.g. `driver=pdo_mysql host=db port=3306 dbname=app`.
+     */
+    private static function describeConnectionTarget(array|Connection $connectionParams): string
+    {
+        if ($connectionParams instanceof Connection) {
+            $connectionParams = $connectionParams->getParams();
+        }
+
+        if (isset($connectionParams['dsn']) && \is_string($connectionParams['dsn'])) {
+            return self::describeDsn($connectionParams['dsn']);
+        }
+
+        $described = [];
+        foreach (['driver', 'driverClass', 'host', 'port', 'dbname', 'path', 'memory'] as $key) {
+            $value = $connectionParams[$key] ?? null;
+            if (\is_bool($value)) {
+                $value = $value ? 'true' : 'false';
+            }
+
+            if (\is_string($value) || \is_int($value)) {
+                $described[] = $key . '=' . $value;
+            }
+        }
+
+        return $described === [] ? 'no connection parameters' : \implode(' ', $described);
+    }
+
+    /**
+     * Describe a DSN without the credentials it may carry.
+     *
+     * @param string $dsn
+     *   The DSN the connection was attempted with.
+     *
+     * @return string
+     *   Redacted description built from the scheme, host, port and path only.
+     */
+    private static function describeDsn(string $dsn): string
+    {
+        $parts = \parse_url($dsn);
+        if ($parts === false) {
+            return 'unparseable dsn';
+        }
+
+        $described = [];
+        foreach (['scheme', 'host', 'port', 'path'] as $key) {
+            $value = $parts[$key] ?? null;
+            if (\is_string($value) || \is_int($value)) {
+                $described[] = $key . '=' . $value;
+            }
+        }
+
+        return $described === [] ? 'unparseable dsn' : \implode(' ', $described);
     }
 
     /**

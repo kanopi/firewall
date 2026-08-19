@@ -8,6 +8,7 @@ Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallEx
     ├── ConfigurationException     Bad config — thrown from Firewall::create()
     │   └── (no subclasses)
     ├── StorageException           Storage file is unusable
+    │   └── StorageConnectionException  Database storage cannot be reached
     ├── FirewallBlockedException    ─┐
     ├── ChallengeRequiredException   ├─ only in mode: exception
     └── ChallengeSolvedException    ─┘
@@ -17,6 +18,7 @@ Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallEx
 |---|---|---|
 | `ConfigurationException` | During `Firewall::create()`: an empty `challenge.secret` while challenge plugins are configured, a `challenge.provider` that does not resolve to a `ChallengeProviderInterface`, or no trusted proxies when `require_trusted_proxies: true`. | Fail the deploy. This always signals operator error, never attacker input. |
 | `StorageException` | A `FileStorage` / `FileRateLimitStorage` path cannot be created, read, or written. | Fix permissions on the storage path. Thrown at construction, so it also surfaces from `create()`. |
+| `StorageConnectionException` | A `DatabaseStorage` / `DatabaseRateLimitStorage` cannot build its connection, create its schema manager, or reach the database. Carries the redacted target (`driver=… host=… dbname=…`) and the driver exception as `previous`. | Fix the credentials or reachability. Thrown at construction, so `DatabaseStorage` surfaces from `create()`; rate-limit storage is built lazily and surfaces on the first evaluated request. |
 | `FirewallBlockedException` | `mode: exception` only — a `block` plugin matched. Carries `getStatusCode()` and the interpolated banning message. | Render your framework's error response with that status code. |
 | `ChallengeRequiredException` | `mode: exception` only — a `challenge` plugin matched and the visitor holds no valid pass token, **or** a posted solution was rejected. | Render the interstitial yourself, or return the status your API expects. |
 | `ChallengeSolvedException` | `mode: exception` only — a posted solution verified. Carries `getToken()` (the minted pass token) and `getRedirect()` (a sanitized, same-origin target). | Set the pass-token cookie / return the token to the client, then redirect to `getRedirect()`. |
@@ -55,6 +57,7 @@ try {
 | Startup validation failed — empty `challenge.secret`, unresolvable `challenge.provider`, or no trusted proxies with `require_trusted_proxies: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
 | Your config file is missing, unreadable, or malformed, with `require_config: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
 | The same, with `require_config: false` (default) | **Nothing** — logged at `error` | The firewall starts with a partial ruleset, possibly an empty one that allows every request. |
+| The configured database storage cannot be reached | `StorageConnectionException` | The firewall never started. **Nothing is filtered.** |
 
 **The last row is the one to design around.** Config loading is lenient by default: `Config::loadFile()` skips files it cannot read and catches YAML, include, and `%env(...)%` resolution errors, so a mistyped path or a broken include yields a firewall with **no plugins**. `Firewall::create()` succeeds and `evaluate()` returns `true` for everything. Each failure is at least logged:
 

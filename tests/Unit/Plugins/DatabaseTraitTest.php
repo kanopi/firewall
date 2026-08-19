@@ -9,9 +9,15 @@ use Doctrine\DBAL\Schema\MySQLSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
+use Kanopi\Firewall\Exception\StorageConnectionException;
+use Kanopi\Firewall\Logging\LoggingFactory;
+use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Storage\DatabaseStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Traits\DatabaseTrait;
+use Monolog\Handler\TestHandler;
+use Monolog\Level;
+use Monolog\Logger;
 
 /**
  * Integration tests for DatabaseTrait using SQLite in-memory connection.
@@ -290,6 +296,236 @@ class DatabaseTraitTest extends AbstractTestCase
         };
 
         $this->assertFalse($instance->tableExists(), 'Table should not exist');
+    }
+
+    /**
+     * A connection that cannot be built reports why (#144).
+     *
+     * `driver: nope` fails inside `DriverManager::getConnection()`, before
+     * either typed property is assigned. Pre-fix the failure was logged and
+     * swallowed, so the caller got an object that looked fine and then died on
+     * `Typed property ...$schemaManager must not be accessed before
+     * initialization` — an `\Error`, which `catch (\Exception)` misses.
+     */
+    public function testCreateConnectionThrowsWhenConnectionCannotBeBuilt(): void
+    {
+        $instance = new class {
+            use DatabaseTrait;
+
+            public array $config = ['storage_table' => 'unreachable'];
+
+            public function connect(array $params): void
+            {
+                $this->createConnection($params);
+            }
+        };
+
+        try {
+            $instance->connect(['driver' => 'nope']);
+            self::fail('Expected a StorageConnectionException.');
+        } catch (StorageConnectionException $exception) {
+            self::assertStringContainsString('could not connect', $exception->getMessage());
+            self::assertStringContainsString('driver=nope', $exception->getMessage());
+            self::assertInstanceOf(
+                \Doctrine\DBAL\Exception::class,
+                $exception->getPrevious(),
+                'The driver exception must be attached so callers can inspect the real cause.'
+            );
+        }
+    }
+
+    /**
+     * The new exception stays catchable as a storage failure.
+     *
+     * Consumers already guard storage setup with `catch (StorageException)`, so
+     * the connection case must not escape those guards.
+     */
+    public function testConnectionExceptionIsAStorageException(): void
+    {
+        $instance = new class {
+            use DatabaseTrait;
+
+            public array $config = ['storage_table' => 'unreachable'];
+
+            public function connect(array $params): void
+            {
+                $this->createConnection($params);
+            }
+        };
+
+        $this->expectException(StorageException::class);
+        $instance->connect(['driver' => 'nope']);
+    }
+
+    /**
+     * A database that cannot be reached reports why, too.
+     *
+     * Doctrine connects lazily, so an unreachable database first fails inside
+     * `createTable()` — after both properties are assigned. That path used to
+     * leave a fully constructed object whose every query failed, which is what
+     * made a consuming admin screen show an empty list rather than an error.
+     */
+    public function testCreateConnectionThrowsWhenDatabaseCannotBeReached(): void
+    {
+        $instance = new class {
+            use DatabaseTrait;
+
+            public array $config = ['storage_table' => 'unreachable'];
+
+            public function connect(array $params): void
+            {
+                $this->createConnection($params);
+            }
+
+            public function getStorageTables(): array
+            {
+                $table = new Table($this->config['storage_table']);
+                $table->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
+                $table->setPrimaryKey(['id']);
+                return [$table];
+            }
+        };
+
+        $path = '/nonexistent-directory-' . uniqid() . '/firewall.sqlite';
+
+        try {
+            $instance->connect(['driver' => 'pdo_sqlite', 'path' => $path]);
+            self::fail('Expected a StorageConnectionException.');
+        } catch (StorageConnectionException $exception) {
+            self::assertStringContainsString('unable to open database file', $exception->getMessage());
+            self::assertStringContainsString('path=' . $path, $exception->getMessage());
+        }
+    }
+
+    /**
+     * The failure names the target without exposing the credentials for it.
+     *
+     * The message and the log both reach places an operator reads — an error
+     * log, a consuming application's admin screen — so they carry the host and
+     * database but never the password, including when it arrived inside a DSN.
+     */
+    public function testConnectionFailureDescribesTargetWithoutCredentials(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $instance = new class {
+            use DatabaseTrait;
+
+            public array $config = ['storage_table' => 'unreachable'];
+
+            public function connect(array $params): void
+            {
+                $this->createConnection($params);
+            }
+        };
+
+        try {
+            $instance->connect(['dsn' => 'nope://firewall:sup3rsecret@db.example.com:3306/firewall_db']);
+            self::fail('Expected a StorageConnectionException.');
+        } catch (StorageConnectionException $exception) {
+            self::assertStringContainsString('host=db.example.com', $exception->getMessage());
+            self::assertStringContainsString('dbname=firewall_db', $exception->getMessage());
+            self::assertStringNotContainsString('sup3rsecret', $exception->getMessage());
+        }
+
+        self::assertTrue(
+            $handler->hasRecordThatContains('Failed to create database connection', Level::Error),
+            'The failure is still logged, as before.'
+        );
+
+        foreach ($handler->getRecords() as $record) {
+            self::assertStringNotContainsString('sup3rsecret', json_encode($record->context) ?: '');
+        }
+    }
+
+    /**
+     * A malformed DSN cannot be parsed at all, and is described as such.
+     */
+    public function testConnectionFailureDescribesAnUnparseableDsn(): void
+    {
+        $instance = new class {
+            use DatabaseTrait;
+
+            public array $config = ['storage_table' => 'unreachable'];
+
+            public function connect(array $params): void
+            {
+                $this->createConnection($params);
+            }
+        };
+
+        try {
+            $instance->connect(['dsn' => 'mysql://firewall:sup3rsecret@db:99999999999/firewall_db']);
+            self::fail('Expected a StorageConnectionException.');
+        } catch (StorageConnectionException $exception) {
+            self::assertStringContainsString('unparseable dsn', $exception->getMessage());
+            self::assertStringNotContainsString('sup3rsecret', $exception->getMessage());
+        }
+    }
+
+    /**
+     * Connection parameters can be absent entirely — both storages default
+     * `$config['connection']` to `[]` — and that is still reported.
+     */
+    public function testConnectionFailureWithNoParametersAtAll(): void
+    {
+        $instance = new class {
+            use DatabaseTrait;
+
+            public array $config = ['storage_table' => 'unreachable'];
+
+            public function connect(array $params): void
+            {
+                $this->createConnection($params);
+            }
+        };
+
+        try {
+            $instance->connect([]);
+            self::fail('Expected a StorageConnectionException.');
+        } catch (StorageConnectionException $exception) {
+            self::assertStringContainsString('no connection parameters', $exception->getMessage());
+        }
+    }
+
+    /**
+     * A ready-made Connection is described from its own parameters.
+     */
+    public function testConnectionFailureDescribesAPassedConnection(): void
+    {
+        $connection = DriverManager::getConnection([
+            'driver' => 'pdo_sqlite',
+            'path' => '/nonexistent-directory-' . uniqid() . '/firewall.sqlite',
+            'password' => 'sup3rsecret',
+        ]);
+
+        $instance = new class {
+            use DatabaseTrait;
+
+            public array $config = ['storage_table' => 'unreachable'];
+
+            public function connect(\Doctrine\DBAL\Connection $connection): void
+            {
+                $this->createConnection($connection);
+            }
+
+            public function getStorageTables(): array
+            {
+                $table = new Table($this->config['storage_table']);
+                $table->addColumn('id', Types::INTEGER, ['autoincrement' => true]);
+                $table->setPrimaryKey(['id']);
+                return [$table];
+            }
+        };
+
+        try {
+            $instance->connect($connection);
+            self::fail('Expected a StorageConnectionException.');
+        } catch (StorageConnectionException $exception) {
+            self::assertStringContainsString('driver=pdo_sqlite', $exception->getMessage());
+            self::assertStringNotContainsString('sup3rsecret', $exception->getMessage());
+        }
     }
 
     /**

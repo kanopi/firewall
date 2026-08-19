@@ -40,6 +40,7 @@ touch directly:
 | `Kanopi\Firewall\Challenge\ChallengeProviderInterface` | Contract for interstitial providers. See [Challenge Responses](../plugins/challenges.md). |
 | `Kanopi\Firewall\Challenge\SingleUseSolutionInterface` | Opt-in marker making a solved challenge redeemable once. |
 | `Kanopi\Firewall\Exception\FirewallException` | Base class for everything the library throws. See [Error Handling](../guides/error-handling.md). |
+| `Kanopi\Firewall\Exception\StorageConnectionException` | A storage backend could not reach its backing service; a `StorageException`. See [Storage](../configuration/storage.md). |
 | `Kanopi\Firewall\Utility\Config` | Config loading, merging, and `getLoadErrors()`. |
 | `Kanopi\Firewall\Utility\TokenSubstitute` | `%env(...)%` resolution and the filesystem-processor opt-in. |
 

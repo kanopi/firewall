@@ -48,6 +48,22 @@ storage:
       # driver: 'pdo_mysql'
 ```
 
+A database the firewall cannot reach is a startup failure, not a silent one: construction throws `Kanopi\Firewall\Exception\StorageConnectionException` (a `StorageException`) carrying the driver's own message and the target it tried — `driver=pdo_mysql host=db port=3306 dbname=app`. Credentials are never included, in the message or the log, so the reason can be shown to an administrator as-is. The original driver exception is attached as `previous`.
+
+```php
+use Kanopi\Firewall\Exception\StorageConnectionException;
+
+try {
+    $firewall = Firewall::create([__DIR__ . '/firewall.yml']);
+} catch (StorageConnectionException $e) {
+    // "Firewall database storage could not connect (driver=pdo_mysql host=db
+    //  port=3306 dbname=app): An exception occurred in the driver: ..."
+    $logger->critical($e->getMessage());
+}
+```
+
+The rate-limit plugin builds its storage lazily, so a `DatabaseRateLimitStorage` that cannot connect surfaces the same exception on the first request the plugin evaluates rather than at startup.
+
 ## Searching and Un-blocking
 
 `StorageInterface` gives you keyed access — `get()`, `set()`, `delete()` for an address you already know. That covers the firewall's own hot path, but it leaves two operational questions unanswered: *who is currently blocked?*, and *how do I lift a block that should not have been applied?*

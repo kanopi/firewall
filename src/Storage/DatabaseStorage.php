@@ -29,6 +29,15 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
 
     /**
      * Constructs a new DatabaseStorage Object.
+     *
+     * @param array<string, mixed> $config
+     *   Storage configuration, including the `connection` parameters.
+     *
+     * @throws \Kanopi\Firewall\Exception\StorageConnectionException
+     *   When the database cannot be reached or its schema cannot be prepared.
+     *   Construction fails loudly rather than handing back an object whose
+     *   first query dies on an uninitialized property (#144), matching how
+     *   `FileStorage` already refuses a backing file it cannot use.
      */
     public function __construct(array $config)
     {
