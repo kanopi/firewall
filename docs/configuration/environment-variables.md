@@ -191,7 +191,7 @@ Prefer `file:` over `require:` whenever you can — reading a secret is far less
 
 **Path resolution for common keys**
 
-Some metadata values are commonly file paths. The loader automatically rewrites **relative** values to **absolute** when they exist on disk, using the **YAML file's directory** as the base. You can target keys with dot‑path patterns and lightweight alternation:
+Some metadata values are commonly file paths. The loader automatically rewrites **relative** values to **absolute**, using the **YAML file's directory** as the base. Keys naming a file the firewall *reads* — a GeoIP database, a plugin config file — are rewritten only when the target exists, so a wrong path is reported by whatever tried to read it rather than silently relocated. Keys naming a file the firewall *writes* — `storage.config.storage_file`, `storage.config.offense_file`, `…storage.config.file`, and log files — are rewritten whether or not they exist, since on a first run they do not. You can target keys with dot‑path patterns and lightweight alternation:
 
 - `*` matches any key at that level
 - Alternation per segment: `block|allow`, `{block,allow}`, or `(block|allow)`
@@ -199,8 +199,6 @@ Some metadata values are commonly file paths. The loader automatically rewrites 
 **Useful patterns**
 
 ```text
-logger.*.args.0
-
 # New plugins: array format
 plugins.*.metadata.reader.db
 plugins.*.metadata.storage.config.file
@@ -212,4 +210,6 @@ plugins.*.metadata.config.*
 (block|allow).Kanopi\Firewall\Plugins\RateLimit.metadata.storage.config.file
 ```
 
-With these patterns, paths like `logs/app.log`, `geo/GeoLite2-ASN.mmdb`, or `limits/rate.yml` will be resolved relative to the YAML file and stored as absolute paths at runtime.
+With these patterns, paths like `geo/GeoLite2-ASN.mmdb` or `limits/rate.yml` will be resolved relative to the YAML file and stored as absolute paths at runtime.
+
+Log file paths are handled separately, without a pattern: `args.0` is a path for `StreamHandler` and `RotatingFileHandler` but an ident string or an address for other handlers, so the loader resolves it based on the handler class instead. See [Logging](logging.md).

@@ -8,7 +8,9 @@ Each handler entry accepts:
 - `args` — positional constructor arguments, in order.
 - `formatter` *(optional)* — `class` + `args` for a `Monolog\Formatter\FormatterInterface` implementation, applied to that handler.
 
-Log levels are passed as strings like `Monolog\Level::Info` (Debug, Info, Notice, Warning, Error, Critical, Alert, Emergency). Relative log file paths (e.g., `args[0]` for `StreamHandler`) are resolved **relative to the YAML file** that declares them.
+Log levels are passed as strings like `Monolog\Level::Info` (Debug, Info, Notice, Warning, Error, Critical, Alert, Emergency). Relative log file paths are resolved **relative to the YAML file** that declares them, whether or not the log file exists yet — so the same config logs to the same place under `php -S`, php-fpm, and cron.
+
+That applies to the handlers that take a file path: `StreamHandler` and `RotatingFileHandler`, in the first argument or under its parameter name (`stream:` / `filename:`). Other handlers are left alone, because the first argument means something else — `SyslogHandler` takes an ident string, for instance. Stream URIs such as `php://stdout` are never rewritten.
 
 > **Heads up:** several Monolog handlers require additional PHP extensions or third-party packages. Slack/IFTTT/Pushover/Telegram need `ext-curl`; `SendGridHandler` and `SymfonyMailerHandler` may require `composer require` of the relevant transport package. See the [Monolog handler docs](https://seldaek.github.io/monolog/doc/02-handlers-formatters-processors.html) for each handler's prerequisites.
 
