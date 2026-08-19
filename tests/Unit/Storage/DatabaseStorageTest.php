@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Kanopi\Firewall\Exception\StorageConnectionException;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Storage\DatabaseStorage;
@@ -656,6 +657,22 @@ class DatabaseStorageTest extends AbstractTestCase
             }
         };
         $this->assertIsInt($plugin->getConfig()['connection']['port']);
+    }
+
+    /**
+     * Construction fails loudly when the database is unreachable (#144).
+     *
+     * The constructor used to log the connection failure, then log
+     * `Database storage initialized`, and hand back an object whose first query
+     * died on an uninitialized `$schemaManager`. `FileStorage` already refuses
+     * a backing file it cannot use; this now matches.
+     */
+    public function testConstructorThrowsWhenTheDatabaseIsUnreachable(): void
+    {
+        $this->expectException(StorageConnectionException::class);
+        $this->expectExceptionMessage('driver=nope');
+
+        new DatabaseStorage(['connection' => ['driver' => 'nope']]);
     }
 
     /**

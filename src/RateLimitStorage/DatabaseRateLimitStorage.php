@@ -26,6 +26,14 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
 
     /**
      * Creates a new DatabaseRateLimitStorage object.
+     *
+     * @param array<string, mixed> $config
+     *   Storage configuration, including the `connection` parameters.
+     *
+     * @throws \Kanopi\Firewall\Exception\StorageConnectionException
+     *   When the database cannot be reached or its schema cannot be prepared
+     *   (#144). The rate-limit plugin builds its storage lazily, so this
+     *   surfaces on the first request the plugin evaluates.
      */
     public function __construct(array $config = [])
     {

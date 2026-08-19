@@ -127,7 +127,8 @@ final class Firewall
      *   load.
      * @throws StorageException
      *   When the configured storage backend cannot create, read, or write
-     *   its backing file.
+     *   its backing file, or — as `StorageConnectionException` — when a
+     *   database-backed storage cannot reach its database.
      */
     public static function create(array $configs = [], array $overrides = []): self
     {

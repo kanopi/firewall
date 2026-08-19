@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\RateLimitStorage;
 
+use Kanopi\Firewall\Exception\StorageConnectionException;
 use Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
@@ -39,6 +40,21 @@ class DatabaseRateLimitStorageTest extends AbstractTestCase
                 $this->config['storage_table'] = 'firewall_rate_limit_storage_notfound';
             }
         };
+    }
+
+    /**
+     * Construction fails loudly when the database is unreachable (#144).
+     *
+     * The rate-limit plugin builds its storage lazily, so this surfaces on the
+     * first request it evaluates — as a typed exception naming the target,
+     * rather than a fatal about an uninitialized property.
+     */
+    public function testConstructorThrowsWhenTheDatabaseIsUnreachable(): void
+    {
+        $this->expectException(StorageConnectionException::class);
+        $this->expectExceptionMessage('driver=nope');
+
+        new DatabaseRateLimitStorage(['connection' => ['driver' => 'nope']]);
     }
 
     /**
