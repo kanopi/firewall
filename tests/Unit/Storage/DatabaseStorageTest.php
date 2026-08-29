@@ -162,6 +162,115 @@ class DatabaseStorageTest extends AbstractTestCase
     }
 
     /**
+     * Regression: `set()` is the storage interface's general key/value write, not
+     * only the block-record writer.
+     *
+     * `Firewall::consumeSingleUseSolution()` stores `['consumed_at' => ...]` through
+     * it to make a solved challenge single-use. Reading `request` and `timestamp`
+     * unconditionally emitted two PHP warnings — which land in the challenge
+     * endpoint's response ahead of its JSON body, so the browser reports
+     * "Verification failed" on a challenge that was actually passed — and left
+     * `plugin` unset, which is NOT NULL with no default, so the insert failed and the
+     * replay guard recorded nothing at all.
+     */
+    public function testSetAcceptsAValueThatIsNotABlockRecord(): void
+    {
+        $captured = null;
+        $this->mockConnection->method('insert')
+            ->willReturnCallback(function (string $table, array $data) use (&$captured): int {
+                if ($table === 'firewall_storage') {
+                    $captured = $data;
+                }
+
+                return 1;
+            });
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn([]);
+
+        $stubColumn = $this->createMock(\Doctrine\DBAL\Schema\Column::class);
+        $this->mockSchema->method('listTableColumns')->willReturn([
+            'remote_address' => $stubColumn,
+            'plugin' => $stubColumn,
+            'event_id' => $stubColumn,
+            'timestamp' => $stubColumn,
+            'request' => $stubColumn,
+            'expire' => $stubColumn,
+            'metadata' => $stubColumn,
+        ]);
+
+        // Exactly what the challenge replay guard writes.
+        $key = 'fw_challenge_solution:' . hash('sha256', 'solution');
+
+        $before = time();
+        $result = $this->storage->set($key, ['consumed_at' => 1_700_000_000], 60);
+
+        $this->assertTrue($result, 'A non-block-record write must succeed');
+        $this->assertIsArray($captured);
+
+        // Every NOT NULL column carries a usable value rather than being absent.
+        $this->assertSame('', $captured['plugin']);
+        $this->assertSame('', $captured['event_id']);
+        $this->assertSame('null', $captured['request']);
+        $this->assertGreaterThanOrEqual($before, $captured['timestamp']);
+    }
+
+    /**
+     * Regression: a solution record must not be filed as an offense.
+     *
+     * The offenses table drives repeat-offender escalation and is never pruned, so
+     * recording one per consumed challenge solution would grow it without bound under
+     * keys that are hashes rather than addresses.
+     */
+    public function testSetDoesNotRecordAnOffenseForANonBlockRecord(): void
+    {
+        $tables = [];
+        $this->mockConnection->method('insert')
+            ->willReturnCallback(function (string $table) use (&$tables): int {
+                $tables[] = $table;
+
+                return 1;
+            });
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn([]);
+
+        $stubColumn = $this->createMock(\Doctrine\DBAL\Schema\Column::class);
+        $this->mockSchema->method('listTableColumns')->willReturn([
+            'remote_address' => $stubColumn,
+            'plugin' => $stubColumn,
+            'event_id' => $stubColumn,
+            'timestamp' => $stubColumn,
+            'request' => $stubColumn,
+            'expire' => $stubColumn,
+            'metadata' => $stubColumn,
+        ]);
+
+        $this->storage->set('fw_challenge_solution:abc', ['consumed_at' => time()], 60);
+        $this->assertNotContains('firewall_offense', $tables);
+
+        // ...while a real block still records one, which is the behaviour that must
+        // not regress in the other direction.
+        $tables = [];
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('TestPlugin');
+        $request = $this->getRequest('1.2.3.4');
+
+        $this->storage->set($request->getClientIp(), $this->storage->getStorageData($request, $plugin));
+        $this->assertContains('firewall_offense', $tables);
+    }
+
+    /**
      * Tests delete() succeeds and returns true.
      */
     public function testDelete(): void

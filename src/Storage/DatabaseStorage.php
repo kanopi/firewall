@@ -121,6 +121,9 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
      */
     public function set(string $key, array $value, int $expire = 0): bool
     {
+        // Read before the try, so the tail of this method cannot see it undefined.
+        $isBlockRecord = isset($value['request']);
+
         try {
             // Pre-fix this used `@serialize(...)`, so any future caller who
             // unserialize()'d the column would have a CWE-502 PHP Object
@@ -130,11 +133,44 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
             // cleanly. The `@` is dropped — json_encode failures should be
             // logged and abort the write rather than store a "false" string
             // silently.
+            //
+            // `set()` is the interface's general key/value write, not only the
+            // block-record writer, and this implementation used to assume otherwise.
+            // `Firewall::consumeSingleUseSolution()` stores `['consumed_at' => ...]`
+            // through it to make a solved challenge single-use, and that value has no
+            // request, no timestamp, no plugin and no event id.
+            //
+            // Measured on a site using database storage: reading those keys
+            // unconditionally emitted two PHP warnings, and with `display_errors` on
+            // they were written into the challenge endpoint's response *ahead of its
+            // JSON body*, so the browser's JSON.parse() failed and the interstitial
+            // reported "Verification failed" on a challenge the visitor had in fact
+            // just passed. The insert then failed anyway on `plugin`, which is NOT
+            // NULL with no default, so `set()` returned FALSE and stored nothing --
+            // the replay guard recorded no solution and a solved token stayed
+            // replayable until it expired. `InMemoryStorage` and `FileStorage` store
+            // the array as given and had neither problem.
+            //
+            // The defaults are supplied here rather than added to the schema because
+            // `getStorageTables()` only runs when the table is missing, so a column
+            // default would not reach any installation already carrying this table.
             $value['request'] = json_encode(
-                $value['request'],
+                $value['request'] ?? null,
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES
             );
-            $value['timestamp'] = strtotime((string) $value['timestamp']);
+
+            // Accepts what the block path sends (an ISO-8601 string from
+            // `getStorageData()`), a Unix timestamp, or nothing at all. A failed parse
+            // used to store 0, which reads back as 1970.
+            $timestamp = $value['timestamp'] ?? null;
+            $value['timestamp'] = is_numeric($timestamp)
+                ? (int) $timestamp
+                : (strtotime((string) $timestamp) ?: time());
+
+            // Both are NOT NULL in `getStorageTables()`.
+            $value['plugin'] ??= '';
+            $value['event_id'] ??= '';
+
             $data = array_merge(
                 $value,
                 [
@@ -174,7 +210,14 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
             return false;
         }
 
-        $this->recordOffense($key);
+        // Only for an actual block. The offenses table drives repeat-offender
+        // escalation and is never pruned, so counting a consumed challenge solution
+        // as an offense would file a permanent row under a key that is a hash rather
+        // than an address, growing the table once per solved challenge, forever.
+        if ($isBlockRecord) {
+            $this->recordOffense($key);
+        }
+
         return true;
     }
 
