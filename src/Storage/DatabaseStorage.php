@@ -267,7 +267,9 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
                     ->where('remote_address = :remote_address')
                     ->setParameter('remote_address', $key)
                     ->executeQuery();
-                return $count->fetchAssociative();
+                $row = $count->fetchAssociative();
+
+                return is_array($row) ? $this->hydrateRow($row) : $row;
             } catch (\Exception $exception) {
                 $this->getLogger()->error('Failed to get entry from database storage', [
                     'table' => $this->config['storage_table'],
@@ -424,6 +426,50 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
     }
 
     /**
+     * Return a stored row with the columns `set()` encoded decoded again.
+     *
+     * `set()` JSON-encodes `request` so the row can hold it in a text column.
+     * Nothing decoded it on the way back, so what a caller stored as an array
+     * came back as a string and every reader that (reasonably) tested
+     * `is_array($value['request'])` silently saw nothing.
+     *
+     * That is not cosmetic: `request` is the whole record of *why* a client was
+     * blocked -- the method, path, URI, query and headers of the request that
+     * tripped the rule. Any UI built on it renders empty against database
+     * storage while working perfectly against `FileStorage` and
+     * `InMemoryStorage`, which keep the array as given. The admin block list
+     * showing a blank path column is the visible half; a blocked-client detail
+     * view is the half that shows nothing at all.
+     *
+     * Only `request` is decoded. `metadata` is a debug blob `set()` synthesises
+     * from the row itself rather than anything a caller handed in, so it has no
+     * round-trip to honour.
+     *
+     * @param array<string, mixed> $row
+     *   A row as fetched from the storage table.
+     *
+     * @return array<string, mixed>
+     *   The row, with `request` back in the shape it was stored in.
+     */
+    private function hydrateRow(array $row): array
+    {
+        if (!isset($row['request']) || !is_string($row['request'])) {
+            return $row;
+        }
+
+        // A row written before this fix, or by hand, may hold something that is
+        // not JSON. Leaving the raw string in place is what every reader already
+        // copes with, so a decode failure is not worth failing the read over.
+        $decoded = json_decode($row['request'], true);
+
+        if (json_last_error() === JSON_ERROR_NONE) {
+            $row['request'] = $decoded;
+        }
+
+        return $row;
+    }
+
+    /**
      * {@inheritdoc}
      */
     public function find(string $pattern): array
@@ -482,7 +528,7 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
             $expire = (int) ($row['expire'] ?? 0);
 
             $matches[$address] = [
-                'value' => $row,
+                'value' => $this->hydrateRow($row),
                 'expire' => $expire,
                 'expires_at' => $expire > 0 ? date('c', $expire) : null,
                 'offenses' => $this->countOffenses($address),
