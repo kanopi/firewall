@@ -453,6 +453,29 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
      */
     private function hydrateRow(array $row): array
     {
+        // `enforceTableData()` drops every key that has no column, so a value a
+        // caller passed to `set()` which the schema does not model is not stored as
+        // a field at all -- it survives only inside `metadata`, which `set()`
+        // encodes from the full array *before* the stripping happens.
+        //
+        // `reason` is the one that matters in practice: it is what an administrator
+        // typed to explain a manual block, so it is the entire answer to "why is
+        // this client blocked", and on database storage it was written and then
+        // never readable again. Restoring only the keys the row is missing means
+        // the columns stay authoritative and `request` is not overwritten with the
+        // encoded copy that `metadata` holds.
+        if (isset($row['metadata']) && is_string($row['metadata'])) {
+            $metadata = json_decode($row['metadata'], true);
+
+            if (is_array($metadata)) {
+                foreach ($metadata as $key => $value) {
+                    if (!array_key_exists($key, $row)) {
+                        $row[$key] = $value;
+                    }
+                }
+            }
+        }
+
         if (!isset($row['request']) || !is_string($row['request'])) {
             return $row;
         }

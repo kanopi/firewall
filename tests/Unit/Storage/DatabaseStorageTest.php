@@ -374,6 +374,52 @@ class DatabaseStorageTest extends AbstractTestCase
     }
 
     /**
+     * Regression: a value with no column of its own must still read back.
+     *
+     * `enforceTableData()` drops keys the schema does not model, so they survive
+     * only inside `metadata`, which `set()` encodes before that stripping happens.
+     * `reason` is the one that matters — it is what an administrator typed to explain
+     * a manual block, so it is the whole answer to "why is this client blocked", and
+     * it was written and then never readable again.
+     */
+    public function testGetRestoresFieldsThatHaveNoColumnFromMetadata(): void
+    {
+        $stored = [
+            'remote_address' => '1.2.3.4',
+            'plugin' => 'Manual',
+            'event_id' => 'GHI789',
+            'timestamp' => 1_700_000_000,
+            'request' => json_encode(['method' => 'GET', 'path' => '/']),
+            'expire' => 0,
+            // As `set()` builds it: the full value, including what the row cannot hold.
+            'metadata' => json_encode([
+                'plugin' => 'Manual',
+                'reason' => 'Reported by the client',
+                'request' => '{"method":"GET","path":"\/"}',
+            ]),
+        ];
+
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('andWhere')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn([$stored]);
+        $this->mockResult->method('fetchAssociative')->willReturn($stored);
+
+        $record = $this->storage->get('1.2.3.4');
+
+        $this->assertSame('Reported by the client', $record['reason']);
+
+        // The columns stay authoritative: `request` must be the decoded column, not
+        // the encoded copy metadata also carries.
+        $this->assertIsArray($record['request']);
+        $this->assertSame('/', $record['request']['path']);
+    }
+
+    /**
      * Tests delete() succeeds and returns true.
      */
     public function testDelete(): void
