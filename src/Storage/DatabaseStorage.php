@@ -41,7 +41,12 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
      */
     public function __construct(array $config)
     {
-        if (is_array($config['connection']) && isset($config['connection']['port']) && is_numeric($config['connection']['port'])) {
+        // `isset()` first: the connection is genuinely optional here -- a caller that
+        // injects it after load, or a misconfiguration -- and createConnection() below
+        // already reports its absence as a StorageConnectionException. Reaching for the
+        // key unguarded put a PHP warning in front of that message on every such
+        // request, which is noise the exception has already said better.
+        if (isset($config['connection']) && is_array($config['connection']) && isset($config['connection']['port']) && is_numeric($config['connection']['port'])) {
             $config['connection']['port'] = intval($config['connection']['port']);
         }
 
