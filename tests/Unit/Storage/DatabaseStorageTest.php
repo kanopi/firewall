@@ -271,6 +271,109 @@ class DatabaseStorageTest extends AbstractTestCase
     }
 
     /**
+     * Regression: what `set()` encoded, the read path must decode.
+     *
+     * `set()` JSON-encodes `request` so it fits a text column, and nothing decoded
+     * it again — so an array went in and a string came back. `request` is the record
+     * of *why* a client was blocked (method, path, URI, query, headers), and every
+     * reader that tests `is_array($value['request'])` therefore saw nothing on
+     * database storage while working correctly on FileStorage and InMemoryStorage.
+     */
+    public function testGetDecodesTheRequestColumnBackToAnArray(): void
+    {
+        $stored = [
+            'remote_address' => '1.2.3.4',
+            'plugin' => 'User Agent',
+            'event_id' => 'ABC123',
+            'timestamp' => 1_700_000_000,
+            'request' => json_encode(['method' => 'GET', 'path' => '/wp-login.php']),
+            'expire' => 0,
+            'metadata' => '{}',
+        ];
+
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('andWhere')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+
+        // `exists()` uses fetchAllAssociative; `get()` uses fetchAssociative.
+        $this->mockResult->method('fetchAllAssociative')->willReturn([$stored]);
+        $this->mockResult->method('fetchAssociative')->willReturn($stored);
+
+        $record = $this->storage->get('1.2.3.4');
+
+        $this->assertIsArray($record);
+        $this->assertIsArray($record['request'], 'request must come back as an array, not JSON text');
+        $this->assertSame('/wp-login.php', $record['request']['path']);
+        $this->assertSame('GET', $record['request']['method']);
+    }
+
+    /**
+     * Regression: the same decode must apply to the rows `find()` wraps, which is
+     * what the admin block list is built from.
+     */
+    public function testFindDecodesTheRequestColumnBackToAnArray(): void
+    {
+        $stored = [
+            'remote_address' => '1.2.3.4',
+            'plugin' => 'Rate Limit',
+            'event_id' => 'DEF456',
+            'timestamp' => 1_700_000_000,
+            'request' => json_encode(['method' => 'POST', 'path' => '/xmlrpc.php']),
+            'expire' => 0,
+            'metadata' => '{}',
+        ];
+
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('andWhere')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn([$stored]);
+
+        $matches = $this->storage->find('1.2.3.4');
+
+        $this->assertArrayHasKey('1.2.3.4', $matches);
+        $value = $matches['1.2.3.4']['value'];
+        $this->assertIsArray($value['request'], 'request must come back as an array, not JSON text');
+        $this->assertSame('/xmlrpc.php', $value['request']['path']);
+    }
+
+    /**
+     * A row holding something that is not JSON — written by hand, or before the
+     * decode existed — is left as it is rather than failing the read.
+     */
+    public function testGetLeavesAnUndecodableRequestColumnAlone(): void
+    {
+        $stored = [
+            'remote_address' => '1.2.3.4',
+            'plugin' => 'Manual',
+            'request' => 'not json at all',
+            'timestamp' => 1_700_000_000,
+            'expire' => 0,
+        ];
+
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('andWhere')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchAllAssociative')->willReturn([$stored]);
+        $this->mockResult->method('fetchAssociative')->willReturn($stored);
+
+        $record = $this->storage->get('1.2.3.4');
+
+        $this->assertSame('not json at all', $record['request']);
+    }
+
+    /**
      * Tests delete() succeeds and returns true.
      */
     public function testDelete(): void
