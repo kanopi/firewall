@@ -199,6 +199,15 @@ class FileStorage extends InMemoryStorage
     /**
      * {@inheritdoc}
      */
+    public function listOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX, int $limit = 50): array
+    {
+        $this->loadOffenseFile();
+        return parent::listOffenses($key, $start, $end, $limit);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
     public function find(string $pattern): array
     {
         // Both files, because find() reports an offense count alongside each

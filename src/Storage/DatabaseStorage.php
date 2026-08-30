@@ -426,6 +426,43 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
     }
 
     /**
+     * {@inheritdoc}
+     */
+    public function listOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX, int $limit = 50): array
+    {
+        try {
+            $builder = $this->connection->createQueryBuilder()
+                ->select('timestamp')
+                ->from($this->config['offenses_table'])
+                ->where('remote_address = :remote_address')
+                ->andWhere('timestamp >= :start AND timestamp <= :end')
+                ->setParameter('remote_address', $key)
+                ->setParameter('start', $start)
+                ->setParameter('end', $end)
+                // Ordered and limited by the database rather than in PHP: a client
+                // that has been blocked for months can have thousands of rows, and
+                // the caller only ever wants the recent end of that.
+                ->orderBy('timestamp', 'DESC');
+
+            if ($limit > 0) {
+                $builder->setMaxResults($limit);
+            }
+
+            $results = $builder->executeQuery()->fetchFirstColumn();
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to list offenses from database storage', [
+                'table' => $this->config['offenses_table'],
+                'key' => $key,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return [];
+        }
+
+        return array_map(intval(...), $results);
+    }
+
+    /**
      * Return a stored row with the columns `set()` encoded decoded again.
      *
      * `set()` JSON-encodes `request` so the row can hold it in a text column.

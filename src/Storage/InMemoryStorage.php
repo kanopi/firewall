@@ -204,6 +204,47 @@ class InMemoryStorage extends AbstractStorageBase implements QueryableStorageInt
     /**
      * {@inheritdoc}
      */
+    public function listOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX, int $limit = 50): array
+    {
+        $moments = [];
+
+        foreach ($this->offenses[$key] ?? [] as $offense) {
+            if (!is_array($offense)) {
+                continue;
+            }
+
+            if (!isset($offense['timestamp'])) {
+                continue;
+            }
+
+            // Recorded as an ISO-8601 string by `recordOffense()`, but a store
+            // written by an older build may hold an integer already.
+            $moment = is_numeric($offense['timestamp'])
+                ? (int) $offense['timestamp']
+                : strtotime((string) $offense['timestamp']);
+            if ($moment === false) {
+                continue;
+            }
+
+            if ($moment < $start) {
+                continue;
+            }
+
+            if ($moment > $end) {
+                continue;
+            }
+
+            $moments[] = $moment;
+        }
+
+        rsort($moments);
+
+        return $limit > 0 ? array_slice($moments, 0, $limit) : $moments;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
     public function find(string $pattern): array
     {
         if (!$this->isValidPattern($pattern)) {

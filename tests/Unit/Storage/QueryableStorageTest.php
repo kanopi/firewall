@@ -123,6 +123,71 @@ final class QueryableStorageTest extends AbstractTestCase
 
         $this->assertFalse($reflection->hasMethod('find'));
         $this->assertFalse($reflection->hasMethod('deleteMatching'));
+        $this->assertFalse($reflection->hasMethod('listOffenses'));
+    }
+
+    // -----------------------------------------------------------------------
+    // listOffenses()
+    // -----------------------------------------------------------------------
+
+    #[DataProvider('provideStorageKinds')]
+    public function testListOffensesReturnsTheMomentsMostRecentFirst(string $kind): void
+    {
+        $storage = $this->make($kind);
+
+        $storage->recordOffense('203.0.113.5');
+        $storage->recordOffense('203.0.113.5');
+        $storage->recordOffense('198.51.100.7');
+
+        $moments = $storage->listOffenses('203.0.113.5');
+
+        $this->assertCount(2, $moments);
+        $this->assertSame(
+            $storage->countOffenses('203.0.113.5'),
+            count($moments),
+            'listOffenses() and countOffenses() must agree about the same key'
+        );
+
+        foreach ($moments as $moment) {
+            $this->assertIsInt($moment, 'Moments are Unix timestamps, whatever the backend stored');
+        }
+
+        // Most recent first, so a caller showing a handful shows the useful ones.
+        $sorted = $moments;
+        rsort($sorted);
+        $this->assertSame($sorted, $moments);
+
+        // Keys do not bleed into one another.
+        $this->assertCount(1, $storage->listOffenses('198.51.100.7'));
+        $this->assertSame([], $storage->listOffenses('203.0.113.99'));
+    }
+
+    #[DataProvider('provideStorageKinds')]
+    public function testListOffensesHonoursTheLimit(string $kind): void
+    {
+        $storage = $this->make($kind);
+
+        for ($i = 0; $i < 5; $i++) {
+            $storage->recordOffense('203.0.113.5');
+        }
+
+        $this->assertCount(5, $storage->listOffenses('203.0.113.5'));
+        $this->assertCount(2, $storage->listOffenses('203.0.113.5', 0, PHP_INT_MAX, 2));
+
+        // Zero means "no ceiling", which is how the database builder reads it too.
+        $this->assertCount(5, $storage->listOffenses('203.0.113.5', 0, PHP_INT_MAX, 0));
+    }
+
+    #[DataProvider('provideStorageKinds')]
+    public function testListOffensesHonoursTheWindow(string $kind): void
+    {
+        $storage = $this->make($kind);
+        $storage->recordOffense('203.0.113.5');
+
+        $now = time();
+
+        $this->assertCount(1, $storage->listOffenses('203.0.113.5', $now - 60, $now + 60));
+        $this->assertSame([], $storage->listOffenses('203.0.113.5', $now + 3600, $now + 7200));
     }
 
     // -----------------------------------------------------------------------

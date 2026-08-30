@@ -420,6 +420,57 @@ class DatabaseStorageTest extends AbstractTestCase
     }
 
     /**
+     * The database backend sorts and limits in SQL rather than in PHP, because a
+     * client blocked over months can have thousands of rows and the caller only ever
+     * wants the recent end of that.
+     */
+    public function testListOffensesOrdersAndLimitsInTheQuery(): void
+    {
+        $captured = array();
+
+        $this->mockConnection->method('createQueryBuilder')->willReturn($this->mockBuilder);
+        $this->mockBuilder->method('select')->willReturnSelf();
+        $this->mockBuilder->method('from')->willReturnSelf();
+        $this->mockBuilder->method('where')->willReturnSelf();
+        $this->mockBuilder->method('andWhere')->willReturnSelf();
+        $this->mockBuilder->method('setParameter')->willReturnSelf();
+        $this->mockBuilder->method('orderBy')
+            ->willReturnCallback(function (string $sort, ?string $order = null) use (&$captured) {
+                $captured['orderBy'] = $sort . ' ' . (string) $order;
+
+                return $this->mockBuilder;
+            });
+        $this->mockBuilder->method('setMaxResults')
+            ->willReturnCallback(function (?int $max) use (&$captured) {
+                $captured['limit'] = $max;
+
+                return $this->mockBuilder;
+            });
+        $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
+        $this->mockResult->method('fetchFirstColumn')->willReturn(['1700000200', '1700000100']);
+
+        $moments = $this->storage->listOffenses('1.2.3.4', 0, PHP_INT_MAX, 25);
+
+        $this->assertSame('timestamp DESC', $captured['orderBy'] ?? null);
+        $this->assertSame(25, $captured['limit'] ?? null);
+
+        // Whatever the driver hands back as strings comes out as integers.
+        $this->assertSame([1700000200, 1700000100], $moments);
+    }
+
+    /**
+     * A failed query is reported and answered with nothing, rather than taking the
+     * screen that called it down.
+     */
+    public function testListOffensesReturnsNothingWhenTheQueryFails(): void
+    {
+        $this->mockConnection->method('createQueryBuilder')
+            ->willThrowException(new \RuntimeException('table is gone'));
+
+        $this->assertSame([], $this->storage->listOffenses('1.2.3.4'));
+    }
+
+    /**
      * Tests delete() succeeds and returns true.
      */
     public function testDelete(): void
