@@ -92,4 +92,27 @@ interface QueryableStorageInterface
      *   not an error.
      */
     public function deleteMatching(array $patterns): int;
+
+    /**
+     * List when a key's offenses happened.
+     *
+     * `countOffenses()` answers "how many", which is enough to drive escalation but
+     * not enough to explain it. An operator looking at a client blocked for the
+     * twelfth time wants to know whether that was twelve times in a minute or twelve
+     * times over a year, and those are very different clients.
+     *
+     * @param string $key
+     *   Key to list offenses for.
+     * @param int $start
+     *   The start timestamp to look for.
+     * @param int $end
+     *   The ending timestamp to include.
+     * @param int $limit
+     *   The most to return. A prolific client can have thousands, and a caller
+     *   showing them wants the recent ones rather than all of them.
+     *
+     * @return array<int, int>
+     *   Unix timestamps, most recent first.
+     */
+    public function listOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX, int $limit = 50): array;
 }
