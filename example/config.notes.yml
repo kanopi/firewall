@@ -98,9 +98,35 @@ challenge:
   #               provider_options.site_key and .secret_key. Replay is
   #               handled by Google, so no storage is involved.
   #               See https://developers.google.com/recaptcha/.
+  #
+  # This is the DEFAULT. An individual plugin can name its own provider with
+  # `metadata.challenge_provider`, so a broad, low-confidence heuristic can
+  # serve a cheap math question while a brute-force rule on a login path
+  # serves reCAPTCHA -- instead of every rule paying for the strictest one.
+  # Pass tokens are scoped to the provider that issued them, so a client
+  # tripping two rules with different providers solves both challenges.
+  # Every provider named by a plugin is built at STARTUP, so a typo or a
+  # missing key pair throws here rather than on the first visitor to trip
+  # that rule.
   provider: math
   # Optional per-provider settings, forwarded to the provider constructor.
   # Unknown keys are ignored, so this is safe to leave empty.
+  #
+  # Written flat, as documented below, these belong to `provider` above.
+  # Once a plugin names a DIFFERENT provider, give that one its own block
+  # keyed by provider name:
+  #
+  #   provider_options:
+  #     turnstile:
+  #       site_key: '%env(TURNSTILE_SITE_KEY)%'
+  #       secret_key: '%env(TURNSTILE_SECRET_KEY)%'
+  #     altcha:
+  #       widget_src: /assets/altcha.min.js
+  #
+  # A named block always wins. The flat block is handed to `provider` ONLY
+  # -- a plugin-named provider gets nothing rather than another service's
+  # keys, since Turnstile's secret_key reaching reCAPTCHA would look
+  # configured right up until Google rejected every solution.
   #
   # altcha accepts:
   #   widget_src       — URL of the ALTCHA widget bundle. Defaults to an
@@ -279,6 +305,11 @@ plugins:
   # the challenge bucket until the token expires.
   #
   # `metadata.default_expiration_time` controls the pass-token TTL (seconds).
+  # `metadata.challenge_provider` names the provider THIS rule serves,
+  # overriding `challenge.provider` -- a built-in short name, or a FQCN
+  # implementing ChallengeProviderInterface. Its options go under
+  # `challenge.provider_options.<name>`. A pass earned here opens only the
+  # rules that same provider serves.
   # Block plugins still apply — a pass token only attests "I am human", not
   # "I am allowed everywhere."
   #
@@ -292,6 +323,8 @@ plugins:
     metadata:
       # Pass-token TTL after a successful challenge (seconds).
       default_expiration_time: 3600
+      # Which provider serves this rule. Omit to use `challenge.provider`.
+      # challenge_provider: recaptcha
     config:
       # Challenge traffic from cloud / hosting ASNs without outright blocking.
       - "asn:AS14618"

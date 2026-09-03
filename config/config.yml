@@ -20,6 +20,12 @@ plugins: []
 #                `recaptcha`) or a
 #                FQCN that implements
 #                Kanopi\Firewall\Challenge\ChallengeProviderInterface.
+#                This is the default; an individual plugin can name its own
+#                with `metadata.challenge_provider`, so a broad heuristic can
+#                serve a cheap math question while a login brute-force rule
+#                serves reCAPTCHA. Pass tokens are scoped to the provider
+#                that issued them, so a client tripping two rules with
+#                different providers solves both challenges.
 #   path:        URL the interstitial form POSTs to.
 #   cookie_name: Cookie that carries the pass token after a successful
 #                challenge. Set to "" to disable the cookie delivery path.
@@ -32,6 +38,15 @@ plugins: []
 #                `widget_integrity`; `turnstile` and `recaptcha` REQUIRE
 #                `site_key` and `secret_key`, and `recaptcha` also takes
 #                `version` (v2 or v3). See example/config.notes.yml.
+#                Written flat, these belong to `provider` above. Once a
+#                plugin names a different provider, give that one its own
+#                block keyed by name -- a plugin-named provider is never
+#                handed the flat block, so it cannot inherit another
+#                service's keys:
+#                  provider_options:
+#                    recaptcha:
+#                      site_key: '...'
+#                      secret_key: '...'
 #   audience:    Scopes pass tokens to this instance so two firewalls
 #                sharing a secret do not accept each other's tokens.
 #                Defaults to the `provider` value above when left empty --

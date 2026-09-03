@@ -1,12 +1,13 @@
 # Challenge Response Type
 
-`response: challenge` serves an interstitial (a CAPTCHA-style proof-of-effort page) when a plugin matches, instead of rejecting the request outright. A visitor who solves the challenge is issued an HMAC-signed pass token that short-circuits any future `response: challenge` plugin until the token expires.
+`response: challenge` serves an interstitial (a CAPTCHA-style proof-of-effort page) when a plugin matches, instead of rejecting the request outright. A visitor who solves the challenge is issued an HMAC-signed pass token that short-circuits any future `response: challenge` plugin served by the same provider, until the token expires.
 
 The pass token is:
 
 - **Signed** with the configured `challenge.secret` (HMAC-SHA256) so it cannot be forged.
 - **IP-bound** — the token only verifies for the same client IP that solved the challenge.
 - **Audience-bound** — the token carries an `aud` claim and only verifies against the instance that issued it. See [Scoping tokens across instances](#scoping-tokens-across-instances).
+- **Provider-bound** — the token carries a `prv` claim and only satisfies rules served by the provider that issued it. See [Per-plugin providers](#per-plugin-providers).
 - **Delivered two ways** — as an `HttpOnly; Secure; SameSite=Strict` cookie *and* as a value the interstitial JS writes to `localStorage` so SPA callers can attach it to XHRs via a custom header (defaults to `X-Firewall-Challenge`).
 - **Expires** after `metadata.default_expiration_time` seconds for the matched plugin (default `3600`).
 
@@ -46,11 +47,79 @@ Two consequences worth knowing:
 
 `math` deliberately does **not** implement it: its signed state is `answer|expiry`, and with only nine possible answers two visitors served in the same second routinely share one, so treating that value as single-use would reject legitimate solvers.
 
+## Per-plugin providers
+
+`challenge.provider` sets the default. Any individual rule can override it with `metadata.challenge_provider`:
+
+```yaml
+challenge:
+  provider: math                # what every rule gets unless it says otherwise
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'
+  provider_options:
+    recaptcha:                  # keyed by provider name — see below
+      site_key: '%env(RECAPTCHA_SITE_KEY)%'
+      secret_key: '%env(RECAPTCHA_SECRET_KEY)%'
+
+plugins:
+  # A broad, low-confidence heuristic: a math question is proportionate.
+  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
+    response: challenge
+    weight: -10
+    config:
+      - "asn:AS14618"
+
+  # A high-confidence rule on a route that matters: worth the friction.
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: challenge
+    weight: -20
+    metadata:
+      default_expiration_time: 900
+      challenge_provider: recaptcha
+    config:
+      - "path@starts_with:/user/login|limit:5|window:60"
+```
+
+Different rules deserve different friction. A cheap math challenge suits a broad heuristic; brute force on a login path warrants something that costs a bot real money. Before this existed, choosing reCAPTCHA for one rule imposed a third-party round trip — and its privacy cost — on every other one too.
+
+The value is a `challenge.provider` string: a built-in short name, or a FQCN implementing `ChallengeProviderInterface`. A plugin that names nothing gets `challenge.provider`, so existing configuration is unaffected.
+
+Plugin classes can also name a provider in PHP by implementing `Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface`. `AbstractPluginBase` already does, which is where the `metadata` key is read.
+
+### Options for more than one provider
+
+With a single provider, `provider_options` was flat and all of it belonged to that provider. That still works. Once a plugin names a *different* provider, that provider needs its own block, keyed by name:
+
+```yaml
+provider_options:
+  turnstile:
+    site_key: '%env(TURNSTILE_SITE_KEY)%'
+    secret_key: '%env(TURNSTILE_SECRET_KEY)%'
+  altcha:
+    widget_src: /assets/altcha.min.js
+    widget_integrity: 'sha384-…'
+```
+
+A block keyed by the provider's name always wins. A flat block is handed to `challenge.provider` **only** — a plugin-named provider gets nothing rather than another service's keys, since Turnstile's `secret_key` reaching reCAPTCHA would look configured right up until Google rejected every solution.
+
+### Every named provider is built at startup
+
+A plugin naming a provider that cannot be resolved — a typo, a class that is not a provider, a remote provider whose `site_key` is missing — is a `ConfigurationException` from `Firewall::create()`, not a 500 for the first visitor to trip that rule. Both remote providers already refuse to construct without their key pair; warming them up at startup is what turns that into a startup failure.
+
+The exception is a provider named only from PHP: it cannot be seen in configuration, so it is built when the plugin first matches and a bad name surfaces then.
+
+### One challenge per provider
+
+Tokens are scoped strictly to the provider that issued them (see [Scoping tokens](#scoping-tokens-across-instances)). A client that trips two rules with different providers therefore solves **two** challenges and ends up holding two tokens, each opening only its own rule.
+
+That is deliberate. The alternative — ranking providers so a "stronger" token covers a "weaker" rule — would mean the firewall imposing an ordering on services it does not control, and would leave custom providers with no place on the ladder. Order your rules by weight so the cheapest challenge a visitor can satisfy is the one they meet first.
+
 ## Scoping tokens across instances
 
 A pass token attests "this client solved *a* challenge" — so if two Firewall instances share a `challenge.secret`, they would accept each other's tokens without further scoping. That matters when the challenges differ in strength: a token earned on the trivial `math` challenge could otherwise be replayed against a route protected by `altcha`, and the weakest challenge in your deployment would set the effective security of every route that shares the secret.
 
 Tokens therefore carry an `aud` claim, which defaults to the configured provider name and is covered by the signature. A `math` token will not verify against an `altcha` instance.
+
+The same problem exists *within* one instance once rules use different providers, and `aud` cannot solve it — every rule in an instance shares one audience. Tokens therefore also carry a `prv` claim naming the provider that was actually solved, and a rule only accepts a token earned against its own provider. Both claims are covered by the signature, so neither can be re-scoped by its holder.
 
 If you run **the same provider** in several places with the same secret — say a low-value public route and a sensitive admin area — the default audiences are identical, so set them apart explicitly:
 
@@ -64,6 +133,8 @@ challenge:
 The alternative is to give each instance its own `challenge.secret`, which isolates them just as effectively.
 
 > **Upgrade note.** Pass tokens minted before the `aud` claim existed are rejected, because verification fails closed rather than treating a missing audience as a match. The visible effect is that everyone holding a live pass token is challenged once more after deploying. Tokens are short-lived (default one hour), so this clears on its own.
+>
+> A token minted before the `prv` claim existed is treated differently, and does **not** cost anyone a re-challenge: it can only have come from `challenge.provider`, so it is honoured for rules served by that provider and refused for every other one.
 
 ## Built-in providers
 
@@ -257,13 +328,16 @@ class HCaptchaProvider implements ChallengeProviderInterface
 
     public function renderInterstitial(Request $request, array $context): string
     {
-        // $context carries: submit_url, redirect_to, ttl, cookie_name, header_name.
-        // Echo redirect_to and ttl back as hidden fields — the Firewall reads
-        // them off the POST to size and target the pass token.
+        // $context carries: submit_url, redirect_to, ttl, cookie_name,
+        // header_name, provider_token.
+        // Echo redirect_to, ttl and provider_token back as hidden fields — the
+        // Firewall reads them off the POST to size and target the pass token,
+        // and to know which provider is being answered.
         $siteKey = htmlspecialchars($this->options['site_key'], ENT_QUOTES, 'UTF-8');
         $submitUrl = htmlspecialchars($context['submit_url'], ENT_QUOTES, 'UTF-8');
         $redirectTo = htmlspecialchars($context['redirect_to'], ENT_QUOTES, 'UTF-8');
         $ttl = htmlspecialchars($context['ttl'], ENT_QUOTES, 'UTF-8');
+        $provider = htmlspecialchars($context['provider_token'] ?? '', ENT_QUOTES, 'UTF-8');
 
         return <<<HTML
         <!DOCTYPE html>
@@ -272,6 +346,7 @@ class HCaptchaProvider implements ChallengeProviderInterface
             <div class="h-captcha" data-sitekey="{$siteKey}"></div>
             <input type="hidden" name="redirect_to" value="{$redirectTo}">
             <input type="hidden" name="ttl" value="{$ttl}">
+            <input type="hidden" name="challenge_provider" value="{$provider}">
             <button type="submit">Continue</button>
           </form>
           <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
@@ -308,6 +383,7 @@ Requirements and gotchas:
 
 - **Escape everything you interpolate.** `redirect_to` originates from the request URI. The built-in providers run every substitution through `InterstitialRenderer::escapeHtml()`; do the same. Values landing inside a `<script>` block need `escapeJs()` instead — HTML entities are not decoded there.
 - **Echo back `redirect_to` and `ttl`** as form fields named exactly that. The Firewall reads them from the POST to decide where to send the visitor and how long to mint the pass token for. Omit them and you get `/` and 3600s.
+- **Echo back `provider_token`** too, in a hidden field named `challenge_provider` (`ChallengeProviderInterface::PROVIDER_FIELD`). It is a signed `name.signature` pair telling the submission handler which provider to verify with — the matched plugin is long gone by then. `InterstitialRenderer::render()` emits it for you from the `provider_token` part. Omitting it is not fatal: submissions are then verified by `challenge.provider`, and the pass token scoped to that. But a provider named by a plugin will never see its own solutions, so omit it only if you are the global provider.
 - **`verifySolution()` must never throw.** It runs on attacker-controlled input; return `false` for anything you don't like. Note that `$request->request->get()` raises `BadRequestException` on an array value, so read hostile fields off `->all()` instead.
 - **Register via FQCN**, not a short name. `challenge.provider` resolves `math`, `altcha`, `turnstile` and `recaptcha` as built-ins; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
 - **Declare the collaborators you want.** `ChallengeProviderFactory` matches constructor parameters by declared type — a `TokenManager` parameter gets the shared manager, an `array` parameter gets `challenge.provider_options`, and a provider needing neither can declare no constructor at all. Untyped parameters receive the `TokenManager`, so providers written against the older fixed `new $class($tokenManager)` signature keep working unchanged.
@@ -319,6 +395,7 @@ Requirements and gotchas:
 | Visitor state                          | Result                                       |
 |----------------------------------------|----------------------------------------------|
 | Matched by an `allow` plugin           | Allowed (challenge skipped).                 |
-| Holds a valid pass token + matches `challenge` | Allowed (challenge bucket skipped).  |
+| Holds a pass token earned against the matched rule's provider | Allowed. |
+| Holds a pass token from a *different* provider | Challenged again — a token is worth only the challenge it was earned on. |
 | No token, matches a `challenge` plugin | Interstitial served; original URL is remembered for the post-success redirect. |
 | Matches a `block` plugin               | Blocked, even if a valid pass token is held. |

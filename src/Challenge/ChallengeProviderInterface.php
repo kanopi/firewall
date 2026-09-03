@@ -46,6 +46,26 @@ interface ChallengeProviderInterface
     public const TTL_FIELD = 'ttl';
 
     /**
+     * Form field naming the provider that rendered this interstitial.
+     *
+     * Once plugins can pick their own provider, the submission has to say
+     * which one it answers. `handleChallengeSubmission()` fires on a POST
+     * to `challenge.path` with the matched plugin long gone, so the only
+     * thing left that can carry the answer is the form itself.
+     *
+     * The value is `name.signature`, signed with `challenge.secret` via
+     * `TokenManager::sign()` — the same stateless carry the math provider
+     * uses for its answer. `InterstitialRenderer` emits the field from the
+     * `provider_token` render context, so any provider built on it gets
+     * this for free; a provider rendering its own document should copy
+     * `$context['provider_token']` into a hidden field of this name.
+     * Omitting it is not fatal — the submission is then verified by
+     * `challenge.provider`, and the pass token is scoped to that — but a
+     * plugin-named provider will never see its own solutions.
+     */
+    public const PROVIDER_FIELD = 'challenge_provider';
+
+    /**
      * Short identifier used in `challenge.provider` config (e.g. "math").
      */
     public function getName(): string;
@@ -62,6 +82,10 @@ interface ChallengeProviderInterface
      *     - ttl:           Token TTL in seconds (per-plugin metadata).
      *     - cookie_name:   Cookie that will carry the pass token.
      *     - header_name:   Header for the localStorage delivery path.
+     *     - provider_token: Signed `name.signature` identifying this
+     *                      provider to the submission handler. Pass it
+     *                      through to InterstitialRenderer, or render it
+     *                      into a hidden PROVIDER_FIELD input.
      *
      * @return string
      *   Complete HTML document.

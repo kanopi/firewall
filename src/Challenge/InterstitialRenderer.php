@@ -85,11 +85,13 @@ final class InterstitialRenderer
      *   header_name: string|int,
      *   redirect_field: string|int,
      *   ttl_field: string|int,
-     *   submit_failure?: string
+     *   submit_failure?: string,
+     *   provider_field?: string|int,
+     *   provider_token?: string|int
      * } $parts
-     *   Provider-supplied document pieces. `submit_failure` is optional and
-     *   defaults to none, so providers written before it existed are
-     *   unaffected.
+     *   Provider-supplied document pieces. `submit_failure`,
+     *   `provider_field` and `provider_token` are optional, so providers
+     *   written before they existed are unaffected.
      */
     public static function render(array $parts): string
     {
@@ -117,6 +119,24 @@ final class InterstitialRenderer
         // one here, otherwise clicking Continue again re-posts a token the
         // remote service has already marked as used and can never succeed.
         $submitFailure = $parts['submit_failure'] ?? '';
+
+        // Names the provider that rendered this page so the submission can
+        // be routed back to it. Emitted only when the Firewall supplied a
+        // signed value: a provider rendered outside that flow (a direct
+        // renderInterstitial() call in a test, say) has no name to carry and
+        // an empty hidden field would only be noise in the POST.
+        $providerInput = '';
+        $providerToken = (string) ($parts['provider_token'] ?? '');
+        if ($providerToken !== '') {
+            $providerField = self::escapeHtml(
+                (string) ($parts['provider_field'] ?? ChallengeProviderInterface::PROVIDER_FIELD)
+            );
+            $providerInput = sprintf(
+                "\n      <input type=\"hidden\" name=\"%s\" value=\"%s\">",
+                $providerField,
+                self::escapeHtml($providerToken)
+            );
+        }
 
         return <<<HTML
 <!DOCTYPE html>
@@ -146,7 +166,7 @@ final class InterstitialRenderer
     <form id="challenge-form" method="post" action="{$submitUrl}">
 {$formFields}
       <input type="hidden" name="{$redirectField}" value="{$redirectTo}">
-      <input type="hidden" name="{$ttlField}" value="{$ttl}">
+      <input type="hidden" name="{$ttlField}" value="{$ttl}">{$providerInput}
       <button type="submit" id="submit"{$disabled}>Continue</button>
       <div id="error" class="error" role="alert">{$errorMessage}</div>
     </form>

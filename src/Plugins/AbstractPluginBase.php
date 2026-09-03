@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\Path;
@@ -19,7 +20,7 @@ use Symfony\Component\HttpFoundation\Request;
 /**
  * Abstract Plugin used for creating a plugin.
  */
-abstract class AbstractPluginBase implements PluginInterface
+abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderAwareInterface
 {
     use LoggingTrait;
 
@@ -128,5 +129,26 @@ abstract class AbstractPluginBase implements PluginInterface
     public function getExpirationTime(?Request $request = null): int
     {
         return intval($this->metadata['default_expiration_time'] ?? 0);
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Read from `metadata.challenge_provider`, alongside the other
+     * per-entry knobs. Only consulted for `response: challenge` entries —
+     * setting it on a block or allow plugin is inert rather than an error,
+     * since the same plugin class is often used for all three.
+     */
+    public function getChallengeProviderName(): ?string
+    {
+        $provider = $this->metadata['challenge_provider'] ?? null;
+
+        if (!is_string($provider)) {
+            return null;
+        }
+
+        $provider = trim($provider);
+
+        return $provider === '' ? null : $provider;
     }
 }

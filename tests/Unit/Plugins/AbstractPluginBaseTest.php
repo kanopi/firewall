@@ -64,6 +64,64 @@ final class AbstractPluginBaseTest extends AbstractTestCase
     }
 
     /**
+     * Tests that no provider is named unless metadata says so.
+     */
+    public function testNoChallengeProviderByDefault(): void
+    {
+        // NULL, not '', because the firewall reads it as "use whatever
+        // challenge.provider names" — the behaviour every plugin had before
+        // this key existed.
+        $plugin = new TestablePlugin();
+        $this->assertNull($plugin->getChallengeProviderName());
+    }
+
+    /**
+     * Tests that metadata.challenge_provider names the plugin's provider.
+     */
+    public function testChallengeProviderComesFromMetadata(): void
+    {
+        $plugin = new TestablePlugin(['challenge_provider' => 'recaptcha']);
+        $this->assertSame('recaptcha', $plugin->getChallengeProviderName());
+    }
+
+    /**
+     * Tests that surrounding whitespace in the metadata value is trimmed.
+     */
+    public function testChallengeProviderIsTrimmed(): void
+    {
+        $plugin = new TestablePlugin(['challenge_provider' => "  altcha\n"]);
+        $this->assertSame('altcha', $plugin->getChallengeProviderName());
+    }
+
+    /**
+     * Tests values that name nothing usable fall back to the global provider.
+     *
+     * @param mixed $value
+     *   The metadata value under test.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('unusableChallengeProviderProvider')]
+    public function testUnusableChallengeProviderFallsBack(mixed $value): void
+    {
+        $plugin = new TestablePlugin(['challenge_provider' => $value]);
+        $this->assertNull($plugin->getChallengeProviderName());
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     *   Keyed by what is wrong with the value.
+     */
+    public static function unusableChallengeProviderProvider(): array
+    {
+        return [
+            'empty string' => [''],
+            'whitespace only' => ['   '],
+            'an array' => [['recaptcha']],
+            'a boolean' => [true],
+            'null' => [null],
+        ];
+    }
+
+    /**
      * Tests that multiple YAML files in metadata are merged with inline config.
      */
     public function testConfigMergesMultipleYamlFilesAndInline(): void
