@@ -22,8 +22,20 @@ use PHPUnit\Framework\Attributes\DataProvider;
  *
  * `InterstitialRenderer` provides the hook — `submit_failure`, run inside
  * `fail()` — and Turnstile and reCAPTCHA both use it. ALTCHA shipped
- * without one. These tests assert the rule rather than the instance, so the
- * next single-use provider cannot repeat it.
+ * without one.
+ *
+ * "Spent by the attempt" cannot be read off the type system. ALTCHA says so
+ * by implementing `SingleUseSolutionInterface`, because the firewall is what
+ * records its solutions; Turnstile and reCAPTCHA implement nothing, because
+ * Cloudflare and Google burn the token themselves and answer
+ * `timeout-or-duplicate` to a replay. Keying the rule off the interface
+ * would therefore have covered ALTCHA alone and let the next
+ * Turnstile-shaped provider ship the same lockout.
+ *
+ * So the rule is inverted: every built-in must render a recovery path unless
+ * it is listed as exempt, with a reason. A provider added to
+ * `ChallengeProviderFactory::BUILTINS` forces the decision rather than
+ * defaulting to silence.
  */
 final class SingleUseRecoveryTest extends AbstractTestCase
 {
@@ -55,19 +67,32 @@ final class SingleUseRecoveryTest extends AbstractTestCase
     private const SHARED_FAIL_LINE = "err.classList.add('visible');";
 
     /**
-     * Built-in providers whose solutions are single-use.
+     * Providers exempt from the rule, and why.
      *
-     * Read off the factory's own list so a provider added later is covered
-     * without touching this file.
+     * Only a provider whose solution SURVIVES a refused attempt belongs
+     * here. Adding to this list is a claim that a visitor can click
+     * Continue a second time and get a different answer.
+     *
+     * @var array<string, string>
+     */
+    private const RECOVERY_EXEMPT = [
+        'math' => 'the signed answer|exp state stays valid, so retyping is a genuine retry',
+    ];
+
+    /**
+     * Every built-in that must render a recovery path.
+     *
+     * Read off the factory's own list, minus the exemptions, so a provider
+     * added later is covered without touching this file.
      *
      * @return array<string, array{0: string}>
      */
-    public static function singleUseProviderProvider(): array
+    public static function providerRequiringRecoveryProvider(): array
     {
         $cases = [];
 
         foreach (self::builtInNames() as $name) {
-            if (self::build($name) instanceof SingleUseSolutionInterface) {
+            if (!isset(self::RECOVERY_EXEMPT[$name])) {
                 $cases[$name] = [$name];
             }
         }
@@ -75,8 +100,8 @@ final class SingleUseRecoveryTest extends AbstractTestCase
         return $cases;
     }
 
-    #[DataProvider('singleUseProviderProvider')]
-    public function testSingleUseProviderOffersAWayOutOfAFailedSubmission(string $name): void
+    #[DataProvider('providerRequiringRecoveryProvider')]
+    public function testProviderOffersAWayOutOfAFailedSubmission(string $name): void
     {
         $recovery = $this->recoveryBody($this->render($name));
 
@@ -84,12 +109,29 @@ final class SingleUseRecoveryTest extends AbstractTestCase
             '',
             $recovery,
             sprintf(
-                '%s solutions are single-use, so a retry re-posts a spent payload. Its '
-                . 'interstitial must do something on failure — reset the widget, or fetch '
-                . 'a new challenge — or one refusal locks the visitor out for good.',
+                'A %s solution is spent by the attempt that posts it, so clicking Continue '
+                . 'again re-posts something that cannot succeed. Its interstitial must do '
+                . 'something on failure — reset the widget, or fetch a new challenge — or '
+                . 'one refusal locks the visitor out for good. If %s solutions genuinely '
+                . 'survive a refusal, add it to RECOVERY_EXEMPT with the reason.',
+                $name,
                 $name
             )
         );
+    }
+
+    public function testTheExemptionListNamesOnlyProvidersThatSurviveARefusal(): void
+    {
+        // Guards the escape hatch: an exemption is only honest if a second
+        // click can actually produce a different answer. A provider whose
+        // solutions the firewall itself records cannot qualify.
+        foreach (array_keys(self::RECOVERY_EXEMPT) as $name) {
+            $this->assertNotInstanceOf(
+                SingleUseSolutionInterface::class,
+                self::build($name),
+                sprintf('%s records its solutions as single-use — it cannot be exempt.', $name)
+            );
+        }
     }
 
     public function testAltchaFetchesAFreshChallengeRatherThanResettingTheWidget(): void
