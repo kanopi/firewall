@@ -44,6 +44,7 @@ Two consequences worth knowing:
 
 - **The challenge flow now writes to storage.** Records are small (one per solved challenge) and expire on their own when the underlying challenge would have gone stale. With `InMemoryStorage` they do not survive the process, so use a shared backend if you serve challenges from more than one worker.
 - **The check is read-then-write, not atomic.** Two submissions of the same solution arriving in the same instant can both succeed. This shrinks the reuse window from the full challenge lifetime to microseconds, which is the part that matters — the attack being closed is redistribution over seconds or minutes, not winning a race.
+- **A refused submission needs a fresh challenge, not a retry.** The payload in the page is spent, so clicking Continue again re-posts something that cannot succeed. Every single-use provider therefore recovers on failure: `turnstile` and `recaptcha` reset their widgets, which fetches a new token from the remote service. `altcha` cannot do that — its challenge is embedded in the page, so resetting the widget re-solves the same one — and instead sends the visitor back to the page they wanted, which serves a new interstitial. If you write a single-use provider, give it a `submit_failure` snippet that does one or the other; without one, a single refusal locks the visitor out until they reload.
 
 `math` deliberately does **not** implement it: its signed state is `answer|expiry`, and with only nine possible answers two visitors served in the same second routinely share one, so treating that value as single-use would reject legitimate solvers.
 
@@ -388,7 +389,7 @@ Requirements and gotchas:
 - **Register via FQCN**, not a short name. `challenge.provider` resolves `math`, `altcha`, `turnstile` and `recaptcha` as built-ins; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
 - **Declare the collaborators you want.** `ChallengeProviderFactory` matches constructor parameters by declared type — a `TokenManager` parameter gets the shared manager, an `array` parameter gets `challenge.provider_options`, and a provider needing neither can declare no constructor at all. Untyped parameters receive the `TokenManager`, so providers written against the older fixed `new $class($tokenManager)` signature keep working unchanged.
 - Use `$tokenManager->sign()` / `verifySignature()` if you need tamper-proof state in the form. You do **not** need to mint the pass token — the Firewall does that once `verifySolution()` returns `true`.
-- **Reuse the shared interstitial** via `InterstitialRenderer::render()` rather than hand-rolling a document. It owns the submit JS, the two token-delivery paths, and the escaping rules those depend on. Providers whose challenge token is spent by a failed attempt can pass a `submit_failure` snippet to reset the widget.
+- **Reuse the shared interstitial** via `InterstitialRenderer::render()` rather than hand-rolling a document. It owns the submit JS, the two token-delivery paths, and the escaping rules those depend on. Providers whose solution is spent by an attempt **must** pass a `submit_failure` snippet — either resetting the widget, or sending the visitor back for a new challenge. See [Single-use solutions](#single-use-solutions).
 
 ## How dispatch interacts with allow / block
 
