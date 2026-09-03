@@ -24,7 +24,7 @@ use Symfony\Component\HttpFoundation\Request;
  * it expires (rotating the secret invalidates everything).
  *
  * Wire format: `base64url(payload).base64url(hmac)`
- *   payload = JSON{ip, exp, nonce, aud}
+ *   payload = JSON{ip, exp, nonce, aud, prv}
  *   hmac    = HMAC-SHA256(payload, secret)
  *
  * Token binding (verified on every request):
@@ -37,6 +37,13 @@ use Symfony\Component\HttpFoundation\Request;
  *             each other's tokens, so a token earned on a weak challenge
  *             could be spent on a route protected by a stronger one — the
  *             weakest challenge would set the security of all of them.
+ *   - `prv`   names the provider that was actually solved. `aud` scopes a
+ *             token across *instances*; `prv` scopes it across *rules
+ *             within* one, which is what per-plugin providers need. With
+ *             one TokenManager serving a math rule and a reCAPTCHA rule,
+ *             `aud` is identical for both, so without `prv` the math token
+ *             would satisfy the reCAPTCHA rule and reintroduce the exact
+ *             hole `aud` closes between instances.
  *
  * The signature is verified with `hash_equals` so a wrong token reveals
  * nothing through timing. Payload parsing errors return FALSE rather than
@@ -55,12 +62,23 @@ final class TokenManager
      *   not accepted by an `altcha`-protected instance. Operators running
      *   several instances with the same provider and the same secret can
      *   set `challenge.audience` explicitly to keep them separate.
+     * @param string $defaultProvider
+     *   The `challenge.provider` name, used only to decide what a token
+     *   carrying no `prv` claim is worth. Such tokens predate per-plugin
+     *   providers, so the only provider that could have minted one is the
+     *   global default — they are accepted for that provider and rejected
+     *   for any other. That keeps an upgrade from re-challenging everyone
+     *   holding a live token, without letting a legacy token stand in for
+     *   a provider it was never earned against.
      *
      * @throws ConfigurationException
      *   When the secret is empty.
      */
-    public function __construct(private readonly string $secret, private readonly string $audience = '')
-    {
+    public function __construct(
+        private readonly string $secret,
+        private readonly string $audience = '',
+        private readonly string $defaultProvider = ''
+    ) {
         if ($this->secret === '') {
             throw new ConfigurationException(
                 'Challenge token secret is empty. Set `challenge.secret` in '
@@ -77,11 +95,16 @@ final class TokenManager
      *   The request that just solved the challenge.
      * @param int $ttl
      *   Token lifetime in seconds. Falls back to 3600 (1h) if non-positive.
+     * @param string $provider
+     *   Name of the provider whose challenge was solved. Recorded as the
+     *   `prv` claim so the token only satisfies rules served by that
+     *   provider. Empty omits the claim, which is what a caller minting
+     *   outside the per-provider flow wants.
      *
      * @return string
      *   The serialized token, ready to set as a cookie value.
      */
-    public function mint(Request $request, int $ttl): string
+    public function mint(Request $request, int $ttl, string $provider = ''): string
     {
         $ttl = $ttl > 0 ? $ttl : 3600;
 
@@ -91,6 +114,10 @@ final class TokenManager
             'nonce' => bin2hex(random_bytes(16)),
             'aud' => $this->audience,
         ];
+
+        if ($provider !== '') {
+            $payload['prv'] = $provider;
+        }
 
         $payloadEncoded = $this->base64UrlEncode((string) json_encode($payload));
         $signature = $this->base64UrlEncode(hash_hmac('sha256', $payloadEncoded, $this->secret, true));
@@ -105,11 +132,16 @@ final class TokenManager
      *   The candidate token (from cookie or header).
      * @param Request $request
      *   The request being evaluated.
+     * @param string|null $provider
+     *   Provider the token has to have been earned against — the one
+     *   serving the rule being evaluated. NULL skips the check, which is
+     *   only right when a single provider serves every challenge rule.
      *
      * @return bool
-     *   TRUE only if signature, IP binding, and expiry all pass.
+     *   TRUE only if signature, IP binding, expiry, audience and (when
+     *   asked for) provider scope all pass.
      */
-    public function verify(string $token, Request $request): bool
+    public function verify(string $token, Request $request, ?string $provider = null): bool
     {
         if ($token === '' || substr_count($token, '.') !== 1) {
             return false;
@@ -151,7 +183,38 @@ final class TokenManager
             return false;
         }
 
+        if ($provider !== null && !$this->scopeMatches($payload['prv'] ?? null, $provider)) {
+            return false;
+        }
+
         return $payload['ip'] === $request->getClientIp();
+    }
+
+    /**
+     * Is a token's `prv` claim good for the provider being asked about?
+     *
+     * Strict by design: a token attests to the one challenge its holder
+     * actually solved, so a client that trips a math rule and a reCAPTCHA
+     * rule solves both. Ranking providers by strength so a "harder" token
+     * covered an "easier" rule would mean the firewall imposing an ordering
+     * on services it does not control — and custom providers have no place
+     * on such a ladder at all.
+     *
+     * @param mixed $claim
+     *   The `prv` value from the payload, or NULL when absent.
+     * @param string $provider
+     *   Provider the rule being evaluated is served by.
+     */
+    private function scopeMatches(mixed $claim, string $provider): bool
+    {
+        // A token minted before `prv` existed can only have come from the
+        // globally configured provider, so it is worth exactly that and
+        // nothing more.
+        if ($claim === null) {
+            return $provider === $this->defaultProvider;
+        }
+
+        return is_string($claim) && hash_equals($claim, $provider);
     }
 
     /**

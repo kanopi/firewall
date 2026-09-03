@@ -206,6 +206,94 @@ final class TokenManagerTest extends AbstractTestCase
         $this->assertFalse($altcha->verify($tampered . '.' . $signature, $request));
     }
 
+    // -------------------------------------------------------------------
+    // Provider scope (`prv`)
+    // -------------------------------------------------------------------
+
+    public function testTokenVerifiesForTheProviderThatMintedIt(): void
+    {
+        $manager = new TokenManager(self::SECRET, 'instance', 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        $token = $manager->mint($request, 3600, 'recaptcha');
+
+        $this->assertTrue($manager->verify($token, $request, 'recaptcha'));
+    }
+
+    public function testTokenIsRefusedForADifferentProvider(): void
+    {
+        // The failure the `prv` claim exists to stop: one TokenManager
+        // serves every rule in an instance, so without it the cheapest
+        // challenge in the config would open the most expensive one.
+        $manager = new TokenManager(self::SECRET, 'instance', 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        $mathToken = $manager->mint($request, 3600, 'math');
+
+        $this->assertFalse($manager->verify($mathToken, $request, 'recaptcha'));
+    }
+
+    public function testProviderScopeIsSkippedWhenNoneIsAskedFor(): void
+    {
+        // A caller with a single provider has nothing to distinguish, and
+        // the audience already scopes the token to the instance.
+        $manager = new TokenManager(self::SECRET, 'instance', 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        $this->assertTrue($manager->verify($manager->mint($request, 3600, 'math'), $request));
+    }
+
+    public function testLegacyTokenIsWorthTheDefaultProviderAndNothingElse(): void
+    {
+        // A token minted before `prv` existed can only have come from
+        // `challenge.provider`. Accepting it there spares everyone holding a
+        // live token an extra challenge on upgrade; accepting it anywhere
+        // else would let it stand in for a challenge never solved.
+        $manager = new TokenManager(self::SECRET, 'instance', 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        $legacy = $manager->mint($request, 3600);
+
+        $this->assertTrue($manager->verify($legacy, $request, 'math'));
+        $this->assertFalse($manager->verify($legacy, $request, 'recaptcha'));
+    }
+
+    public function testProviderScopeIsCoveredByTheSignature(): void
+    {
+        // Rewriting `prv` must break the HMAC, otherwise a math pass could
+        // be relabelled as a reCAPTCHA one by its holder.
+        $manager = new TokenManager(self::SECRET, 'instance', 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        [$payloadPart, $signature] = explode('.', $manager->mint($request, 3600, 'math'), 2);
+        $padded = $payloadPart . str_repeat('=', (4 - strlen($payloadPart) % 4) % 4);
+        $payload = json_decode((string) base64_decode(strtr($padded, '-_', '+/'), true), true);
+        $this->assertIsArray($payload);
+
+        $payload['prv'] = 'recaptcha';
+        $tampered = rtrim(strtr(base64_encode((string) json_encode($payload)), '+/', '-_'), '=');
+
+        $this->assertFalse($manager->verify($tampered . '.' . $signature, $request, 'recaptcha'));
+    }
+
+    public function testNonStringProviderClaimIsRejected(): void
+    {
+        // Correctly signed rubbish: the claim is present, so the legacy path
+        // does not apply, but it is not a name either.
+        $manager = new TokenManager(self::SECRET, 'instance', 'math');
+        $request = $this->getRequest('10.1.2.3');
+
+        $encoded = self::encode((string) json_encode([
+            'ip' => '10.1.2.3',
+            'exp' => time() + 3600,
+            'nonce' => str_repeat('a', 32),
+            'aud' => 'instance',
+            'prv' => ['math'],
+        ]));
+
+        $this->assertFalse($manager->verify($encoded . '.' . $manager->sign($encoded), $request, 'math'));
+    }
+
     /**
      * Payloads that survive the signature check but are still not tokens.
      *

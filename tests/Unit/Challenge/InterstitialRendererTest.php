@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Challenge;
 
 use Kanopi\Firewall\Challenge\AltchaChallengeProvider;
+use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
 use Kanopi\Firewall\Challenge\InterstitialRenderer;
 use Kanopi\Firewall\Challenge\MathChallengeProvider;
 use Kanopi\Firewall\Challenge\RecaptchaChallengeProvider;
@@ -185,6 +186,69 @@ final class InterstitialRendererTest extends AbstractTestCase
         // The hidden input must not be breakable out of.
         $this->assertStringNotContainsString('"><script>alert(1)', $html);
         $this->assertStringContainsString('&lt;script&gt;', $html);
+    }
+
+    // -------------------------------------------------------------------
+    // The signed provider field
+    // -------------------------------------------------------------------
+
+    public function testProviderFieldIsRenderedWhenTheFirewallSuppliesOne(): void
+    {
+        $provider = new MathChallengeProvider(new TokenManager(self::SECRET));
+
+        $html = $provider->renderInterstitial($this->getRequest('10.0.0.5'), [
+            'submit_url' => '/_firewall/challenge',
+            'redirect_to' => '/protected',
+            'ttl' => '60',
+            'header_name' => 'X-FW',
+            'provider_token' => 'recaptcha.c2lnbmF0dXJl',
+        ]);
+
+        $this->assertStringContainsString(
+            '<input type="hidden" name="' . ChallengeProviderInterface::PROVIDER_FIELD
+            . '" value="recaptcha.c2lnbmF0dXJl">',
+            $html
+        );
+    }
+
+    public function testProviderFieldIsOmittedWhenThereIsNothingToCarry(): void
+    {
+        // A provider rendered outside the firewall -- a direct call in a
+        // test, or a host app driving it itself -- has no name to carry, and
+        // an empty hidden field would only be noise in the POST.
+        $provider = new MathChallengeProvider(new TokenManager(self::SECRET));
+
+        $html = $provider->renderInterstitial($this->getRequest('10.0.0.5'), [
+            'submit_url' => '/_firewall/challenge',
+            'redirect_to' => '/protected',
+            'ttl' => '60',
+            'header_name' => 'X-FW',
+        ]);
+
+        $this->assertStringNotContainsString(
+            'name="' . ChallengeProviderInterface::PROVIDER_FIELD . '"',
+            $html
+        );
+    }
+
+    public function testProviderFieldIsEscapedIntoTheAttribute(): void
+    {
+        // The name half is operator-supplied (`challenge.provider` accepts a
+        // FQCN), so it reaches an HTML attribute and has to be escaped like
+        // every other rendered value.
+        $provider = new MathChallengeProvider(new TokenManager(self::SECRET));
+
+        $html = $provider->renderInterstitial($this->getRequest('10.0.0.5'), [
+            'submit_url' => '/_firewall/challenge',
+            'redirect_to' => '/protected',
+            'ttl' => '60',
+            'header_name' => 'X-FW',
+            'provider_token' => '"><script>alert(1)</script>.sig',
+        ]);
+
+        $this->assertStringNotContainsString('"><script>alert(1)', $html);
+        $this->assertStringContainsString('&quot;&gt;&lt;script&gt;', $html);
+        $this->assertInlineScriptParses($html);
     }
 
     /**

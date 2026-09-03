@@ -408,6 +408,8 @@ final class RecaptchaChallengeProvider implements ChallengeProviderInterface
             'header_name' => $context['header_name'] ?? '',
             'redirect_field' => self::REDIRECT_FIELD,
             'ttl_field' => self::TTL_FIELD,
+            'provider_field' => self::PROVIDER_FIELD,
+            'provider_token' => $context['provider_token'] ?? '',
         ]);
     }
 

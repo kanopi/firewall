@@ -11,8 +11,9 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall;
 
-use Kanopi\Firewall\Challenge\ChallengeProviderFactory;
+use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
+use Kanopi\Firewall\Challenge\ChallengeProviderRegistry;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
@@ -57,14 +58,20 @@ final class Firewall
      * @param array $config
      *   Global configuration that can be set as defaults.
      * @param ChallengeProviderInterface|null $challengeProvider
-     *   Provider that renders + verifies challenges. Required iff at
-     *   least one challenge plugin is configured.
+     *   Provider named by `challenge.provider`, used for every challenge
+     *   plugin that does not name one of its own. Required iff at least
+     *   one challenge plugin is configured.
      * @param TokenManager|null $tokenManager
      *   Mints / verifies the pass token issued after a challenge is
      *   solved. Required iff $challengeProvider is set.
      * @param array<string, mixed> $challengeConfig
      *   Subset of config relevant to the challenge flow: path,
      *   cookie_name, header_name.
+     * @param ChallengeProviderRegistry|null $challengeProviderRegistry
+     *   Resolves the providers named by individual plugins. Built
+     *   alongside $challengeProvider, which is the registry's default —
+     *   holding it separately keeps the single-provider paths reading
+     *   exactly as they did.
      */
     protected function __construct(
         private StorageInterface $storage,
@@ -74,7 +81,8 @@ final class Firewall
         private array $config,
         private ?ChallengeProviderInterface $challengeProvider = null,
         private ?TokenManager $tokenManager = null,
-        private array $challengeConfig = []
+        private array $challengeConfig = [],
+        private ?ChallengeProviderRegistry $challengeProviderRegistry = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
 
@@ -120,7 +128,8 @@ final class Firewall
      *
      * @throws ConfigurationException
      *   When challenge plugins are configured without a `challenge.secret`,
-     *   when `challenge.provider` cannot be resolved to a
+     *   when `challenge.provider` — or a provider named by a plugin's
+     *   `metadata.challenge_provider` — cannot be resolved to a
      *   ChallengeProviderInterface, when `global.require_trusted_proxies`
      *   is enabled and no trusted proxies have been set, or when
      *   `global.require_config` is enabled and any config input failed to
@@ -206,9 +215,9 @@ final class Firewall
             'global_config_keys' => array_keys($config['global']),
         ]);
 
-        [$challengeProvider, $tokenManager, $challengeConfig] = self::createChallengePieces(
+        [$challengeProvider, $tokenManager, $challengeConfig, $providerRegistry] = self::createChallengePieces(
             $config['challenge'],
-            $partitioned['challenge'] !== []
+            $partitioned['challenge']
         );
 
         $firewall = new self(
@@ -219,7 +228,8 @@ final class Firewall
             $config['global'],
             $challengeProvider,
             $tokenManager,
-            $challengeConfig
+            $challengeConfig,
+            $providerRegistry
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -237,27 +247,33 @@ final class Firewall
     /**
      * Build the challenge collaborators (or skip if not needed).
      *
-     * Returns `[provider|null, tokenManager|null, normalizedChallengeConfig]`.
-     * When no challenge plugins are present and no challenge block was
-     * declared, all three slots are empty/null and the firewall acts as
-     * if the feature did not exist.
+     * Returns `[provider|null, tokenManager|null, normalizedChallengeConfig,
+     * registry|null]`. When no challenge plugins are present and no
+     * challenge block was declared, the slots are empty/null and the
+     * firewall acts as if the feature did not exist.
      *
      * Failing here (rather than at first request) keeps a missing secret
-     * from looking like a 500 deep in the request lifecycle.
+     * from looking like a 500 deep in the request lifecycle. The same goes
+     * for a provider a plugin names: `warmUp()` constructs every one of
+     * them now, so a typo or a missing `site_key` is a startup failure
+     * rather than a surprise for the first visitor to trip that rule.
      *
      * @param array<string, mixed> $challengeConfig
      *   The `challenge:` section from the loaded YAML.
-     * @param bool $hasChallengePlugins
-     *   Whether any plugin partitioned into the challenge bucket.
+     * @param array<int, array<string, mixed>> $challengePlugins
+     *   Plugin entries partitioned into the challenge bucket. Read for the
+     *   providers they name; empty means the feature is not in use.
      *
-     * @return array{0: ?ChallengeProviderInterface, 1: ?TokenManager, 2: array<string, mixed>}
+     * @return array{0: ?ChallengeProviderInterface, 1: ?TokenManager, 2: array<string, mixed>, 3: ?ChallengeProviderRegistry}
      *
      * @throws ConfigurationException
-     *   When challenge plugins exist but no secret is configured, or
-     *   when the configured provider cannot be resolved.
+     *   When challenge plugins exist but no secret is configured, or when
+     *   a provider named by the config or by a plugin cannot be resolved.
      */
-    private static function createChallengePieces(array $challengeConfig, bool $hasChallengePlugins): array
+    private static function createChallengePieces(array $challengeConfig, array $challengePlugins): array
     {
+        $hasChallengePlugins = $challengePlugins !== [];
+
         $defaults = [
             'provider' => 'math',
             'secret' => '',
@@ -271,7 +287,7 @@ final class Firewall
         $challengeConfig = array_replace($defaults, $challengeConfig);
 
         if (!$hasChallengePlugins) {
-            return [null, null, $challengeConfig];
+            return [null, null, $challengeConfig, null];
         }
 
         $secret = (string) ($challengeConfig['secret'] ?? '');
@@ -284,6 +300,7 @@ final class Firewall
         }
 
         $providerOptions = $challengeConfig['provider_options'] ?? [];
+        $defaultProvider = (string) $challengeConfig['provider'];
 
         // Scope pass tokens so two instances sharing a secret but running
         // different challenges cannot accept each other's tokens. Defaults
@@ -291,17 +308,57 @@ final class Firewall
         // running the same provider in several places can override it.
         $audience = trim((string) ($challengeConfig['audience'] ?? ''));
         if ($audience === '') {
-            $audience = (string) $challengeConfig['provider'];
+            $audience = $defaultProvider;
         }
 
-        $tokenManager = new TokenManager($secret, $audience);
-        $challengeProvider = ChallengeProviderFactory::create(
-            (string) $challengeConfig['provider'],
+        $tokenManager = new TokenManager($secret, $audience, $defaultProvider);
+
+        $challengeProviderRegistry = new ChallengeProviderRegistry(
             $tokenManager,
+            $defaultProvider,
             is_array($providerOptions) ? $providerOptions : []
         );
+        $challengeProviderRegistry->warmUp(self::declaredChallengeProviders($challengePlugins));
 
-        return [$challengeProvider, $tokenManager, $challengeConfig];
+        return [
+            $challengeProviderRegistry->get($defaultProvider),
+            $tokenManager,
+            $challengeConfig,
+            $challengeProviderRegistry,
+        ];
+    }
+
+    /**
+     * Collect the provider names the challenge plugins ask for.
+     *
+     * Read straight off the config entries rather than from constructed
+     * plugins: plugins are lazily built (see `LazyObjectRegistry`), and
+     * instantiating every challenge plugin at startup just to ask it which
+     * provider it wants would undo that. The key read here is the same one
+     * `AbstractPluginBase::getChallengeProviderName()` reads at request
+     * time, so the two cannot disagree for plugins built on the base class.
+     *
+     * @param array<int, array<string, mixed>> $challengePlugins
+     *   Plugin entries from the challenge bucket.
+     *
+     * @return array<int, string>
+     *   Provider names, with duplicates and blanks left for the registry
+     *   to normalize.
+     */
+    private static function declaredChallengeProviders(array $challengePlugins): array
+    {
+        $names = [];
+
+        foreach ($challengePlugins as $challengePlugin) {
+            $metadata = $challengePlugin['metadata'] ?? [];
+            $provider = is_array($metadata) ? ($metadata['challenge_provider'] ?? null) : null;
+
+            if (is_string($provider)) {
+                $names[] = $provider;
+            }
+        }
+
+        return $names;
     }
 
     /**
@@ -598,19 +655,35 @@ final class Firewall
         // A held pass token short-circuits the challenge bucket. Block
         // plugins still run — the token only attests "I am human", not
         // "I am allowed everywhere".
-        $hasValidToken = $this->hasValidChallengeToken($request);
+        //
+        // That short-circuit only holds while one provider serves every
+        // challenge rule, because then any pass token covers all of them.
+        // Once a plugin names its own provider, a token is worth only what
+        // its holder actually solved, so which rule matched has to be known
+        // before its token can be judged — the bucket is evaluated first
+        // and the token is checked against the matched plugin below.
+        $hasValidToken = !$this->hasPerPluginChallengeProviders()
+            && $this->hasValidChallengeToken($request, $this->defaultChallengeProviderName());
 
         if (!$hasValidToken && ($plugin = $this->challengePluginManager->evaluate($request)) !== false) {
-            if ($this->firewallMode === FirewallMode::Log) {
+            $providerName = $this->challengeProviderNameFor($plugin);
+
+            if ($this->hasValidChallengeToken($request, $providerName)) {
+                $this->getLogger()->debug('Challenge satisfied by held pass token', $this->getContext($request, [
+                    'plugin_name' => $plugin->getName(),
+                    'plugin_type' => $plugin::class,
+                    'provider' => $providerName,
+                ]));
+            } elseif ($this->firewallMode === FirewallMode::Log) {
                 $this->getLogger()->warning('Request would be challenged (log mode)', $this->getContext($request, [
                     'mode' => 'log',
                     'plugin_name' => $plugin->getName(),
                     'plugin_type' => $plugin::class,
                 ]));
                 return true;
+            } else {
+                $this->sendChallengeResponse($request, $plugin);
             }
-
-            $this->sendChallengeResponse($request, $plugin);
         }
 
         if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {
@@ -697,21 +770,30 @@ final class Firewall
             return;
         }
 
-        $valid = $this->challengeProvider->verifySolution($request);
-        $replayed = false;
+        [$providerName, $challengeProvider] = $this->resolveSubmissionProvider($request);
+
+        // An unresolvable provider claim is refused outright rather than
+        // quietly verified by the default provider: the field is signed, so
+        // a bad one is either tampering or a firewall whose config changed
+        // under a rendered page, and neither should mint a token.
+        $valid = $challengeProvider instanceof ChallengeProviderInterface
+            && $challengeProvider->verifySolution($request);
+        $reason = $challengeProvider instanceof ChallengeProviderInterface
+            ? 'invalid_solution'
+            : 'unknown_provider';
 
         // A stateless verify accepts the same payload every time it is
         // posted. For providers that opt in, burn the solution here so the
         // work behind it cannot be redistributed and reused.
-        if ($valid && !$this->consumeSingleUseSolution($request)) {
+        if ($valid && !$this->consumeSingleUseSolution($request, $challengeProvider)) {
             $valid = false;
-            $replayed = true;
+            $reason = 'solution_already_used';
         }
 
         if (!$valid) {
             $this->getLogger()->info('Challenge solution rejected', $this->getContext($request, [
-                'provider' => $this->challengeProvider->getName(),
-                'reason' => $replayed ? 'solution_already_used' : 'invalid_solution',
+                'provider' => $challengeProvider?->getName() ?? $providerName,
+                'reason' => $reason,
             ]));
 
             if ($this->firewallMode === FirewallMode::Exception) {
@@ -737,13 +819,17 @@ final class Firewall
         $rawTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
         $ttl = $rawTtl === '' ? 3600 : max(0, (int) $rawTtl);
 
-        $token = $this->tokenManager->mint($request, $ttl);
+        // Scope the token to what was actually solved. Without this a math
+        // pass would satisfy a reCAPTCHA rule, and the cheapest challenge
+        // in the config would set the price of every other one.
+        $token = $this->tokenManager->mint($request, $ttl, $providerName);
 
         $rawRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
         $redirect = $this->sanitizeRedirect($rawRedirect === '' ? '/' : $rawRedirect);
 
         $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
-            'provider' => $this->challengeProvider->getName(),
+            'provider' => $challengeProvider->getName(),
+            'provider_name' => $providerName,
             'ttl' => $ttl,
         ]));
 
@@ -763,6 +849,100 @@ final class Firewall
     }
 
     /**
+     * Prefix for the signed provider name carried by the interstitial.
+     *
+     * Domain-separates that signature from every other use of
+     * `TokenManager::sign()` — notably the math provider's `answer|exp`
+     * state — so a value signed for one purpose can never be presented as
+     * a value signed for the other.
+     */
+    private const PROVIDER_SIGNATURE_PREFIX = 'challenge-provider:';
+
+    /**
+     * Sign a provider name for the interstitial to carry back.
+     *
+     * Produces `name.signature`. The name is not a secret; the signature
+     * is what stops the field being rewritten to name a provider the
+     * firewall never chose for this visitor.
+     */
+    protected function signProviderName(string $provider): string
+    {
+        if (!$this->tokenManager instanceof TokenManager || $provider === '') {
+            return '';
+        }
+
+        return $provider . '.' . $this->tokenManager->sign(self::PROVIDER_SIGNATURE_PREFIX . $provider);
+    }
+
+    /**
+     * Work out which provider a posted solution is answering.
+     *
+     * The matched plugin is long gone by the time a solution arrives — this
+     * is a fresh POST to `challenge.path` — so the interstitial carries the
+     * provider's name back in a signed hidden field.
+     *
+     * Three outcomes:
+     *   - **No field.** Verified by `challenge.provider`, exactly as before
+     *     this existed. Keeps custom providers that render their own
+     *     document working, and costs nothing: the pass token is then
+     *     scoped to that provider, so it opens only the rules that provider
+     *     serves.
+     *   - **A field that verifies.** Its provider is resolved and used.
+     *   - **Anything else** — malformed, wrong signature, or a name that no
+     *     longer resolves. Returns no provider, and the caller refuses the
+     *     submission.
+     *
+     * @return array{0: string,1: ?ChallengeProviderInterface}
+     *   The provider name and its instance, or NULL for the instance when
+     *   the claim could not be honoured.
+     */
+    protected function resolveSubmissionProvider(Request $request): array
+    {
+        $default = $this->defaultChallengeProviderName();
+
+        $posted = $this->postedString($request, ChallengeProviderInterface::PROVIDER_FIELD, false);
+        if ($posted === '') {
+            return [$default, $this->challengeProvider];
+        }
+
+        // Split on the LAST dot: the signature is base64url and carries
+        // none, but a provider named by FQCN or by a custom short name may.
+        $separator = strrpos($posted, '.');
+        if ($separator === false || $separator === 0) {
+            return ['', null];
+        }
+
+        $name = substr($posted, 0, $separator);
+        $signature = substr($posted, $separator + 1);
+
+        if ($signature === '' || !$this->tokenManager instanceof TokenManager) {
+            return ['', null];
+        }
+
+        if (!$this->tokenManager->verifySignature(self::PROVIDER_SIGNATURE_PREFIX . $name, $signature)) {
+            return ['', null];
+        }
+
+        if (!$this->challengeProviderRegistry instanceof ChallengeProviderRegistry) {
+            return [$name, $this->challengeProvider];
+        }
+
+        try {
+            return [$name, $this->challengeProviderRegistry->get($name)];
+        } catch (ConfigurationException $configurationException) {
+            // Signed, so this is the firewall's own name coming back — the
+            // config must have changed while the page was open. Log it:
+            // unlike a tampered field, it points at a real misconfiguration.
+            $this->getLogger()->error('Challenge submission named an unresolvable provider', $this->getContext($request, [
+                'provider' => $name,
+                'error' => $configurationException->getMessage(),
+            ]));
+
+            return [$name, null];
+        }
+    }
+
+    /**
      * Record a single-use solution, refusing one that was already spent.
      *
      * Only applies to providers implementing SingleUseSolutionInterface;
@@ -776,17 +956,26 @@ final class Firewall
      * what matters here — the attack this closes is redistributing one
      * solve to many clients over seconds or minutes, not winning a race.
      *
+     * @param Request $request
+     *   The POST carrying the solution.
+     * @param ChallengeProviderInterface|null $challengeProvider
+     *   The provider that just verified it. NULL means the globally
+     *   configured one, which is what it always was before providers
+     *   could vary per plugin.
+     *
      * @return bool
      *   TRUE when the solution had not been used before (or the provider
      *   does not track reuse), FALSE when this is a replay.
      */
-    protected function consumeSingleUseSolution(Request $request): bool
+    protected function consumeSingleUseSolution(Request $request, ?ChallengeProviderInterface $challengeProvider = null): bool
     {
-        if (!$this->challengeProvider instanceof \Kanopi\Firewall\Challenge\SingleUseSolutionInterface) {
+        $challengeProvider ??= $this->challengeProvider;
+
+        if (!$challengeProvider instanceof \Kanopi\Firewall\Challenge\SingleUseSolutionInterface) {
             return true;
         }
 
-        $receipt = $this->challengeProvider->getSolutionReceipt($request);
+        $receipt = $challengeProvider->getSolutionReceipt($request);
         if ($receipt === null) {
             return true;
         }
@@ -812,9 +1001,11 @@ final class Firewall
      * @throws ChallengeRequiredException
      *   In Exception mode.
      * @throws ConfigurationException
-     *   When a challenge plugin matched but no provider is wired up. This
-     *   should be unreachable — `create()` fails first — but is raised in
-     *   every mode rather than serving an empty page.
+     *   When a challenge plugin matched but no provider is wired up — or
+     *   when the plugin names a provider that cannot be resolved, which
+     *   only a plugin naming one from PHP can reach, since names coming
+     *   from config were all resolved at startup. Raised in every mode
+     *   rather than serving an empty page.
      */
     protected function sendChallengeResponse(Request $request, PluginInterface $plugin): void
     {
@@ -828,6 +1019,11 @@ final class Firewall
             );
         }
 
+        $providerName = $this->challengeProviderNameFor($plugin);
+        $challengeProvider = $this->challengeProviderRegistry instanceof ChallengeProviderRegistry
+            ? $this->challengeProviderRegistry->get($providerName)
+            : $this->challengeProvider;
+
         $ttl = $plugin->getExpirationTime($request);
         if ($ttl <= 0) {
             $ttl = 3600;
@@ -836,7 +1032,8 @@ final class Firewall
         $this->getLogger()->notice('Sending challenge response', $this->getContext($request, [
             'plugin_name' => $plugin->getName(),
             'plugin_type' => $plugin::class,
-            'provider' => $this->challengeProvider->getName(),
+            'provider' => $challengeProvider->getName(),
+            'provider_name' => $providerName,
             'ttl' => $ttl,
         ]));
 
@@ -848,12 +1045,13 @@ final class Firewall
         }
 
         // @codeCoverageIgnoreStart
-        $body = $this->challengeProvider->renderInterstitial($request, [
+        $body = $challengeProvider->renderInterstitial($request, [
             'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
             'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
             'ttl' => (string) $ttl,
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
             'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
+            'provider_token' => $this->signProviderName($providerName),
         ]);
 
         http_response_code(200);
@@ -867,13 +1065,70 @@ final class Firewall
     }
 
     /**
+     * Is any plugin asking for a provider other than `challenge.provider`?
+     *
+     * Answered from the registry, which was told at startup what the
+     * challenge plugins declared. FALSE keeps the pre-existing ordering:
+     * one provider serves everything, so a pass token can still be judged
+     * before knowing which rule it will be spent on.
+     */
+    protected function hasPerPluginChallengeProviders(): bool
+    {
+        return $this->challengeProviderRegistry instanceof ChallengeProviderRegistry
+            && $this->challengeProviderRegistry->hasOverrides();
+    }
+
+    /**
+     * Which provider serves this plugin's challenges?
+     *
+     * Falls back to `challenge.provider` for plugins that name none, which
+     * is every plugin until someone sets `metadata.challenge_provider`.
+     * Pure string work — resolving the name to an instance can fail, and
+     * the token check has no business throwing.
+     */
+    protected function challengeProviderNameFor(PluginInterface $plugin): string
+    {
+        $name = $plugin instanceof ChallengeProviderAwareInterface
+            ? $plugin->getChallengeProviderName()
+            : null;
+
+        if ($name !== null && $name !== '') {
+            return $name;
+        }
+
+        return $this->defaultChallengeProviderName();
+    }
+
+    /**
+     * The `challenge.provider` name.
+     *
+     * Read from the registry, which holds the resolved value. The config
+     * fallback covers a firewall built without one — every challenge path
+     * is gated on a provider existing, so it is a guard rather than a case
+     * that happens.
+     */
+    protected function defaultChallengeProviderName(): string
+    {
+        return $this->challengeProviderRegistry instanceof ChallengeProviderRegistry
+            ? $this->challengeProviderRegistry->getDefaultName()
+            : (string) ($this->challengeConfig['provider'] ?? '');
+    }
+
+    /**
      * Does the request carry a pass token that verifies for this client?
      *
      * Looks first in the cookie, then in the configured custom header
      * (the localStorage delivery path used by SPA callers whose XHRs
      * cannot rely on cookies).
+     *
+     * @param Request $request
+     *   The request being evaluated.
+     * @param string|null $provider
+     *   Provider the token must have been earned against. NULL accepts a
+     *   token from any provider, which is only safe where a single one
+     *   serves every challenge rule.
      */
-    protected function hasValidChallengeToken(Request $request): bool
+    protected function hasValidChallengeToken(Request $request, ?string $provider = null): bool
     {
         if (!$this->tokenManager instanceof \Kanopi\Firewall\Challenge\TokenManager) {
             return false;
@@ -895,7 +1150,7 @@ final class Firewall
             return false;
         }
 
-        return $this->tokenManager->verify($token, $request);
+        return $this->tokenManager->verify($token, $request, $provider);
     }
 
     /**
