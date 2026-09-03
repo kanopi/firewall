@@ -185,6 +185,33 @@ FIELDS,
         }
 
 GUARD,
+            // A solved ALTCHA challenge is spent by the attempt that posts
+            // it: `SingleUseSolutionInterface` has the firewall record it,
+            // and every later submission carrying it is refused. So without
+            // this, clicking Continue again re-posts the same dead payload
+            // and can never succeed — one failure locks the visitor out of
+            // the page until they think to reload it.
+            //
+            // Turnstile recovers by resetting its widget, which fetches a
+            // fresh token from Cloudflare. That does not work here: this
+            // provider embeds the challenge in the page as `challengejson`
+            // precisely to avoid a round trip for one, so a reset re-solves
+            // the *same* challenge and produces the same spent payload. A
+            // new challenge only exists in a new render, which means going
+            // back for the page.
+            //
+            // `redirectTo` is where the visitor was heading, already
+            // sanitized by Firewall::sanitizeRedirect(). Navigating there
+            // trips the same challenge plugin and serves a fresh
+            // interstitial. `replace()` rather than `reload()`: reload would
+            // re-submit the original request if it was a POST, and replace
+            // keeps the dead page out of the back button. The pause is there
+            // so the message below can actually be read.
+            'submit_failure' => <<<'FAILURE'
+        submit.disabled = true;
+        err.textContent = 'That verification could not be used. Fetching a new one…';
+        window.setTimeout(function () { window.location.replace(redirectTo); }, 2000);
+FAILURE,
             'extra_script' => <<<'SCRIPT'
       var widget = document.querySelector('altcha-widget');
       if (widget) {
