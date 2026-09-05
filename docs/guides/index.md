@@ -40,6 +40,15 @@ pages describe *how to accomplish something*.
 
     [:octicons-arrow-right-24: Advanced examples](advanced-examples.md)
 
+-   :material-cloud-download-outline:{ .lg .middle } **Syncing Rule Sources**
+
+    ---
+
+    Refresh remote rule lists at deploy time and on a cron, then take the
+    request path offline so a visitor never waits on somebody else's server.
+
+    [:octicons-arrow-right-24: Syncing rule sources](syncing-sources.md)
+
 -   :material-map-marker-radius-outline:{ .lg .middle } **GeoIP Setup**
 
     ---

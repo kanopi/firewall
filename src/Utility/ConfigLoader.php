@@ -264,7 +264,7 @@ final class ConfigLoader
     private static function resolveRelativePathsForKeys(array $data, string $baseDir, array $dotKeys, bool $allowMissing = false): array
     {
         foreach ($dotKeys as $dotKey) {
-            foreach (self::expandMatches($data, $dotKey) as [$path, $value]) {
+            foreach (DotPath::expand($data, $dotKey) as [$path, $value]) {
                 if (\is_string($value) && !Path::isAbsolute($value) && !Path::looksLikeUrl($value)) {
                     $data = self::resolveOne($data, $path, $value, $baseDir, $allowMissing);
                 }
@@ -506,74 +506,6 @@ final class ConfigLoader
     }
 
     /**
-     * Expand a dot/wildcard path like "logger.*.args.0" to a list of ([pathArray, value]) matches.
-     *
-     * Each '*' matches any single key at that depth. Non-matching segments are skipped.
-     *
-     * Expand a dot/wildcard pattern like:
-     *   "logger.*.args.0"
-     *   "block|allow.\Kanopi\Firewall\Plugins\Asn.metadata.reader.db"
-     *   "{block,allow}.\Kanopi\Firewall\Plugins\RateLimit.metadata.storage.config.file"
-     *   "(block|allow).\Kanopi\Firewall\Plugins\GeoLocation.metadata.reader.db"
-     *
-     * Supported per-segment tokens:
-     *   - "*"                     : match any single key
-     *   - "a|b|c"                 : alternation (parentheses optional)
-     *   - "{a,b,c}"               : brace alternation
-     *   - literal                 : exact match
-     *
-     * Returns a list of ([pathSegments], value) matches.
-     *
-     *
-     * @param array<string,mixed> $data
-     *   The configuration to traverse.
-     * @param string $pattern
-     *   Dot-path pattern with optional '*' segments.
-     *
-     * @return array<int, array{0: array<int|string>, 1: mixed}>
-     *   A list of tuples: [pathSegments[], value] for every match.
-     */
-    private static function expandMatches(array $data, string $pattern): array
-    {
-        $parts = \explode('.', $pattern);
-        $paths = [[[], $data]]; // queue of [pathSoFar, node]
-    
-        foreach ($parts as $part) {
-            $alts = self::tokenAlternatives($part); // e.g., ['block','allow'] or ['*'] or ['literal']
-            $next = [];
-    
-            foreach ($paths as [$p, $node]) {
-                if (!\is_array($node)) {
-                    continue; // cannot descend
-                }
-    
-                // Fast path: wildcard '*' present in alts
-                if (\in_array('*', $alts, true)) {
-                    foreach ($node as $k => $v) {
-                        $next[] = [\array_merge($p, [$k]), $v];
-                    }
-
-                    continue;
-                }
-    
-                // Alternation / literals
-                foreach ($alts as $alt) {
-                    if (\array_key_exists($alt, $node)) {
-                        $next[] = [\array_merge($p, [$alt]), $node[$alt]];
-                    }
-                }
-            }
-    
-            $paths = $next;
-            if ($paths === []) {
-                break; // no matches at this level; early exit
-            }
-        }
-    
-        return $paths;
-    }
-
-    /**
      * Set an array value by a path of keys.
      *
      * @param array<string,mixed> $data
@@ -604,48 +536,5 @@ final class ConfigLoader
         $ref = $value;
 
         return $data;
-    }
-
-    /**
-     * Convert a segment token into a list of alternatives.
-     * Examples:
-     *   "*"                => ["*"]
-     *   "block|allow"      => ["block","allow"]
-     *   "(block|allow)"    => ["block","allow"]
-     *   "{block,allow}"    => ["block","allow"]
-     *   "literal"          => ["literal"]
-     */
-    private static function tokenAlternatives(string $token): array
-    {
-        $t = \trim($token);
-
-        if ($t === '*') {
-            return ['*'];
-        }
-
-        // Strip optional parens "(a|b|c)"
-        if ($t !== '' && $t[0] === '(' && \str_ends_with($t, ')')) {
-            $t = \substr($t, 1, -1);
-        }
-
-        // Brace CSV "{a,b,c}"
-        if ($t !== '' && $t[0] === '{' && \str_ends_with($t, '}')) {
-            $csv = \substr($t, 1, -1);
-            return self::splitAlternativesCsv($csv);
-        }
-
-        // Pipe alternation "a|b|c"
-        if (\str_contains($t, '|')) {
-            return \array_values(\array_filter(\array_map(trim(...), \explode('|', $t)), strlen(...)));
-        }
-
-        // Literal segment
-        return [$t];
-    }
-
-    /** Split a simple CSV like "a,b,c" into ["a","b","c"] (trimmed, empty removed). */
-    private static function splitAlternativesCsv(string $csv): array
-    {
-        return \array_values(\array_filter(\array_map(trim(...), \explode(',', $csv)), strlen(...)));
     }
 }

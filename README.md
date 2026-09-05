@@ -41,6 +41,7 @@ to contribute a change.
 - **Advanced Conditional Logic**: Support for simple, complex, and grouped conditional rules
 - **Escalating Bans**: Repeat offenders can be banned for progressively longer, up to permanently
 - **Remote Configuration Support**: Load configuration files from remote URLs with local caching
+- **Rule Sources**: Feed a plugin's rules from files or URLs in the format they are already published in — text, JSON, NDJSON, YAML, CSV, or TSV — with selection, filtering, templating, validation, conditional refresh, and per-source failure policy
 - **PSR-3 Compatible Logging**: Integration with Monolog for flexible logging, with sensitive headers redacted by default
 - **Framework Agnostic**: Works with any PHP application or framework — block, log-only, or throw exceptions for your framework to handle
 
