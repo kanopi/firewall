@@ -451,4 +451,140 @@ class SourceHttpIntegrationTest extends IntegrationTestCase
             SourceDefinition::fromArray(['upstream' => '/lists/a.txt'])
         ));
     }
+
+    /**
+     * A Last-Modified response is revalidated with If-Modified-Since.
+     */
+    public function testLastModifiedDrivesConditionalRequests(): void
+    {
+        $definition = SourceDefinition::fromArray([
+            'name' => 'last-modified',
+            'upstream' => $this->url(0, '/last-modified'),
+            'ttl' => 0,
+        ]);
+
+        $loader = $this->loader();
+
+        $this->assertSame(['5.5.5.5'], $loader->load($definition));
+        $this->assertSame(['5.5.5.5'], $loader->load($definition), 'A 304 reuses the cached entries.');
+
+        $received = $this->recordedFor($this->ports[0]);
+        $this->assertArrayNotHasKey('if-modified-since', $received[0]['headers']);
+        $this->assertSame(
+            'Wed, 03 Sep 2026 18:02:00 GMT',
+            $received[1]['headers']['if-modified-since'] ?? null
+        );
+    }
+
+    /**
+     * A redirect with no Location is not followed, and reports the status.
+     */
+    public function testRedirectWithoutLocationIsNotFollowed(): void
+    {
+        $definition = SourceDefinition::fromArray([
+            'name' => 'nowhere',
+            'upstream' => $this->url(0, '/redirect-no-location'),
+        ]);
+
+        $this->expectException(SourceException::class);
+        $this->expectExceptionMessage('HTTP 302');
+
+        $this->loader()->load($definition);
+    }
+
+    /**
+     * A relative Location is resolved against the URL that produced it.
+     */
+    public function testRelativeRedirectIsResolved(): void
+    {
+        $definition = SourceDefinition::fromArray([
+            'name' => 'relative',
+            'upstream' => $this->url(0, '/redirect-relative'),
+        ]);
+
+        $this->assertSame(['1.1.1.1', '2.2.2.2'], $this->loader()->load($definition));
+    }
+
+    /**
+     * A redirect loop is bounded by max_redirects rather than running forever.
+     */
+    public function testRedirectLoopIsBounded(): void
+    {
+        $definition = SourceDefinition::fromArray([
+            'name' => 'loop',
+            'upstream' => ['url' => $this->url(0, '/redirect-loop'), 'max_redirects' => 3],
+        ]);
+
+        $this->expectException(SourceException::class);
+        $this->expectExceptionMessage('HTTP 302');
+
+        $this->loader()->load($definition);
+    }
+
+    /**
+     * A 303 turns the request into a GET, as the status requires.
+     */
+    public function testSeeOtherDowngradesThePostToAGet(): void
+    {
+        $definition = SourceDefinition::fromArray([
+            'name' => 'see-other',
+            'upstream' => [
+                'url' => $this->url(0, '/redirect-see-other'),
+                'method' => 'POST',
+                'body' => 'q=1',
+            ],
+        ]);
+
+        $this->assertSame(['GET'], $this->loader()->load($definition));
+    }
+
+    /**
+     * A per-source timeout is honoured over the fetcher's own.
+     */
+    public function testUpstreamTimeoutIsUsed(): void
+    {
+        $definition = SourceDefinition::fromArray([
+            'name' => 'timed',
+            'upstream' => ['url' => $this->url(0, '/list'), 'timeout' => 30],
+        ]);
+
+        $this->assertSame(['1.1.1.1', '2.2.2.2'], $this->loader()->load($definition));
+    }
+
+    /**
+     * A fetcher-level timeout is used when the source declares none.
+     */
+    public function testFetcherTimeoutIsUsedWhenTheSourceDeclaresNone(): void
+    {
+        $definition = SourceDefinition::fromArray([
+            'name' => 'fetcher-timeout',
+            'upstream' => $this->url(0, '/list'),
+        ]);
+
+        $loader = new SourceLoader(
+            sourceCache: new SourceCache($this->tempDir . '/cache'),
+            fetchers: [new HttpFetcher(timeout: 20.0)]
+        );
+
+        $this->assertSame(['1.1.1.1', '2.2.2.2'], $loader->load($definition));
+    }
+
+    /**
+     * A connection that cannot be opened at all is reported.
+     */
+    public function testUnreachableUpstreamIsReported(): void
+    {
+        // Port 1 is privileged and never listening. Deliberately not an
+        // ephemeral port grabbed and released: that range overlaps the one
+        // startServer() binds, so the "closed" port could be one of this
+        // test's own servers.
+        $definition = SourceDefinition::fromArray([
+            'name' => 'closed',
+            'upstream' => 'http://127.0.0.1:1/list',
+        ]);
+
+        $this->expectException(SourceException::class);
+
+        $this->loader()->load($definition);
+    }
 }

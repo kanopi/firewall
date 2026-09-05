@@ -74,6 +74,43 @@ switch ($path) {
         header('Location: http://127.0.0.1:' . $to . '/list');
         return true;
 
+    case '/last-modified':
+        if (isset($normalised['if-modified-since'])) {
+            http_response_code(304);
+            return true;
+        }
+
+        header('Content-Type: text/plain');
+        header('Last-Modified: Wed, 03 Sep 2026 18:02:00 GMT');
+        echo "5.5.5.5\n";
+        return true;
+
+    case '/redirect-no-location':
+        // A redirect status with nothing to follow. Servers really do this.
+        http_response_code(302);
+        return true;
+
+    case '/redirect-loop':
+        http_response_code(302);
+        header('Location: /redirect-loop');
+        return true;
+
+    case '/redirect-relative':
+        http_response_code(302);
+        header('Location: list');
+        return true;
+
+    case '/redirect-see-other':
+        // 303 turns any method into a GET.
+        http_response_code(303);
+        header('Location: /echo-method');
+        return true;
+
+    case '/echo-method':
+        header('Content-Type: text/plain');
+        echo ($_SERVER['REQUEST_METHOD'] ?? '?') . "\n";
+        return true;
+
     case '/conditional':
         if (($normalised['if-none-match'] ?? null) === 'W/"list-v1"') {
             http_response_code(304);

@@ -450,18 +450,17 @@ final class ConfigLoader
             // `args` is spread into the constructor, so the path arrives either
             // first or under the parameter's own name.
             foreach ([0, 'stream', 'filename'] as $argKey) {
-                // looksLikeUrl() also covers stream wrappers, so `php://stdout`
-                // and `php://stderr` are left alone.
                 $value = $handler['args'][$argKey] ?? null;
                 if (!\is_string($value)) {
                     continue;
                 }
 
+                // isAbsolute() is true for stream wrappers and URLs as well as
+                // rooted paths, so `php://stdout`, `php://stderr` and any
+                // scheme:// target are all left alone here. A separate
+                // looksLikeUrl() check used to follow this one and could never
+                // be reached.
                 if (Path::isAbsolute($value)) {
-                    continue;
-                }
-
-                if (Path::looksLikeUrl($value)) {
                     continue;
                 }
 

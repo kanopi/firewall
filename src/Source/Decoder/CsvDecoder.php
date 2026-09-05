@@ -28,11 +28,9 @@ final class CsvDecoder implements DecoderInterface
     public function decode(string $body, SourceDefinition $sourceDefinition): array
     {
         $delimiter = $sourceDefinition->delimiter ?? ($sourceDefinition->format === 'tsv' ? "\t" : ',');
-        $lines = preg_split('/\R/', $body);
-
-        if ($lines === false) {
-            return [];
-        }
+        // `preg_split` with a literal, valid pattern has no failure mode, so
+        // there is no branch to take here — just a default for the analyser.
+        $lines = preg_split('/\R/', $body) ?: [];
 
         $rows = [];
 

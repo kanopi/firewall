@@ -276,7 +276,7 @@ final class SourceLoader
             return $body;
         }
 
-        if (!function_exists('gzdecode')) {
+        if (!$this->gzipAvailable()) {
             throw new SourceException(sprintf(
                 'Source "%s": declares gzip compression but ext-zlib is not available.',
                 $sourceDefinition->name
@@ -293,6 +293,20 @@ final class SourceLoader
         }
 
         return $decoded;
+    }
+
+    /**
+     * Whether this host can decompress gzip.
+     *
+     * A seam, for the same reason `LocalFetcher::readFile()` is one: ext-zlib
+     * is either compiled in or it is not, and a test cannot take it away.
+     *
+     * @return bool
+     *   TRUE when gzdecode() is available.
+     */
+    protected function gzipAvailable(): bool
+    {
+        return function_exists('gzdecode');
     }
 
     /**
