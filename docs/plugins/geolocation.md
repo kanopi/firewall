@@ -74,3 +74,92 @@ plugins:
 - `location.timeZone` - Time zone
 - `postal` - Returns postal code
 - `postal.code` - Postal/ZIP code
+
+
+## Reading location from CDN headers
+
+A site behind Cloudflare, CloudFront, Akamai or Fastly has already had the lookup done at
+the edge. `source: header` reads the result instead of consulting a MaxMind database, so
+there is no database to ship, update, or pay for:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    weight: 0
+    enable: true
+    metadata:
+      source: header          # reader (default) | header
+      provider: cloudflare    # cloudflare | cloudfront | akamai | custom
+    config:
+      - "country@in:CN,RU,KP"
+```
+
+The rule vocabulary is unchanged, so a config can move between sources without being
+rewritten. `country` and `country.isoCode` both work either way.
+
+!!! danger "A geo header is a claim, and it is only worth anything if it came from the edge"
+    Nothing stops a request going straight to your origin with a header of its choosing:
+
+    ```bash
+    curl -H "CF-IPCountry: US" https://origin.example.com/
+    ```
+
+    Against a `response: block` entry that defeats your geo blocking. Against
+    `response: allow` it is far worse — an allow match short-circuits evaluation, so a
+    forged country header becomes a **complete firewall bypass**.
+
+    So headers are only believed when the request arrived via a **trusted proxy**:
+
+    ```php
+    Request::setTrustedProxies(
+        ['173.245.48.0/20', '103.21.244.0/22', /* … your CDN's ranges … */],
+        Request::HEADER_X_FORWARDED_FOR
+    );
+    ```
+
+    A deployment behind a CDN needs this anyway for `getClientIp()` to be correct, so it is
+    usually already set. When it is not, the plugin **matches nothing and logs a warning on
+    every request** rather than trusting the header — geo blocking being quietly off looks
+    exactly like nobody from those countries visiting.
+
+    Keeping that list current is what [rule sources](../configuration/sources.md) are for:
+    most CDNs publish their ranges at a stable URL.
+
+### Providers
+
+| `provider` | Header(s) |
+|---|---|
+| `cloudflare` | `CF-IPCountry`, plus `CF-IPCity`, `CF-IPContinent`, `CF-Postal-Code`, `CF-Region-Code`, `CF-IPLatitude`, `CF-IPLongitude` |
+| `cloudfront` | `CloudFront-Viewer-Country`, `-Country-Name`, `-City`, `-Postal-Code`, `-Country-Region`, `-Latitude`, `-Longitude` |
+| `akamai` | `X-Akamai-Edgescape`, a single compound header this plugin unpacks |
+| `custom` | Whatever you name in `metadata.headers` |
+
+**Only the first header of each is present by default.** Cloudflare emits `CF-IPCountry` on
+every plan and the rest only once the matching Managed Transform is enabled; CloudFront
+emits nothing until the viewer headers are added to the cache or origin-request policy.
+Verify against your CDN's current documentation rather than assuming — a field the edge did
+not send resolves to nothing rather than to a wrong answer.
+
+### Fastly, and anything else
+
+Fastly adds no geo header of its own. Set one in VCL from `client.geo.*` and name it:
+
+```yaml
+metadata:
+  source: header
+  provider: custom
+  headers:
+    country: X-Geo-Country
+    city: X-Geo-City
+```
+
+`headers` also overrides a named provider one field at a time, so you can take Cloudflare's
+defaults and redirect a single field to a header of your own.
+
+### What you give up against a reader
+
+Edge headers are thinner. Country is reliably present; everything else depends on the CDN
+and its configuration, and `country.name` and `continent.name` are unavailable on several
+of them. If your rules need the full variable surface — city, timezone, coordinates — the
+MaxMind reader remains the source that has all of it.
