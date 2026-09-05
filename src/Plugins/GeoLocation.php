@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Traits\EvaluateTrait;
 use Kanopi\Firewall\Traits\GeoLocationTrait;
+use Kanopi\Firewall\Utility\GeoHeaderMap;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -24,9 +25,26 @@ class GeoLocation extends AbstractPluginBase
     use GeoLocationTrait;
 
     /**
+     * Where location comes from.
+     */
+    public const SOURCES = ['reader', 'header'];
+
+    /**
      * Whether the operator configured a reader at all (vs. an init failure).
      */
     private bool $readerConfigured;
+
+    /**
+     * Header mapping, when reading location from the edge.
+     */
+    private ?GeoHeaderMap $geoHeaderMap = null;
+
+    /**
+     * Fields the edge sent for the request being evaluated.
+     *
+     * @var array<string, string>
+     */
+    private array $headerValues = [];
 
     /**
      * Constructs a new GeoLocation object.
@@ -34,6 +52,18 @@ class GeoLocation extends AbstractPluginBase
     public function __construct(array $metadata = [], array $config = [])
     {
         parent::__construct($metadata, $config);
+
+        if ($this->source() === 'header') {
+            $this->geoHeaderMap = GeoHeaderMap::fromMetadata($metadata);
+            $this->readerConfigured = false;
+
+            $this->getLogger()->debug('GeoLocation reading location from edge headers', [
+                'provider' => $this->geoHeaderMap->provider(),
+            ]);
+
+            return;
+        }
+
         $this->readerConfigured = isset($metadata['reader']);
         $this->reader = $this->createService($metadata['reader']['type'] ?? null, $metadata['reader'] ?? []);
 
@@ -71,8 +101,62 @@ class GeoLocation extends AbstractPluginBase
     /**
      * {@inheritdoc}
      */
+    /**
+     * Where this plugin reads location from.
+     *
+     * @return string
+     *   One of self::SOURCES.
+     */
+    protected function source(): string
+    {
+        $source = $this->metadata['source'] ?? 'reader';
+
+        if (is_string($source) && in_array($source, self::SOURCES, true)) {
+            return $source;
+        }
+
+        if ($source !== 'reader') {
+            $this->getLogger()->warning('Unknown GeoLocation source; falling back to the reader', [
+                'source' => is_string($source) ? $source : gettype($source),
+                'known' => implode(', ', self::SOURCES),
+            ]);
+        }
+
+        return 'reader';
+    }
+
+    /**
+     * Whether an edge header may be believed for this request.
+     *
+     * A geo header is a claim, and a claim is only worth anything when the
+     * request provably came through the edge that makes it. Otherwise a request
+     * straight to the origin can set `CF-IPCountry: US` and pick its own
+     * country — and against a `response: allow` entry that is not a weakened
+     * control but a complete bypass, since an allow match short-circuits
+     * everything after it.
+     *
+     * Symfony already knows whether a request arrived via a trusted proxy, and
+     * a deployment behind a CDN has to configure that anyway for
+     * `getClientIp()` to be right. So that is the gate rather than a second
+     * list to maintain.
+     *
+     * @param Request $request
+     *   The request under evaluation.
+     *
+     * @return bool
+     *   TRUE when the headers may be read.
+     */
+    protected function edgeIsTrusted(Request $request): bool
+    {
+        return $request->isFromTrustedProxy();
+    }
+
     public function evaluate(Request $request): bool
     {
+        if ($this->geoHeaderMap instanceof GeoHeaderMap) {
+            return $this->evaluateFromHeaders($request);
+        }
+
         if ($this->reader === null) {
             if (!$this->readerConfigured) {
                 $this->getLogger()->debug('GeoLocation evaluation skipped - no reader configured', $this->getContext($request));
@@ -98,6 +182,93 @@ class GeoLocation extends AbstractPluginBase
     }
 
     /**
+     * Resolve a rule variable from what the edge sent.
+     *
+     * The vocabulary is the reader's, so a rule written for a MaxMind-backed
+     * plugin keeps working when the source changes. What the edge cannot supply
+     * resolves to NULL rather than to a wrong answer — `country.name` is absent
+     * on Cloudflare, for instance, while `country` is present on every plan.
+     *
+     * @param string $variable
+     *   The rule variable, e.g. `country` or `location.latitude`.
+     *
+     * @return string|null
+     *   The value, or NULL when the edge did not supply it.
+     */
+    protected function headerValue(string $variable): ?string
+    {
+        $field = strtolower(trim($variable));
+
+        // `country` and `country.isoCode` ask the same question; the reader
+        // path answers both, so this one does too.
+        $aliases = [
+            'country.isocode' => 'country',
+            'continent.code' => 'continent',
+            'city.name' => 'city',
+            'postal.code' => 'postal',
+        ];
+
+        $field = $aliases[$field] ?? $field;
+
+        foreach ($this->headerValues as $name => $value) {
+            if (strcasecmp($name, $field) === 0) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Evaluate the configured rules against the edge's geo headers.
+     *
+     * @param Request $request
+     *   The request under evaluation.
+     *
+     * @return bool
+     *   Whether a rule matched.
+     */
+    protected function evaluateFromHeaders(Request $request): bool
+    {
+        if (!$this->edgeIsTrusted($request)) {
+            // Loud rather than quiet. Without trusted proxies configured this
+            // plugin matches nothing, which looks exactly like "nobody from
+            // those countries is visiting" — the failure #165 is about, in a
+            // place where it means geo blocking is simply off.
+            $this->getLogger()->warning(
+                'GeoLocation is reading edge headers but this request did not arrive via a '
+                . 'trusted proxy, so the headers are being ignored. Call '
+                . 'Request::setTrustedProxies() with your CDN ranges, or the geo rules will '
+                . 'never match.',
+                $this->getContext($request, [
+                    'provider' => $this->geoHeaderMap?->provider(),
+                    'trusted_proxies' => Request::getTrustedProxies(),
+                ])
+            );
+
+            return false;
+        }
+
+        $values = $this->geoHeaderMap?->read($request) ?? [];
+
+        if ($values === []) {
+            $this->getLogger()->debug('GeoLocation edge headers carried nothing', $this->getContext($request, [
+                'provider' => $this->geoHeaderMap?->provider(),
+            ]));
+
+            return false;
+        }
+
+        $this->headerValues = $values;
+
+        try {
+            return $this->evaluateRequest($request, $this->config);
+        } finally {
+            $this->headerValues = [];
+        }
+    }
+
+    /**
      * Extract the value for a given variable name from the User Agent object.
      *
      * Supported variables:
@@ -117,6 +288,10 @@ class GeoLocation extends AbstractPluginBase
      */
     protected function getValue(Request $request, string $variable): mixed
     {
+        if ($this->geoHeaderMap instanceof GeoHeaderMap) {
+            return $this->headerValue($variable);
+        }
+
         if ($this->reader === null) {
             return false;
         }
