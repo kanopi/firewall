@@ -31,7 +31,7 @@ final class GeoHeaderMap
     /**
      * Providers with a known header layout.
      */
-    public const PROVIDERS = ['cloudflare', 'cloudfront', 'akamai', 'custom'];
+    public const PROVIDERS = ['cloudflare', 'cloudfront', 'akamai', 'fastly', 'gcp', 'custom'];
 
     /**
      * Fields a provider can populate, in the plugin's own vocabulary.
@@ -77,7 +77,41 @@ final class GeoHeaderMap
             'location.latitude' => 'CloudFront-Viewer-Latitude',
             'location.longitude' => 'CloudFront-Viewer-Longitude',
         ],
+        // Fastly adds no geo header of its own — the data is available in VCL
+        // as `client.geo.*` and the operator decides what to call it. These are
+        // the names the snippet in docs/plugins/geolocation.md sets, so the
+        // provider and the snippet match. An existing deployment with different
+        // names uses `custom`.
+        //
+        // Deliberately not `Fastly-Geo-*`: Fastly uses the `Fastly-` prefix for
+        // its own headers, and squatting on it invites a collision.
+        'fastly' => [
+            'country' => 'X-Geo-Country',
+            'country.name' => 'X-Geo-Country-Name',
+            'continent' => 'X-Geo-Continent',
+            'city' => 'X-Geo-City',
+            'postal' => 'X-Geo-Postal',
+            'region' => 'X-Geo-Region',
+            'location.latitude' => 'X-Geo-Latitude',
+            'location.longitude' => 'X-Geo-Longitude',
+        ],
     ];
+
+    /**
+     * Google Cloud's load balancer packs its two fields into one header.
+     *
+     * Documented as `X-Client-Geo-Location:{client_region},{client_city}`,
+     * which for Mountain View arrives as `US,Mountain View` — so despite the
+     * name, `client_region` is the country code.
+     */
+    private const GCP_HEADER = 'X-Client-Geo-Location';
+
+    /**
+     * What each position of the Google header carries, in order.
+     *
+     * @var array<int, string>
+     */
+    private const GCP_POSITIONS = ['country', 'city'];
 
     /**
      * Akamai packs everything into one header, as `key=value` pairs.
@@ -187,9 +221,11 @@ final class GeoHeaderMap
      */
     public function read(Request $request): array
     {
-        $values = $this->provider === 'akamai'
-            ? $this->readAkamai($request)
-            : $this->readNamed($request);
+        $values = match ($this->provider) {
+            'akamai' => $this->readAkamai($request),
+            'gcp' => $this->readGoogle($request),
+            default => $this->readNamed($request),
+        };
 
         // An explicit `headers` map always wins, so a provider's default can be
         // overridden one header at a time rather than all or nothing.
@@ -232,6 +268,42 @@ final class GeoHeaderMap
             $value = $request->headers->get($header);
 
             if (is_string($value) && trim($value) !== '') {
+                $values[$field] = trim($value);
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Unpack Google Cloud's positional geo header.
+     *
+     * Unlike Akamai's `key=value` pairs this is positional, so a missing
+     * leading field would shift everything after it. The load balancer expands
+     * a variable it cannot resolve to an empty string rather than dropping it,
+     * which keeps the positions stable — and an empty field is skipped here
+     * rather than stored as "".
+     *
+     * @param Request $request
+     *   The request to read.
+     *
+     * @return array<string, string>
+     *   Field to value.
+     */
+    private function readGoogle(Request $request): array
+    {
+        $raw = $request->headers->get(self::GCP_HEADER);
+
+        if (!is_string($raw) || trim($raw) === '') {
+            return [];
+        }
+
+        $values = [];
+
+        foreach (explode(',', $raw) as $index => $value) {
+            $field = self::GCP_POSITIONS[$index] ?? null;
+
+            if ($field !== null && trim($value) !== '') {
                 $values[$field] = trim($value);
             }
         }

@@ -172,7 +172,77 @@ class GeoHeaderSourceTest extends AbstractTestCase
             'cloudflare' => ['cloudflare', ['CF-IPCountry' => 'CN']],
             'cloudfront' => ['cloudfront', ['CloudFront-Viewer-Country' => 'RU']],
             'akamai' => ['akamai', ['X-Akamai-Edgescape' => 'georegion=263,country_code=CN,city=BEIJING']],
+            'fastly' => ['fastly', ['X-Geo-Country' => 'CN']],
+            'gcp' => ['gcp', ['X-Client-Geo-Location' => 'RU,Moscow']],
         ];
+    }
+
+    /**
+     * Fastly adds no geo header of its own, so the provider matches the VCL
+     * snippet in the docs. If those two ever drift, this fails.
+     */
+    public function testFastlyProviderMatchesTheDocumentedVclNames(): void
+    {
+        $this->trustTheEdge();
+
+        $headers = [
+            'X-Geo-Country' => 'DE',
+            'X-Geo-Country-Name' => 'Germany',
+            'X-Geo-City' => 'BERLIN',
+            'X-Geo-Continent' => 'EU',
+            'X-Geo-Postal' => '10115',
+            'X-Geo-Region' => 'BE',
+            'X-Geo-Latitude' => '52.52',
+            'X-Geo-Longitude' => '13.40',
+        ];
+
+        foreach (
+            [
+                'country:DE',
+                'country.name:Germany',
+                'city:BERLIN',
+                'continent:EU',
+                'postal:10115',
+                'region:BE',
+                'location.latitude:52.52',
+                'location.longitude:13.40',
+            ] as $rule
+        ) {
+            $this->assertTrue(
+                $this->plugin(['provider' => 'fastly'], [$rule])->evaluate($this->request($headers)),
+                $rule
+            );
+        }
+    }
+
+    /**
+     * Google Cloud's header is positional rather than keyed.
+     *
+     * Documented as `{client_region},{client_city}` — so despite the name, the
+     * first field is the country code.
+     */
+    public function testGoogleCloudPositionalHeaderIsUnpacked(): void
+    {
+        $this->trustTheEdge();
+
+        $request = $this->request(['X-Client-Geo-Location' => 'US,Mountain View']);
+
+        $this->assertTrue($this->plugin(['provider' => 'gcp'], ['country:US'])->evaluate($request));
+        $this->assertTrue($this->plugin(['provider' => 'gcp'], ['city:Mountain View'])->evaluate($request));
+    }
+
+    /**
+     * The load balancer expands an unresolvable variable to an empty string,
+     * so positions stay stable and an empty field simply does not match.
+     */
+    public function testGoogleCloudEmptyFieldsDoNotShiftPositions(): void
+    {
+        $this->trustTheEdge();
+
+        $request = $this->request(['X-Client-Geo-Location' => 'US,']);
+
+        $this->assertTrue($this->plugin(['provider' => 'gcp'], ['country:US'])->evaluate($request));
+        $this->assertFalse($this->plugin(['provider' => 'gcp'], ['city:Mountain View'])->evaluate($request));
     }
 
     /**
