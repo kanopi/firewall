@@ -166,4 +166,15 @@ class Url extends AbstractPluginBase
 
         return is_string($data) ? $data : null;
     }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Mirrors the switch in `getValue()` and the variable list in
+     * `docs/plugins/url.md`.
+     */
+    protected function knownRuleVariables(): array
+    {
+        return ['method', 'host', 'path', 'query', 'scheme', 'port', 'post', 'header', 'cookie'];
+    }
 }

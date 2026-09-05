@@ -164,4 +164,14 @@ class Asn extends AbstractPluginBase
             default => null,
         };
     }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Mirrors the match in `getValue()`.
+     */
+    protected function knownRuleVariables(): array
+    {
+        return ['asn', 'asn_org'];
+    }
 }
