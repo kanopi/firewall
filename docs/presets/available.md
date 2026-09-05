@@ -70,6 +70,61 @@ WordPress-specific blocking rules including:
 
 **Note**: REST API (`/wp-json/`) is commented out by default.
 
+## `drupal.yml`
+
+Drupal hardening that is safe on any site, Drupal 7 through 11:
+
+- **Version disclosure**: `/CHANGELOG.txt`, `/core/*.txt`, `/README.md`, `/web.config` — the files that tell a scanner exactly which core version to target
+- **Installer and recovery routes**: `/core/install.php`, `/core/update.php`, `/core/authorize.php`, `/core/rebuild.php`, and the unprefixed Drupal 7 forms
+- **Settings and services**: `settings.php`, `settings.local.php`, `services.yml` across single-site and multisite — served as *text*, credentials included, whenever PHP stops executing
+- **PHP under the files directory**: the upload-then-request path, covering `.php`, `.phtml`, `.phar`, `.inc` and numbered variants
+- **Private files**: `/sites/*/files/private/`, reachable only when the docroot is misconfigured — and when it is, everything Drupal thought was private is public
+- **Configuration export**: `/config/sync/`, a full inventory of enabled modules and their settings
+- **Build artefacts**: `composer.json`, `composer.lock`, `package.json`, `/vendor/`, `/.git/`, `.env`, `.ddev/` — a leaked lock file is a shopping list of known CVEs
+- **Development routes**: `/devel`, `/admin/config/development`, core test directories, `phpunit.xml`
+
+**Deliberately not blocked**: `/core/misc/*` and `/core/assets/*` (core serves its CSS and
+JavaScript from there), uploaded media under `/sites/*/files/`, public user profiles at
+`/user/<id>`, and `/.well-known/` for certificate renewal.
+
+**Does not touch `/admin` or `/user/login`** — that is [`drupal-admin.yml`](#drupal-adminyml).
+
+## `drupal-admin.yml`
+
+Drupal's administrative and authentication surface:
+
+- **Admin interface**: `/admin` and everything under it, including
+  `/admin/reports/status`, which discloses the version and module list
+- **Authentication**: `/user/login`, `/user/register`, `/user/password`, `/user/reset/*`,
+  and their language-prefixed forms (`/es/user/login`)
+- **Content authoring**: `/node/add`, `/node/*/edit`, `/node/*/delete`
+
+!!! danger "This preset locks people out. That is what it is for."
+    Including it without an allow rule above it means **nobody can log in**, editors
+    included. Pair it with an `IpAddress` allow entry at a lower weight:
+
+    ```yaml
+    configs:
+      - "{presets_dir}/drupal.yml"
+      - "{presets_dir}/drupal-admin.yml"
+
+    plugins:
+      - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+        response: allow
+        weight: -200          # ahead of the preset's blocks
+        enable: true
+        config:
+          - 203.0.113.0/24    # office
+          - 198.51.100.7      # VPN egress
+    ```
+
+    Or change `response: block` to `response: challenge` in your own copy, so an
+    interstitial replaces the refusal. That needs a
+    [`challenge:` section](../plugins/challenges.md) configured.
+
+**Blocks `/user` but not `/user/<id>`** — public profiles keep working, which is why the
+authentication routes are named individually rather than blocking the `/user` prefix.
+
 ## `malicious-urls.yml`
 
 Blocks common malicious PHP files, attack patterns, and suspicious URLs including:

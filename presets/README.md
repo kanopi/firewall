@@ -24,6 +24,8 @@ malicious requests.
 | `malicious-urls.yml` | URL-pattern blocks for known-bad paths. |
 | `rate-limiting.yml` | Per-path rate limits across auth, API, admin, forms, and static assets. |
 | `wordpress.yml` | WordPress-specific hardening. |
+| `drupal.yml` | Drupal hardening: version disclosure, installer routes, build artefacts, PHP under the files directory. Safe for any Drupal site. |
+| `drupal-admin.yml` | Blocks Drupal's `/admin` and authentication routes. Locks people out by design — pair it with an allow rule. |
 | `storage-pantheon.yml` | Storage wiring for Pantheon-hosted sites. |
 | `logging-pantheon.yml` | Logging wiring for Pantheon-hosted sites. |
 | `config.yml` | Convenience bundle of the two URL-pattern presets (`malicious-urls.yml` + `wordpress.yml`). No rate limiting or vulnerability scoring. |

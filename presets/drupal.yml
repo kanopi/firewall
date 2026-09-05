@@ -1,0 +1,143 @@
+# Drupal Hardening Configuration
+#
+# Blocks what a Drupal install exposes but a visitor never needs: the version
+# it is running, the routes that install and update it, the build artefacts a
+# misconfigured docroot leaks, and PHP under the files directory.
+#
+# Deliberately does NOT touch /admin or /user/login. Those are a separate
+# decision with a real chance of locking out the people who run the site —
+# see drupal-admin.yml.
+#
+# Works for Drupal 7 through 11. Paths that only exist on one of those are
+# harmless to block on the others.
+#
+# USAGE:
+#   configs:
+#     - "{presets_dir}/drupal.yml"
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -100
+    enable: true
+    config:
+      # =====================================================================
+      # Version Disclosure
+      #
+      # These sit at the docroot and name the exact core version, which is how
+      # a scanner decides which exploit to try. Nothing legitimate reads them.
+      # =====================================================================
+      - path:/CHANGELOG.txt
+      - path:/core/CHANGELOG.txt
+      - path:/core/COPYRIGHT.txt
+      - path:/core/INSTALL.txt
+      - path:/core/INSTALL.mysql.txt
+      - path:/core/INSTALL.pgsql.txt
+      - path:/core/INSTALL.sqlite.txt
+      - path:/core/MAINTAINERS.txt
+      - path:/core/UPDATE.txt
+      - path:/core/USAGE.txt
+      - path:/core/LICENSE.txt
+      - path:/README.txt
+      - path:/README.md
+      - path:/core/README.md
+      - path:/web.config
+
+      # =====================================================================
+      # Installer, Updater, and Recovery Routes
+      #
+      # Reachable on a running site more often than anyone expects, and each
+      # one is a takeover if it answers. `/core/*` covers Drupal 8+; the
+      # unprefixed forms are Drupal 7.
+      # =====================================================================
+      - path:/core/install.php
+      - path:/core/update.php
+      - path:/core/rebuild.php
+      - path:/core/authorize.php
+      - path:/install.php
+      - path:/update.php
+      - path:/rebuild.php
+      - path:/authorize.php
+      - path:/core/scripts/password-hash.sh
+      - path@starts_with:/core/scripts/
+
+      # =====================================================================
+      # Settings and Service Definitions
+      #
+      # Never served as PHP when the site is healthy — but when PHP stops
+      # executing, these are served as *text*, credentials and all.
+      # =====================================================================
+      - path@regex:#^/sites/[^/]+/settings(\.[^/]+)?\.php$#i
+      - path@regex:#^/sites/[^/]+/services(\.[^/]+)?\.yml$#i
+      - path@regex:#^/sites/[^/]+/default\.settings\.php$#i
+      - path@regex:#^/sites/[^/]+/default\.services\.yml$#i
+      - path:/sites/default/default.settings.php
+
+      # =====================================================================
+      # PHP Under the Files Directory
+      #
+      # The classic Drupal path: upload a .php through a weak form or a
+      # vulnerable module, then request it. Covers multisite (/sites/<name>/)
+      # as well as single-site (/sites/default/), and the extensions PHP will
+      # happily execute besides .php.
+      # =====================================================================
+      - path@regex:#^/sites/[^/]+/files/.*\.(php|php[3-8]|phtml|phps|phar|inc)$#i
+      - path@regex:#^/sites/[^/]+/(files/)?private/.*\.(php|php[3-8]|phtml|phps|phar|inc)$#i
+
+      # =====================================================================
+      # Private File Directory
+      #
+      # Only reachable directly when the docroot is misconfigured. When it is,
+      # everything Drupal thought was private is public.
+      # =====================================================================
+      - path@regex:#^/sites/[^/]+/(files/)?private/#i
+
+      # =====================================================================
+      # Configuration Sync
+      #
+      # A full export of the site's configuration, including which modules are
+      # enabled and how they are set up.
+      # =====================================================================
+      - path@contains:/config/sync/
+      - path@regex:#^/sites/[^/]+/files/config_#i
+
+      # =====================================================================
+      # Build Artefacts and Dependency Manifests
+      #
+      # A leaked composer.lock is an exact inventory of every contrib module
+      # and its version — a shopping list of known CVEs.
+      # =====================================================================
+      - path:/composer.json
+      - path:/composer.lock
+      - path:/core/composer.json
+      - path:/core/composer.lock
+      - path:/package.json
+      - path:/package-lock.json
+      - path:/yarn.lock
+      - path@starts_with:/vendor/
+      - path@starts_with:/.git/
+      - path:/.gitignore
+      - path@starts_with:/.ddev/
+      - path:/.lando.yml
+      - path@contains:/.env
+
+      # =====================================================================
+      # Drupal 7 Leftovers
+      #
+      # Removed from core in Drupal 8, still present on plenty of live sites.
+      # =====================================================================
+      - path:/xmlrpc.php
+      - path:/cron.php
+
+      # =====================================================================
+      # Development and Debug Routes
+      #
+      # These reach production more often than they should, usually via a
+      # module left enabled after a debugging session.
+      # =====================================================================
+      - path@starts_with:/devel
+      - path@starts_with:/admin/config/development
+      - path@regex:#^/core/modules/[^/]+/tests/#i
+      - path@starts_with:/core/tests/
+      - path@ends_with:/phpunit.xml
+      - path@ends_with:/phpunit.xml.dist

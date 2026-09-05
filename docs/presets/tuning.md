@@ -131,3 +131,33 @@ plugins:
       - path@starts_with:/api/
       - path@starts_with:/wp-json/
 ```
+
+## Drupal false positives
+
+**`/user/<id>` versus `/user/login`.** `drupal-admin.yml` names the authentication routes
+individually rather than blocking the `/user` prefix, because public user profiles live at
+`/user/123` on a great many sites. If yours has no public profiles, blocking
+`path@starts_with:/user` is tighter — but check first.
+
+**Language prefixes.** A multilingual site serves `/es/user/login` as well as
+`/user/login`. The preset covers a two-letter code with an optional region
+(`/pt-br/user/login`); a site using a longer or non-standard prefix needs its own rule.
+
+**Drupal 7 query routing is deliberately absent.** `?q=admin` and `?q=user/login` are not
+blocked, for two reasons found by testing rather than reasoning. `q` is the parameter a
+great many search forms use, so `?q=admin` is a visitor searching for the word "admin" at
+least as often as it is someone reaching the back end. And the rule would not work anyway:
+the separator arrives percent-encoded (`q=admin%2Fcontent`), so a `q=admin/` pattern never
+matches. If you need it, match the encoded form and accept the search false positive.
+
+**`/core/` is not blocked wholesale.** Core serves its CSS and JavaScript from
+`/core/misc/` and `/core/assets/`, so only named files and the `scripts`, `tests`, and
+module-test directories are blocked. Adding `path@starts_with:/core/` will unstyle the
+site.
+
+**Uploaded media stays reachable.** Only *executable* extensions under `/sites/*/files/`
+are blocked. Blocking the directory outright takes every image and document with it.
+
+**`/admin` prefix matching.** `path@starts_with:/admin/` plus an exact `path:/admin` is
+deliberate — it means `/administrative-services` and `/news/admin-appointed` keep working,
+which a bare `path@contains:/admin` would break.

@@ -34,6 +34,47 @@ curl http://localhost:8080/
 curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" http://localhost:8080/
 ```
 
+## Testing drupal.yml
+
+```bash
+# Should be blocked (403)
+curl -i http://localhost:8080/core/CHANGELOG.txt
+curl -i http://localhost:8080/core/install.php
+curl -i http://localhost:8080/sites/default/settings.php
+curl -i http://localhost:8080/sites/default/files/evil.php
+curl -i http://localhost:8080/sites/default/files/private/salary.pdf
+curl -i http://localhost:8080/composer.lock
+curl -i http://localhost:8080/.git/config
+curl -i http://localhost:8080/vendor/autoload.php
+
+# Should NOT be blocked — these break the site if the preset is too greedy
+curl -i http://localhost:8080/core/misc/drupal.js
+curl -i http://localhost:8080/core/assets/vendor/jquery/jquery.min.js
+curl -i http://localhost:8080/sites/default/files/2026-09/photo.jpg
+curl -i http://localhost:8080/user/42
+curl -i http://localhost:8080/.well-known/acme-challenge/token123
+```
+
+## Testing drupal-admin.yml
+
+```bash
+# Should be blocked (403)
+curl -i http://localhost:8080/admin
+curl -i http://localhost:8080/admin/reports/status
+curl -i http://localhost:8080/user/login
+curl -i http://localhost:8080/user/register
+curl -i http://localhost:8080/es/user/login
+curl -i http://localhost:8080/node/add/article
+
+# Should NOT be blocked
+curl -i http://localhost:8080/user/42
+curl -i http://localhost:8080/administrative-services
+curl -i "http://localhost:8080/search?q=admin"
+
+# From an allowed address, /admin should pass
+curl -i --interface 203.0.113.9 http://localhost:8080/admin
+```
+
 ## Testing malicious-urls.yml
 
 ```bash
