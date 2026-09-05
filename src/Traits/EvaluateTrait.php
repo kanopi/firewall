@@ -174,11 +174,11 @@ trait EvaluateTrait
         // last two before the parser ever saw them, which silently killed
         // every `@exists` rule and every shorthand comparison — both of them
         // documented forms (#169).
-        if (
-            !str_contains($rule, ':')
-            && !str_contains($rule, '@')
-            && preg_match('/[<>]/', $rule) !== 1
-        ) {
+        $hasValue = str_contains($rule, ':');
+        $hasOperator = str_contains($rule, '@');
+        $hasComparison = preg_match('/[<>]/', $rule) === 1;
+
+        if (!$hasValue && !$hasOperator && !$hasComparison) {
             // Invalid format; return false to not block.
             return false;
         }
