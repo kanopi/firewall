@@ -91,6 +91,65 @@ Redefining `bot:true` would apply that to rules people wrote long ago and have n
 
 Worth knowing if you use `client.name@contains:sqlmap`: it keeps working alongside `automated:true`. Detection stops as soon as an agent is identified as a bot, and a stopped parse exposes no client at all — so the wider list is deliberately kept out of that decision. Folding it in would have silently broken exactly that rule.
 
+
+## Choosing the bot detection source
+
+`bot:` is answered by device-detector's curated database by default. That is the historical
+behaviour and it stays the default, because widening what an existing blocking rule matches
+is not something a minor release should do quietly.
+
+When you want the wider list behind `bot:` itself, say so:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: block
+    enable: true
+    metadata:
+      bot_detector: both      # device-detector | crawler-detect | both
+    config:
+      - "bot:true"
+```
+
+| `bot_detector` | `bot:true` matches |
+|---|---|
+| `device-detector` *(default)* | The curated bot database — crawlers and the scanners it knows |
+| `crawler-detect` | The wider crawler list — adds sqlmap, nikto, curl, python-requests, Go-http-client |
+| `both` | Either signal |
+
+!!! warning "The wider list counts HTTP client libraries as bots"
+    `curl`, `python-requests` and `Go-http-client` are on it. A partner integration or a
+    mobile app built on one of those would start being blocked by a rule that previously
+    let it through. That is the trade-off, and it is why the default is the narrow source.
+
+`automated:` is unaffected — it is always the union of both sources, whatever
+`bot_detector` says, because that is the question it exists to answer.
+
+### The notice you may see
+
+A plugin configured with `bot:` and no `automated:`, and no explicit `bot_detector`, logs
+this once when it is constructed:
+
+```
+firewall.NOTICE: bot: does not match sqlmap, nikto, curl, python-requests or Go-http-client —
+                 automated: does. Add "automated:true" alongside it, or set
+                 metadata.bot_detector to choose a source explicitly and silence this.
+```
+
+It is not an error and nothing is broken. It exists because the gap is otherwise invisible:
+the rule is valid, it fires, it simply does not know about half the tooling. Setting
+`bot_detector` explicitly — to any value, including the default — counts as having made the
+choice, and silences it.
+
+### What `bot.name` gives you under each source
+
+device-detector's database carries a name, category and producer. The crawler list carries
+only the substring it matched. So under `crawler-detect` or `both`, a bot the curated
+database knows still reports all three fields, and one only the crawler list knows reports
+`bot.name` as the matched string with no category or producer. That is better than the
+field going empty, but do not expect `bot.category` to be populated for everything
+`bot:true` now matches.
+
 ## Caching
 
 The plugin's detection is backed by `matomo/device-detector`, which compiles a 1.7&nbsp;MB corpus of regex files on the first parse in each PHP process. That costs **110–637&nbsp;ms** depending on the user agent — ordinary mobile browsers are among the worst cases, because brand and model detection walks the largest part of the corpus. Once warm it is roughly 4&nbsp;ms.

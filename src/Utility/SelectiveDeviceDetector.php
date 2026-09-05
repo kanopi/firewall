@@ -191,6 +191,29 @@ class SelectiveDeviceDetector extends DeviceDetector
     }
 
     /**
+     * What the crawler list matched, when it matched.
+     *
+     * device-detector's bot database carries a name, category and producer;
+     * the crawler list carries only the substring it matched on. That string is
+     * still the most useful thing available for `bot.name` when a rule resolves
+     * through this detector, and returning it keeps a documented field
+     * populated instead of empty.
+     *
+     * @return string|null
+     *   The matched substring, or NULL when nothing matched.
+     */
+    public function crawlerMatch(): ?string
+    {
+        if (!$this->isCrawler()) {
+            return null;
+        }
+
+        $match = self::$crawlerDetect?->getMatches();
+
+        return is_string($match) && $match !== '' ? $match : null;
+    }
+
+    /**
      * Position of a phase in the parse order.
      *
      * @param string $phase
