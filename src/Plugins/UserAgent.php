@@ -53,6 +53,20 @@ class UserAgent extends AbstractPluginBase
     private bool $cacheResolved = false;
 
     /**
+     * Sources that can answer the `bot:` rule variable.
+     */
+    public const BOT_DETECTORS = ['device-detector', 'crawler-detect', 'both'];
+
+    /**
+     * The source used when none is configured.
+     *
+     * Deliberately the historical behaviour. Widening it changes what an
+     * existing blocking rule matches, which is not something a minor release
+     * should do silently — see #109.
+     */
+    public const BOT_DETECTOR_DEFAULT = 'device-detector';
+
+    /**
      * Deepest parse phase the configured rules need, resolved once (#108).
      */
     private ?string $requiredPhase = null;
@@ -86,14 +100,120 @@ class UserAgent extends AbstractPluginBase
      * @return bool
      *   Whether any source considers the agent automated.
      */
+    /**
+     * Which detector answers the `bot:` rule variable.
+     *
+     * `bot:true` is one of the first rules people reach for, and backed by
+     * device-detector alone it misses roughly half the tooling a firewall
+     * exists to stop — sqlmap and Nikto among them (#109). The wider crawler
+     * list catches those, but also counts generic HTTP client libraries as
+     * bots, which would start blocking a partner integration built on
+     * python-requests.
+     *
+     * Rather than pick for everyone, the source is configurable and the default
+     * is the current behaviour:
+     *
+     * - `device-detector` (default) — the curated bot database, as today.
+     * - `crawler-detect` — the wider list.
+     * - `both` — either signal counts.
+     *
+     * Setting this explicitly is also how an operator says "I have thought
+     * about this", which suppresses the coverage notice below.
+     *
+     * @return string
+     *   One of self::BOT_DETECTORS.
+     */
+    protected function botDetector(): string
+    {
+        $configured = $this->metadata['bot_detector'] ?? null;
+
+        if (is_string($configured) && in_array($configured, self::BOT_DETECTORS, true)) {
+            return $configured;
+        }
+
+        if ($configured !== null) {
+            $this->getLogger()->warning('Unknown bot_detector; falling back to the default', [
+                'plugin' => $this->getName(),
+                'bot_detector' => is_string($configured) ? $configured : gettype($configured),
+                'known' => implode(', ', self::BOT_DETECTORS),
+            ]);
+        }
+
+        return self::BOT_DETECTOR_DEFAULT;
+    }
+
+    /**
+     * Whether the configured source considers this agent a bot.
+     *
+     * Deliberately resolves the *rule*, not the detector. `isBot()` drives
+     * device-detector's parse decisions — widening it would suppress client
+     * parsing and break `client.name@contains:sqlmap`, which is the documented
+     * workaround for this very gap. See `SelectiveDeviceDetector::isCrawler()`.
+     *
+     * @return bool
+     *   Whether `bot:true` should match.
+     */
+    protected function isBotBySource(): bool
+    {
+        return match ($this->botDetector()) {
+            'crawler-detect' => $this->isCrawler(),
+            'both' => $this->deviceDetector->isBot() || $this->isCrawler(),
+            default => $this->deviceDetector->isBot(),
+        };
+    }
+
+    /**
+     * The fields behind `bot.name`, `bot.category` and `bot.producer`.
+     *
+     * device-detector's database carries all three. The crawler list carries
+     * only the substring it matched, so when a rule resolves through that
+     * source the name is populated from the match and the other two are absent
+     * rather than invented.
+     *
+     * @return array<string, mixed>
+     *   Bot metadata, empty when nothing matched.
+     */
+    protected function botFields(): array
+    {
+        if ($this->deviceDetector->isBot()) {
+            $bot = $this->deviceDetector->getBot();
+
+            return is_array($bot) ? $bot : [];
+        }
+
+        if ($this->botDetector() === 'device-detector') {
+            return [];
+        }
+
+        $match = $this->deviceDetector instanceof SelectiveDeviceDetector
+            ? $this->deviceDetector->crawlerMatch()
+            : null;
+
+        return $match === null ? [] : ['name' => $match];
+    }
+
+    /**
+     * Whether the wider crawler list matches.
+     *
+     * @return bool
+     *   TRUE when the crawler list matches the user agent.
+     */
+    protected function isCrawler(): bool
+    {
+        return $this->deviceDetector instanceof SelectiveDeviceDetector
+            && $this->deviceDetector->isCrawler();
+    }
+
     protected function isAutomated(): bool
     {
         if ($this->deviceDetector->isBot()) {
             return true;
         }
 
-        return $this->deviceDetector instanceof SelectiveDeviceDetector
-            && $this->deviceDetector->isCrawler();
+        // Always the union, whatever `bot_detector` says. `automated:` is
+        // defined as "any source we have"; making it follow the bot source
+        // would leave no way to ask the broad question.
+        return $this->isCrawler();
     }
 
     /**
@@ -585,10 +705,10 @@ class UserAgent extends AbstractPluginBase
                 return $this->isAutomated() ? 'true' : 'false';
             case 'bot':
                 if (count($segments) === 1) {
-                    return $this->deviceDetector->isBot() ? 'true' : 'false';
+                    return $this->isBotBySource() ? 'true' : 'false';
                 }
 
-                $data = $this->deviceDetector->isBot() ? $this->deviceDetector->getBot() : [];
+                $data = $this->botFields();
                 break;
             case 'device':
                 $data = ['type' => $this->deviceDetector->getDeviceName()];
@@ -628,5 +748,96 @@ class UserAgent extends AbstractPluginBase
     protected function knownRuleVariables(): array
     {
         return ['automated', 'bot', 'device', 'client', 'os', 'brand', 'model'];
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Adds the coverage notice below to the base class's rule checking.
+     */
+    protected function reportUnusableRules(): void
+    {
+        parent::reportUnusableRules();
+        $this->reportBotCoverageGap();
+    }
+
+    /**
+     * Say so when `bot:` has been asked a question it cannot fully answer.
+     *
+     * The trap this closes: an operator writes `bot:true`, reasonably believes
+     * they have blocked scanners, and sqlmap walks straight through (#109).
+     * Nothing about that is visible — the rule is valid, it fires, it simply
+     * does not know about half the tooling.
+     *
+     * Reported rather than fixed, because fixing it means widening what an
+     * existing blocking rule matches and that is not a thing to do silently in
+     * a minor release. Saying it out loud costs nothing and reaches the people
+     * who never read release notes, which is who the trap catches.
+     *
+     * Stays quiet when the operator has already engaged with the question:
+     * `automated:` is in the rules, or `bot_detector` is set explicitly.
+     */
+    protected function reportBotCoverageGap(): void
+    {
+        if (isset($this->metadata['bot_detector']) || $this->botDetector() !== 'device-detector') {
+            return;
+        }
+
+        $variables = self::ruleVariables($this->config);
+
+        if (!in_array('bot', $variables, true) || in_array('automated', $variables, true)) {
+            return;
+        }
+
+        $this->getLogger()->notice(
+            'bot: does not match sqlmap, nikto, curl, python-requests or Go-http-client — '
+            . 'automated: does. Add "automated:true" alongside it, or set '
+            . 'metadata.bot_detector to choose a source explicitly and silence this.',
+            [
+                'plugin' => $this->getName(),
+                'bot_detector' => $this->botDetector(),
+            ]
+        );
+    }
+
+    /**
+     * Every variable root a rule list addresses, groups included.
+     *
+     * @param array<array-key, mixed> $rules
+     *   A rule list.
+     *
+     * @return array<int, string>
+     *   Lowercased roots, without duplicates.
+     */
+    private static function ruleVariables(array $rules): array
+    {
+        $found = [];
+
+        foreach ($rules as $rule) {
+            if (is_string($rule)) {
+                $root = preg_split('/[.@:<>]/', ltrim(trim($rule), '!'), 2)[0] ?? '';
+
+                if ($root !== '') {
+                    $found[] = strtolower(trim($root));
+                }
+
+                continue;
+            }
+
+            if (!is_array($rule)) {
+                continue;
+            }
+
+            if (isset($rule['rules']) && is_array($rule['rules'])) {
+                $found = array_merge($found, self::ruleVariables($rule['rules']));
+                continue;
+            }
+
+            if (isset($rule['variable']) && is_string($rule['variable'])) {
+                $found[] = strtolower(trim(preg_split('/[.@:<>]/', $rule['variable'], 2)[0] ?? ''));
+            }
+        }
+
+        return array_values(array_unique(array_filter($found)));
     }
 }
