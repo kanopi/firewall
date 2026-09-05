@@ -1,0 +1,63 @@
+# Search Engine Crawler Allow
+#
+# Lets the crawlers you want indexing you past the rules that would otherwise
+# catch them. Runs at weight -200, ahead of every block and challenge entry.
+#
+# READ THIS BEFORE INCLUDING IT.
+#
+# A user-agent allow rule is spoofable, and `response: allow` short-circuits
+# evaluation entirely — an allow match means no block, no challenge, no rate
+# limit, nothing. So "Googlebot" in a User-Agent header is a skeleton key, and
+# setting one is a single curl flag.
+#
+# This preset is therefore SCOPED. The allow applies to public content only;
+# the administrative and authentication surface is excluded, so a spoofed
+# crawler gets a pass on your blog posts and still meets the firewall at
+# /wp-admin and /user/login. That is the difference between a preset that
+# reduces false positives and one that hands out a bypass.
+#
+# The exclusion covers the paths WordPress and Drupal put their back ends on.
+# If your admin lives somewhere else, add it to the second rule below.
+#
+# STRONGER OPTIONS, in increasing order of correctness:
+#
+#   1. This preset — scoped by path. Cheap, and enough for most sites.
+#   2. Verify by address. Google, Bing and Apple publish their crawler IP
+#      ranges; pair this with an IpAddress allow fed by those and require both.
+#      Correct, and needs a published-lists story to be practical.
+#   3. Verify by reverse DNS, which is what the search engines actually
+#      document — reverse lookup, then forward-confirm. The library has no
+#      mechanism for this today.
+#
+# USAGE:
+#   configs:
+#     - "{presets_dir}/search-bots.yml"      # first, so it runs ahead
+#     - "{presets_dir}/malicious-requests.yml"
+#     - "{presets_dir}/ai-crawlers.yml"
+#
+# TO REMOVE THE SCOPE (not recommended — this is the bypass):
+#   Copy this file and drop the second rule from the template.
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: allow
+    weight: -200
+    enable: true
+    metadata:
+      sources:
+        - name: search-bots
+          upstream: "lists/search-bots.txt"
+          template:
+            type: AND
+            rules:
+              # The crawler identifies itself as one we want.
+              - "header.user-agent@contains:{value}"
+              # ...and is NOT one of the "-Extended" training variants.
+              # Applebot-Extended contains "Applebot", so a substring match on
+              # the search list would otherwise vouch for the training crawler
+              # too — the exact conflation this preset warns about elsewhere.
+              - "!header.user-agent@contains:-Extended"
+              # ...and is asking for something a crawler has any business
+              # asking for. The boundary is (/|$|\.) so /wp-login.php is
+              # caught while /administrative and /user/42 are not.
+              - "!path@regex:#^/(wp-admin|wp-login|wp-json|xmlrpc|user/(login|register|password|reset)|admin|node/add)(/|$|\\.)#i"

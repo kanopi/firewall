@@ -1,0 +1,51 @@
+# AI training and dataset-collection crawlers
+#
+# Bots that fetch pages to build training corpora or datasets, rather than to
+# answer a question somebody just asked. Blocking these costs no referral
+# traffic, which is what makes them the safer half of the AI-crawler question.
+#
+# Answer engines — the ones that fetch a page *because a user asked about it* —
+# are in ai-answer-engines.txt, because blocking those has a traffic cost and is
+# a different decision.
+#
+# Matched as a substring of the User-Agent header, case-insensitively.
+#
+# Updated: 2026-09-05
+
+# OpenAI
+GPTBot
+
+# Anthropic
+ClaudeBot
+anthropic-ai
+Claude-Web
+
+# Common Crawl — the corpus much of the rest is trained on
+CCBot
+
+# Google, training only. NOT Googlebot: blocking that deindexes the site.
+Google-Extended
+
+# Apple, training only. NOT Applebot, which powers Siri and Spotlight results.
+Applebot-Extended
+
+# Meta
+FacebookBot
+Meta-ExternalAgent
+meta-externalagent
+
+# ByteDance
+Bytespider
+
+# Amazon
+Amazonbot
+
+# Others
+Omgilibot
+Omgili
+Diffbot
+ImagesiftBot
+Timpibot
+Webzio-Extended
+AI2Bot
+cohere-ai

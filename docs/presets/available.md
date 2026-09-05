@@ -124,6 +124,111 @@ Drupal's administrative and authentication surface:
 
 **Blocks `/user` but not `/user/<id>`** — public profiles keep working, which is why the
 authentication routes are named individually rather than blocking the `/user` prefix.
+## `search-bots.yml`
+
+Lets the crawlers you want indexing you past the rules that would otherwise catch them.
+`automated:true`, vulnerability scoring, rate limits and an AI-crawler block all catch
+search engines too, and a site that quietly stops being indexed usually finds out weeks
+later from a traffic graph.
+
+Covers Googlebot and its variants, bingbot, Slurp, DuckDuckBot, Applebot, Baiduspider,
+YandexBot, Naverbot, Seznambot and Qwantify. Runs at weight `-200`, ahead of every block
+and challenge entry.
+
+!!! danger "An allow rule is a bypass, and a user agent is trivially forged"
+    `response: allow` short-circuits evaluation entirely — an allow match means no block,
+    no challenge, no rate limit, nothing. `Googlebot` in a User-Agent header is a skeleton
+    key, and setting one is a single `curl -A` flag.
+
+    **This preset is therefore scoped.** The allow applies to public content only; the
+    administrative and authentication surface is excluded, so a forged crawler gets a pass
+    on your blog posts and still meets the firewall at `/wp-admin` and `/user/login`.
+
+    The excluded paths cover where WordPress and Drupal put their back ends. If yours lives
+    elsewhere, add it to the second rule.
+
+### Stronger options
+
+In increasing order of correctness:
+
+1. **This preset** — scoped by path. Cheap, and enough for most sites.
+2. **Verify by address.** Google, Bing and Apple publish crawler IP ranges. Pair this with
+   an `IpAddress` allow fed by those and require both. Correct, and needs a
+   published-lists story to be practical.
+3. **Verify by reverse DNS**, which is what the search engines actually document — reverse
+   lookup, then forward-confirm. The library has no mechanism for this today.
+
+### What is deliberately not in the list
+
+**SEO tooling** — `AhrefsBot`, `SemrushBot`, `DotBot`, `MJ12bot`, Screaming Frog. Those are
+legitimate for a site's own team and pure cost for everyone else, so allowing them is a
+different decision from "keep my pages in search results".
+
+**The `-Extended` training variants.** `Applebot-Extended` contains the string `Applebot`,
+so a substring match would otherwise vouch for the training crawler while you were trying
+to allow the Siri and Spotlight one. The preset excludes anything carrying `-Extended`, and
+there is a test for it.
+
+## AI Crawler Presets
+
+Three presets, two lists, and one decision to make twice — because "AI crawler" covers two
+populations with very different costs.
+
+**Training and dataset crawlers** fetch pages to build corpora. Blocking them costs you
+nothing in traffic. **Answer engines** fetch a page because a user just asked a question
+about it, then cite it — several of them send referral traffic and put your pages in front
+of people actively looking for what you publish.
+
+The lists live as data beside the presets (`presets/lists/*.txt`) and are read through
+[rule sources](../configuration/sources.md), so they can be reviewed as lists, consumed by
+anything else that wants them, and updated without waiting on a release.
+
+### `ai-crawlers.yml`
+
+Blocks training and dataset collection: `GPTBot`, `ClaudeBot`, `CCBot`, `Google-Extended`,
+`Applebot-Extended`, `Bytespider`, `Amazonbot`, `Meta-ExternalAgent`, `Diffbot` and others.
+The safer half of the question — start here.
+
+### `ai-crawlers-challenge.yml`
+
+The same list, served an interstitial instead of a refusal. Friction rather than a hard no.
+
+!!! warning "Requires a configured `challenge:` section"
+    `response: challenge` needs `challenge.secret` and a provider, and the firewall refuses
+    to start without them. See [Challenge Responses](../plugins/challenges.md). Use
+    `ai-crawlers.yml` if you have not set that up.
+
+### `ai-answer-engines.yml`
+
+Blocks `PerplexityBot`, `ChatGPT-User`, `OAI-SearchBot`, `Claude-User`, `YouBot`,
+`DuckAssistBot` and similar.
+
+!!! danger "This one has a traffic cost"
+    Blocking answer engines is a business decision, not a security one. Measure before you
+    make it — run in log mode for a week and look at what they are actually doing:
+
+    ```yaml
+    global:
+      mode: log
+    ```
+
+    `mode: log` is **global**. It stops every other rule from enforcing too, so do it
+    deliberately on staging or during a quiet window rather than leaving it on. There is no
+    log-only *preset*, precisely because a file you include alongside your other rules
+    should not be able to switch enforcement off for all of them.
+
+### What these cannot do
+
+User-agent matching is a courtesy, not a control. Anything that wants to ignore it changes
+its UA string and never appears again. These presets stop well-behaved crawlers that
+identify themselves honestly; they do not stop scraping. Pair them with `robots.txt`, which
+several of these do honour.
+
+### Do not confuse these with search indexing
+
+`Google-Extended` is training; **`Googlebot` is search indexing**, and blocking it
+deindexes the site. Likewise `Applebot-Extended` versus `Applebot`, which powers Siri and
+Spotlight. Neither preset touches the search crawlers, and there are tests asserting that.
 
 ## `malicious-urls.yml`
 
