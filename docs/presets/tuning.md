@@ -161,3 +161,21 @@ are blocked. Blocking the directory outright takes every image and document with
 **`/admin` prefix matching.** `path@starts_with:/admin/` plus an exact `path:/admin` is
 deliberate — it means `/administrative-services` and `/news/admin-appointed` keep working,
 which a bare `path@contains:/admin` would break.
+## Search crawler allow: what to check
+
+**The scope is the safety.** `search-bots.yml` is only defensible because the allow does
+not cover the admin surface. If you copy it and drop the path exclusion, you have published
+a firewall bypass that anyone can use with `curl -A Googlebot`.
+
+**Add your own admin path.** The exclusion knows about WordPress and Drupal. A custom admin
+route, a headless CMS endpoint, or an API you do not want crawled needs adding to the same
+rule.
+
+**Watch the `-Extended` names.** `Applebot` and `Applebot-Extended` are different crawlers
+that mean opposite things, and one contains the other as a substring. The preset excludes
+`-Extended` explicitly for this reason. If you add a crawler to the list by hand, check
+whether its name is a prefix of something you do not want to allow.
+
+**Google-Extended is not Googlebot.** Blocking `Googlebot` deindexes the site; blocking
+`Google-Extended` only opts out of training collection. They are on different lists here
+on purpose.

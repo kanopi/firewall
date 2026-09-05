@@ -73,6 +73,29 @@ curl -i "http://localhost:8080/search?q=admin"
 
 # From an allowed address, /admin should pass
 curl -i --interface 203.0.113.9 http://localhost:8080/admin
+## Testing search-bots.yml
+
+```bash
+# Should be allowed through on public content (200, even with block rules on)
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" http://localhost:8080/blog/a-post
+curl -i -A "Mozilla/5.0 (compatible; bingbot/2.0)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (compatible; Applebot/0.1)" http://localhost:8080/
+
+# The bypass must stop at the admin surface — these should still be blocked
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1)" http://localhost:8080/wp-admin/
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1)" http://localhost:8080/wp-login.php
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1)" http://localhost:8080/user/login
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1)" http://localhost:8080/admin
+
+# Public lookalikes should stay crawlable
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1)" http://localhost:8080/administrative-services
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1)" http://localhost:8080/user/42
+
+# Training variants must NOT get the allow
+curl -i -A "Mozilla/5.0 (compatible; Applebot-Extended/1.0)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (compatible; Google-Extended/1.0)" http://localhost:8080/
+```
+
 ## Testing the AI crawler presets
 
 ```bash
