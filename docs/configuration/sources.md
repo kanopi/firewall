@@ -53,9 +53,11 @@ values a plugin wants needs nothing but an `upstream`.
 
 ## Every option
 
+### On the source
+
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `upstream` | string | *required* | File path or URL the list is read from |
+| `upstream` | string or map | *required* | Where the list lives and how to ask for it — see [Upstreams](#upstreams) |
 | `name` | string | derived from `upstream` | Used in logs, errors, and match attribution |
 | `format` | enum | inferred from extension, else `txt` | `txt`, `json`, `ndjson`, `yaml`, `csv`, `tsv` |
 | `compression` | enum | inferred from extension, else `none` | `none`, `gzip` |
@@ -67,16 +69,172 @@ values a plugin wants needs nothing but an `upstream`.
 | `ttl` | int | `KANOPI_FIREWALL_CACHE_TTL`, else 3600 | Seconds before the cached copy is revalidated |
 | `on_error` | enum | `last_known_good` | `last_known_good`, `fail_open`, `abort` |
 | `required` | bool | `false` | Abort rather than degrade when this source fails |
-| `headers` | bool | `true` | CSV/TSV: treat the first row as column names |
+| `header_row` | bool | `true` | CSV/TSV: treat the first row as column names |
 | `comment` | string | `#` | Text formats: strip from this marker to end of line |
 | `delimiter` | string | `,` for csv, tab for tsv | CSV/TSV field delimiter |
 
-A bare string is shorthand for `{upstream: ...}`:
+### On the upstream
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `url` | string | *required* | File path or URL the list is read from |
+| `method` | enum | `GET` | `GET`, `POST`, or `HEAD` |
+| `headers` | map | `{}` | Extra request headers |
+| `auth` | map | none | Credentials — see [Authentication](#authentication) |
+| `body` | string | none | Request body, for methods that take one |
+| `timeout` | float | `KANOPI_FIREWALL_CACHE_TIMEOUT`, else 5.0 | Seconds to wait |
+| `max_redirects` | int | `5` | Redirect hops to follow |
+| `allow_insecure` | bool | `false` | Permit credentials over plain `http://` |
+
+A bare string is shorthand for a source with nothing but an upstream, and an upstream with
+nothing but a URL. These three are the same source:
 
 ```yaml
 sources:
   - "{config_dir}/lists/tor-exits.txt"
+
+  - upstream: "{config_dir}/lists/tor-exits.txt"
+
+  - upstream:
+      url: "{config_dir}/lists/tor-exits.txt"
 ```
+
+---
+
+## Upstreams
+
+Most upstreams are a bare location, so `upstream` takes a string. When the request needs
+more than a URL, the same key takes a map instead:
+
+```yaml
+- name: private-feed
+  upstream:
+    url: https://feeds.example.com/v1/blocklist.json
+    method: POST
+    body: '{"scope":"active"}'
+    headers:
+      Content-Type: application/json
+      X-Account: "12345"
+    auth:
+      type: bearer
+      token: "%env(FEED_TOKEN)%"
+    timeout: 10
+  format: json
+  select: "results.*"
+  template: "{value[address]}"
+  validate: cidr
+```
+
+Everything about *reaching* the list lives under `upstream`; everything else on the source
+is about the list itself. That split is also why the CSV first-row option is
+`header_row` — `headers` under `upstream` is unambiguously request headers.
+
+Header values are stripped of newlines, since one would otherwise let an injected value
+start a header of its own.
+
+---
+
+## Authentication
+
+`upstream.auth` covers the four shapes feeds actually use.
+
+=== "Bearer token"
+
+    ```yaml
+    upstream:
+      url: https://feeds.example.com/v1/list.json
+      auth:
+        type: bearer
+        token: "%env(FEED_TOKEN)%"
+    ```
+
+    Sends `Authorization: Bearer <token>`.
+
+=== "Basic"
+
+    ```yaml
+    upstream:
+      url: https://feeds.example.com/v1/list.json
+      auth:
+        type: basic
+        username: "%env(FEED_USER)%"
+        password: "%env(FEED_PASSWORD)%"
+    ```
+
+    Sends `Authorization: Basic <base64>`.
+
+=== "API key header"
+
+    ```yaml
+    upstream:
+      url: https://feeds.example.com/v1/list.json
+      auth:
+        type: header
+        name: X-API-Key
+        value: "%env(FEED_KEY)%"
+    ```
+
+=== "Query parameter"
+
+    ```yaml
+    upstream:
+      url: https://feeds.example.com/v1/list.json
+      auth:
+        type: query
+        name: api_key
+        value: "%env(FEED_KEY)%"
+    ```
+
+    Appended to the request URL, and scrubbed from anything the firewall prints.
+
+!!! tip "Keep the secret out of the config file"
+    `%env(...)%` is resolved at load time, so credentials can live in the environment
+    rather than in a file that ends up in version control. See
+    [Environment Variables](environment-variables.md).
+
+### Credentials never reach a log
+
+Every place the firewall shows an upstream — log context, exception messages, CLI output,
+the plugin's own debug dump of its metadata — shows a redacted form:
+
+```
+https://reader:hunter2@example.org/list.txt   →  https://***@example.org/list.txt
+https://example.org/list?api_key=s3cr3t       →  https://example.org/list?api_key=***
+```
+
+Redaction runs whether or not `auth` is declared, because a URL pasted straight in can
+carry a token on its own. Parameters named `token`, `key`, `api_key`, `access_token`,
+`auth`, `password`, `secret`, `signature` and similar are all scrubbed.
+
+### Plain `http://` is refused
+
+A credential sent over plain http travels in clear text, so declaring one on an `http://`
+upstream is an error. An operator on a trusted internal network can say so explicitly:
+
+```yaml
+upstream:
+  url: http://internal.example/list.txt
+  auth:
+    type: bearer
+    token: "%env(FEED_TOKEN)%"
+  allow_insecure: true
+```
+
+### Redirects do not carry credentials off-origin
+
+Redirects are followed by hand rather than by PHP's `follow_location`, which reuses the
+whole request context on every hop — so a redirect to another host would resend your
+`Authorization` header to whoever answered it. When a hop changes scheme, host, or port,
+both `auth` and any `headers` you set are dropped before the next request. An API key
+header is a credential whatever it is called.
+
+`max_redirects: 0` disables following altogether.
+
+### Rotating a credential does not invalidate the cache
+
+The cache key covers everything that can change *what comes back* — URL, method, headers,
+body — but deliberately not the credential. Rotating a token does not change the list it
+fetches, and re-decoding every source on a key rotation would be pure waste.
 
 ---
 
@@ -148,8 +306,8 @@ publish this.
 
 ### `csv` and `tsv` — delimited rows
 
-With `headers: true` (the default) each row becomes a map keyed by column name. With
-`headers: false` rows stay numerically indexed and you address columns by position.
+With `header_row: true` (the default) each row becomes a map keyed by column name. With
+`header_row: false` rows stay numerically indexed and you address columns by position.
 
 ```csv
 asn,org,country
@@ -165,6 +323,9 @@ asn,org,country
 ```
 
 → `["asn:13335", "asn:16509"]`
+
+With `header_row: false` the same file is `template: "asn:{value[0]}"`, addressing columns
+by index.
 
 ### Compression
 
@@ -262,7 +423,7 @@ feed publishes those. So a template is the normal case, not the exception.
 | a text line, or any scalar | `{value}` |
 | a JSON/YAML object | `{value[ip_prefix]}` |
 | a CSV row with headers | `{value[asn]}` |
-| a CSV row without headers | `{value[0]}` |
+| a CSV row with `header_row: false` | `{value[0]}` |
 | nested | `{value[geo][country]}` |
 | whichever key exists | `{value[ip_prefix\|ipv6_prefix]}` |
 
@@ -641,6 +802,14 @@ to surprise you.
 **A large list is scanned linearly.** `IpAddress` walks its rule list per request. That is
 fine for hundreds of entries; measure before pointing a plugin at many thousands, and
 prefer `where` to cut a document down to the part you actually need.
+
+**`headers` and `header_row` are different things.** `upstream.headers` are request
+headers. `header_row` is the CSV/TSV option for whether the first row names the columns.
+They sit at different levels for exactly that reason.
+
+**A sync job needs the credentials too.** `bin/firewall-sources` is a separate process
+from your application, so a token in your web server's environment is not automatically
+present in cron. See [Syncing Rule Sources](../guides/syncing-sources.md#credentials).
 
 **Declare `format` when the extension lies.** Inference reads the extension and falls back
 to `txt`. An endpoint like `https://example.org/v1/ranges` serving JSON needs

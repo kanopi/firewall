@@ -176,7 +176,7 @@ final class SourceLoader
 
         $this->getLogger()->debug('Source loaded', [
             'source' => $sourceDefinition->name,
-            'upstream' => $sourceDefinition->upstream,
+            'upstream' => $sourceDefinition->displayUpstream(),
             'entries' => count($entries),
         ]);
 
@@ -318,7 +318,7 @@ final class SourceLoader
         throw new SourceException(sprintf(
             'Source "%s": no fetcher handles "%s".',
             $sourceDefinition->name,
-            $sourceDefinition->upstream
+            $sourceDefinition->displayUpstream()
         ));
     }
 

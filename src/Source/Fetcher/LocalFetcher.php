@@ -43,7 +43,7 @@ final class LocalFetcher implements FetcherInterface
      */
     public function fetch(SourceDefinition $sourceDefinition, array $validators = []): FetchResult
     {
-        $path = $sourceDefinition->upstream;
+        $path = $sourceDefinition->upstream->url;
 
         if (!is_file($path) || !is_readable($path)) {
             throw new SourceException(sprintf(

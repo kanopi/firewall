@@ -171,10 +171,10 @@ class SourceLoaderTest extends AbstractTestCase
                 ['template' => 'asn:{value[asn]}'],
                 ['asn:13335', 'asn:16509'],
             ],
-            'csv without headers' => [
+            'csv without a header row' => [
                 'asns2.csv',
                 "13335,CLOUDFLARENET",
-                ['headers' => false, 'template' => 'asn:{value[0]}'],
+                ['header_row' => false, 'template' => 'asn:{value[0]}'],
                 ['asn:13335'],
             ],
             'tsv' => [

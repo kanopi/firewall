@@ -51,7 +51,7 @@ class SourceDefinitionTest extends AbstractTestCase
     public function testUpstreamIsRequired(): void
     {
         $this->expectException(SourceException::class);
-        $this->expectExceptionMessage('missing a non-empty "upstream"');
+        $this->expectExceptionMessage('missing an "upstream"');
 
         SourceDefinition::fromArray(['name' => 'nowhere']);
     }

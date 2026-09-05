@@ -12,7 +12,6 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Source;
 
 use Kanopi\Firewall\Exception\SourceException;
-use Kanopi\Firewall\Utility\Path;
 
 /**
  * One declared `metadata.sources` entry, validated.
@@ -49,8 +48,8 @@ final class SourceDefinition
     /**
      * @param string $name
      *   Identifier used in logs, errors, and match attribution.
-     * @param string $upstream
-     *   Absolute path, relative path, or URL the list is read from.
+     * @param SourceUpstream $upstream
+     *   Where the list lives and how to ask for it.
      * @param string $format
      *   One of self::FORMATS.
      * @param string $compression
@@ -71,7 +70,7 @@ final class SourceDefinition
      *   One of self::ERROR_POLICIES.
      * @param bool $required
      *   When true, a failure aborts regardless of $onError.
-     * @param bool $headers
+     * @param bool $headerRow
      *   CSV/TSV only: treat the first row as column names.
      * @param string $comment
      *   Text formats only: strip from this marker to end of line.
@@ -80,7 +79,7 @@ final class SourceDefinition
      */
     public function __construct(
         public readonly string $name,
-        public readonly string $upstream,
+        public readonly SourceUpstream $upstream,
         public readonly string $format = 'txt',
         public readonly string $compression = 'none',
         public readonly ?string $select = null,
@@ -91,7 +90,7 @@ final class SourceDefinition
         public readonly ?int $ttl = null,
         public readonly string $onError = 'last_known_good',
         public readonly bool $required = false,
-        public readonly bool $headers = true,
+        public readonly bool $headerRow = true,
         public readonly string $comment = '#',
         public readonly ?string $delimiter = null,
     ) {
@@ -113,23 +112,33 @@ final class SourceDefinition
      */
     public static function fromArray(array $declaration, int $index = 0): self
     {
-        $upstream = $declaration['upstream'] ?? null;
-
-        if (!is_string($upstream) || trim($upstream) === '') {
+        if (!array_key_exists('upstream', $declaration)) {
             throw new SourceException(
-                sprintf('Source at index %d is missing a non-empty "upstream".', $index)
+                sprintf('Source at index %d is missing an "upstream".', $index)
             );
         }
 
-        $name = $declaration['name'] ?? null;
-        $name = is_string($name) && trim($name) !== '' ? trim($name) : self::deriveName($upstream, $index);
+        $declaredUpstream = $declaration['upstream'];
 
-        $format = self::choice($declaration, 'format', self::FORMATS, self::inferFormat($upstream), $name);
+        // The name is wanted for every error message below, including the
+        // upstream's own, so it is derived from the raw declaration first.
+        $url = is_string($declaredUpstream)
+            ? $declaredUpstream
+            : (is_array($declaredUpstream) && is_string($declaredUpstream['url'] ?? null)
+                ? $declaredUpstream['url']
+                : '');
+
+        $name = $declaration['name'] ?? null;
+        $name = is_string($name) && trim($name) !== '' ? trim($name) : self::deriveName($url, $index);
+
+        $sourceUpstream = SourceUpstream::fromDeclaration($declaredUpstream, $name);
+
+        $format = self::choice($declaration, 'format', self::FORMATS, self::inferFormat($sourceUpstream->url), $name);
         $compression = self::choice(
             $declaration,
             'compression',
             self::COMPRESSIONS,
-            self::inferCompression($upstream),
+            self::inferCompression($sourceUpstream->url),
             $name
         );
         $onError = self::choice($declaration, 'on_error', self::ERROR_POLICIES, 'last_known_good', $name);
@@ -184,7 +193,7 @@ final class SourceDefinition
 
         return new self(
             name: $name,
-            upstream: trim($upstream),
+            upstream: $sourceUpstream,
             format: $format,
             compression: $compression,
             select: $select,
@@ -195,10 +204,26 @@ final class SourceDefinition
             ttl: $ttl,
             onError: $onError,
             required: (bool) ($declaration['required'] ?? false),
-            headers: (bool) ($declaration['headers'] ?? true),
+            headerRow: (bool) ($declaration['header_row'] ?? true),
             comment: is_string($declaration['comment'] ?? null) ? $declaration['comment'] : '#',
             delimiter: is_string($declaration['delimiter'] ?? null) ? $declaration['delimiter'] : null,
         );
+    }
+
+    /**
+     * The upstream as it is safe to show.
+     *
+     * Used everywhere an upstream reaches a log line, an exception message, or
+     * CLI output. A URL can carry a credential even when no `auth` block is
+     * declared — somebody pastes a tokenised feed URL straight in — so this is
+     * applied unconditionally rather than only when `auth` is set.
+     *
+     * @return string
+     *   The upstream with any credential replaced by `***`.
+     */
+    public function displayUpstream(): string
+    {
+        return $this->upstream->display();
     }
 
     /**
@@ -209,7 +234,7 @@ final class SourceDefinition
      */
     public function isRemote(): bool
     {
-        return Path::looksLikeUrl($this->upstream);
+        return $this->upstream->isRemote();
     }
 
     /**
@@ -228,7 +253,9 @@ final class SourceDefinition
      *
      * Keyed on the upstream and every option that changes the decoded result,
      * so editing a `select` or `template` invalidates the cache without the
-     * upstream having to change.
+     * upstream having to change. Credentials are deliberately excluded:
+     * rotating a token does not change the list it fetches, and re-decoding
+     * every source on a key rotation would be pure waste.
      *
      * @return string
      *   A hex digest.
@@ -236,14 +263,14 @@ final class SourceDefinition
     public function fingerprint(): string
     {
         return hash('sha256', serialize([
-            $this->upstream,
+            $this->upstream->fingerprintParts(),
             $this->format,
             $this->compression,
             $this->select,
             $this->where,
             $this->template,
             $this->validate,
-            $this->headers,
+            $this->headerRow,
             $this->comment,
             $this->delimiter,
         ]));

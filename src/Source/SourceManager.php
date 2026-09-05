@@ -182,7 +182,7 @@ final class SourceManager
             if ($sourceDefinition->mustAbortOnError()) {
                 $this->getLogger()->error('Required source failed to load', [
                     'source' => $sourceDefinition->name,
-                    'upstream' => $sourceDefinition->upstream,
+                    'upstream' => $sourceDefinition->displayUpstream(),
                     'reason' => $sourceException->getMessage(),
                 ]);
 
@@ -195,7 +195,7 @@ final class SourceManager
                 if ($cached !== null) {
                     $this->getLogger()->error('Source failed to load; using last known good copy', [
                         'source' => $sourceDefinition->name,
-                        'upstream' => $sourceDefinition->upstream,
+                        'upstream' => $sourceDefinition->displayUpstream(),
                         'reason' => $sourceException->getMessage(),
                         'entries' => count($cached),
                     ]);
@@ -206,7 +206,7 @@ final class SourceManager
 
             $this->getLogger()->error('Source failed to load — its entries are NOT active', [
                 'source' => $sourceDefinition->name,
-                'upstream' => $sourceDefinition->upstream,
+                'upstream' => $sourceDefinition->displayUpstream(),
                 'reason' => $sourceException->getMessage(),
                 'on_error' => $sourceDefinition->onError,
             ]);

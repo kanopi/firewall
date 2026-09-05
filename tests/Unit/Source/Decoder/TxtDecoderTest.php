@@ -18,7 +18,12 @@ class TxtDecoderTest extends AbstractTestCase
      */
     private function definition(string $comment = '#'): SourceDefinition
     {
-        return new SourceDefinition(name: 'list', upstream: '/tmp/list.txt', format: 'txt', comment: $comment);
+        return SourceDefinition::fromArray([
+            'name' => 'list',
+            'upstream' => '/tmp/list.txt',
+            'format' => 'txt',
+            'comment' => $comment,
+        ]);
     }
 
     /**

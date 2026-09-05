@@ -16,15 +16,15 @@ class CsvDecoderTest extends AbstractTestCase
     /**
      * Build a definition with delimiter options.
      */
-    private function definition(string $format = 'csv', bool $headers = true, ?string $delimiter = null): SourceDefinition
+    private function definition(string $format = 'csv', bool $headerRow = true, ?string $delimiter = null): SourceDefinition
     {
-        return new SourceDefinition(
-            name: 'rows',
-            upstream: '/tmp/rows.csv',
-            format: $format,
-            headers: $headers,
-            delimiter: $delimiter
-        );
+        return SourceDefinition::fromArray([
+            'name' => 'rows',
+            'upstream' => '/tmp/rows.csv',
+            'format' => $format,
+            'header_row' => $headerRow,
+            'delimiter' => $delimiter,
+        ]);
     }
 
     /**
@@ -46,9 +46,9 @@ class CsvDecoderTest extends AbstractTestCase
     }
 
     /**
-     * Without headers, rows stay numerically indexed so fields are positional.
+     * Without a header row, rows stay numerically indexed so fields are positional.
      */
-    public function testHeadersDisabledKeepsPositionalRows(): void
+    public function testHeaderRowDisabledKeepsPositionalRows(): void
     {
         $decoded = (new CsvDecoder())->decode("13335,CLOUDFLARENET", $this->definition('csv', false));
 

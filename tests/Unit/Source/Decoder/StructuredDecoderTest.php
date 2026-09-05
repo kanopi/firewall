@@ -21,7 +21,7 @@ class StructuredDecoderTest extends AbstractTestCase
      */
     private function definition(string $format): SourceDefinition
     {
-        return new SourceDefinition(name: 'feed', upstream: '/tmp/feed', format: $format);
+        return SourceDefinition::fromArray(['name' => 'feed', 'upstream' => '/tmp/feed', 'format' => $format]);
     }
 
     /**

@@ -16,8 +16,8 @@ use Kanopi\Firewall\Source\SourceDefinition;
 /**
  * Delimiter-separated rows, serving both `csv` and `tsv`.
  *
- * With `headers: true` each row decodes to a map keyed by column name, so a
- * template reaches fields as `{value[asn]}`. With `headers: false` rows stay
+ * With `header_row: true` each row decodes to a map keyed by column name, so a
+ * template reaches fields as `{value[asn]}`. With `header_row: false` rows stay
  * numerically indexed and fields are `{value[0]}`.
  */
 final class CsvDecoder implements DecoderInterface
@@ -54,7 +54,7 @@ final class CsvDecoder implements DecoderInterface
             return [];
         }
 
-        if (!$sourceDefinition->headers) {
+        if (!$sourceDefinition->headerRow) {
             return $rows;
         }
 

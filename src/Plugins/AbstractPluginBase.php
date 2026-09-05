@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Source\SourceAuth;
 use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\NestedArray;
@@ -121,17 +122,71 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
             $this->getLogger()->debug('Plugin initialized with config files', [
                 'plugin' => $this->getName(),
                 'config_files' => array_filter($files, is_string(...)),
-                'metadata' => $this->metadata,
+                'metadata' => $this->redactedMetadata(),
             ]);
         } else {
             $this->getLogger()->debug('Plugin initialized', [
                 'plugin' => $this->getName(),
-                'metadata' => $this->metadata,
+                'metadata' => $this->redactedMetadata(),
                 'config' => $this->config,
             ]);
         }
 
         $this->config = $this->mergeSourceEntries($entries, $this->config);
+    }
+
+    /**
+     * Metadata with source credentials removed, for logging.
+     *
+     * The debug lines below dump the whole metadata array, which for a source
+     * behind authentication would put a bearer token or password straight into
+     * the log. Nothing else in metadata is secret, so only `sources.*.upstream`
+     * is scrubbed — and it is replaced with the redacted URL so the line still
+     * says which list it is talking about.
+     *
+     * @return array<int|string, mixed>
+     *   Metadata safe to log.
+     */
+    protected function redactedMetadata(): array
+    {
+        $metadata = $this->metadata;
+
+        if (!isset($metadata['sources']) || !is_array($metadata['sources'])) {
+            return $metadata;
+        }
+
+        foreach ($metadata['sources'] as $index => $source) {
+            if (is_string($source)) {
+                $metadata['sources'][$index] = SourceAuth::redactUrl($source);
+                continue;
+            }
+
+            if (!is_array($source)) {
+                continue;
+            }
+
+            if (!array_key_exists('upstream', $source)) {
+                continue;
+            }
+
+            $upstream = $source['upstream'];
+
+            if (is_string($upstream)) {
+                $metadata['sources'][$index]['upstream'] = SourceAuth::redactUrl($upstream);
+                continue;
+            }
+
+            if (is_array($upstream)) {
+                unset($metadata['sources'][$index]['upstream']['auth']);
+                unset($metadata['sources'][$index]['upstream']['headers']);
+
+                if (is_string($upstream['url'] ?? null)) {
+                    $metadata['sources'][$index]['upstream']['url'] = SourceAuth::redactUrl($upstream['url']);
+                }
+            }
+        }
+
+        return $metadata;
     }
 
     /**

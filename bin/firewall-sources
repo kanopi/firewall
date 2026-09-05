@@ -200,7 +200,7 @@ foreach ($definitions as $definition) {
                 $cache->isFresh($definition, $meta) ? 'fresh' : 'stale'
             );
 
-        fwrite(STDOUT, sprintf("  %-28s %s (%s)\n", $definition->name, $definition->upstream, $state));
+        fwrite(STDOUT, sprintf("  %-28s %s (%s)\n", $definition->name, $definition->displayUpstream(), $state));
         continue;
     }
 

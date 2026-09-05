@@ -104,6 +104,27 @@ In offline mode:
 - Local files are still read normally. Syncing lists to disk and reading them from disk is
   the intended arrangement.
 
+## Credentials
+
+Sources behind authentication read their credentials from the configuration, and the
+recommended shape puts the secret in the environment rather than the file:
+
+```yaml
+upstream:
+  url: https://feeds.example.com/v1/list.json
+  auth:
+    type: bearer
+    token: "%env(FEED_TOKEN)%"
+```
+
+Which means **the sync command needs those variables too**. It is a separate process from
+your application, so a token exported by your web server's environment is not
+automatically present in a cron job or a deploy script. A source that authenticates fine
+in the request path and fails under cron is almost always this.
+
+Nothing the command prints contains a credential — upstream URLs are redacted before they
+reach stdout, stderr, or a log — so its output is safe to capture in CI.
+
 ## Cron
 
 Match the interval to how fast the upstream actually moves, not to how often you would
@@ -112,8 +133,11 @@ user agents changes when someone edits it.
 
 ```cron
 # Refresh firewall lists every six hours
-0 */6 * * * cd /srv/app && vendor/bin/firewall-sources config/firewall.yml --quiet
+0 */6 * * * cd /srv/app && FEED_TOKEN=... vendor/bin/firewall-sources config/firewall.yml --quiet
 ```
+
+Better still, source the same environment file your application uses rather than putting
+secrets in the crontab, where they are readable by anyone who can list it.
 
 `--quiet` reports only failures, so cron mails you when something breaks and stays silent
 otherwise.
