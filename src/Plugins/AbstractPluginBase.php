@@ -17,6 +17,7 @@ use Kanopi\Firewall\Source\SourceAuth;
 use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\NestedArray;
+use Kanopi\Firewall\Utility\RuleDiagnostics;
 use Kanopi\Firewall\Utility\Path;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -141,6 +142,54 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
         }
 
         $this->config = $this->mergeSourceEntries($entries, $this->config);
+        $this->reportUnusableRules();
+    }
+
+    /**
+     * Variable roots this plugin's rules may address.
+     *
+     * Returning a non-empty list opts the plugin into rule checking at
+     * construction: a rule naming something outside it matches nothing, and
+     * saying so is the difference between a five-second fix and an afternoon.
+     *
+     * The default is empty, which disables checking. That is correct for
+     * plugins whose `config` is not a rule list at all — `IpAddress` takes bare
+     * addresses, `VulnerabilityScore` a nested scoring tree — where every entry
+     * would otherwise be reported as an unknown variable.
+     *
+     * @return array<int, string>
+     *   Known variable roots, or an empty array to skip checking.
+     */
+    protected function knownRuleVariables(): array
+    {
+        return [];
+    }
+
+    /**
+     * Report rules that cannot match anything, and repair the ones that can be.
+     *
+     * Runs once per plugin instance at construction rather than per request:
+     * this is a configuration problem, and a configuration problem should be
+     * reported when the configuration is read.
+     */
+    protected function reportUnusableRules(): void
+    {
+        $known = $this->knownRuleVariables();
+
+        if ($known === [] || $this->config === [] || !array_is_list($this->config)) {
+            return;
+        }
+
+        $result = RuleDiagnostics::inspect($this->config, $known);
+        $this->config = $result['rules'];
+
+        foreach ($result['issues'] as $issue) {
+            $this->getLogger()->warning('Firewall rule will not match anything', [
+                'plugin' => $this->getName(),
+                'rule' => $issue['rule'],
+                'reason' => $issue['reason'],
+            ]);
+        }
     }
 
     /**

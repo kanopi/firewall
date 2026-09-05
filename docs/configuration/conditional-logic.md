@@ -91,3 +91,44 @@ Combine multiple conditions with logical operators:
         - "header.authorization@exists"
         - "query.api_key@exists"
 ```
+
+## When a rule does not match
+
+A rule the evaluator cannot interpret matches nothing. For a `block` plugin that is
+indistinguishable from a rule which is working and finding nothing, so the firewall says so
+at construction rather than leaving you to guess:
+
+```
+firewall.WARNING: Firewall rule will not match anything
+    {"plugin":"User Agent","rule":"automatd:true",
+     "reason":"Unknown variable \"automatd\" — did you mean \"automated\"? This rule matches nothing."}
+```
+
+Three shapes account for nearly all of it.
+
+**A misspelled or unknown variable.** Each plugin knows its own vocabulary, so the warning
+names the near miss where there is one, and lists the alternatives where there is not.
+
+**A rule that is not rule-shaped.** A bare string with no value, operator, or comparison —
+`"nonsense"` — cannot be parsed into anything.
+
+**The YAML map shape.** This is the one that catches people, because it is what YAML looks
+like and it reads as obviously correct:
+
+```yaml
+config:
+  - automated: true       # a map — NOT the string "automated:true"
+```
+
+That parses to `{"automated": true}`, which is neither a group nor a structured rule. The
+intent is unambiguous, so it is **accepted** and read as `automated:true` — and reported,
+so the config gets corrected rather than silently carried. Quote it:
+
+```yaml
+config:
+  - "automated:true"
+```
+
+Checking runs once when the plugin is constructed, not per request, and only for plugins
+whose `config` is a rule list. `IpAddress` takes bare addresses and `VulnerabilityScore` a
+nested scoring tree, so neither is checked.

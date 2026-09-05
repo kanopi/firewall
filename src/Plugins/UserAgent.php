@@ -618,4 +618,15 @@ class UserAgent extends AbstractPluginBase
 
         return is_string($data) ? $data : null;
     }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Mirrors the switch in `getValue()`. `automated` is listed first because
+     * it is the one people reach for and the one most often misspelled.
+     */
+    protected function knownRuleVariables(): array
+    {
+        return ['automated', 'bot', 'device', 'client', 'os', 'brand', 'model'];
+    }
 }
