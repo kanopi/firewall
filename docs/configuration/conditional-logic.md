@@ -48,6 +48,22 @@ Quick and readable syntax for common conditions:
 - `less_than_or_equal` (<=)
 - `exists`
 
+`exists` is the one operator that takes **no value** — it asks only whether the request
+carried the variable at all, so there is nothing after the operator name:
+
+```yaml
+- "query.cmd@exists"              # the parameter is present, whatever its value
+- "!header.authorization@exists"  # the header is absent
+- "query.flag@exists"             # `?flag=` counts as present
+```
+
+The shorthand comparisons carry no colon either, and are written with or without spaces:
+
+```yaml
+- "client.version <= 10"
+- "query.n>=5"
+```
+
 ## 2. Complex Format
 
 Detailed configuration with full control:

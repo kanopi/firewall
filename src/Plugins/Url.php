@@ -77,6 +77,8 @@ class Url extends AbstractPluginBase
             'segments' => $segments,
         ]));
 
+        $isHeader = false;
+
         switch (strtolower((string) $segments[0])) {
             case 'method':
                 return $request->getMethod();
@@ -107,6 +109,14 @@ class Url extends AbstractPluginBase
 
             case 'header':
                 $data = $request->headers->all();
+                $isHeader = true;
+                // Header names are case-insensitive by spec, and Symfony
+                // lowercases them on the way in. Without this, `header.User-Agent`
+                // — the natural way to write it — resolves to nothing.
+                $segments = array_map(
+                    strtolower(...),
+                    $segments
+                );
                 break;
 
             case 'cookie':
@@ -128,6 +138,30 @@ class Url extends AbstractPluginBase
             }
 
             $data = $data[$segment];
+        }
+
+        if ($isHeader && is_array($data)) {
+            // Symfony's HeaderBag stores every header as a *list* of values,
+            // because HTTP permits a field to appear more than once. Returning
+            // NULL for that array is what made every `header.*` rule match
+            // nothing at all, silently (#169). Fold repeats the way the spec
+            // does, so `header.user-agent` is the string it looks like.
+            //
+            // Deliberately limited to headers. An array under `query` or
+            // `post` — `?items[]=a&items[]=b` — is what the client actually
+            // sent, not a storage artefact, and flattening it would let a
+            // `contains` rule match across values the client never put
+            // together. Those keep resolving to NULL.
+            foreach ($data as $value) {
+                if ($value !== null && !is_scalar($value)) {
+                    return null;
+                }
+            }
+
+            return implode(', ', array_map(
+                static fn (mixed $value): string => (string) $value,
+                $data
+            ));
         }
 
         return is_string($data) ? $data : null;

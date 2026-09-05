@@ -168,7 +168,17 @@ trait EvaluateTrait
      */
     protected function evaluateSimpleStringRule(Request $request, string $rule): bool
     {
-        if (!str_contains($rule, ':')) {
+        // A rule is parseable when it carries a value (`variable:value`), an
+        // explicit operator (`variable@operator...`), or a shorthand
+        // comparison (`variable >= value`). Gating on ':' alone rejected the
+        // last two before the parser ever saw them, which silently killed
+        // every `@exists` rule and every shorthand comparison — both of them
+        // documented forms (#169).
+        if (
+            !str_contains($rule, ':')
+            && !str_contains($rule, '@')
+            && preg_match('/[<>]/', $rule) !== 1
+        ) {
             // Invalid format; return false to not block.
             return false;
         }
@@ -239,7 +249,9 @@ trait EvaluateTrait
         // Check for explicit @operator syntax
         if (str_contains($rule, '@')) {
             [$variable, $rest] = explode('@', $rule, 2);
-            [$operator, $value] = explode(':', $rest, 2);
+            // Value-less operators — `@exists` — have nothing after the
+            // operator name, so pad rather than leaving $value undefined.
+            [$operator, $value] = array_pad(explode(':', $rest, 2), 2, null);
         } elseif (preg_match('/^([^><:]+)\s*(>=|<=|>|<)\s*([^><]+)$/', $rule, $matchesMatch)) {
             // Shorthand comparison like "score>=42"
             [, $variable, $symbol, $value] = $matchesMatch;
@@ -253,14 +265,14 @@ trait EvaluateTrait
         // Handle multi-value splitting
         // Note: 'regex' is NOT included because regex patterns can contain commas (e.g., {1,2})
         $multiValueOps = ['in', 'matches_any', 'equals', 'contains', 'starts_with', 'ends_with'];
-        $value = trim($value);
-        if (str_contains($value, ',') && in_array($operator, $multiValueOps, true)) {
+        $value = $value === null ? null : trim($value);
+        if (is_string($value) && str_contains($value, ',') && in_array($operator, $multiValueOps, true)) {
             $value = array_map(trim(...), explode(',', $value));
         }
 
         return [
             'variable' => trim($variable),
-            'operator' => trim($operator),
+            'operator' => trim((string) $operator),
             'value' => $value,
             'negate' => $negate,
             'matches' => $matches,
@@ -459,6 +471,11 @@ trait EvaluateTrait
 
         $result = match ($operator) {
             'equals' => $requestValue === $value,
+            'not_equals' => $requestValue !== $value,
+            // Resolution returns NULL for a variable the request does not
+            // carry, so "not null" is exactly "present". An empty value —
+            // `?flag=` — is present, which is what the operator name claims.
+            'exists' => $requestValue !== null,
             'starts_with' => str_starts_with((string) $requestValue, (string) $value),
             'ends_with' => str_ends_with((string) $requestValue, (string) $value),
             'contains' => str_contains((string) $requestValue, (string) $value),
