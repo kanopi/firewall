@@ -44,6 +44,19 @@ final class ConfigLoader
     /** Maximum include depth to prevent accidental infinite recursion. */
     private const MAX_DEPTH = 20;
 
+    /**
+     * Inputs that parsed successfully but produced nothing usable.
+     *
+     * These are not exceptions. A YAML document that parses to a scalar is
+     * *valid* YAML — it just is not configuration — so throwing would abort a
+     * whole include chain over one stray file. Recording lets the offending
+     * input contribute nothing while everything around it still loads, and
+     * lets `Config` report it once a logger exists.
+     *
+     * @var array<int, array{file: string, message: string}>
+     */
+    private static array $loadErrors = [];
+
     /** @var array<string,true> Absolute file paths currently being included (circular guard). */
     private static array $includeStack = [];
 
@@ -73,11 +86,85 @@ final class ConfigLoader
      * @throws ConfigurationException
      *   If the configFilePath does not exist, includes cause circular references, or %env(...)% fails.
      */
+    /**
+     * Take the recorded parse failures, clearing them.
+     *
+     * `Config::loadFile()` drains this after every call so the failures land in
+     * the same list `Firewall::create()` already reports. A caller using
+     * `ConfigLoader` directly should drain it too, or the failures go unseen.
+     *
+     * @return array<int, array{file: string, message: string}>
+     *   One entry per input that parsed to something unusable.
+     */
+    public static function takeLoadErrors(): array
+    {
+        $errors = self::$loadErrors;
+        self::$loadErrors = [];
+
+        return $errors;
+    }
+
+    /**
+     * Describe a parse that produced something other than configuration.
+     *
+     * The overwhelmingly common cause is a rule *list* — newline-delimited
+     * addresses, user agents, or paths — being handed to a config loader.
+     * YAML folds those lines into one plain scalar, so the parse succeeds and
+     * the rules vanish. Naming that case in the message turns a silent empty
+     * rule list into an obvious mistake.
+     *
+     * @param mixed $data
+     *   Whatever the parse produced.
+     *
+     * @return string
+     *   Operator-readable reason.
+     */
+    private static function describeNonArrayParse(mixed $data): string
+    {
+        $type = get_debug_type($data);
+
+        if (is_string($data)) {
+            return sprintf(
+                'Parsed as a single %s, not a configuration mapping. A newline-delimited list folds '
+                . 'into one YAML scalar — if this is a rule list, load it through a plugin source '
+                . '(metadata.sources) rather than as configuration.',
+                $type
+            );
+        }
+
+        return sprintf('Parsed as %s, not a configuration mapping.', $type);
+    }
+
+    /**
+     * Record an input that parsed to something unusable.
+     *
+     * @param string $file
+     *   The input.
+     * @param mixed $data
+     *   What the parse produced.
+     */
+    private static function recordNonArrayParse(string $file, mixed $data): void
+    {
+        self::$loadErrors[] = [
+            'file' => $file,
+            'message' => self::describeNonArrayParse($data),
+        ];
+    }
+
     public static function parse(string $yaml, string $configFilePath, array $relativePathKeys = [], array $creatablePathKeys = []): array
     {
         $absOrigin = Path::looksLikeUrl($configFilePath) ? $configFilePath : Path::realOrGiven($configFilePath);
         $baseDir = \dirname($absOrigin);
         $data      = Yaml::parse($yaml) ?? [];
+
+        if (!is_array($data)) {
+            // Reached by remote `configs:` includes, where a URL serving a
+            // plain list used to raise a TypeError out of postProcess() —
+            // an Error, which loadFile()'s catch(\Exception) does not catch.
+            self::recordNonArrayParse($absOrigin, $data);
+
+            return [];
+        }
 
         return self::postProcess($data, $baseDir, $relativePathKeys, $absOrigin, 0, $creatablePathKeys);
     }
@@ -142,6 +229,11 @@ final class ConfigLoader
             $data = Yaml::parseFile($abs) ?? [];
 
             if (!is_array($data)) {
+                // An empty file parses to NULL and is coalesced to [] above, so
+                // it never lands here: "nothing in it" stays legitimate, and
+                // only a scalar or list document is reported.
+                self::recordNonArrayParse($abs, $data);
+
                 return [];
             }
 

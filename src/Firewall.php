@@ -147,6 +147,7 @@ final class Firewall
         Config::clearLoadErrors();
         $config = Config::load(array_merge([__DIR__ . '/../config/config.yml'], $configs), $overrides);
         $configLoadErrors = Config::getLoadErrors();
+        $configLoadWarnings = Config::getLoadWarnings();
 
         // Read the flag before the array_filter() below strips an explicit
         // `require_config: false` and makes it indistinguishable from unset.
@@ -173,6 +174,7 @@ final class Firewall
         // The logger only exists now, so this is the first moment a load
         // failure recorded above can actually reach an operator.
         self::reportConfigLoadFailures($configLoadErrors, $requireConfig);
+        self::reportConfigLoadWarnings($configLoadWarnings);
 
         // Every plugin reads `$request->getClientIp()`. Symfony only honors
         // proxy headers (X-Forwarded-For, Forwarded, X-Real-IP, …) when the
@@ -443,6 +445,33 @@ final class Firewall
                 $errors
             ))
         ));
+    }
+
+    /**
+     * Report config inputs that loaded, but not from where they should have.
+     *
+     * Warnings and failures are reported separately on purpose. A failure means
+     * rules are missing, which `global.require_config` may reasonably refuse to
+     * start over. A warning means the rules are present but stale — a remote
+     * include served from cache after the fetch failed. Escalating that to a
+     * failure would take a site down over a momentary DNS blip while a
+     * known-good copy sat on disk, which is the opposite of what the fallback
+     * exists to do.
+     *
+     * @param array<int, array{file: string, message: string}> $warnings
+     *   Degraded loads recorded by `Config::load()`.
+     */
+    protected static function reportConfigLoadWarnings(array $warnings): void
+    {
+        foreach ($warnings as $warning) {
+            LoggingFactory::logger()->warning(
+                'Firewall config loaded in a degraded state',
+                [
+                    'file' => $warning['file'],
+                    'reason' => $warning['message'],
+                ]
+            );
+        }
     }
 
     /**

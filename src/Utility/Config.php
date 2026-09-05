@@ -33,6 +33,19 @@ class Config
     private static array $loadErrors = [];
 
     /**
+     * Degraded loads recorded since the last `clearLoadErrors()`.
+     *
+     * Kept apart from `$loadErrors` because these inputs *did* load. The only
+     * entry today is a remote config served from a stale cache after the fetch
+     * failed — content that is real, just older than the TTL allows. Reporting
+     * that as a failure would let `global.require_config` refuse to start over
+     * a momentary DNS blip while a known-good copy sat on disk.
+     *
+     * @var array<int, array{file: string, message: string}>
+     */
+    private static array $loadWarnings = [];
+
+    /**
      * Loader function used for producing the configuration files and merging.
      *
      * Loading is lenient: an input that cannot be read or parsed contributes
@@ -163,15 +176,27 @@ class Config
      * @param float|null $timeout
      *   Timeout amount for remote connection. Null falls back to
      *   `KANOPI_FIREWALL_CACHE_TIMEOUT` or 5.0.
+     * @param int|null $maxStale
+     *   How far past the TTL a cached copy may still be served when the fetch
+     *   fails. Null falls back to `KANOPI_FIREWALL_CACHE_MAX_STALE`, and to
+     *   unbounded when that is not defined either.
      *
      * @return string|false
      *   Return file contents if allowed or false if ran into issues.
      */
-    private static function fileGetContents(string $url, ?string $cacheDir = null, ?int $ttl = null, ?float $timeout = null): string|false
-    {
+    private static function fileGetContents(
+        string $url,
+        ?string $cacheDir = null,
+        ?int $ttl = null,
+        ?float $timeout = null,
+        ?int $maxStale = null
+    ): string|false {
         $cacheDir ??= defined('KANOPI_FIREWALL_CACHE_DIR') ? (string) KANOPI_FIREWALL_CACHE_DIR : '/tmp/cache';
         $ttl ??= defined('KANOPI_FIREWALL_CACHE_TTL') ? intval(KANOPI_FIREWALL_CACHE_TTL) : 3600;
         $timeout ??= defined('KANOPI_FIREWALL_CACHE_TIMEOUT') ? floatval(KANOPI_FIREWALL_CACHE_TIMEOUT) : 5.0;
+        $maxStale ??= defined('KANOPI_FIREWALL_CACHE_MAX_STALE')
+            ? intval(KANOPI_FIREWALL_CACHE_MAX_STALE)
+            : null;
 
         if (!is_dir($cacheDir)) {
             mkdir($cacheDir, 0775, true);
@@ -189,12 +214,74 @@ class Config
         ]);
 
         $content = @file_get_contents($url, false, $context);
+
         if ($content === false) {
-            return false;
+            // The fetch failed, but a copy that once worked may be sitting
+            // right there. Discarding it drops the whole ruleset over a CDN
+            // 503 or a DNS blip — and for a `response: allow` include at
+            // negative weight, dropping it starts blocking the monitoring and
+            // deploy traffic it existed to let through. Serve it, and say so.
+            return self::serveStaleCache($url, $cacheFile, $maxStale);
         }
 
         file_put_contents($cacheFile, $content);
         return $content;
+    }
+
+    /**
+     * Fall back to a cached copy after a failed fetch.
+     *
+     * Deliberately does not touch the cache file's mtime. Restamping it would
+     * reset the TTL and hide how old the content is, so a permanently dead
+     * upstream would look healthy forever.
+     *
+     * @param string $url
+     *   The URL that could not be fetched.
+     * @param string $cacheFile
+     *   Where its last good copy would be.
+     * @param int|null $maxStale
+     *   Seconds past the TTL a copy may still be served, or NULL for unbounded.
+     *
+     * @return string|false
+     *   The stale contents, or FALSE when there is nothing usable to fall back to.
+     */
+    private static function serveStaleCache(string $url, string $cacheFile, ?int $maxStale): string|false
+    {
+        if (!file_exists($cacheFile)) {
+            return false;
+        }
+
+        $age = time() - (int) @filemtime($cacheFile);
+
+        if ($maxStale !== null && $age > $maxStale) {
+            self::recordLoadError($url, sprintf(
+                'Remote config could not be fetched and the cached copy is %ds old, beyond the %ds '
+                . 'allowed by KANOPI_FIREWALL_CACHE_MAX_STALE.',
+                $age,
+                $maxStale
+            ));
+
+            return false;
+        }
+
+        $stale = @file_get_contents($cacheFile);
+
+        if ($stale === false) {
+            self::recordLoadError(
+                $url,
+                'Remote config could not be fetched and its cached copy could not be read.'
+            );
+
+            return false;
+        }
+
+        self::recordLoadWarning($url, sprintf(
+            'Remote config could not be fetched; served a cached copy %ds old. '
+            . 'The rules are active, but they are not necessarily current.',
+            $age
+        ));
+
+        return $stale;
     }
 
     /**
@@ -210,15 +297,33 @@ class Config
     }
 
     /**
+     * Degraded loads recorded since the last `clearLoadErrors()` call.
+     *
+     * Separate from the error list because these are not failures. Serving a
+     * stale remote config is a *successful* load of older content — reporting
+     * it as an error would make `global.require_config` refuse to start over a
+     * transient CDN blip, while perfectly good config sat in the cache.
+     *
+     * @return array<int, array{file: string, message: string}>
+     *   One entry per input that loaded, but not from the source it names.
+     */
+    public static function getLoadWarnings(): array
+    {
+        return self::$loadWarnings;
+    }
+
+    /**
      * Discard recorded load failures.
      *
      * Call this before a `load()` you intend to inspect, so failures from an
      * earlier load (or from another firewall instance in the same process)
-     * are not attributed to it.
+     * are not attributed to it. Clears the warning list too, so a caller that
+     * already resets errors does not silently inherit stale warnings.
      */
     public static function clearLoadErrors(): void
     {
         self::$loadErrors = [];
+        self::$loadWarnings = [];
     }
 
     /**
@@ -240,6 +345,39 @@ class Config
     private static function recordLoadError(string $file, string $message): void
     {
         self::$loadErrors[] = ['file' => $file, 'message' => $message];
+    }
+
+    /**
+     * Record a config input that loaded, but in a degraded way.
+     *
+     * Recorded rather than logged for the same reason as `recordLoadError()`:
+     * config is read before a logger exists.
+     *
+     * @param string $file
+     *   The config input.
+     * @param string $message
+     *   What was degraded, in operator-readable terms.
+     */
+    private static function recordLoadWarning(string $file, string $message): void
+    {
+        self::$loadWarnings[] = ['file' => $file, 'message' => $message];
+    }
+
+    /**
+     * Move anything ConfigLoader recorded into this class's error list.
+     *
+     * ConfigLoader cannot reach `recordLoadError()`, and a document that parses
+     * to a scalar is not an exception it could throw without aborting an entire
+     * include chain. So it records, and this drains.
+     *
+     * @param string $file
+     *   The input being loaded, used when ConfigLoader named a nested include.
+     */
+    private static function drainLoaderErrors(string $file): void
+    {
+        foreach (ConfigLoader::takeLoadErrors() as $error) {
+            self::recordLoadError($error['file'] ?: $file, $error['message']);
+        }
     }
 
     /**
@@ -316,13 +454,24 @@ class Config
             try {
                 $contents = self::fileGetContents($file);
                 if ($contents === false) {
-                    self::recordLoadError($file, 'Remote config could not be fetched (network error, non-200 response, or timeout).');
+                    // fileGetContents() records the specific reason when a
+                    // cached copy existed but could not be used. Only describe
+                    // the failure generically when it said nothing.
+                    if (self::$loadErrors === []) {
+                        self::recordLoadError(
+                            $file,
+                            'Remote config could not be fetched (network error, non-200 response, or timeout).'
+                        );
+                    }
+
                     return [];
                 }
 
                 $config = ConfigLoader::parse($contents, $file, $replacementPaths, $creatablePaths);
             } catch (\Exception $exception) {
                 self::recordLoadError($file, $exception->getMessage());
+            } finally {
+                self::drainLoaderErrors($file);
             }
         } elseif (file_exists($file) && is_file($file) && !is_dir($file) && is_readable($file)) {
             try {
@@ -335,6 +484,8 @@ class Config
                 // processor — arrives here. Discarding it is what turned a
                 // broken ruleset into a firewall that allows everything (#78).
                 self::recordLoadError($file, $exception->getMessage());
+            } finally {
+                self::drainLoaderErrors($file);
             }
         } else {
             // No `else` used to exist at all: a mistyped path fell through
