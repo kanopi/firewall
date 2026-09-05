@@ -5,7 +5,7 @@ Conditions are evaluated in two places. Plugins evaluate them against an incomin
 evaluates the same syntax against a **record** from the list it is decoding — every
 operator, negation, and group below works there unchanged, with one difference worth
 knowing: a `where` list is AND, where a plugin's `config:` list is first-match-wins. See
-[Rule Sources](sources.md#where--filtering-records).
+[Rule Sources](sources.md#where-filtering-records).
 
 The firewall supports three formats for defining conditions:
 
