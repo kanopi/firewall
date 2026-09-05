@@ -1,0 +1,32 @@
+# AI answer engines and retrieval-on-demand crawlers
+#
+# These fetch a page because a user asked a question about it, then cite it.
+# Blocking them is a real decision with a real cost: some send referral traffic
+# and appear in answers your audience is reading.
+#
+# Kept apart from ai-crawlers.txt for exactly that reason. Measure before you
+# block — see the docs on running in log mode first.
+#
+# Matched as a substring of the User-Agent header, case-insensitively.
+#
+# Updated: 2026-09-05
+
+# Perplexity
+PerplexityBot
+Perplexity-User
+
+# OpenAI, on-demand rather than training
+ChatGPT-User
+OAI-SearchBot
+
+# Anthropic, on-demand
+Claude-User
+Claude-SearchBot
+
+# You.com
+YouBot
+
+# Others
+Meta-ExternalFetcher
+DuckAssistBot
+MistralAI-User

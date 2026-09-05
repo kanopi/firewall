@@ -1,0 +1,41 @@
+# AI Training Crawler Blocking
+#
+# Blocks the crawlers that collect pages to build training corpora. Blocking
+# these costs no referral traffic, which is what makes them the safer half of
+# the AI-crawler question.
+#
+# The list lives beside this file as data (lists/ai-crawlers.txt) rather than
+# inline, so it can be reviewed as a list, consumed by anything else that wants
+# it, and later pointed at a published URL without this preset changing shape.
+#
+# USAGE:
+#   configs:
+#     - "{presets_dir}/ai-crawlers.yml"
+#
+# TO ADD ANSWER ENGINES TOO (a separate decision — see the docs):
+#   plugins:
+#     - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+#       response: block
+#       enable: true
+#       metadata:
+#         sources:
+#           - upstream: "lists/ai-answer-engines.txt"
+#             template: "header.user-agent@contains:{value}"
+#
+# WHAT THIS CANNOT DO:
+# User-agent matching is a courtesy, not a control. Anything that wants to
+# ignore it changes its UA string and this preset never sees it again. It stops
+# well-behaved crawlers that identify themselves honestly; it does not stop
+# scraping. Pair it with robots.txt, which several of these do honour.
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -50
+    enable: true
+    metadata:
+      sources:
+        - name: ai-training-crawlers
+          upstream: "lists/ai-crawlers.txt"
+          template: "header.user-agent@contains:{value}"
+          validate: string

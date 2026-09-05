@@ -26,6 +26,10 @@ malicious requests.
 | `wordpress.yml` | WordPress-specific hardening. |
 | `drupal.yml` | Drupal hardening: version disclosure, installer routes, build artefacts, PHP under the files directory. Safe for any Drupal site. |
 | `drupal-admin.yml` | Blocks Drupal's `/admin` and authentication routes. Locks people out by design — pair it with an allow rule. |
+| `ai-crawlers.yml` | Blocks AI training and dataset crawlers. Reads `lists/ai-crawlers.txt`. |
+| `ai-crawlers-challenge.yml` | The same list, served an interstitial instead. Needs a `challenge:` section. |
+| `ai-answer-engines.yml` | Blocks AI answer engines. Has a referral-traffic cost — measure first. |
+| `lists/*.txt` | Curated data the presets above read through `metadata.sources`. |
 | `storage-pantheon.yml` | Storage wiring for Pantheon-hosted sites. |
 | `logging-pantheon.yml` | Logging wiring for Pantheon-hosted sites. |
 | `config.yml` | Convenience bundle of the two URL-pattern presets (`malicious-urls.yml` + `wordpress.yml`). No rate limiting or vulnerability scoring. |
