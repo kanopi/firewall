@@ -117,6 +117,14 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
                 ]);
             }
 
+            foreach (Config::getLoadWarnings() as $warning) {
+                $this->getLogger()->warning('Plugin config file loaded in a degraded state', [
+                    'plugin' => $this->getName(),
+                    'file' => $warning['file'],
+                    'reason' => $warning['message'],
+                ]);
+            }
+
             $this->warnLegacyListConfig();
 
             $this->getLogger()->debug('Plugin initialized with config files', [

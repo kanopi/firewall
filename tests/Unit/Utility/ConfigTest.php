@@ -747,11 +747,14 @@ class ConfigTest extends AbstractTestCase
     }
 
     /**
-     * Test fileGetContents() with expired cache
+     * An expired cache is served when the refetch fails, rather than discarded.
      *
-     * Tests that expired cache triggers new fetch (which will fail for fake URL)
+     * Previously this returned FALSE and the whole ruleset went with it. A CDN
+     * 503 or a DNS blip an hour after the last good fetch should not drop rules
+     * that are sitting on disk — and for a `response: allow` include it would
+     * start blocking the traffic that include existed to let through (#149).
      */
-    public function testFileGetContentsCacheExpiredTriggersNewFetch(): void
+    public function testExpiredCacheIsServedWhenTheRefetchFails(): void
     {
         $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_expired_' . uniqid();
         mkdir($this->tempCacheDir, 0775, true);
@@ -759,17 +762,118 @@ class ConfigTest extends AbstractTestCase
         $url = 'https://nonexistent-test-domain-12345.com/expired.yml';
         $oldContent = "old: data";
 
-        // Create an expired cache file (older than TTL)
         $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
         file_put_contents($cacheFile, $oldContent);
-        touch($cacheFile, time() - 7200); // 2 hours old
+        touch($cacheFile, time() - 7200); // Two hours old, well past the TTL.
 
+        Config::clearLoadErrors();
         $method = $this->getFileGetContentsMethod();
-        // Use 1 hour TTL, so cache is expired
         $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 1.0);
 
-        // Should return false because fetch fails for nonexistent domain
+        $this->assertSame($oldContent, $result);
+        $this->assertSame([], Config::getLoadErrors(), 'Serving stale content is not a failure.');
+
+        $warnings = Config::getLoadWarnings();
+        $this->assertCount(1, $warnings, 'A degraded load must still be reported.');
+        $this->assertStringContainsString('cached copy', $warnings[0]['message']);
+    }
+
+    /**
+     * With nothing cached there is nothing to fall back to, so it still fails.
+     */
+    public function testFailedFetchWithNoCacheStillFails(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_none_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        Config::clearLoadErrors();
+        $method = $this->getFileGetContentsMethod();
+        $result = $method->invoke(
+            null,
+            'https://nonexistent-test-domain-12345.com/never-fetched.yml',
+            $this->tempCacheDir,
+            3600,
+            1.0
+        );
+
         $this->assertFalse($result);
+        $this->assertSame([], Config::getLoadWarnings());
+    }
+
+    /**
+     * A staleness bound turns the fallback back into a hard failure, so an
+     * upstream that has been dead for a month cannot serve month-old rules
+     * indefinitely without anyone noticing.
+     */
+    public function testStaleFallbackRespectsTheMaximumAge(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_maxstale_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://nonexistent-test-domain-12345.com/too-old.yml';
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, 'old: data');
+        touch($cacheFile, time() - 86400); // A day old.
+
+        Config::clearLoadErrors();
+        $method = $this->getFileGetContentsMethod();
+
+        // Allowed to be an hour stale; it is a day old.
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 1.0, 3600);
+
+        $this->assertFalse($result);
+        $this->assertSame([], Config::getLoadWarnings());
+
+        $errors = Config::getLoadErrors();
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('beyond the', $errors[0]['message']);
+    }
+
+    /**
+     * Within the bound, the same copy is served.
+     */
+    public function testStaleFallbackServesWithinTheMaximumAge(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_instale_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://nonexistent-test-domain-12345.com/recent.yml';
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, 'old: data');
+        touch($cacheFile, time() - 7200); // Two hours old.
+
+        Config::clearLoadErrors();
+        $method = $this->getFileGetContentsMethod();
+
+        // Allowed to be a day stale.
+        $result = $method->invoke(null, $url, $this->tempCacheDir, 3600, 1.0, 86400);
+
+        $this->assertSame('old: data', $result);
+        $this->assertCount(1, Config::getLoadWarnings());
+    }
+
+    /**
+     * Serving stale content must not restamp the cache file. Restamping would
+     * reset the TTL and hide the age, so a permanently dead upstream would
+     * look healthy forever.
+     */
+    public function testServingStaleDoesNotRefreshTheCacheTimestamp(): void
+    {
+        $this->tempCacheDir = sys_get_temp_dir() . '/reflection_cache_mtime_' . uniqid();
+        mkdir($this->tempCacheDir, 0775, true);
+
+        $url = 'https://nonexistent-test-domain-12345.com/mtime.yml';
+        $cacheFile = $this->tempCacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, 'old: data');
+        $stamped = time() - 7200;
+        touch($cacheFile, $stamped);
+
+        Config::clearLoadErrors();
+        $method = $this->getFileGetContentsMethod();
+        $method->invoke(null, $url, $this->tempCacheDir, 3600, 1.0);
+
+        clearstatcache(true, $cacheFile);
+        $this->assertSame($stamped, filemtime($cacheFile));
     }
 
     /**
@@ -923,17 +1027,25 @@ class ConfigTest extends AbstractTestCase
 
         $method = $this->getFileGetContentsMethod();
 
-        // Test with TTL of 60 seconds - cache should be expired
+        // TTL of 60 seconds: the cache has expired, the refetch fails, and the
+        // stale copy is served with a warning. Since the fallback returns the
+        // same bytes a fresh cache would, the warning is what distinguishes the
+        // two cases now.
+        Config::clearLoadErrors();
         $result1 = $method->invoke(null, $url, $this->tempCacheDir, 60, 1.0);
-        $this->assertFalse($result1); // Cache expired, fetch fails
+        $this->assertEquals($content, $result1);
+        $this->assertCount(1, Config::getLoadWarnings(), 'Expired cache served stale.');
 
         // Refresh cache
         file_put_contents($cacheFile, $content);
         touch($cacheFile, time() - 90);
 
-        // Test with TTL of 120 seconds - cache should be valid
+        // TTL of 120 seconds: the cache is still valid, so nothing is fetched
+        // and nothing is degraded.
+        Config::clearLoadErrors();
         $result2 = $method->invoke(null, $url, $this->tempCacheDir, 120, 1.0);
-        $this->assertEquals($content, $result2); // Cache still valid
+        $this->assertEquals($content, $result2);
+        $this->assertSame([], Config::getLoadWarnings(), 'A valid cache is not a degraded load.');
     }
 
     /**

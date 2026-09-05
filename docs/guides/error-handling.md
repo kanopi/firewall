@@ -55,6 +55,7 @@ try {
 |---|---|---|
 | A `block` plugin matched a request (`mode: exception`) | `FirewallBlockedException` | The request you were meant to block proceeds. |
 | Startup validation failed — empty `challenge.secret`, unresolvable `challenge.provider`, or no trusted proxies with `require_trusted_proxies: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
+| A remote `configs:` include cannot be fetched, but a cached copy exists | **Nothing** — logged at `warning` | The firewall starts on the cached rules. They are active, but not necessarily current. |
 | Your config file is missing, unreadable, or malformed, with `require_config: true` | `ConfigurationException` | The firewall never started. **Nothing is filtered.** |
 | The same, with `require_config: false` (default) | **Nothing** — logged at `error` | The firewall starts with a partial ruleset, possibly an empty one that allows every request. |
 | The configured database storage cannot be reached | `StorageConnectionException` | The firewall never started. **Nothing is filtered.** |

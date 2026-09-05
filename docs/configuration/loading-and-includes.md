@@ -44,9 +44,71 @@ Remote files are cached locally to improve performance and reduce external depen
 define('KANOPI_FIREWALL_CACHE_DIR', '/var/cache/firewall');  // Default: /tmp/cache
 define('KANOPI_FIREWALL_CACHE_TTL', 7200);                   // Default: 3600 (1 hour)
 define('KANOPI_FIREWALL_CACHE_TIMEOUT', 10.0);               // Default: 5.0 seconds
+define('KANOPI_FIREWALL_CACHE_MAX_STALE', 86400);            // Default: unbounded
 
 \Kanopi\Firewall\Firewall::create([__DIR__ . '/config.yml'])->evaluate();
 ```
+
+### When the fetch fails
+
+A remote include that cannot be fetched **falls back to its cached copy, even after the
+TTL has expired**, and reports the fallback as a warning rather than an error:
+
+```
+firewall.WARNING: Firewall config loaded in a degraded state
+    {"file":"https://cdn.example.com/firewall/base-rules.yml",
+     "reason":"Remote config could not be fetched; served a cached copy 7412s old.
+               The rules are active, but they are not necessarily current."}
+```
+
+The alternative — discarding a copy that worked an hour ago because a CDN returned a 503 —
+drops the whole ruleset over a momentary failure. For a `response: block` include that
+fails open. For a `response: allow` include at negative weight it fails *closed*, and
+starts blocking the monitoring and deploy traffic the include existed to admit.
+
+Three things follow from this being a warning rather than an error:
+
+- It does **not** trip [`global.require_config`](global.md#requiring-the-config-to-load).
+  The config loaded; it is just older than you asked for. A transient DNS blip should not
+  refuse to start a site that has perfectly usable rules on disk.
+- The cache file's timestamp is **not** refreshed. Restamping would reset the TTL and hide
+  the age, so an upstream that has been dead for a month would look healthy.
+- Read it yourself with `Config::getLoadWarnings()`, alongside `getLoadErrors()`.
+
+With no cached copy to fall back to, the fetch failure stays an error and the include
+contributes nothing.
+
+`KANOPI_FIREWALL_CACHE_MAX_STALE` bounds how far past the TTL a copy may be served. Past
+that age the fallback becomes a hard failure and is reported as an error. It is unbounded
+by default, on the grounds that stale rules beat no rules — set it when you would rather
+be told loudly that an upstream has gone away.
+
+### When a file parses to something that is not configuration
+
+YAML folds a newline-delimited list into a single scalar, so a file like this **parses
+successfully** and yields no configuration at all:
+
+```
+216.144.248.16/28
+69.162.124.224/28
+```
+
+That is reported rather than passed over in silence:
+
+```
+firewall.ERROR: Firewall config file failed to load — its rules are NOT active
+    {"file":"/srv/app/config/ips.txt",
+     "reason":"Parsed as a single string, not a configuration mapping. A newline-delimited
+               list folds into one YAML scalar — if this is a rule list, load it through a
+               plugin source (metadata.sources) rather than as configuration."}
+```
+
+An **empty** file is still silent: a file with nothing in it, only comments, or an explicit
+`~` is legitimately no configuration, not a mistake. A YAML **sequence** still loads
+normally, since plugin rule files are sequences.
+
+A bad *include* costs only that include. The file that included it still loads, so one
+stray `.txt` caught by a `configs:` glob does not take the ruleset with it.
 
 **Example**
 
