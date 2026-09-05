@@ -13,7 +13,10 @@ namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Source\SourceAuth;
+use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\NestedArray;
 use Kanopi\Firewall\Utility\Path;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -28,6 +31,17 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
      * List of all the files being loaded.
      */
     protected array $files = [];
+
+    /**
+     * Which declared source contributed each entry, by config index.
+     *
+     * Only populated for entries that came from `metadata.sources`. Inline
+     * `config:` entries and anything loaded through the legacy
+     * `metadata.config` are absent, so a lookup miss means "local".
+     *
+     * @var array<int, string>
+     */
+    protected array $sourceProvenance = [];
 
     /**
      * Return logging context for the plugin.
@@ -53,6 +67,8 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
      */
     public function __construct(protected array $metadata = [], protected array $config = [])
     {
+        $entries = $this->loadDeclaredSources();
+
         // Load the extra config files for each plugin.
         if (isset($metadata['config'])) {
             $files = $metadata['config'];
@@ -101,18 +117,187 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
                 ]);
             }
 
+            $this->warnLegacyListConfig();
+
             $this->getLogger()->debug('Plugin initialized with config files', [
                 'plugin' => $this->getName(),
                 'config_files' => array_filter($files, is_string(...)),
-                'metadata' => $this->metadata,
+                'metadata' => $this->redactedMetadata(),
             ]);
         } else {
             $this->getLogger()->debug('Plugin initialized', [
                 'plugin' => $this->getName(),
-                'metadata' => $this->metadata,
+                'metadata' => $this->redactedMetadata(),
                 'config' => $this->config,
             ]);
         }
+
+        $this->config = $this->mergeSourceEntries($entries, $this->config);
+    }
+
+    /**
+     * Metadata with source credentials removed, for logging.
+     *
+     * The debug lines below dump the whole metadata array, which for a source
+     * behind authentication would put a bearer token or password straight into
+     * the log. Nothing else in metadata is secret, so only `sources.*.upstream`
+     * is scrubbed — and it is replaced with the redacted URL so the line still
+     * says which list it is talking about.
+     *
+     * @return array<int|string, mixed>
+     *   Metadata safe to log.
+     */
+    protected function redactedMetadata(): array
+    {
+        $metadata = $this->metadata;
+
+        if (!isset($metadata['sources']) || !is_array($metadata['sources'])) {
+            return $metadata;
+        }
+
+        foreach ($metadata['sources'] as $index => $source) {
+            if (is_string($source)) {
+                $metadata['sources'][$index] = SourceAuth::redactUrl($source);
+                continue;
+            }
+
+            if (!is_array($source)) {
+                continue;
+            }
+
+            if (!array_key_exists('upstream', $source)) {
+                continue;
+            }
+
+            $upstream = $source['upstream'];
+
+            if (is_string($upstream)) {
+                $metadata['sources'][$index]['upstream'] = SourceAuth::redactUrl($upstream);
+                continue;
+            }
+
+            if (is_array($upstream)) {
+                unset($metadata['sources'][$index]['upstream']['auth']);
+                unset($metadata['sources'][$index]['upstream']['headers']);
+
+                if (is_string($upstream['url'] ?? null)) {
+                    $metadata['sources'][$index]['upstream']['url'] = SourceAuth::redactUrl($upstream['url']);
+                }
+            }
+        }
+
+        return $metadata;
+    }
+
+    /**
+     * Load every source declared under `metadata.sources`.
+     *
+     * Failures are governed by each source's own `on_error` and `required`
+     * settings; a source marked required rethrows and takes the bootstrap with
+     * it, which is what an allow list wants and a block list does not.
+     *
+     * @return array<int, mixed>
+     *   Merged entries in declaration order, empty when nothing is declared.
+     */
+    protected function loadDeclaredSources(): array
+    {
+        $declared = $this->metadata['sources'] ?? null;
+
+        if (!is_array($declared) || $declared === []) {
+            return [];
+        }
+
+        $sourceManager = $this->sourceManager();
+        $entries = $sourceManager->load($declared);
+
+        $this->sourceProvenance = $sourceManager->provenance();
+
+        foreach ($sourceManager->errors() as $error) {
+            $this->getLogger()->warning('Plugin source did not contribute its entries', [
+                'plugin' => $this->getName(),
+                'source' => $error['source'],
+                'reason' => $error['message'],
+            ]);
+        }
+
+        return $entries;
+    }
+
+    /**
+     * Combine source entries with whatever the plugin already had.
+     *
+     * `NestedArray::mergeDeepArray()` renumbers integer keys, so list entries
+     * from sources append ahead of local ones while a map-shaped document —
+     * the nested `scoring` and `risk_levels` trees VulnerabilityScore loads —
+     * still merges by key. Local config lands last either way, so a site can
+     * always add to a shared list without editing it.
+     *
+     * @param array<int, mixed> $entries
+     *   Entries produced by declared sources.
+     * @param array<array-key, mixed> $config
+     *   Configuration assembled from files and inline rules.
+     *
+     * @return array<array-key, mixed>
+     *   The merged configuration.
+     */
+    protected function mergeSourceEntries(array $entries, array $config): array
+    {
+        if ($entries === []) {
+            return $config;
+        }
+
+        return NestedArray::mergeDeepArray([$entries, $config]);
+    }
+
+    /**
+     * Note when `metadata.config` is doing a job `metadata.sources` now does.
+     *
+     * The key is only deprecated for rule *lists*, which sources handle with
+     * declared formats and failure policies. It stays the mechanism for merging
+     * nested configuration documents, so the notice is limited to the case that
+     * actually has a replacement rather than firing on every use.
+     */
+    protected function warnLegacyListConfig(): void
+    {
+        if (isset($this->metadata['sources']) || $this->config === [] || !array_is_list($this->config)) {
+            return;
+        }
+
+        $this->getLogger()->notice(
+            'metadata.config is deprecated for rule lists; declare metadata.sources instead, '
+            . 'which adds format handling, filtering, and per-source failure policy',
+            [
+                'plugin' => $this->getName(),
+                'files' => array_values(array_filter($this->files, is_string(...))),
+            ]
+        );
+    }
+
+    /**
+     * The source manager used to resolve `metadata.sources`.
+     *
+     * Overridable so tests can supply a manager backed by a temporary cache.
+     *
+     * @return SourceManager
+     *   The manager.
+     */
+    protected function sourceManager(): SourceManager
+    {
+        return new SourceManager();
+    }
+
+    /**
+     * Which source contributed the entry at a config index.
+     *
+     * @param int $index
+     *   Index into the plugin's merged config.
+     *
+     * @return string|null
+     *   The source name, or NULL when the entry is local.
+     */
+    public function entrySource(int $index): ?string
+    {
+        return $this->sourceProvenance[$index] ?? null;
     }
 
     /**

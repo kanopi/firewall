@@ -184,6 +184,7 @@ nav:
       - Global Settings: configuration/global.md
       - Storage: configuration/storage.md
       - Conditional Logic: configuration/conditional-logic.md
+      - Rule Sources: configuration/sources.md
       - Logging: configuration/logging.md
       - Runtime Overrides: configuration/overrides.md
   - Plugins:
@@ -209,6 +210,7 @@ nav:
       - guides/index.md
       - Error Handling: guides/error-handling.md
       - Checking a Request: guides/checking-requests.md
+      - Syncing Rule Sources: guides/syncing-sources.md
       - Custom Plugins: guides/custom-plugins.md
       - Custom Storage: guides/custom-storage.md
       - Advanced Examples: guides/advanced-examples.md

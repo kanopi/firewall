@@ -1,0 +1,240 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Refresh every `metadata.sources` list a config declares, out of band.
+ *
+ * Sources can refresh themselves on a TTL while requests are being served, but
+ * that is the worse arrangement: a cold or expired cache makes a visitor wait
+ * on somebody else's HTTP server, and an expiry under load sends every
+ * concurrent request after the same URL at once.
+ *
+ * Running this at deploy time, or on a cron, moves that work off the request
+ * path entirely. Pair it with `sources.offline: true` in global config and the
+ * runtime will read cached results and never open a socket.
+ *
+ * Usage:
+ *   bin/firewall-sources config.yml [more.yml ...] [options]
+ *
+ * Options:
+ *   --force          Revalidate even when a cached copy is still fresh.
+ *   --dry-run        Report what would be fetched without writing the cache.
+ *   --cache-dir=DIR  Write to DIR instead of the configured cache location.
+ *   --quiet          Only report failures.
+ *   --help           Show this message.
+ *
+ * Exit codes:
+ *   0  every source loaded
+ *   1  at least one source failed
+ *   2  the configuration itself could not be read
+ */
+
+use Kanopi\Firewall\Exception\SourceException;
+use Kanopi\Firewall\Source\SourceCache;
+use Kanopi\Firewall\Source\SourceDefinition;
+use Kanopi\Firewall\Source\SourceLoader;
+use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\PluginConfigNormalizer;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(Config::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(2);
+}
+
+$arguments = array_slice($argv, 1);
+$files = [];
+$force = false;
+$dryRun = false;
+$quiet = false;
+$cacheDir = null;
+
+foreach ($arguments as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        fwrite(STDOUT, trim(<<<TEXT
+        Refresh the source lists declared in a firewall configuration.
+
+          bin/firewall-sources config.yml [more.yml ...] [options]
+
+          --force          Revalidate even when a cached copy is still fresh.
+          --dry-run        Report what would be fetched without writing the cache.
+          --cache-dir=DIR  Write to DIR instead of the configured cache location.
+          --quiet          Only report failures.
+        TEXT) . "\n");
+        exit(0);
+    }
+
+    if ($argument === '--force') {
+        $force = true;
+        continue;
+    }
+
+    if ($argument === '--dry-run') {
+        $dryRun = true;
+        continue;
+    }
+
+    if ($argument === '--quiet') {
+        $quiet = true;
+        continue;
+    }
+
+    if (str_starts_with($argument, '--cache-dir=')) {
+        $cacheDir = substr($argument, strlen('--cache-dir='));
+        continue;
+    }
+
+    $files[] = $argument;
+}
+
+if ($files === []) {
+    fwrite(STDERR, "No configuration files given. Try --help.\n");
+    exit(2);
+}
+
+foreach ($files as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, sprintf("Configuration file not found: %s\n", $file));
+        exit(2);
+    }
+}
+
+Config::clearLoadErrors();
+$config = PluginConfigNormalizer::normalize(Config::load($files));
+
+foreach (Config::getLoadErrors() as $error) {
+    fwrite(STDERR, sprintf("Could not load %s: %s\n", $error['file'], $error['message']));
+}
+
+$plugins = $config['plugins'] ?? [];
+
+if (!is_array($plugins) || $plugins === []) {
+    fwrite(STDERR, "Configuration declares no plugins.\n");
+    exit(2);
+}
+
+/*
+ * The same upstream is often declared on several plugin entries — one to
+ * challenge, one to block. Deduplicate on the definition fingerprint so a
+ * shared list is fetched once per run rather than once per plugin.
+ */
+$definitions = [];
+
+foreach ($plugins as $plugin) {
+    if (!is_array($plugin)) {
+        continue;
+    }
+
+    $declared = $plugin['metadata']['sources'] ?? null;
+
+    if (!is_array($declared)) {
+        continue;
+    }
+
+    foreach (array_values($declared) as $index => $declaration) {
+        if (is_string($declaration)) {
+            $declaration = ['upstream' => $declaration];
+        }
+
+        if (!is_array($declaration)) {
+            continue;
+        }
+
+        try {
+            $definition = SourceDefinition::fromArray($declaration, $index);
+        } catch (SourceException $sourceException) {
+            fwrite(STDERR, sprintf("Invalid source: %s\n", $sourceException->getMessage()));
+            exit(2);
+        }
+
+        $definitions[$definition->fingerprint()] = $definition;
+    }
+}
+
+if ($definitions === []) {
+    if (!$quiet) {
+        fwrite(STDOUT, "No sources declared.\n");
+    }
+
+    exit(0);
+}
+
+$cache = new SourceCache($cacheDir);
+$loader = new SourceLoader($cache);
+$failed = 0;
+
+if (!$quiet) {
+    fwrite(STDOUT, sprintf("Cache directory: %s\n\n", $cache->directory()));
+}
+
+foreach ($definitions as $definition) {
+    if ($dryRun) {
+        $meta = $cache->meta($definition);
+        $count = (int) ($meta['entry_count'] ?? 0);
+        $state = $meta === []
+            ? 'not cached'
+            : sprintf(
+                '%d %s, %s',
+                $count,
+                $count === 1 ? 'entry' : 'entries',
+                $cache->isFresh($definition, $meta) ? 'fresh' : 'stale'
+            );
+
+        fwrite(STDOUT, sprintf("  %-28s %s (%s)\n", $definition->name, $definition->displayUpstream(), $state));
+        continue;
+    }
+
+    $started = microtime(true);
+
+    try {
+        $entries = $loader->load($definition, $force);
+
+        if (!$quiet) {
+            fwrite(STDOUT, sprintf(
+                "  ✓ %-28s %d %s in %dms\n",
+                $definition->name,
+                count($entries),
+                count($entries) === 1 ? 'entry' : 'entries',
+                (int) round((microtime(true) - $started) * 1000)
+            ));
+        }
+    } catch (SourceException $sourceException) {
+        $failed++;
+        fwrite(STDERR, sprintf("  ✗ %-28s %s\n", $definition->name, $sourceException->getMessage()));
+    }
+}
+
+if ($failed > 0) {
+    fwrite(STDERR, sprintf("\n%d of %d sources failed.\n", $failed, count($definitions)));
+    exit(1);
+}
+
+if (!$quiet && !$dryRun) {
+    fwrite(STDOUT, sprintf(
+        "\n%d %s refreshed.\n",
+        count($definitions),
+        count($definitions) === 1 ? 'source' : 'sources'
+    ));
+}
+
+exit(0);

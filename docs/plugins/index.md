@@ -80,28 +80,47 @@ plugins:
       # ... rate limit config ...
 ```
 
-## Loading External Plugin Configuration
+## Loading Rules From Elsewhere
 
-Plugins can load rules from external files (local or remote) using the `metadata.config` option. This is useful for managing large rule sets separately:
+Rules can come from a file or URL instead of the configuration itself, in whatever format
+that list is published in — newline-delimited text, JSON, NDJSON, YAML, CSV, or TSV:
 
 ```yaml
 plugins:
-  - plugin: "Kanopi\\Firewall\\Plugins\\VulnerabilityScore"
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
     response: block
-    weight: -50
     enable: true
     metadata:
-      # Load scoring rules from external file(s)
-      config:
-        - vulnerability-score-rules.yml
-        # Can also load from remote URLs
-        - https://cdn.example.com/firewall/vuln-patterns.yml
-    # Inline config is merged with loaded files
+      sources:
+        - name: cloud-ec2-us
+          upstream: https://example.org/v1/ranges.json
+          format: json
+          select: "prefixes.*"
+          where:
+            - "service:EC2"
+          template: "{value[ip_prefix]}"
+          validate: cidr
     config:
-      risk_levels:
-        critical:
-          threshold: 100
-          block: true
+      - 203.0.113.7        # inline rules are appended after every source
 ```
 
-The external files use the same structure as the inline `config` section. Multiple files can be specified and will be merged in order. Both local file paths (relative or absolute) and remote URLs are supported.
+Sources declare their own format, which part of the document to take, how to filter it,
+how to shape it, and what should happen when they cannot be read. See
+[Rule Sources](../configuration/sources.md) for the full reference.
+
+### `metadata.config` (deprecated for rule lists)
+
+Plugins can also load rules by listing config files under `metadata.config`:
+
+```yaml
+metadata:
+  config:
+    - vulnerability-score-rules.yml
+    - https://cdn.example.com/firewall/vuln-patterns.yml
+```
+
+Files are merged in order and inline `config` is applied last. This still works, but for
+**rule lists** `metadata.sources` supersedes it and using it for one logs a deprecation
+notice. It remains the mechanism for merging **nested configuration documents** — the
+`scoring` and `risk_levels` trees `VulnerabilityScore` loads — which sources deliberately
+do not do.
