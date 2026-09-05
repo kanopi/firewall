@@ -1,0 +1,48 @@
+# Search engine crawlers
+#
+# The crawlers whose indexing you presumably want. Aggressive rules —
+# automated:true, vulnerability scoring, rate limits, an AI-crawler block —
+# catch these too, and a site that quietly stops being indexed usually finds
+# out weeks later from a traffic graph.
+#
+# Matched as a substring of the User-Agent header, case-insensitively.
+#
+# NOT included, deliberately: SEO tooling (AhrefsBot, SemrushBot, DotBot,
+# MJ12bot, Screaming Frog). Those are legitimate for a site's own team and pure
+# cost for everyone else, so allowing them is a different decision from
+# "keep my pages in search results".
+#
+# Updated: 2026-09-05
+
+# Google. Note this is Googlebot, the indexer — NOT Google-Extended, which is
+# training collection and lives on the AI crawler list.
+Googlebot
+Googlebot-Image
+Googlebot-News
+Googlebot-Video
+Storebot-Google
+Google-InspectionTool
+GoogleOther
+
+# Microsoft
+bingbot
+BingPreview
+msnbot
+
+# Yahoo
+Slurp
+
+# DuckDuckGo. DuckAssistBot is the answer engine and is on the other list.
+DuckDuckBot
+
+# Apple. Powers Siri and Spotlight. NOT Applebot-Extended, which is training.
+Applebot
+
+# Regional engines
+Baiduspider
+YandexBot
+YandexImages
+Naverbot
+Yeti
+Seznambot
+Qwantify

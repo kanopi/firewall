@@ -24,6 +24,7 @@ malicious requests.
 | `malicious-urls.yml` | URL-pattern blocks for known-bad paths. |
 | `rate-limiting.yml` | Per-path rate limits across auth, API, admin, forms, and static assets. |
 | `wordpress.yml` | WordPress-specific hardening. |
+| `search-bots.yml` | Allows search engine crawlers past your block rules — scoped to public content, not the admin surface. |
 | `ai-crawlers.yml` | Blocks AI training and dataset crawlers. Reads `lists/ai-crawlers.txt`. |
 | `ai-crawlers-challenge.yml` | The same list, served an interstitial instead. Needs a `challenge:` section. |
 | `ai-answer-engines.yml` | Blocks AI answer engines. Has a referral-traffic cost — measure first. |

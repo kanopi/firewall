@@ -70,6 +70,51 @@ WordPress-specific blocking rules including:
 
 **Note**: REST API (`/wp-json/`) is commented out by default.
 
+## `search-bots.yml`
+
+Lets the crawlers you want indexing you past the rules that would otherwise catch them.
+`automated:true`, vulnerability scoring, rate limits and an AI-crawler block all catch
+search engines too, and a site that quietly stops being indexed usually finds out weeks
+later from a traffic graph.
+
+Covers Googlebot and its variants, bingbot, Slurp, DuckDuckBot, Applebot, Baiduspider,
+YandexBot, Naverbot, Seznambot and Qwantify. Runs at weight `-200`, ahead of every block
+and challenge entry.
+
+!!! danger "An allow rule is a bypass, and a user agent is trivially forged"
+    `response: allow` short-circuits evaluation entirely — an allow match means no block,
+    no challenge, no rate limit, nothing. `Googlebot` in a User-Agent header is a skeleton
+    key, and setting one is a single `curl -A` flag.
+
+    **This preset is therefore scoped.** The allow applies to public content only; the
+    administrative and authentication surface is excluded, so a forged crawler gets a pass
+    on your blog posts and still meets the firewall at `/wp-admin` and `/user/login`.
+
+    The excluded paths cover where WordPress and Drupal put their back ends. If yours lives
+    elsewhere, add it to the second rule.
+
+### Stronger options
+
+In increasing order of correctness:
+
+1. **This preset** — scoped by path. Cheap, and enough for most sites.
+2. **Verify by address.** Google, Bing and Apple publish crawler IP ranges. Pair this with
+   an `IpAddress` allow fed by those and require both. Correct, and needs a
+   published-lists story to be practical.
+3. **Verify by reverse DNS**, which is what the search engines actually document — reverse
+   lookup, then forward-confirm. The library has no mechanism for this today.
+
+### What is deliberately not in the list
+
+**SEO tooling** — `AhrefsBot`, `SemrushBot`, `DotBot`, `MJ12bot`, Screaming Frog. Those are
+legitimate for a site's own team and pure cost for everyone else, so allowing them is a
+different decision from "keep my pages in search results".
+
+**The `-Extended` training variants.** `Applebot-Extended` contains the string `Applebot`,
+so a substring match would otherwise vouch for the training crawler while you were trying
+to allow the Siri and Spotlight one. The preset excludes anything carrying `-Extended`, and
+there is a test for it.
+
 ## AI Crawler Presets
 
 Three presets, two lists, and one decision to make twice — because "AI crawler" covers two
