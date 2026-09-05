@@ -1,0 +1,35 @@
+# AI Answer Engine Blocking
+#
+# Blocks the crawlers that fetch a page because a user asked a question about
+# it, then cite it in an answer.
+#
+# THIS ONE HAS A TRAFFIC COST. Unlike the training crawlers, several of these
+# send referral traffic and put your pages in front of people who are actively
+# looking for what you publish. Blocking them is a business decision, not a
+# security one.
+#
+# Measure before you decide. Run the firewall in log mode for a week and look at
+# what these are actually doing on your site:
+#
+#   global:
+#     mode: log
+#
+# Note that `mode: log` is GLOBAL — it stops every other rule from enforcing
+# too, so it is a thing to do deliberately on a staging environment or during a
+# quiet window, not a setting to leave on.
+#
+# USAGE:
+#   configs:
+#     - "{presets_dir}/ai-answer-engines.yml"
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -50
+    enable: true
+    metadata:
+      sources:
+        - name: ai-answer-engines
+          upstream: "lists/ai-answer-engines.txt"
+          template: "header.user-agent@contains:{value}"
+          validate: string

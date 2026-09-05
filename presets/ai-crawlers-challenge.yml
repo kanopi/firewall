@@ -1,0 +1,29 @@
+# AI Training Crawler Challenge
+#
+# The same list as ai-crawlers.yml, served an interstitial instead of a refusal.
+# Useful when you want friction rather than a hard no — a crawler that cannot
+# solve the challenge goes away, and anything that can was probably a browser.
+#
+# REQUIRES A CONFIGURED CHALLENGE SECTION. `response: challenge` needs
+# `challenge.secret` and a provider; without them the firewall refuses to start.
+# See docs/plugins/challenges.md. Include ai-crawlers.yml instead if you have
+# not set that up.
+#
+# USAGE:
+#   configs:
+#     - "{presets_dir}/ai-crawlers-challenge.yml"
+#
+#   challenge:
+#     secret: "%env(FIREWALL_CHALLENGE_SECRET)%"
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: challenge
+    weight: -50
+    enable: true
+    metadata:
+      sources:
+        - name: ai-training-crawlers
+          upstream: "lists/ai-crawlers.txt"
+          template: "header.user-agent@contains:{value}"
+          validate: string

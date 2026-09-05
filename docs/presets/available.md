@@ -70,6 +70,67 @@ WordPress-specific blocking rules including:
 
 **Note**: REST API (`/wp-json/`) is commented out by default.
 
+## AI Crawler Presets
+
+Three presets, two lists, and one decision to make twice — because "AI crawler" covers two
+populations with very different costs.
+
+**Training and dataset crawlers** fetch pages to build corpora. Blocking them costs you
+nothing in traffic. **Answer engines** fetch a page because a user just asked a question
+about it, then cite it — several of them send referral traffic and put your pages in front
+of people actively looking for what you publish.
+
+The lists live as data beside the presets (`presets/lists/*.txt`) and are read through
+[rule sources](../configuration/sources.md), so they can be reviewed as lists, consumed by
+anything else that wants them, and updated without waiting on a release.
+
+### `ai-crawlers.yml`
+
+Blocks training and dataset collection: `GPTBot`, `ClaudeBot`, `CCBot`, `Google-Extended`,
+`Applebot-Extended`, `Bytespider`, `Amazonbot`, `Meta-ExternalAgent`, `Diffbot` and others.
+The safer half of the question — start here.
+
+### `ai-crawlers-challenge.yml`
+
+The same list, served an interstitial instead of a refusal. Friction rather than a hard no.
+
+!!! warning "Requires a configured `challenge:` section"
+    `response: challenge` needs `challenge.secret` and a provider, and the firewall refuses
+    to start without them. See [Challenge Responses](../plugins/challenges.md). Use
+    `ai-crawlers.yml` if you have not set that up.
+
+### `ai-answer-engines.yml`
+
+Blocks `PerplexityBot`, `ChatGPT-User`, `OAI-SearchBot`, `Claude-User`, `YouBot`,
+`DuckAssistBot` and similar.
+
+!!! danger "This one has a traffic cost"
+    Blocking answer engines is a business decision, not a security one. Measure before you
+    make it — run in log mode for a week and look at what they are actually doing:
+
+    ```yaml
+    global:
+      mode: log
+    ```
+
+    `mode: log` is **global**. It stops every other rule from enforcing too, so do it
+    deliberately on staging or during a quiet window rather than leaving it on. There is no
+    log-only *preset*, precisely because a file you include alongside your other rules
+    should not be able to switch enforcement off for all of them.
+
+### What these cannot do
+
+User-agent matching is a courtesy, not a control. Anything that wants to ignore it changes
+its UA string and never appears again. These presets stop well-behaved crawlers that
+identify themselves honestly; they do not stop scraping. Pair them with `robots.txt`, which
+several of these do honour.
+
+### Do not confuse these with search indexing
+
+`Google-Extended` is training; **`Googlebot` is search indexing**, and blocking it
+deindexes the site. Likewise `Applebot-Extended` versus `Applebot`, which powers Siri and
+Spotlight. Neither preset touches the search crawlers, and there are tests asserting that.
+
 ## `malicious-urls.yml`
 
 Blocks common malicious PHP files, attack patterns, and suspicious URLs including:

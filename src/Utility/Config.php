@@ -437,6 +437,16 @@ class Config
             // New plugins: array format paths
             'plugins.*.metadata.config.*',
             'plugins.*.metadata.(asn_reader|reader|country_reader).db',
+            // Rule sources. Without these a preset that ships its list
+            // alongside itself cannot name it: a relative `upstream` stayed
+            // relative and was read against the process working directory,
+            // which for a web request is wherever the front controller
+            // happens to be. Both the string and map forms of `upstream`
+            // are covered; a URL is left alone by the resolver.
+            'plugins.*.metadata.sources.*.upstream',
+            'plugins.*.metadata.sources.*.upstream.url',
+            '(allow|block).*.metadata.sources.*.upstream',
+            '(allow|block).*.metadata.sources.*.upstream.url',
         ];
 
         // Files the firewall *writes*: block-list state, the offense sidecar,

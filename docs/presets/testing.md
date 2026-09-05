@@ -34,6 +34,26 @@ curl http://localhost:8080/
 curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" http://localhost:8080/
 ```
 
+## Testing the AI crawler presets
+
+```bash
+# Should be blocked by ai-crawlers.yml (403)
+curl -i -A "Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (compatible; ClaudeBot/1.0)" http://localhost:8080/
+curl -i -A "CCBot/2.0 (https://commoncrawl.org/faq/)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (compatible; Google-Extended/1.0)" http://localhost:8080/
+
+# Should be blocked only by ai-answer-engines.yml
+curl -i -A "Mozilla/5.0 (compatible; PerplexityBot/1.0)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (compatible; ChatGPT-User/1.0)" http://localhost:8080/
+
+# Must NEVER be blocked by either — blocking these deindexes the site
+curl -i -A "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (compatible; bingbot/2.0)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (compatible; Applebot/0.1)" http://localhost:8080/
+curl -i -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0.0.0" http://localhost:8080/
+```
+
 ## Testing malicious-urls.yml
 
 ```bash
