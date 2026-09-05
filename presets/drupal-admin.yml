@@ -1,0 +1,78 @@
+# Drupal Administrative Access Blocking
+#
+# Blocks the administrative and authentication surface: /admin, the login and
+# password-reset routes, and user registration.
+#
+# THIS ONE LOCKS PEOPLE OUT. That is the point, and it is why it is a separate
+# file from drupal.yml — including it without an allow rule above it means
+# nobody can log in, editors included. Pair it with an IpAddress allow entry at
+# a lower weight, or use the challenge form described in the docs.
+#
+# USAGE:
+#   configs:
+#     - "{presets_dir}/drupal.yml"          # always safe
+#     - "{presets_dir}/drupal-admin.yml"    # only with an allow rule below
+#
+#   plugins:
+#     - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+#       response: allow
+#       weight: -200                        # ahead of the blocks below
+#       enable: true
+#       config:
+#         - 203.0.113.0/24                  # office
+#         - 198.51.100.7                    # VPN egress
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: -100
+    enable: true
+    config:
+      # =====================================================================
+      # Administrative Interface
+      #
+      # /admin covers the entire back end, including /admin/reports/status,
+      # which discloses the version and module list to anyone who asks.
+      # =====================================================================
+      - path:/admin
+      - path@starts_with:/admin/
+
+      # =====================================================================
+      # Authentication Routes
+      #
+      # Named individually rather than blocking /user, because /user/123 is a
+      # public profile on a great many sites and blocking the prefix would take
+      # those with it.
+      # =====================================================================
+      - path:/user/login
+      - path:/user/register
+      - path:/user/password
+      - path@starts_with:/user/reset/
+      - path:/user
+      - path@regex:#^/[a-z]{2}(-[a-z]{2,4})?/user/(login|register|password)$#i
+
+      # =====================================================================
+      # Content Authoring
+      # =====================================================================
+      - path@starts_with:/node/add
+      - path@regex:#^/node/\d+/(edit|delete|revisions)#i
+
+      # =====================================================================
+      # Drupal 7 Authentication Routes
+      # =====================================================================
+      - path:/user/login/
+
+      # Deliberately NOT blocking Drupal 7's query-based routing (`?q=admin`,
+      # `?q=user/login`). Two reasons, both found by testing rather than
+      # reasoning:
+      #
+      #   1. `q` is the query parameter a great many search forms use, so
+      #      `?q=admin` is a visitor searching for the word "admin" at least as
+      #      often as it is someone reaching the back end.
+      #   2. It would not work anyway. Symfony encodes the separator, so the
+      #      value arrives as `q=admin%2Fcontent` and a `q=admin/` pattern
+      #      never matches.
+      #
+      # Drupal 7 reached end of life in January 2025, and any D7 site still
+      # running has clean URLs on. A site that genuinely needs this should add
+      # a rule matching the encoded form, and accept the search false positive.
