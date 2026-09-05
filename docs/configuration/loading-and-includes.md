@@ -14,7 +14,9 @@ The firewall supports **modular configuration** via a top‑level `configs:` key
   - **Environment-driven** using `%env(...)%` (must resolve to a string path)
 - **Merge semantics**:
   - Objects (associative arrays) are merged **deeply**; later files override earlier keys
-  - Lists (numeric arrays) are **replaced as a whole** by later files
+  - Lists (numeric arrays) are **replaced as a whole** by later files — with one
+    exception: a root-level `plugins:` list **appends**, so several included files can
+    each contribute plugin entries
 - Safety: circular includes are prevented and excessive include depth is rejected.
 
 **Remote Configuration Files**
@@ -26,6 +28,13 @@ configs:
   - "https://cdn.example.com/firewall/base-rules.yml"
   - "https://cdn.example.com/firewall/ip-blocklist.yml"
 ```
+
+!!! note "`configs:` is for configuration documents, not rule lists"
+    Because lists are replaced rather than appended, a remote *rule list* included this
+    way overwrites your local one instead of adding to it — and does so quietly. Pulling
+    a list of addresses, user agents, or paths is what
+    [Rule Sources](sources.md) are for: they append, declare their own format, and carry
+    their own TTL and failure policy. Keep `configs:` for whole configuration documents.
 
 Remote files are cached locally to improve performance and reduce external dependencies. You can control caching behavior using PHP constants:
 

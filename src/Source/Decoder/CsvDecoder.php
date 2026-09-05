@@ -1,0 +1,80 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Kanopi\Firewall\Source\Decoder;
+
+use Kanopi\Firewall\Source\SourceDefinition;
+
+/**
+ * Delimiter-separated rows, serving both `csv` and `tsv`.
+ *
+ * With `headers: true` each row decodes to a map keyed by column name, so a
+ * template reaches fields as `{value[asn]}`. With `headers: false` rows stay
+ * numerically indexed and fields are `{value[0]}`.
+ */
+final class CsvDecoder implements DecoderInterface
+{
+    /**
+     * {@inheritdoc}
+     */
+    public function decode(string $body, SourceDefinition $sourceDefinition): array
+    {
+        $delimiter = $sourceDefinition->delimiter ?? ($sourceDefinition->format === 'tsv' ? "\t" : ',');
+        $lines = preg_split('/\R/', $body);
+
+        if ($lines === false) {
+            return [];
+        }
+
+        $rows = [];
+
+        foreach ($lines as $line) {
+            if (trim($line) === '') {
+                continue;
+            }
+
+            // A comment marker only counts at the start of a row here; inside a
+            // field it is data, and str_getcsv is what decides field boundaries.
+            if ($sourceDefinition->comment !== '' && str_starts_with(ltrim($line), $sourceDefinition->comment)) {
+                continue;
+            }
+
+            $rows[] = str_getcsv($line, $delimiter, '"', '\\');
+        }
+
+        if ($rows === []) {
+            return [];
+        }
+
+        if (!$sourceDefinition->headers) {
+            return $rows;
+        }
+
+        $columns = array_map(static fn (mixed $column): string => trim((string) $column), array_shift($rows));
+        $records = [];
+
+        foreach ($rows as $row) {
+            $record = [];
+
+            foreach ($columns as $index => $column) {
+                if ($column === '') {
+                    continue;
+                }
+
+                $record[$column] = $row[$index] ?? null;
+            }
+
+            $records[] = $record;
+        }
+
+        return $records;
+    }
+}

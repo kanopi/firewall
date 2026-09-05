@@ -14,7 +14,8 @@
     ],
     "license": "MIT",
     "bin": [
-        "bin/firewall-check"
+        "bin/firewall-check",
+        "bin/firewall-sources"
     ],
     "autoload": {
         "psr-4": {
@@ -125,7 +126,9 @@
         ],
         "perf:validate": "php tests/Performance/bin/validate-scenarios.php --skip-geoip",
         "perf:down": "docker compose -f tests/Performance/docker-compose.yml down --volumes --remove-orphans",
-        "check:request": "php bin/firewall-check"
+        "check:request": "php bin/firewall-check",
+        "sources:sync": "php bin/firewall-sources",
+        "sources:status": "php bin/firewall-sources --dry-run"
     },
     "scripts-descriptions": {
         "test": "Run both suites without coverage — the fast loop for local development",
