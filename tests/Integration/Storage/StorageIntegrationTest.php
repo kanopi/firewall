@@ -269,9 +269,15 @@ class StorageIntegrationTest extends IntegrationTestCase
     protected function runDatabaseStorageTests(Connection $connection, string $dbType): void
     {
         $tableName = 'firewall_test_' . uniqid();
+        // A unique offenses table too, so the counts asserted below are this
+        // run's own. The default is shared, and on MySQL/PostgreSQL it
+        // survives between runs -- which also means the old cleanup left it
+        // behind every time.
+        $offensesTable = $tableName . '_offenses';
         $storage = new DatabaseStorage([
             'connection' => $connection,
-            'storage_table' => $tableName
+            'storage_table' => $tableName,
+            'offenses_table' => $offensesTable
         ]);
         
         // Test table creation
@@ -312,8 +318,32 @@ class StorageIntegrationTest extends IntegrationTestCase
         $storage->expire();
         $this->assertNull($storage->get($request->getClientIp()), 'Expired entry should be removed');
         
+        // Offenses are counted by the database rather than fetched and counted
+        // in PHP. DatabaseStorage's own tests mock the connection, so nothing
+        // asserted that the count was right against a real one -- which is how
+        // the fetch-everything version survived. Runs on SQLite always, and on
+        // MySQL/PostgreSQL when they are available.
+        $storage->recordOffense('203.0.113.77');
+        $storage->recordOffense('203.0.113.77');
+        $storage->recordOffense('198.51.100.9');
+
+        $this->assertSame(2, $storage->countOffenses('203.0.113.77'), 'Counts only this key');
+        $this->assertSame(1, $storage->countOffenses('198.51.100.9'), 'Keys are counted separately');
+        $this->assertSame(0, $storage->countOffenses('192.0.2.200'), 'A key with no offenses counts zero');
+        $this->assertSame(
+            0,
+            $storage->countOffenses('203.0.113.77', 0, 1),
+            'The time window is honoured -- these offenses were recorded just now'
+        );
+        $this->assertCount(
+            $storage->countOffenses('203.0.113.77'),
+            $storage->listOffenses('203.0.113.77'),
+            'countOffenses() and listOffenses() must agree'
+        );
+
         // Clean up
         $connection->executeStatement("DROP TABLE $tableName");
+        $connection->executeStatement("DROP TABLE $offensesTable");
     }
     
     /**

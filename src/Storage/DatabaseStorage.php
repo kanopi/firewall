@@ -407,21 +407,22 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
     public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
     {
         try {
-            $results = $this->connection->createQueryBuilder()
-                ->select('remote_address')
-                ->from($this->config['offenses_table'])
-                ->where('remote_address = :remote_address')
-                ->andWhere('timestamp >= :start AND timestamp <= :end')
-                ->setParameter('remote_address', $key)
-                ->setParameter('start', $start)
-                ->setParameter('end', $end)
-                ->executeQuery()
-                ->fetchAllAssociative();
+            // Counted by the database. Pre-fix this selected every matching
+            // row and counted them in PHP, and a client blocked for months can
+            // have thousands -- `listOffenses()` right below already limits
+            // and orders in SQL for exactly that reason.
+            return $this->countRows(
+                $this->connection->createQueryBuilder()
+                    ->from($this->config['offenses_table'])
+                    ->where('remote_address = :remote_address')
+                    ->andWhere('timestamp >= :start AND timestamp <= :end')
+                    ->setParameter('remote_address', $key)
+                    ->setParameter('start', $start)
+                    ->setParameter('end', $end)
+            );
         } catch (\Exception) {
             return 0;
         }
-
-        return count($results);
     }
 
     /**

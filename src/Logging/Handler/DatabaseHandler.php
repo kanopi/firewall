@@ -401,13 +401,12 @@ class DatabaseHandler extends AbstractProcessingHandler
         }
 
         try {
-            return (int) $this->connection->createQueryBuilder()
-                ->select('COUNT(*)')
-                ->from($this->table)
-                ->where('logged_at < :cutoff')
-                ->setParameter('cutoff', $this->retentionCutoff())
-                ->executeQuery()
-                ->fetchOne();
+            return $this->countRows(
+                $this->connection->createQueryBuilder()
+                    ->from($this->table)
+                    ->where('logged_at < :cutoff')
+                    ->setParameter('cutoff', $this->retentionCutoff())
+            );
         } catch (\Throwable $throwable) {
             $this->reportFailure('Failed to count prunable firewall log records', $throwable);
 

@@ -107,19 +107,22 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
     public function countRequests(string $key, int $start, int $end): int
     {
         try {
-            $count = count($this
-                ->connection
-                ->createQueryBuilder()
-                ->select('*')
-                ->from($this->config['storage_table'])
-                ->where('rule = :rule')
-                ->andWhere('timestamp >= :start')
-                ->andWhere('timestamp <= :end')
-                ->setParameter('rule', $key)
-                ->setParameter('start', $start)
-                ->setParameter('end', $end)
-                ->executeQuery()
-                ->fetchAllAssociative());
+            // Counted by the database. Pre-fix this fetched every row in the
+            // window and counted them in PHP -- on the rate limiter's
+            // per-request path, so the client generating the most rows paid
+            // to have all of them sent back on every one of its requests.
+            $count = $this->countRows(
+                $this
+                    ->connection
+                    ->createQueryBuilder()
+                    ->from($this->config['storage_table'])
+                    ->where('rule = :rule')
+                    ->andWhere('timestamp >= :start')
+                    ->andWhere('timestamp <= :end')
+                    ->setParameter('rule', $key)
+                    ->setParameter('start', $start)
+                    ->setParameter('end', $end)
+            );
 
             $this->getLogger()->debug('Rate limit request count', [
                 'key' => $key,
