@@ -51,7 +51,7 @@ class RateLimit extends AbstractPluginBase
     /**
      * {@inheritdoc}
      */
-    public function getName(): string
+    protected function defaultName(): string
     {
         return 'Rate Limit';
     }

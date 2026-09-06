@@ -817,6 +817,122 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Two rules answering to one name is worth saying out loud.
+     *
+     * The point of naming a rule is telling it apart in the log, so a
+     * duplicate silently puts the operator back where they started -- and
+     * nothing about the config looks wrong.
+     */
+    public function testCreateWarnsWhenTwoPluginsDeclareTheSameName(): void
+    {
+        $handler = $this->captureLogger();
+
+        Firewall::create([
+            [
+                'logger' => [['class' => $handler]],
+                'plugins' => [
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'allow',
+                        'metadata' => ['name' => 'office'],
+                        'config' => ['203.0.113.0/24'],
+                    ],
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'block',
+                        'metadata' => ['name' => ' office '],
+                        'config' => ['198.51.100.0/24'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertTrue(
+            $handler->hasWarningContaining('declare the same name'),
+            'Expected a warning when two plugins share a declared name.'
+        );
+    }
+
+    /**
+     * Distinct names, and the ones that were never declared, warn about nothing.
+     *
+     * The second half matters more than the first: two unnamed entries of one
+     * class do share a name, but that is the status quo this feature exists to
+     * let an operator opt out of. Warning about it would fire on nearly every
+     * configuration in existence and say nothing actionable.
+     */
+    public function testCreateDoesNotWarnAboutDistinctOrUndeclaredNames(): void
+    {
+        $handler = $this->captureLogger();
+
+        Firewall::create([
+            [
+                'logger' => [['class' => $handler]],
+                'plugins' => [
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'allow',
+                        'metadata' => ['name' => 'office'],
+                        'config' => ['203.0.113.0/24'],
+                    ],
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'block',
+                        'metadata' => ['name' => 'known-bad'],
+                        'config' => ['198.51.100.0/24'],
+                    ],
+                    // No name at all, twice, plus entries of shapes the loop
+                    // has to survive rather than warn about.
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'config' => ['192.0.2.1']],
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'config' => ['192.0.2.2']],
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'metadata' => ['name' => '  ']],
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'metadata' => ['name' => ['office']]],
+                    ['response' => 'block', 'metadata' => ['name' => 'unnamed-class']],
+                ],
+            ],
+        ]);
+
+        $this->assertFalse(
+            $handler->hasWarningContaining('declare the same name'),
+            'No two plugins share a declared name here.'
+        );
+    }
+
+    /**
+     * A declared name is what reaches the log when the rule fires.
+     */
+    public function testDeclaredPluginNameReachesTheLog(): void
+    {
+        $handler = $this->captureLogger();
+
+        $firewall = Firewall::create([
+            [
+                'global' => ['mode' => 'exception'],
+                'logger' => [['class' => $handler]],
+                'plugins' => [
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'allow',
+                        'metadata' => ['name' => 'office-network'],
+                        'config' => ['203.0.113.5'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $firewall->evaluate(Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '203.0.113.5']));
+
+        $bypassed = array_values(array_filter(
+            $handler->records,
+            static fn($record): bool => $record->message === 'Request bypassed'
+        ));
+
+        $this->assertNotSame([], $bypassed, 'The allow rule should have logged a bypass.');
+        $this->assertSame('office-network', $bypassed[0]->context['plugin_name']);
+        $this->assertSame(IpAddress::class, $bypassed[0]->context['plugin_type']);
+    }
+
+    /**
      * Regression for #58: when trusted proxies are configured, no warning
      * fires.
      */

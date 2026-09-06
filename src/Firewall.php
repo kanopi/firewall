@@ -205,6 +205,8 @@ final class Firewall
         // Normalize configuration to the new plugins: array format.
         $config = PluginConfigNormalizer::normalize($config);
 
+        self::warnOnDuplicatePluginNames($config['plugins'] ?? []);
+
         // Partition plugins by response type and sort by weight.
         $partitioned = PluginConfigNormalizer::partitionAndSort($config['plugins'] ?? []);
 
@@ -389,6 +391,63 @@ final class Firewall
         }
 
         return defined('KANOPI_FIREWALL_REQUIRE_CONFIG') && (bool) KANOPI_FIREWALL_REQUIRE_CONFIG;
+    }
+
+    /**
+     * Warn when two plugin entries declare the same `metadata.name`.
+     *
+     * The point of naming a rule is telling it apart from the others in the
+     * log, so two rules answering to `office` puts an operator back where they
+     * started -- and silently, because nothing about the config looks wrong.
+     *
+     * A warning rather than an exception: a duplicate name is untidy rather
+     * than dangerous. Nothing the firewall does depends on the name, only what
+     * it says afterwards, and refusing to start over a label would be a worse
+     * outcome than the ambiguity it prevents.
+     *
+     * Only declared names are checked. Two entries of the same class with no
+     * name still share one, which is the status quo this feature exists to let
+     * an operator opt out of -- warning about it would fire on almost every
+     * configuration in existence and say nothing actionable.
+     *
+     * @param array<int|string, mixed> $plugins
+     *   Plugin entries, after normalisation to the `plugins:` array format.
+     */
+    private static function warnOnDuplicatePluginNames(array $plugins): void
+    {
+        $seen = [];
+
+        foreach ($plugins as $plugin) {
+            // No `is_array()` guard: `??` already yields NULL for every entry
+            // shape that has no such offset, and the `is_string()` test below
+            // rejects it. An entry that is not an array at all does not reach
+            // here in practice -- `partitionAndSort()` refuses it first.
+            $name = $plugin['metadata']['name'] ?? null;
+
+            if (!is_string($name)) {
+                continue;
+            }
+
+            $name = trim($name);
+
+            if ($name === '') {
+                continue;
+            }
+
+            $seen[$name][] = is_string($plugin['plugin'] ?? null) ? $plugin['plugin'] : 'unknown';
+        }
+
+        foreach ($seen as $name => $classes) {
+            if (count($classes) < 2) {
+                continue;
+            }
+
+            LoggingFactory::logger()->warning('Two or more plugins declare the same name, so their log lines cannot be told apart', [
+                'name' => $name,
+                'declared_by' => $classes,
+                'count' => count($classes),
+            ]);
+        }
     }
 
     /**

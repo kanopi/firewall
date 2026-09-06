@@ -22,7 +22,7 @@ class ApiKeyValidator extends AbstractPluginBase
         $this->validApiKeys = $metadata['api_keys'] ?? [];
     }
     
-    public function getName(): string
+    protected function defaultName(): string
     {
         return 'API Key Validator';
     }
@@ -82,3 +82,28 @@ plugins:
         - "sk_live_abcd1234567890"
         - "sk_live_efgh0987654321"
 ```
+
+## Naming a custom plugin
+
+`defaultName()` is what the plugin is called when the configuration declares no name of
+its own. Override it, and `metadata.name` still overrides that:
+
+```yaml
+plugins:
+  - plugin: "App\\Security\\Firewall\\Plugins\\ApiKeyValidator"
+    response: block
+    metadata:
+      name: partner-api-keys
+```
+
+```
+firewall.WARNING: Request blocked {"plugin_name":"partner-api-keys","plugin_type":"App\\Security\\Firewall\\Plugins\\ApiKeyValidator", …}
+```
+
+Override neither and the plugin logs its short class name — `ApiKeyValidator`.
+
+> **Upgrading from `getName()`.** A plugin that implements `public function getName()`
+> itself keeps working exactly as before; that is why `defaultName()` is a concrete method
+> rather than an abstract one. Such a plugin simply never sees `metadata.name`, because it
+> has taken over the method that reads it. Rename it to `protected function defaultName()`
+> to opt in. See [`metadata.name`](../plugins/index.md#metadataname-naming-a-rule).
