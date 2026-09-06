@@ -35,17 +35,6 @@ class DatabaseLogHandlerIntegrationTest extends IntegrationTestCase
         parent::setUp();
 
         $this->databasePath = $this->tempDir . '/firewall.sqlite';
-        DatabaseHandler::setDefaultConnection(null);
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    protected function tearDown(): void
-    {
-        DatabaseHandler::setDefaultConnection(null);
-
-        parent::tearDown();
     }
 
     /**

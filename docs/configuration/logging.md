@@ -147,18 +147,24 @@ logger:
 ```
 
 **This only applies when `storage.type` is itself database backed** — `DatabaseStorage`,
-or a storage class of your own that connects through `DatabaseTrait`. On file or
-in-memory storage there is no connection to inherit, so the handler must declare its own
-`connection` or it will disable itself and say so in the PHP error log:
+or a storage class of your own that connects through `DatabaseTrait`. On file or in-memory
+storage there is no connection to inherit, so the handler must declare its own `connection`
+or it will disable itself and say so in the PHP error log:
 
 ```
 Firewall log handler has no database connection: none declared under its `args`, and the
-configured storage is not database backed so there is none to inherit
+configured storage is not database backed so there was none to inherit
 ```
 
 `connection` under `storage.config` means "Doctrine parameters" to `DatabaseStorage` and
 to nothing else, so a custom storage using the same key for something different — a Redis
-config, an HTTP endpoint — is never borrowed from.
+config, an HTTP endpoint — is never borrowed from. An explicit `connection` on the handler
+always wins over the storage one.
+
+The borrowing happens once, when the config is read, so what a handler connects to is
+decided by the config it was constructed from and nothing changes it later.
+`bin/firewall-log-prune` resolves it the same way, so a config relying on the convenience
+prunes without repeating its credentials either.
 
 ### The columns
 

@@ -277,24 +277,20 @@ class FirewallTest extends AbstractTestCase
      * one for blocked clients, and repeating those credentials under `logger:`
      * only creates a second place for them to drift.
      */
-    public function testCreateSeedsTheLogHandlerWithTheStorageConnection(): void
+    public function testCreateGivesTheLogHandlerTheStorageConnection(): void
     {
-        DatabaseHandler::setDefaultConnection(null);
+        Firewall::create([], [
+            '[storage][type]' => DatabaseStorage::class,
+            '[storage][config][connection][driver]' => 'pdo_sqlite',
+            '[storage][config][connection][memory]' => true,
+            '[logger][0][class]' => DatabaseHandler::class,
+            '[logger][0][args][0][table]' => 'firewall_log',
+        ]);
 
-        try {
-            Firewall::create([], [
-                '[storage][type]' => DatabaseStorage::class,
-                '[storage][config][connection][driver]' => 'pdo_sqlite',
-                '[storage][config][connection][memory]' => true,
-            ]);
-
-            self::assertSame(
-                ['driver' => 'pdo_sqlite', 'memory' => true],
-                DatabaseHandler::getDefaultConnection()
-            );
-        } finally {
-            DatabaseHandler::setDefaultConnection(null);
-        }
+        self::assertSame(
+            ['driver' => 'pdo_sqlite', 'memory' => true],
+            $this->logHandler()->getConnectionParameters()
+        );
     }
 
     /**
@@ -304,24 +300,40 @@ class FirewallTest extends AbstractTestCase
      * `DatabaseStorage`, so a host that writes its own database-backed storage
      * -- which the custom-storage guide encourages -- is not excluded.
      */
-    public function testCreateSeedsFromACustomDatabaseBackedStorage(): void
+    public function testCreateBorrowsFromACustomDatabaseBackedStorage(): void
     {
-        DatabaseHandler::setDefaultConnection(null);
+        Firewall::create([], [
+            '[storage][type]' => FakeDatabaseBackedStorage::class,
+            '[storage][config][connection][driver]' => 'pdo_sqlite',
+            '[storage][config][connection][memory]' => true,
+            '[logger][0][class]' => DatabaseHandler::class,
+            '[logger][0][args][0][table]' => 'firewall_log',
+        ]);
 
-        try {
-            Firewall::create([], [
-                '[storage][type]' => FakeDatabaseBackedStorage::class,
-                '[storage][config][connection][driver]' => 'pdo_sqlite',
-                '[storage][config][connection][memory]' => true,
-            ]);
+        self::assertSame(
+            ['driver' => 'pdo_sqlite', 'memory' => true],
+            $this->logHandler()->getConnectionParameters()
+        );
+    }
 
-            self::assertSame(
-                ['driver' => 'pdo_sqlite', 'memory' => true],
-                DatabaseHandler::getDefaultConnection()
-            );
-        } finally {
-            DatabaseHandler::setDefaultConnection(null);
-        }
+    /**
+     * A handler that declares its own connection keeps it.
+     */
+    public function testAnExplicitHandlerConnectionIsNotOverwritten(): void
+    {
+        Firewall::create([], [
+            '[storage][type]' => DatabaseStorage::class,
+            '[storage][config][connection][driver]' => 'pdo_sqlite',
+            '[storage][config][connection][memory]' => true,
+            '[logger][0][class]' => DatabaseHandler::class,
+            '[logger][0][args][0][connection][driver]' => 'pdo_sqlite',
+            '[logger][0][args][0][connection][path]' => '/tmp/its-own.sqlite',
+        ]);
+
+        self::assertSame(
+            ['driver' => 'pdo_sqlite', 'path' => '/tmp/its-own.sqlite'],
+            $this->logHandler()->getConnectionParameters()
+        );
     }
 
     /**
@@ -337,17 +349,14 @@ class FirewallTest extends AbstractTestCase
      *   Configuration overrides describing the storage block.
      */
     #[DataProvider('connectionlessStorageProvider')]
-    public function testCreateSeedsNothingWhenStorageLendsNoConnection(array $overrides): void
+    public function testCreateLendsNothingWhenStorageHasNothingToLend(array $overrides): void
     {
-        DatabaseHandler::setDefaultConnection(['driver' => 'pdo_mysql']);
+        Firewall::create([], $overrides + [
+            '[logger][0][class]' => DatabaseHandler::class,
+            '[logger][0][args][0][table]' => 'firewall_log',
+        ]);
 
-        try {
-            Firewall::create([], $overrides);
-
-            self::assertNull(DatabaseHandler::getDefaultConnection());
-        } finally {
-            DatabaseHandler::setDefaultConnection(null);
-        }
+        self::assertNull($this->logHandler()->getConnectionParameters());
     }
 
     /**
@@ -400,31 +409,48 @@ class FirewallTest extends AbstractTestCase
     /**
      * A second firewall in one process does not inherit the first one's.
      *
-     * The fallback is a static, so it has to clear as readily as it seeds --
-     * otherwise a host that builds one firewall on database storage and
-     * another on file storage would have the second one's log handler quietly
-     * writing to the first one's database.
+     * The reason the fallback is a config transform rather than a static
+     * default: there is no state to go stale, so a host that builds one
+     * firewall on database storage and another on file storage cannot end up
+     * with the second one's log handler quietly writing to the first one's
+     * database.
      */
-    public function testCreateClearsTheFallbackWhenTheNextStorageHasNone(): void
+    public function testASecondFirewallDoesNotInheritTheFirstOnesConnection(): void
     {
-        try {
-            Firewall::create([], [
-                '[storage][type]' => DatabaseStorage::class,
-                '[storage][config][connection][driver]' => 'pdo_sqlite',
-                '[storage][config][connection][memory]' => true,
-            ]);
+        Firewall::create([], [
+            '[storage][type]' => DatabaseStorage::class,
+            '[storage][config][connection][driver]' => 'pdo_sqlite',
+            '[storage][config][connection][memory]' => true,
+            '[logger][0][class]' => DatabaseHandler::class,
+            '[logger][0][args][0][table]' => 'firewall_log',
+        ]);
 
-            self::assertNotNull(DatabaseHandler::getDefaultConnection());
+        self::assertNotNull($this->logHandler()->getConnectionParameters());
 
-            Firewall::create([], ['[storage][type]' => FileStorage::class]);
+        Firewall::create([], [
+            '[storage][type]' => FileStorage::class,
+            '[logger][0][class]' => DatabaseHandler::class,
+            '[logger][0][args][0][table]' => 'firewall_log',
+        ]);
 
-            self::assertNull(
-                DatabaseHandler::getDefaultConnection(),
-                'The file-storage firewall must not inherit the database one\'s connection.'
-            );
-        } finally {
-            DatabaseHandler::setDefaultConnection(null);
+        self::assertNull(
+            $this->logHandler()->getConnectionParameters(),
+            'The file-storage firewall must not inherit the database one\'s connection.'
+        );
+    }
+
+    /**
+     * Return the database log handler the current logger was built with.
+     */
+    private function logHandler(): DatabaseHandler
+    {
+        foreach (LoggingFactory::logger()->getHandlers() as $handler) {
+            if ($handler instanceof DatabaseHandler) {
+                return $handler;
+            }
         }
+
+        self::fail('No DatabaseHandler was wired into the logger.');
     }
 
     /**

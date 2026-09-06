@@ -119,20 +119,19 @@ foreach (Config::getLoadErrors() as $error) {
 }
 
 /*
- * The handler falls back to the storage connection when it declares none, and
- * that fallback is normally seeded by `Firewall::create()` — which is not
- * running here. Seed it the same way, so a config that relies on the
- * convenience prunes as readily as one that repeats its credentials.
+ * A handler that declares no connection borrows the storage one, which
+ * `Firewall::create()` normally arranges — and it is not running here. The
+ * same call does it, so a config relying on that convenience prunes as
+ * readily as one that repeats its credentials.
  */
-$storageConnection = $config['storage']['config']['connection'] ?? null;
-
-if (is_array($storageConnection) && $storageConnection !== []) {
-    DatabaseHandler::setDefaultConnection($storageConnection);
-}
+$loggerConfig = DatabaseHandler::shareStorageConnection(
+    is_array($config['logger'] ?? null) ? $config['logger'] : [],
+    is_array($config['storage'] ?? null) ? $config['storage'] : []
+);
 
 $handlers = [];
 
-foreach ($config['logger'] ?? [] as $handlerConfig) {
+foreach ($loggerConfig as $handlerConfig) {
     if (!is_array($handlerConfig)) {
         continue;
     }

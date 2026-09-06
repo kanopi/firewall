@@ -8,6 +8,8 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
+use Kanopi\Firewall\Storage\InMemoryStorage;
+use Kanopi\Firewall\Tests\Storage\FakeDatabaseBackedStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Monolog\Level;
 use Monolog\LogRecord;
@@ -36,7 +38,6 @@ class DatabaseHandlerTest extends AbstractTestCase
         parent::setUp();
 
         $this->databasePath = sys_get_temp_dir() . '/' . uniqid('firewall-log-', true) . '.sqlite';
-        DatabaseHandler::setDefaultConnection(null);
     }
 
     /**
@@ -44,8 +45,6 @@ class DatabaseHandlerTest extends AbstractTestCase
      */
     protected function tearDown(): void
     {
-        DatabaseHandler::setDefaultConnection(null);
-
         if (is_file($this->databasePath)) {
             unlink($this->databasePath);
         }
@@ -453,18 +452,25 @@ class DatabaseHandlerTest extends AbstractTestCase
     }
 
     /**
-     * With no connection of its own, the handler uses the storage one.
+     * With no connection of its own, the handler is given the storage one.
+     *
+     * Filled into the config before the handler is constructed, so what it
+     * connects to is visible in the config it was built from rather than in
+     * something global consulted at write time.
      */
-    public function testDefaultConnectionIsUsedWhenNoneIsConfigured(): void
+    public function testTheStorageConnectionIsFilledInWhenTheHandlerDeclaresNone(): void
     {
-        DatabaseHandler::setDefaultConnection(['driver' => 'pdo_sqlite', 'path' => $this->databasePath]);
+        $shared = DatabaseHandler::shareStorageConnection(
+            [['class' => DatabaseHandler::class, 'args' => [['table' => 'firewall_log']]]],
+            $this->databaseBackedStorageConfig()
+        );
 
         self::assertSame(
             ['driver' => 'pdo_sqlite', 'path' => $this->databasePath],
-            DatabaseHandler::getDefaultConnection()
+            $shared[0]['args'][0]['connection']
         );
 
-        $handler = new DatabaseHandler(['table' => 'firewall_log']);
+        $handler = new DatabaseHandler($shared[0]['args'][0]);
         $handler->handle($this->record(Level::Warning, 'Borrowed connection'));
         $handler->flush();
 
@@ -472,17 +478,134 @@ class DatabaseHandlerTest extends AbstractTestCase
     }
 
     /**
-     * A connection declared on the handler wins over the storage one.
+     * A handler entry with no `args` at all is still given one.
      */
-    public function testConfiguredConnectionWinsOverTheDefault(): void
+    public function testAHandlerWithNoArgsIsStillGivenTheConnection(): void
     {
-        DatabaseHandler::setDefaultConnection(['driver' => 'pdo_sqlite', 'path' => '/nonexistent/dir/x.sqlite']);
+        $shared = DatabaseHandler::shareStorageConnection(
+            [['class' => '\\' . DatabaseHandler::class]],
+            $this->databaseBackedStorageConfig()
+        );
 
-        $handler = $this->createHandler();
+        self::assertSame(
+            ['driver' => 'pdo_sqlite', 'path' => $this->databasePath],
+            $shared[0]['args'][0]['connection']
+        );
+    }
+
+    /**
+     * A connection declared on the handler is never overwritten.
+     */
+    public function testAnExplicitConnectionIsNeverOverwritten(): void
+    {
+        $declared = ['driver' => 'pdo_sqlite', 'path' => $this->databasePath];
+
+        $shared = DatabaseHandler::shareStorageConnection(
+            [['class' => DatabaseHandler::class, 'args' => [['connection' => $declared]]]],
+            ['type' => FakeDatabaseBackedStorage::class, 'config' => [
+                'connection' => ['driver' => 'pdo_sqlite', 'path' => '/nonexistent/dir/x.sqlite'],
+            ]]
+        );
+
+        self::assertSame($declared, $shared[0]['args'][0]['connection']);
+
+        $handler = new DatabaseHandler($shared[0]['args'][0]);
         $handler->handle($this->record(Level::Warning, 'Own connection'));
         $handler->flush();
 
         self::assertCount(1, $this->rows());
+    }
+
+    /**
+     * Entries the transform must leave exactly as it found them.
+     *
+     * @param array<int, mixed> $loggerConfig
+     *   A `logger:` block.
+     */
+    #[DataProvider('untouchedLoggerConfigProvider')]
+    public function testEntriesThatAreNotAConfigurableHandlerAreLeftAlone(array $loggerConfig): void
+    {
+        self::assertSame(
+            $loggerConfig,
+            DatabaseHandler::shareStorageConnection($loggerConfig, $this->databaseBackedStorageConfig())
+        );
+    }
+
+    /**
+     * Logger entries with nothing for the transform to fill in.
+     *
+     * @return array<string, array{array<int, mixed>}>
+     *   Provider sets, keyed by what makes each untouchable.
+     */
+    public static function untouchedLoggerConfigProvider(): array
+    {
+        return [
+            'a different handler class' => [[['class' => 'Monolog\\Handler\\StreamHandler', 'args' => ['/tmp/x.log']]]],
+            'an entry that is not an array' => [['nonsense']],
+            'an entry with no class' => [[['args' => [[]]]]],
+            'a class that is not a string' => [[['class' => 42]]],
+            'args that are not an array' => [[['class' => DatabaseHandler::class, 'args' => 'nonsense']]],
+            'a first argument that is not an array' => [[['class' => DatabaseHandler::class, 'args' => ['nonsense']]]],
+        ];
+    }
+
+    /**
+     * Storage that cannot lend a connection leaves the logger config alone.
+     *
+     * @param array<string, mixed> $storageConfig
+     *   A `storage:` block.
+     */
+    #[DataProvider('unlendableStorageProvider')]
+    public function testStorageThatCannotLendLeavesTheConfigAlone(array $storageConfig): void
+    {
+        $loggerConfig = [['class' => DatabaseHandler::class, 'args' => [['table' => 'firewall_log']]]];
+
+        self::assertSame(
+            $loggerConfig,
+            DatabaseHandler::shareStorageConnection($loggerConfig, $storageConfig)
+        );
+    }
+
+    /**
+     * Storage blocks with no connection to lend.
+     *
+     * @return array<string, array{array<string, mixed>}>
+     *   Provider sets, keyed by what disqualifies each one.
+     */
+    public static function unlendableStorageProvider(): array
+    {
+        $connection = ['connection' => ['driver' => 'pdo_sqlite', 'memory' => true]];
+
+        return [
+            'no storage at all' => [[]],
+            'not database backed' => [['type' => InMemoryStorage::class, 'config' => $connection]],
+            'a class that does not exist' => [['type' => 'App\\Nope', 'config' => $connection]],
+            'a type that is not a string' => [['type' => 42, 'config' => $connection]],
+            'database backed with no config' => [['type' => FakeDatabaseBackedStorage::class]],
+            'database backed with a non-array config' => [
+                ['type' => FakeDatabaseBackedStorage::class, 'config' => 'nonsense'],
+            ],
+            'database backed with a non-array connection' => [
+                ['type' => FakeDatabaseBackedStorage::class, 'config' => ['connection' => 'nonsense']],
+            ],
+            'database backed with an empty connection' => [
+                ['type' => FakeDatabaseBackedStorage::class, 'config' => ['connection' => []]],
+            ],
+        ];
+    }
+
+    /**
+     * A storage block pointing at this test's SQLite file.
+     *
+     * @return array<string, mixed>
+     *   A `storage:` block a connection can be borrowed from.
+     */
+    private function databaseBackedStorageConfig(): array
+    {
+        return [
+            'type' => FakeDatabaseBackedStorage::class,
+            'config' => ['connection' => ['driver' => 'pdo_sqlite', 'path' => $this->databasePath]],
+        ];
     }
 
     /**
@@ -724,22 +847,10 @@ class DatabaseHandlerTest extends AbstractTestCase
 
     /**
      * An empty `connection:` reads as "declared none", not as "declared empty".
-     *
-     * So it falls back to the storage connection rather than disabling the
-     * handler -- `connection: {}` and omitting the key say the same thing.
      */
-    public function testEmptyConnectionFallsBackToTheStorageConnection(): void
+    public function testEmptyConnectionIsTreatedAsAbsent(): void
     {
-        DatabaseHandler::setDefaultConnection(['driver' => 'pdo_sqlite', 'path' => $this->databasePath]);
-
-        $handler = new DatabaseHandler(['table' => 'firewall_log', 'connection' => []]);
-
-        self::assertNull($handler->getConnectionParameters());
-
-        $handler->handle($this->record(Level::Warning, 'Borrowed connection'));
-        $handler->flush();
-
-        self::assertCount(1, $this->rows());
+        self::assertNull((new DatabaseHandler(['table' => 'firewall_log', 'connection' => []]))->getConnectionParameters());
     }
 
     /**

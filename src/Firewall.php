@@ -27,7 +27,6 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
-use Kanopi\Firewall\Traits\DatabaseTrait;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
@@ -171,19 +170,12 @@ final class Firewall
         $config['global'] = isset($config['global']) && is_array($config['global']) ? array_filter($config['global']) : [];
         $config['challenge'] = isset($config['challenge']) && is_array($config['challenge']) ? $config['challenge'] : [];
 
-        // Seeded before the logger is built, because that is when a
-        // `DatabaseHandler` declared in `logger:` is constructed. A deployment
-        // logging to a database almost certainly already has one configured
-        // for blocked clients, and repeating those credentials under `logger:`
-        // only creates a second place for them to drift.
-        //
-        // Set on every create(), including to NULL. Most deployments are on
-        // file or in-memory storage and have nothing to offer here, and the
-        // property is static -- so this has to clear as readily as it seeds,
-        // or a second firewall built in the same process would inherit the
-        // first one's connection. `storageConnection()` returns NULL unless
-        // storage is genuinely database backed.
-        DatabaseHandler::setDefaultConnection(self::storageConnection($config['storage']));
+        // A database log handler that declares no connection of its own borrows
+        // the storage one, so those credentials live in one place rather than
+        // two. Resolved here, into the config the handler is about to be
+        // constructed from -- on file or in-memory storage there is nothing to
+        // borrow and the config comes back untouched.
+        $config['logger'] = DatabaseHandler::shareStorageConnection($config['logger'], $config['storage']);
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 
@@ -407,74 +399,6 @@ final class Firewall
         }
 
         return defined('KANOPI_FIREWALL_REQUIRE_CONFIG') && (bool) KANOPI_FIREWALL_REQUIRE_CONFIG;
-    }
-
-    /**
-     * Return the connection the storage backend is configured with, if any.
-     *
-     * Only consulted when the configured storage class is itself database
-     * backed. `connection` under `storage.config` means "Doctrine connection
-     * parameters" to `DatabaseStorage` and to nothing else -- a custom storage
-     * is free to use the same key for a Redis config, an HTTP endpoint, or
-     * anything else, and handing that to `DriverManager` would produce a
-     * confusing connection failure attributed to the log handler. A deployment
-     * on file or in-memory storage has no such key at all and gets NULL, which
-     * is the common case this must stay cheap for.
-     *
-     * Only the parameters are read. No connection is opened here, and none is
-     * opened by handing them to `DatabaseHandler`, which connects lazily on
-     * its first write.
-     *
-     * @param array<string, mixed> $storageConfig
-     *   The `storage` block, as normalised by `create()`.
-     *
-     * @return array<string, mixed>|null
-     *   Doctrine connection parameters, or NULL when storage is not database
-     *   backed or declares no connection.
-     */
-    private static function storageConnection(array $storageConfig): ?array
-    {
-        $type = $storageConfig['type'] ?? null;
-
-        if (!is_string($type) || !class_exists($type) || !self::isDatabaseBacked($type)) {
-            return null;
-        }
-
-        $storageInnerConfig = $storageConfig['config'] ?? null;
-
-        if (!is_array($storageInnerConfig)) {
-            return null;
-        }
-
-        $connection = $storageInnerConfig['connection'] ?? null;
-
-        return is_array($connection) && $connection !== [] ? $connection : null;
-    }
-
-    /**
-     * Whether a storage class connects through `DatabaseTrait`.
-     *
-     * Tested by trait rather than by `instanceof DatabaseStorage` so a host
-     * that writes its own database-backed storage -- which the custom-storage
-     * guide encourages -- gets the same convenience the shipped one does.
-     *
-     * @param class-string $class
-     *   The configured storage class.
-     *
-     * @return bool
-     *   TRUE when the class, or one of its parents, uses `DatabaseTrait`.
-     */
-    private static function isDatabaseBacked(string $class): bool
-    {
-        $candidates = [$class, ...array_values(class_parents($class) ?: [])];
-
-        foreach ($candidates as $candidate) {
-            if (in_array(DatabaseTrait::class, class_uses($candidate) ?: [], true)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**
