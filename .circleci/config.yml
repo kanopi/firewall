@@ -67,6 +67,16 @@ jobs:
         auth:
           username: $DOCKERHUB_USER
           password: $DOCKERHUB_PASS
+        environment:
+          # Point the Redis-backed tests at the service below. Set here rather
+          # than left to phpunit.env so the rate-limit backend is genuinely
+          # exercised: the unit tests for it mock `Redis`, which proves the call
+          # sequence and nothing about what Redis does with it. Two real bugs
+          # were hiding behind that — a burst inside one second counted as a
+          # single request, and a `prefix` option warned on every construction.
+          - REDIS_HOST=redis
+          - REDIS_PORT=6379
+          - TEST_SKIP_REDIS=false
       - image: cimg/mariadb:10.6
         auth:
           username: $DOCKERHUB_USER

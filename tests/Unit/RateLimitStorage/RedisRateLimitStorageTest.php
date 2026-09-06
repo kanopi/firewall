@@ -42,7 +42,7 @@ class RedisRateLimitStorageTest extends AbstractTestCase
         $mockRedis = $this->createMock(Redis::class);
         $mockRedis->expects($this->once())
             ->method('zAdd')
-            ->with('ratelimit:test-key', $this->anything(), '1234567890');
+            ->with('ratelimit:test-key', 1234567890, $this->stringStartsWith('1234567890:'));
         $mockRedis->expects($this->once())
             ->method('expire')
             ->with('ratelimit:test-key', 3600);
@@ -133,5 +133,44 @@ class RedisRateLimitStorageTest extends AbstractTestCase
         };
 
         $this->assertIsInt($storage->getConfig()['redis']['port']);
+    }
+
+    /**
+     * A configured prefix is used, and not forwarded to ext-redis.
+     *
+     * `prefix` is this class's own option. Leaving it in the array handed to
+     * `Redis::__construct()` made every construction emit "Skip unknown option
+     * 'prefix'" — a warning nobody can act on, from a key the documentation
+     * tells them to set. Found by the integration test against a real server;
+     * a mock never sees the constructor at all.
+     */
+    public function testConfiguredPrefixIsUsedAndNotPassedToRedis(): void
+    {
+        $mockRedis = $this->createMock(Redis::class);
+        $mockRedis->expects($this->once())
+            ->method('zAdd')
+            ->with('custom:test-key', 1234567890, $this->stringStartsWith('1234567890:'));
+
+        $storage = new RedisRateLimitStorage([
+            'instance' => $mockRedis,
+            'redis' => ['prefix' => 'custom:', 'host' => '127.0.0.1'],
+        ]);
+
+        $storage->recordRequest('test-key', 1234567890);
+    }
+
+    /**
+     * Without a configured prefix, the documented default applies.
+     */
+    public function testDefaultPrefixApplies(): void
+    {
+        $mockRedis = $this->createMock(Redis::class);
+        $mockRedis->expects($this->once())
+            ->method('zAdd')
+            ->with('ratelimit:test-key', 1234567890, $this->stringStartsWith('1234567890:'));
+
+        $storage = new RedisRateLimitStorage(['instance' => $mockRedis]);
+
+        $storage->recordRequest('test-key', 1234567890);
     }
 }

@@ -40,8 +40,18 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
         parent::__construct($config);
 
         try {
-            $this->redisPrefix = strval($config['redis']['prefix'] ?? 'ratelimit:');
-            $this->redis = (($config['instance'] ?? null) instanceof Redis) ? $config['instance'] : new Redis($config['redis']);
+            $redisOptions = is_array($config['redis'] ?? null) ? $config['redis'] : [];
+            $this->redisPrefix = strval($redisOptions['prefix'] ?? 'ratelimit:');
+
+            // `prefix` is ours, not ext-redis's. Leaving it in the array makes
+            // Redis::__construct() emit "Skip unknown option 'prefix'" on every
+            // single construction — a warning nobody can act on, from a config
+            // key the documentation tells them to set.
+            unset($redisOptions['prefix']);
+
+            $this->redis = (($config['instance'] ?? null) instanceof Redis)
+                ? $config['instance']
+                : new Redis($redisOptions);
             $this->redis->echo('Connected');
 
             $this->getLogger()->info('Redis rate limit storage initialized', [
@@ -64,7 +74,15 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
         $ttl = $this->config['ttl'] ?? 3600;
 
         try {
-            $added = $this->redis->zAdd($redisKey, $timestamp, (string)$timestamp);
+            // The score is the timestamp, which is what `countRequests()`
+            // ranges over. The MEMBER has to be unique per request: a sorted
+            // set holds each member once, so using the timestamp for both
+            // collapsed every request arriving in the same second into a
+            // single entry. A burst of 25 counted as 1, which meant no limit
+            // finer than one request per second per key could ever fire —
+            // against precisely the traffic rate limiting exists to stop.
+            $member = $timestamp . ':' . bin2hex(random_bytes(8));
+            $added = $this->redis->zAdd($redisKey, $timestamp, $member);
             $this->redis->expire($redisKey, $ttl);
 
             $this->getLogger()->debug('Redis rate limit request recorded', [
