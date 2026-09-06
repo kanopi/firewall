@@ -8,6 +8,7 @@ use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
@@ -264,6 +265,67 @@ class FirewallTest extends AbstractTestCase
     {
         $firewall = Firewall::create();
         $this->assertInstanceOf(Firewall::class, $firewall);
+    }
+
+    /**
+     * `create()` hands the storage connection to the database log handler.
+     *
+     * A deployment that logs to a database almost certainly already declares
+     * one for blocked clients, and repeating those credentials under `logger:`
+     * only creates a second place for them to drift.
+     */
+    public function testCreateSeedsTheLogHandlerWithTheStorageConnection(): void
+    {
+        DatabaseHandler::setDefaultConnection(null);
+
+        try {
+            Firewall::create([], [
+                '[storage][config][connection][driver]' => 'pdo_sqlite',
+                '[storage][config][connection][memory]' => true,
+            ]);
+
+            self::assertSame(
+                ['driver' => 'pdo_sqlite', 'memory' => true],
+                DatabaseHandler::getDefaultConnection()
+            );
+        } finally {
+            DatabaseHandler::setDefaultConnection(null);
+        }
+    }
+
+    /**
+     * Storage that declares no connection seeds nothing.
+     *
+     * @param array<string, mixed> $overrides
+     *   Configuration overrides describing the storage block.
+     */
+    #[DataProvider('connectionlessStorageProvider')]
+    public function testCreateSeedsNothingWhenStorageDeclaresNoConnection(array $overrides): void
+    {
+        DatabaseHandler::setDefaultConnection(['driver' => 'pdo_mysql']);
+
+        try {
+            Firewall::create([], $overrides);
+
+            self::assertNull(DatabaseHandler::getDefaultConnection());
+        } finally {
+            DatabaseHandler::setDefaultConnection(null);
+        }
+    }
+
+    /**
+     * Storage blocks that carry no usable connection.
+     *
+     * @return array<string, array{array<string, mixed>}>
+     *   Override sets, keyed by what makes each one connectionless.
+     */
+    public static function connectionlessStorageProvider(): array
+    {
+        return [
+            'no storage config at all' => [[]],
+            'connection is not an array' => [['[storage][config][connection]' => 'nonsense']],
+            'connection is empty' => [['[storage][config][connection]' => []]],
+        ];
     }
 
     /**

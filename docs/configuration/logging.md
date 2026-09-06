@@ -85,6 +85,173 @@ logger:
       - Monolog\Level::Warning
 ```
 
+## Database logging
+
+Write every event to a table, so what the firewall did to traffic can be queried
+instead of grepped. Monolog ships no generic SQL handler — its documentation tells
+you to write your own — so this one comes from the library:
+
+```yaml
+logger:
+  - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+    args:
+      - table: firewall_log
+        connection:
+          driver: pdo_mysql
+          host: db
+          dbname: app
+          user: "%env(DB_USER)%"
+          password: "%env(DB_PASSWORD)%"
+        level: Monolog\Level::Warning
+        retention_days: 30
+```
+
+Unlike every other handler on this page, its `args` is a **single map** rather than a
+positional list — there are too many knobs for positions to stay readable. The table is
+created on first write if it does not exist.
+
+| Key | Default | What it does |
+|---|---|---|
+| `table` | `firewall_log` | Table to create and write to |
+| `connection` | the storage connection | Doctrine parameters, or a `dsn:` |
+| `level` | `Monolog\Level::Warning` | Minimum severity to record |
+| `bubble` | `true` | Whether records continue to handlers below |
+| `buffer` | `true` | Hold records in memory, write them in one go at shutdown |
+| `buffer_limit` | `0` | Flush early once this many records are held (`0` = at shutdown) |
+| `retention_days` | `0` | Delete rows older than this (`0` = keep forever) |
+| `prune_probability` | `0.01` | Chance per flush of running that delete |
+
+### Reusing the storage connection
+
+Omit `connection` entirely and the handler uses whatever `storage.config.connection`
+already declares. A deployment logging to a database almost certainly has one configured
+for blocked clients already, and repeating the credentials only creates a second place
+for them to drift:
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\DatabaseStorage"
+  config:
+    connection:
+      driver: pdo_mysql
+      host: db
+      dbname: app
+      user: "%env(DB_USER)%"
+      password: "%env(DB_PASSWORD)%"
+
+logger:
+  - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+    args:
+      - table: firewall_log
+        level: Monolog\Level::Warning
+```
+
+### The columns
+
+The value of a table is what can be asked of it, so the eight context keys the firewall
+puts on every record each get their own column. Everything else lands in `context` as
+JSON, so nothing is lost.
+
+| Column | Source |
+|---|---|
+| `id` | auto-increment |
+| `logged_at` | record time, as a Unix timestamp |
+| `level`, `level_value` | record level — separates "would have blocked" from "blocked" |
+| `channel` | logger channel |
+| `message` | record message |
+| `request_id` | ties the several lines one request produces together |
+| `client_ip` | the most queried column |
+| `plugin_name` | the rule's display name — see the caveat below |
+| `plugin_type` | the plugin class, which is stable where the name is not |
+| `method`, `path`, `host` | what was asked for |
+| `user_agent` | |
+| `context` | everything not promoted to a column, as JSON |
+
+`logged_at`, `client_ip` and `plugin_type` are indexed, because every question the table
+exists for is bounded by time, by address, or by rule:
+
+```sql
+-- Which rule has blocked the most clients this week?
+SELECT plugin_type, COUNT(DISTINCT client_ip) AS clients
+FROM firewall_log
+WHERE logged_at >= UNIX_TIMESTAMP() - 604800
+GROUP BY plugin_type
+ORDER BY clients DESC;
+
+-- Did anything match this rule at all since it was added?
+SELECT COUNT(*) FROM firewall_log WHERE plugin_type = 'Kanopi\\Firewall\\Plugins\\GeoLocation';
+
+-- What did we do to this address before it complained?
+SELECT logged_at, level, message, path FROM firewall_log
+WHERE client_ip = '203.0.113.5' ORDER BY logged_at DESC;
+```
+
+Values on the [redaction list](#sensitive-value-redaction) are replaced before the write,
+not after. A table is a more durable place to leak a session cookie than a file that
+rotates away.
+
+> **`plugin_name` is not a rule name.** `getName()` is hardcoded per plugin class, so a
+> config with four `IpAddress` entries logs all four as `IP Address` and no query can
+> tell them apart. Use `plugin_type` where you need something stable, and the `path` /
+> `context` columns where you need to know which entry matched. This is a limitation of
+> the log today rather than one the table introduces.
+
+### Retention
+
+Nothing prunes a log table on its own, and a table that only grows is a support ticket
+six months out. `retention_days` sets the window; there are two ways to enforce it.
+
+**Probabilistic, needs no scheduling.** `prune_probability` (default `0.01`) is the
+chance that any given flush also runs the retention delete. On a site with traffic this
+keeps up on its own.
+
+**Scheduled, deterministic.** `bin/firewall-log-prune` does the same delete when you say
+so, and reports how many rows went:
+
+```bash
+vendor/bin/firewall-log-prune config/firewall.yml --dry-run
+vendor/bin/firewall-log-prune config/firewall.yml
+```
+
+| Option | What it does |
+|---|---|
+| `--days=N` | Prune to N days, ignoring each handler's `retention_days` |
+| `--dry-run` | Report what would be deleted without deleting it |
+| `--quiet` | Only report failures |
+
+Set `prune_probability: 0` to leave pruning entirely to the script — nothing then touches
+the table on the request path. On cron:
+
+```cron
+30 4 * * * cd /srv/app && vendor/bin/firewall-log-prune config/firewall.yml --quiet
+```
+
+### What this costs on the request path
+
+A database insert is a synchronous round trip, and the requests that produce the most log
+lines are exactly the ones under attack. Two defaults follow from that:
+
+- **`level` defaults to `Warning`**, not `Debug`. At `Debug` this handler writes a row for
+  every allowed request, which is a load test you did not mean to run.
+- **`buffer` defaults to `true`.** Records are held in memory and written when the handler
+  closes, which PHP does on a normal shutdown and on the `exit()` a blocking response ends
+  on. A fatal error skips destructors and loses the buffered records; `buffer: false` pays
+  a round trip per record to avoid that.
+
+No connection is opened until the first record is actually written, so a request that logs
+nothing costs nothing.
+
+If the log database is unreachable, the handler disables itself, reports once to the PHP
+error log, and the firewall carries on enforcing. A log destination going down must not
+take the firewall with it — which is also why the handler's own failures never route back
+through the firewall logger.
+
+### Schema changes
+
+The table is created on first write and never migrated. If a future release adds a column,
+an existing table will not gain it — drop the table and let it be recreated, which loses
+history but breaks nothing. Worth knowing before you build reporting on it.
+
 ## Email alerts
 
 Send an email when something critical happens. `NativeMailerHandler` uses PHP's `mail()` — no extra package required:

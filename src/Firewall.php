@@ -20,6 +20,7 @@ use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Exception\StorageException;
+use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Plugins\PluginInterface;
@@ -168,6 +169,13 @@ final class Firewall
         $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
         $config['global'] = isset($config['global']) && is_array($config['global']) ? array_filter($config['global']) : [];
         $config['challenge'] = isset($config['challenge']) && is_array($config['challenge']) ? $config['challenge'] : [];
+
+        // Seeded before the logger is built, because that is when a
+        // `DatabaseHandler` declared in `logger:` is constructed. A deployment
+        // logging to a database almost certainly already has one configured
+        // for blocked clients, and repeating those credentials under `logger:`
+        // only creates a second place for them to drift.
+        DatabaseHandler::setDefaultConnection(self::storageConnection($config['storage']));
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 
@@ -389,6 +397,33 @@ final class Firewall
         }
 
         return defined('KANOPI_FIREWALL_REQUIRE_CONFIG') && (bool) KANOPI_FIREWALL_REQUIRE_CONFIG;
+    }
+
+    /**
+     * Return the connection the storage backend is configured with, if any.
+     *
+     * Only the parameters are read — no connection is opened here, and none
+     * is opened by handing them to `DatabaseHandler`, which connects lazily
+     * on its first write. A deployment on file or in-memory storage therefore
+     * pays nothing for this, and gets NULL.
+     *
+     * @param array<string, mixed> $storageConfig
+     *   The `storage` block, as normalised by `create()`.
+     *
+     * @return array<string, mixed>|null
+     *   Doctrine connection parameters, or NULL when storage declares none.
+     */
+    private static function storageConnection(array $storageConfig): ?array
+    {
+        $storageInnerConfig = $storageConfig['config'] ?? null;
+
+        if (!is_array($storageInnerConfig)) {
+            return null;
+        }
+
+        $connection = $storageInnerConfig['connection'] ?? null;
+
+        return is_array($connection) && $connection !== [] ? $connection : null;
     }
 
     /**

@@ -184,8 +184,16 @@ trait DatabaseTrait
                     ]);
                 }
             } else {
+                // The table being iterated, not `config['storage_table']`.
+                // A class using this trait may declare several tables --
+                // `DatabaseStorage` declares two -- so the config key named
+                // only the first of them, and it is not a key every consumer
+                // sets at all: a class whose config has no `storage_table`
+                // took an undefined-index warning here on every construction
+                // where its table already existed, which is every request
+                // after the first.
                 $this->getLogger()->debug('Database table already exists', [
-                    'table' => $this->config['storage_table'],
+                    'table' => $table->getName(),
                 ]);
             }
         }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Logging;
 
+use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Monolog\Handler\ErrorLogHandler;
 use Monolog\Handler\HandlerInterface;
@@ -17,6 +18,7 @@ use Monolog\Handler\SlackWebhookHandler;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogHandler;
 use Monolog\Handler\TelegramBotHandler;
+use Monolog\Level;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Yaml\Yaml;
@@ -204,7 +206,62 @@ final class ReadmeLoggingExamplesTest extends TestCase
                 YAML,
                 TelegramBotHandler::class,
             ],
+
+            'Database logging — DatabaseHandler' => [
+                <<<'YAML'
+                logger:
+                  - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+                    args:
+                      - table: firewall_log
+                        connection:
+                          driver: pdo_mysql
+                          host: db
+                          dbname: app
+                          user: firewall
+                          password: secret
+                        level: Monolog\Level::Warning
+                        retention_days: 30
+                YAML,
+                DatabaseHandler::class,
+            ],
+
+            'Database logging reusing the storage connection' => [
+                <<<'YAML'
+                logger:
+                  - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+                    args:
+                      - table: firewall_log
+                        level: Monolog\Level::Warning
+                YAML,
+                DatabaseHandler::class,
+            ],
         ];
+    }
+
+    /**
+     * The documented `level:` reaches the handler.
+     *
+     * `LoggingFactory` rewrites `Monolog\Level::*` strings found at the top
+     * level of `args`, and `DatabaseHandler` takes one map, so its `level` sits
+     * a layer deeper than that pass reaches. If the handler stopped resolving
+     * the constant spelling itself, every documented example here would
+     * silently fall back to the default rather than fail.
+     */
+    public function testDocumentedDatabaseHandlerLevelIsApplied(): void
+    {
+        $yaml = <<<'YAML'
+        logger:
+          - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+            args:
+              - table: firewall_log
+                level: Monolog\Level::Critical
+        YAML;
+
+        $handlers = LoggingFactory::create(Yaml::parse($yaml)['logger'])->getHandlers();
+
+        self::assertInstanceOf(DatabaseHandler::class, $handlers[0]);
+        self::assertSame(Level::Critical, $handlers[0]->getLevel());
+        self::assertSame('firewall_log', $handlers[0]->getTable());
     }
 
     /**
