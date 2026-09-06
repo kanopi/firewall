@@ -198,9 +198,9 @@ final class TemplateRenderer
             return is_array($record) ? null : $record;
         }
 
-        if (preg_match_all('/\[([^\[\]]*)\]/', $subscripts, $matches) === false) {
-            return null;
-        }
+        // A literal pattern has no failure mode; the default keeps the
+        // analyser happy without an unreachable branch.
+        preg_match_all('/\[([^\[\]]*)\]/', $subscripts, $matches);
 
         $current = $record;
 

@@ -642,6 +642,36 @@ class PerPluginChallengeProviderTest extends TestCase
     }
 
     /**
+     * A signed provider claim still resolves when no registry was built.
+     *
+     * The registry is only assembled when config names more than one provider.
+     * Without it there is a single provider and nothing to look a name up in,
+     * so a claim that verifies resolves to that one — rather than being
+     * refused because the lookup table happens not to exist.
+     */
+    public function testSignedProviderResolvesWithoutARegistry(): void
+    {
+        $firewall = Firewall::create([$this->config()]);
+
+        // Stand the firewall up as a single-provider deployment.
+        $registry = new \ReflectionProperty($firewall, 'challengeProviderRegistry');
+        $registry->setValue($firewall, null);
+
+        $signed = $this->signedProvider($firewall, 'math');
+        $this->assertNotSame('', $signed, 'The provider claim must be signable.');
+
+        $request = Request::create('/', 'POST', [
+            ChallengeProviderInterface::PROVIDER_FIELD => $signed,
+        ], [], [], ['REMOTE_ADDR' => '203.0.113.9']);
+
+        $method = new \ReflectionMethod($firewall, 'resolveSubmissionProvider');
+        [$name, $provider] = $method->invoke($firewall, $request);
+
+        $this->assertSame('math', $name);
+        $this->assertNotNull($provider, 'The single configured provider answers the claim.');
+    }
+
+    /**
      * The provider registry the firewall built from config.
      */
     private function registry(Firewall $firewall): ChallengeProviderRegistry

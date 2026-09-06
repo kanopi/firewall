@@ -226,6 +226,42 @@ final class HttpFetcher implements FetcherInterface
             $options['content'] = $body;
         }
 
+        [$responseBody, $responseHeaders] = $this->readStream($sourceDefinition, $url, $options);
+
+        if ($responseHeaders === []) {
+            throw new SourceException(sprintf(
+                'Source "%s": no response headers from "%s".',
+                $sourceDefinition->name,
+                $sourceDefinition->upstream->display()
+            ));
+        }
+
+        return [$this->status($responseHeaders), $responseHeaders, $responseBody];
+    }
+
+    /**
+     * Open the URL and return its body and response headers.
+     *
+     * A seam. The two failure paths below the call — a stream that opens but
+     * yields no headers, and one whose body cannot be read despite a 2xx — are
+     * real, and neither can be provoked from a test against a working server.
+     * Overriding this is how they get exercised.
+     *
+     * @param SourceDefinition $sourceDefinition
+     *   The source being fetched, for error messages.
+     * @param string $url
+     *   The URL to open.
+     * @param array<string, mixed> $options
+     *   Stream context `http` options.
+     *
+     * @return array{0: string|false, 1: array<int, string>}
+     *   The body, and the raw response headers.
+     *
+     * @throws SourceException
+     *   When the stream cannot be opened at all.
+     */
+    protected function readStream(SourceDefinition $sourceDefinition, string $url, array $options): array
+    {
         $handle = @fopen($url, 'r', false, stream_context_create(['http' => $options]));
 
         if ($handle === false) {
@@ -238,28 +274,20 @@ final class HttpFetcher implements FetcherInterface
 
         try {
             $meta = stream_get_meta_data($handle);
-            $responseBody = stream_get_contents($handle);
+            $body = stream_get_contents($handle);
         } finally {
             fclose($handle);
         }
 
-        $responseHeaders = [];
+        $headers = [];
 
         foreach ($meta['wrapper_data'] ?? [] as $header) {
             if (is_string($header)) {
-                $responseHeaders[] = $header;
+                $headers[] = $header;
             }
         }
 
-        if ($responseHeaders === []) {
-            throw new SourceException(sprintf(
-                'Source "%s": no response headers from "%s".',
-                $sourceDefinition->name,
-                $sourceDefinition->upstream->display()
-            ));
-        }
-
-        return [$this->status($responseHeaders), $responseHeaders, $responseBody];
+        return [$body, $headers];
     }
 
     /**

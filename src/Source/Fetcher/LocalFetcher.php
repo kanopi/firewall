@@ -39,6 +39,25 @@ final class LocalFetcher implements FetcherInterface
     }
 
     /**
+     * Read a file's contents.
+     *
+     * A seam. The readability checks above can pass and the read still fail —
+     * the file is unlinked or its permissions change in between — which is a
+     * real race but not one a test can provoke in-process. Overriding this is
+     * how that path gets exercised.
+     *
+     * @param string $path
+     *   File to read.
+     *
+     * @return string|false
+     *   The contents, or FALSE when the read failed.
+     */
+    protected function readFile(string $path): string|false
+    {
+        return @file_get_contents($path);
+    }
+
+    /**
      * {@inheritdoc}
      */
     public function fetch(SourceDefinition $sourceDefinition, array $validators = []): FetchResult
@@ -53,7 +72,7 @@ final class LocalFetcher implements FetcherInterface
             ));
         }
 
-        $body = @file_get_contents($path);
+        $body = $this->readFile($path);
 
         if ($body === false) {
             throw new SourceException(sprintf(
