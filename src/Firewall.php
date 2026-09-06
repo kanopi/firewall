@@ -20,7 +20,6 @@ use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Exception\StorageException;
-use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Plugins\PluginInterface;
@@ -169,13 +168,6 @@ final class Firewall
         $config['storage'] = isset($config['storage']) && is_array($config['storage']) ? array_filter($config['storage']) : [];
         $config['global'] = isset($config['global']) && is_array($config['global']) ? array_filter($config['global']) : [];
         $config['challenge'] = isset($config['challenge']) && is_array($config['challenge']) ? $config['challenge'] : [];
-
-        // A database log handler that declares no connection of its own borrows
-        // the storage one, so those credentials live in one place rather than
-        // two. Resolved here, into the config the handler is about to be
-        // constructed from -- on file or in-memory storage there is nothing to
-        // borrow and the config comes back untouched.
-        $config['logger'] = DatabaseHandler::shareStorageConnection($config['logger'], $config['storage']);
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
 

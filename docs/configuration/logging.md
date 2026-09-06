@@ -110,32 +110,24 @@ Unlike every other handler on this page, its `args` is a **single map** rather t
 positional list — there are too many knobs for positions to stay readable. The table is
 created on first write if it does not exist.
 
-| Key | Default | What it does |
-|---|---|---|
-| `table` | `firewall_log` | Table to create and write to |
-| `connection` | the storage connection, if it has one | Doctrine parameters, or a `dsn:` |
-| `level` | `Monolog\Level::Warning` | Minimum severity to record |
-| `bubble` | `true` | Whether records continue to handlers below |
-| `buffer` | `true` | Hold records in memory, write them in one go at shutdown |
-| `buffer_limit` | `0` | Flush early once this many records are held (`0` = at shutdown) |
-| `retention_days` | `0` | Delete rows older than this (`0` = keep forever) |
-| `prune_probability` | `0.01` | Chance per flush of running that delete |
+`connection` is required. A handler without one has nowhere to write, so it disables
+itself and says so in the PHP error log rather than failing the request:
 
-### Reusing the storage connection
+```
+Firewall log handler has no `connection` configured, so it can write nowhere and is disabled
+```
 
-Omit `connection` entirely and the handler uses whatever `storage.config.connection`
-already declares. A deployment logging to a database almost certainly has one configured
-for blocked clients already, and repeating the credentials only creates a second place
-for them to drift:
+If you already declare a connection for [database storage](storage.md), point both at the
+same environment variables rather than repeating literal credentials:
 
 ```yaml
 storage:
   type: "Kanopi\\Firewall\\Storage\\DatabaseStorage"
   config:
-    connection:
+    connection: &db
       driver: pdo_mysql
-      host: db
-      dbname: app
+      host: "%env(DB_HOST)%"
+      dbname: "%env(DB_NAME)%"
       user: "%env(DB_USER)%"
       password: "%env(DB_PASSWORD)%"
 
@@ -143,28 +135,22 @@ logger:
   - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
     args:
       - table: firewall_log
+        connection: *db
         level: Monolog\Level::Warning
 ```
 
-**This only applies when `storage.type` is itself database backed** — `DatabaseStorage`,
-or a storage class of your own that connects through `DatabaseTrait`. On file or in-memory
-storage there is no connection to inherit, so the handler must declare its own `connection`
-or it will disable itself and say so in the PHP error log:
+A YAML anchor (`&db` / `*db`) keeps it to one declaration within a single file.
 
-```
-Firewall log handler has no database connection: none declared under its `args`, and the
-configured storage is not database backed so there was none to inherit
-```
-
-`connection` under `storage.config` means "Doctrine parameters" to `DatabaseStorage` and
-to nothing else, so a custom storage using the same key for something different — a Redis
-config, an HTTP endpoint — is never borrowed from. An explicit `connection` on the handler
-always wins over the storage one.
-
-The borrowing happens once, when the config is read, so what a handler connects to is
-decided by the config it was constructed from and nothing changes it later.
-`bin/firewall-log-prune` resolves it the same way, so a config relying on the convenience
-prunes without repeating its credentials either.
+| Key | Default | What it does |
+|---|---|---|
+| `table` | `firewall_log` | Table to create and write to |
+| `connection` | *(required)* | Doctrine parameters, or a `dsn:` |
+| `level` | `Monolog\Level::Warning` | Minimum severity to record |
+| `bubble` | `true` | Whether records continue to handlers below |
+| `buffer` | `true` | Hold records in memory, write them in one go at shutdown |
+| `buffer_limit` | `0` | Flush early once this many records are held (`0` = at shutdown) |
+| `retention_days` | `0` | Delete rows older than this (`0` = keep forever) |
+| `prune_probability` | `0.01` | Chance per flush of running that delete |
 
 ### The columns
 

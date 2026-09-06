@@ -148,45 +148,6 @@ class DatabaseLogHandlerIntegrationTest extends IntegrationTestCase
     }
 
     /**
-     * With no `connection`, the handler reuses the storage one.
-     */
-    public function testTheStorageConnectionIsReusedWhenTheHandlerDeclaresNone(): void
-    {
-        $firewall = $this->createFirewall([
-            'storage' => [
-                'type' => 'Kanopi\Firewall\Storage\DatabaseStorage',
-                'config' => [
-                    'connection' => ['driver' => 'pdo_sqlite', 'path' => $this->databasePath],
-                ],
-            ],
-            'logger' => [
-                [
-                    'class' => DatabaseHandler::class,
-                    'args' => [
-                        [
-                            'table' => 'firewall_log',
-                            'level' => 'Monolog\Level::Warning',
-                            'buffer' => false,
-                        ],
-                    ],
-                ],
-            ],
-        ]);
-
-        $this->evaluate($firewall, '192.0.2.55');
-
-        self::assertCount(1, $this->rows());
-
-        // Both subsystems in one database, which is the point of the fallback.
-        $tables = $this->connection()->fetchFirstColumn(
-            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-        );
-
-        self::assertContains('firewall_log', $tables);
-        self::assertContains('firewall_storage', $tables);
-    }
-
-    /**
      * A log database that is unreachable does not stop the firewall.
      *
      * The handler is built during `Firewall::create()`. If it connected there,

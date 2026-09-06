@@ -182,150 +182,6 @@ class DatabaseHandler extends AbstractProcessingHandler
     }
 
     /**
-     * Fill in `connection` on any log handler that declared none.
-     *
-     * A deployment logging to a database almost certainly already has one
-     * configured for blocked clients, and repeating those credentials under
-     * `logger:` only creates a second place for them to drift. So a handler
-     * that names no connection borrows the storage one.
-     *
-     * This resolves that at config time and returns the amended `logger:`
-     * block, rather than leaving the handler to consult something global at
-     * write time. The earlier version was a static default seeded by
-     * `Firewall::create()`, and it was confusing for exactly the reason a
-     * static is: it had to be assigned on every `create()` even when there was
-     * nothing to assign, because not assigning it would let a firewall on file
-     * storage inherit the database of one built earlier in the same process.
-     * A config transform has no such state to keep straight -- what a handler
-     * connects to is now visible in the config it was constructed from, and
-     * `getConnectionParameters()` reports it.
-     *
-     * Nothing is borrowed unless the storage backend is genuinely database
-     * backed. `connection` under `storage.config` means "Doctrine parameters"
-     * to `DatabaseStorage` and to nothing else; a custom storage is free to
-     * use the same key for a Redis config or an HTTP endpoint, and handing
-     * that to `DriverManager` would produce a connection failure blamed on the
-     * log handler. Most deployments run file or in-memory storage and have
-     * nothing to lend, which is the case this stays cheap for: it opens no
-     * connection and, finding no storage to borrow from, returns the config
-     * untouched.
-     *
-     * @param array<int|string, mixed> $loggerConfig
-     *   The `logger:` block, as normalised by `Firewall::create()`.
-     * @param array<string, mixed> $storageConfig
-     *   The `storage:` block, to borrow a connection from.
-     *
-     * @return array<int|string, mixed>
-     *   The `logger:` block, with `connection` filled in on any
-     *   `DatabaseHandler` entry that declared none. Entries that declare their
-     *   own connection are left alone -- an explicit one always wins.
-     */
-    public static function shareStorageConnection(array $loggerConfig, array $storageConfig): array
-    {
-        $connection = self::reusableStorageConnection($storageConfig);
-
-        if ($connection === null) {
-            return $loggerConfig;
-        }
-
-        foreach ($loggerConfig as $index => $handlerConfig) {
-            if (!is_array($handlerConfig)) {
-                continue;
-            }
-
-            // An already-instantiated handler passed through config overrides
-            // is past the point where its connection could be changed.
-            $class = $handlerConfig['class'] ?? null;
-
-            if (!is_string($class)) {
-                continue;
-            }
-
-            if (!is_a(ltrim($class, '\\'), self::class, true)) {
-                continue;
-            }
-
-            $args = $handlerConfig['args'] ?? [];
-
-            if (!is_array($args)) {
-                continue;
-            }
-
-            $handlerArgs = $args[0] ?? [];
-
-            if (!is_array($handlerArgs)) {
-                continue;
-            }
-
-            // An explicit connection always wins.
-            if (isset($handlerArgs['connection'])) {
-                continue;
-            }
-
-            $handlerArgs['connection'] = $connection;
-            $args[0] = $handlerArgs;
-            $loggerConfig[$index]['args'] = $args;
-        }
-
-        return $loggerConfig;
-    }
-
-    /**
-     * Return the connection a storage backend can lend, if it can lend one.
-     *
-     * @param array<string, mixed> $storageConfig
-     *   The `storage:` block.
-     *
-     * @return array<string, mixed>|null
-     *   Doctrine connection parameters, or NULL when the storage is not
-     *   database backed or declares no connection.
-     */
-    private static function reusableStorageConnection(array $storageConfig): ?array
-    {
-        $type = $storageConfig['type'] ?? null;
-
-        if (!is_string($type) || !class_exists($type) || !self::isDatabaseBacked($type)) {
-            return null;
-        }
-
-        $storageInnerConfig = $storageConfig['config'] ?? null;
-
-        if (!is_array($storageInnerConfig)) {
-            return null;
-        }
-
-        $connection = $storageInnerConfig['connection'] ?? null;
-
-        return is_array($connection) && $connection !== [] ? $connection : null;
-    }
-
-    /**
-     * Whether a storage class connects through `DatabaseTrait`.
-     *
-     * Tested by trait rather than by `instanceof DatabaseStorage` so a host
-     * that writes its own database-backed storage -- which the custom-storage
-     * guide encourages -- gets the same convenience the shipped one does.
-     *
-     * @param class-string $class
-     *   The configured storage class.
-     *
-     * @return bool
-     *   TRUE when the class, or one of its parents, uses `DatabaseTrait`.
-     */
-    private static function isDatabaseBacked(string $class): bool
-    {
-        $candidates = [$class, ...array_values(class_parents($class) ?: [])];
-
-        foreach ($candidates as $candidate) {
-            if (in_array(DatabaseTrait::class, class_uses($candidate) ?: [], true)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * Describe the log table.
      *
      * The columns are the design: what can be asked of this table is decided
@@ -610,12 +466,12 @@ class DatabaseHandler extends AbstractProcessingHandler
 
         if ($connection === null) {
             $this->disabled = true;
-            // Says which of the two ways of configuring this was missed.
-            // Reaching here on file or in-memory storage is the likely case:
-            // there was no storage connection for `shareStorageConnection()`
-            // to fill in, so the handler has to declare its own, and a config
-            // that looks complete otherwise would just never produce a table.
-            $this->getLogger()->error('Firewall log handler has no database connection: none declared under its `args`, and the configured storage is not database backed so there was none to inherit', [
+            // Reported rather than thrown: a log destination that cannot be
+            // reached must not take the firewall down with it. But a config
+            // that declares this handler and forgets its `connection` looks
+            // complete and would otherwise just never produce a table, so the
+            // message says exactly what is missing.
+            $this->getLogger()->error('Firewall log handler has no `connection` configured, so it can write nowhere and is disabled', [
                 'table' => $this->table,
             ]);
 

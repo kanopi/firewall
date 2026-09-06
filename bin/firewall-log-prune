@@ -118,17 +118,7 @@ foreach (Config::getLoadErrors() as $error) {
     fwrite(STDERR, sprintf("Could not load %s: %s\n", $error['file'], $error['message']));
 }
 
-/*
- * A handler that declares no connection borrows the storage one, which
- * `Firewall::create()` normally arranges — and it is not running here. The
- * same call does it, so a config relying on that convenience prunes as
- * readily as one that repeats its credentials.
- */
-$loggerConfig = DatabaseHandler::shareStorageConnection(
-    is_array($config['logger'] ?? null) ? $config['logger'] : [],
-    is_array($config['storage'] ?? null) ? $config['storage'] : []
-);
-
+$loggerConfig = is_array($config['logger'] ?? null) ? $config['logger'] : [];
 $handlers = [];
 
 foreach ($loggerConfig as $handlerConfig) {

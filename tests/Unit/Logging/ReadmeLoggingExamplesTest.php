@@ -225,17 +225,66 @@ final class ReadmeLoggingExamplesTest extends TestCase
                 DatabaseHandler::class,
             ],
 
-            'Database logging reusing the storage connection' => [
+            // The documented way to avoid declaring the same credentials
+            // twice when storage is also on a database. If Symfony's YAML
+            // parser ever stopped resolving anchors before the firewall reads
+            // the config, this example would silently produce a handler with
+            // no connection at all.
+            'Database logging, sharing a connection by YAML anchor' => [
                 <<<'YAML'
+                storage:
+                  type: "Kanopi\\Firewall\\Storage\\DatabaseStorage"
+                  config:
+                    connection: &db
+                      driver: pdo_mysql
+                      host: db
+                      dbname: app
+                      user: firewall
+                      password: secret
+
                 logger:
                   - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
                     args:
                       - table: firewall_log
+                        connection: *db
                         level: Monolog\Level::Warning
                 YAML,
                 DatabaseHandler::class,
             ],
         ];
+    }
+
+    /**
+     * The anchored connection reaches the handler, not just the storage block.
+     *
+     * The docs offer a YAML anchor as the way to declare one connection and
+     * use it in both places. An anchor that parsed but did not reach the
+     * handler would leave it disabled with an error only in the PHP error log,
+     * so this asserts the parameters actually arrive.
+     */
+    public function testAnAnchoredConnectionReachesTheHandler(): void
+    {
+        $yaml = <<<'YAML'
+        storage:
+          config:
+            connection: &db
+              driver: pdo_sqlite
+              path: /tmp/firewall-anchor-test.sqlite
+
+        logger:
+          - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+            args:
+              - table: firewall_log
+                connection: *db
+        YAML;
+
+        $handlers = LoggingFactory::create(Yaml::parse($yaml)['logger'])->getHandlers();
+
+        self::assertInstanceOf(DatabaseHandler::class, $handlers[0]);
+        self::assertSame(
+            ['driver' => 'pdo_sqlite', 'path' => '/tmp/firewall-anchor-test.sqlite'],
+            $handlers[0]->getConnectionParameters()
+        );
     }
 
     /**
