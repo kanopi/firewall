@@ -41,20 +41,19 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
      */
     public function __construct(array $config)
     {
-        // `isset()` first: the connection is genuinely optional here -- a caller that
-        // injects it after load, or a misconfiguration -- and createConnection() below
-        // already reports its absence as a StorageConnectionException. Reaching for the
-        // key unguarded put a PHP warning in front of that message on every such
-        // request, which is noise the exception has already said better.
-        if (isset($config['connection']) && is_array($config['connection']) && isset($config['connection']['port']) && is_numeric($config['connection']['port'])) {
-            $config['connection']['port'] = intval($config['connection']['port']);
-        }
+        // The connection is genuinely optional here -- a caller that injects it
+        // after load, or a misconfiguration -- and createConnection() below
+        // already reports its absence as a StorageConnectionException.
+        // `normalizeConnectionParameters()` gives back NULL rather than
+        // reaching for a key that may not be there, so no PHP warning lands in
+        // front of the message that explains the real problem.
+        $config['connection'] = self::normalizeConnectionParameters($config['connection'] ?? null) ?? [];
 
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_storage';
         $this->config['offenses_table'] ??= 'firewall_offenses';
 
-        $this->createConnection($config['connection'] ?? []);
+        $this->createConnection($config['connection']);
         $this->getLogger()->info('Database storage initialized', [
             'storage_table' => $this->config['storage_table'],
             'offenses_table' => $this->config['offenses_table'],

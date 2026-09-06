@@ -37,17 +37,21 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
      */
     public function __construct(array $config = [])
     {
-        if (is_array($config['connection']) && isset($config['connection']['port']) && is_numeric($config['connection']['port'])) {
-            $config['connection']['port'] = intval($config['connection']['port']);
-        }
+        // Pre-fix this read `$config['connection']` unguarded, so a config
+        // that declares none emitted `Undefined array key "connection"` on
+        // every construction -- in front of the StorageConnectionException
+        // that actually explains the problem. `DatabaseStorage` had already
+        // fixed that for itself; sharing the normaliser is what finally
+        // brought the fix here.
+        $config['connection'] = self::normalizeConnectionParameters($config['connection'] ?? null) ?? [];
 
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_rate_limit_storage';
 
-        $this->createConnection($config['connection'] ?? []);
+        $this->createConnection($config['connection']);
         $this->getLogger()->info('Database rate limit storage initialized', [
             'table' => $this->config['storage_table'],
-            'driver' => $config['connection']['driver'] ?? 'unknown',
+            'driver' => $this->config['connection']['driver'] ?? 'unknown',
         ]);
     }
 

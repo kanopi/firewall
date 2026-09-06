@@ -95,6 +95,54 @@ trait DatabaseTrait
     }
 
     /**
+     * Reduce a configured `connection` to something DriverManager will accept.
+     *
+     * Every consumer of this trait reads its connection from YAML, so every
+     * one of them needs the same two fixes applied before Doctrine sees it:
+     * YAML hands back `port` as a string where `DriverManager` wants an int,
+     * and a sequence-shaped key would arrive as an int where the parameter
+     * names are strings. All three used to do the first of those inline and
+     * they did not agree -- `DatabaseRateLimitStorage` reached for
+     * `$config['connection']` without checking it was there, so a config with
+     * no connection at all emitted `Undefined array key "connection"` ahead of
+     * the exception that explains the real problem. That is the noise
+     * `DatabaseStorage` has a comment about having removed; the removal never
+     * reached its sibling. Doing it once here is why it now has.
+     *
+     * @param mixed $connection
+     *   Whatever the config carried: parameters, a `dsn`, a ready
+     *   `Connection`, or nothing usable.
+     *
+     * @return array<string, mixed>|Connection|null
+     *   Parameters ready for `createConnection()`, the connection as given, or
+     *   NULL when there is nothing usable to connect with. Callers decide what
+     *   NULL means for them -- storage passes `[]` on to fail loudly, the log
+     *   handler falls back to the storage connection.
+     */
+    protected static function normalizeConnectionParameters(mixed $connection): array|Connection|null
+    {
+        if ($connection instanceof Connection) {
+            return $connection;
+        }
+
+        if (!is_array($connection) || $connection === []) {
+            return null;
+        }
+
+        $parameters = [];
+
+        foreach ($connection as $key => $value) {
+            $parameters[(string) $key] = $value;
+        }
+
+        if (isset($parameters['port']) && is_numeric($parameters['port'])) {
+            $parameters['port'] = (int) $parameters['port'];
+        }
+
+        return $parameters;
+    }
+
+    /**
      * Describe where a failed connection was pointed, for logs and messages.
      *
      * Only non-secret parameters are reported: an operator needs to see which

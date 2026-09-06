@@ -723,6 +723,26 @@ class DatabaseHandlerTest extends AbstractTestCase
     }
 
     /**
+     * An empty `connection:` reads as "declared none", not as "declared empty".
+     *
+     * So it falls back to the storage connection rather than disabling the
+     * handler -- `connection: {}` and omitting the key say the same thing.
+     */
+    public function testEmptyConnectionFallsBackToTheStorageConnection(): void
+    {
+        DatabaseHandler::setDefaultConnection(['driver' => 'pdo_sqlite', 'path' => $this->databasePath]);
+
+        $handler = new DatabaseHandler(['table' => 'firewall_log', 'connection' => []]);
+
+        self::assertNull($handler->getConnectionParameters());
+
+        $handler->handle($this->record(Level::Warning, 'Borrowed connection'));
+        $handler->flush();
+
+        self::assertCount(1, $this->rows());
+    }
+
+    /**
      * A connection of an unusable shape is treated as none at all.
      */
     public function testUnusableConnectionIsTreatedAsAbsent(): void

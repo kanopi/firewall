@@ -190,42 +190,7 @@ class DatabaseHandler extends AbstractProcessingHandler
         $probability = $config['prune_probability'] ?? 0.01;
         $this->pruneProbability = is_numeric($probability) ? min(1.0, max(0.0, (float) $probability)) : 0.01;
 
-        $this->connectionParameters = $this->normaliseConnection($config['connection'] ?? null);
-    }
-
-    /**
-     * Reduce a configured `connection` to something Doctrine will accept.
-     *
-     * @param mixed $connection
-     *   Whatever the config carried: parameters, a ready `Connection`, or
-     *   something unusable.
-     *
-     * @return array<string, mixed>|Connection|null
-     *   Parameters, the connection as given, or NULL when there is nothing
-     *   usable here and the storage connection should be tried instead.
-     */
-    private function normaliseConnection(mixed $connection): array|Connection|null
-    {
-        if ($connection instanceof Connection) {
-            return $connection;
-        }
-
-        if (!is_array($connection)) {
-            return null;
-        }
-
-        $parameters = [];
-
-        foreach ($connection as $key => $value) {
-            $parameters[(string) $key] = $value;
-        }
-
-        // YAML gives every scalar back as a string, and Doctrine wants an int.
-        if (isset($parameters['port']) && is_numeric($parameters['port'])) {
-            $parameters['port'] = (int) $parameters['port'];
-        }
-
-        return $parameters;
+        $this->connectionParameters = self::normalizeConnectionParameters($config['connection'] ?? null);
     }
 
     /**
