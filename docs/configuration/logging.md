@@ -175,7 +175,7 @@ JSON, so nothing is lost.
 | `message` | record message |
 | `request_id` | ties the several lines one request produces together |
 | `client_ip` | the most queried column |
-| `plugin_name` | the rule's display name — see the caveat below |
+| `plugin_name` | `metadata.name`, or the plugin class's own — see the caveat below |
 | `plugin_type` | the plugin class, which is stable where the name is not |
 | `method`, `path`, `host` | what was asked for |
 | `user_agent` | |
@@ -204,11 +204,22 @@ Values on the [redaction list](#sensitive-value-redaction) are replaced before t
 not after. A table is a more durable place to leak a session cookie than a file that
 rotates away.
 
-> **`plugin_name` is not a rule name.** `getName()` is hardcoded per plugin class, so a
-> config with four `IpAddress` entries logs all four as `IP Address` and no query can
-> tell them apart. Use `plugin_type` where you need something stable, and the `path` /
-> `context` columns where you need to know which entry matched. This is a limitation of
-> the log today rather than one the table introduces.
+> **`plugin_name` is only useful if you name your rules.** Without a
+> [`metadata.name`](../plugins/index.md#metadataname-naming-a-rule) a plugin logs the name
+> its *class* carries, so a config with four `IpAddress` entries writes `IP Address` in all
+> four and no `GROUP BY` over that column means anything. Name them and the grouping
+> becomes the one you actually want:
+>
+> ```yaml
+> plugins:
+>   - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+>     response: block
+>     metadata:
+>       name: known-bad-ranges
+> ```
+>
+> `plugin_type` stays the class either way, so it remains the stable column to group by
+> when names are arbitrary or absent.
 
 ### Retention
 

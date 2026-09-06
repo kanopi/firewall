@@ -92,6 +92,73 @@ class DatabaseLogHandlerIntegrationTest extends IntegrationTestCase
     }
 
     /**
+     * A named rule is what the `plugin_name` column holds.
+     *
+     * The column is only a useful grouping key if two entries of one class can
+     * be told apart, which is what `metadata.name` (#180) exists for. This is
+     * the two features meeting: name the rules, then `GROUP BY plugin_name`.
+     */
+    public function testNamedRulesAreDistinguishableInTheTable(): void
+    {
+        $firewall = $this->createFirewall([
+            'plugins' => [
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\IpAddress',
+                    'response' => 'block',
+                    'enable' => true,
+                    'metadata' => ['name' => 'known-bad-ranges'],
+                    'config' => ['192.0.2.0/24'],
+                ],
+                [
+                    'plugin' => 'Kanopi\Firewall\Plugins\IpAddress',
+                    'response' => 'block',
+                    'enable' => true,
+                    'metadata' => ['name' => 'cloud-egress'],
+                    'config' => ['198.51.100.0/24'],
+                ],
+            ],
+            'logger' => [
+                [
+                    'class' => DatabaseHandler::class,
+                    'args' => [
+                        [
+                            'table' => 'firewall_log',
+                            'connection' => ['driver' => 'pdo_sqlite', 'path' => $this->databasePath],
+                            'level' => 'Monolog\Level::Warning',
+                            'buffer' => false,
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        // Distinct addresses: a second request from an address already blocked
+        // is stopped by the storage blocklist before any plugin evaluates, and
+        // that line names no rule at all.
+        $this->evaluate($firewall, '192.0.2.55');
+        $this->evaluate($firewall, '192.0.2.56');
+        $this->evaluate($firewall, '198.51.100.20');
+
+        self::assertSame(
+            [
+                ['plugin_name' => 'cloud-egress', 'hits' => 1],
+                ['plugin_name' => 'known-bad-ranges', 'hits' => 2],
+            ],
+            $this->connection()->fetchAllAssociative(
+                'SELECT plugin_name, COUNT(*) AS hits FROM firewall_log GROUP BY plugin_name ORDER BY plugin_name'
+            ),
+            'Two entries of one plugin class must group separately'
+        );
+
+        // And the class is still recoverable, which is what makes the name
+        // safe to make arbitrary.
+        self::assertSame(
+            ['Kanopi\Firewall\Plugins\IpAddress'],
+            $this->connection()->fetchFirstColumn('SELECT DISTINCT plugin_type FROM firewall_log')
+        );
+    }
+
+    /**
      * With no `connection`, the handler reuses the storage one.
      */
     public function testTheStorageConnectionIsReusedWhenTheHandlerDeclaresNone(): void
