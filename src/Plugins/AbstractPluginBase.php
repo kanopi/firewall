@@ -54,8 +54,63 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
     {
         return [
             'plugin_name' => $this->getName(),
-            'plugin_type' => self::class,
+            // `static::class`, not `self::class`. Pre-fix this resolved here,
+            // in the abstract, so every plugin reported its type as
+            // `AbstractPluginBase` on any line it logged itself. That was
+            // survivable while `plugin_name` identified the rule; it is not
+            // once `metadata.name` makes the name arbitrary, because the class
+            // is then the only stable identifier a log reader has left.
+            'plugin_type' => static::class,
         ];
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Prefers `metadata.name` over what the plugin class calls itself.
+     *
+     * `defaultName()` is hardcoded per class, so a configuration with four
+     * `IpAddress` entries -- an allow list for the office, one for a monitoring
+     * vendor, a block list for known-bad ranges, a challenge list for cloud
+     * egress -- logged all four as `IP Address`. Nothing reading those lines
+     * back could tell which rule fired, which is the whole question a firewall
+     * log is asked.
+     *
+     * Declaring nothing keeps the name the plugin has always had, so no
+     * existing configuration changes what it logs.
+     */
+    public function getName(): string
+    {
+        $name = $this->metadata['name'] ?? null;
+
+        if (!is_string($name)) {
+            return $this->defaultName();
+        }
+
+        $name = trim($name);
+
+        // An empty or whitespace-only `name:` is a half-written key, not an
+        // assertion that this rule has no name. Falling back beats logging ''.
+        return $name === '' ? $this->defaultName() : $name;
+    }
+
+    /**
+     * Return the name this plugin class carries when none is configured.
+     *
+     * Concrete rather than abstract on purpose: a plugin outside this package
+     * that implements `getName()` itself -- the shape every plugin here had
+     * before `metadata.name` existed, and the one the custom-plugin guide
+     * documented -- keeps working untouched. Adding an abstract method here
+     * would have made every such class fatally incomplete on upgrade.
+     *
+     * @return string
+     *   The plugin's short class name, unless the plugin says otherwise.
+     */
+    protected function defaultName(): string
+    {
+        $parts = explode('\\', static::class);
+
+        return end($parts);
     }
 
     /**
