@@ -435,7 +435,15 @@ class AllPluginsIntegrationTest extends IntegrationTestCase
             ],
             'redis' => [
                 'type' => 'Kanopi\Firewall\RateLimitStorage\RedisRateLimitStorage',
-                'config' => ['redis' => self::getRedisConfig()]
+                // A per-run key prefix. Unlike the file backend (a fresh temp
+                // directory) and the in-memory one (a fresh process), Redis
+                // outlives the test — so without this the counters from the
+                // last run are still there and the first request of this one
+                // is already over the limit.
+                'config' => [
+                    'redis' => self::getRedisConfig()
+                        + ['prefix' => 'fwtest:' . bin2hex(random_bytes(6)) . ':'],
+                ]
             ],
             'memory' => [
                 'type' => 'Kanopi\Firewall\RateLimitStorage\InMemoryRateLimitStorage'
