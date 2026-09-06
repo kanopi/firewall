@@ -113,7 +113,7 @@ created on first write if it does not exist.
 | Key | Default | What it does |
 |---|---|---|
 | `table` | `firewall_log` | Table to create and write to |
-| `connection` | the storage connection | Doctrine parameters, or a `dsn:` |
+| `connection` | the storage connection, if it has one | Doctrine parameters, or a `dsn:` |
 | `level` | `Monolog\Level::Warning` | Minimum severity to record |
 | `bubble` | `true` | Whether records continue to handlers below |
 | `buffer` | `true` | Hold records in memory, write them in one go at shutdown |
@@ -145,6 +145,20 @@ logger:
       - table: firewall_log
         level: Monolog\Level::Warning
 ```
+
+**This only applies when `storage.type` is itself database backed** — `DatabaseStorage`,
+or a storage class of your own that connects through `DatabaseTrait`. On file or
+in-memory storage there is no connection to inherit, so the handler must declare its own
+`connection` or it will disable itself and say so in the PHP error log:
+
+```
+Firewall log handler has no database connection: none declared under its `args`, and the
+configured storage is not database backed so there is none to inherit
+```
+
+`connection` under `storage.config` means "Doctrine parameters" to `DatabaseStorage` and
+to nothing else, so a custom storage using the same key for something different — a Redis
+config, an HTTP endpoint — is never borrowed from.
 
 ### The columns
 

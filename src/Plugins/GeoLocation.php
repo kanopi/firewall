@@ -85,7 +85,7 @@ class GeoLocation extends AbstractPluginBase
     /**
      * {@inheritdoc}
      */
-    public function getName(): string
+    protected function defaultName(): string
     {
         return "GeoLocation";
     }

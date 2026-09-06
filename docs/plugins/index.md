@@ -12,11 +12,60 @@ plugins:
     response: block          # 'allow', 'block', or 'challenge'
     weight: 0                # Execution order within its response group (lower runs first)
     enable: true             # Whether the plugin entry is active
-    metadata: {}             # Plugin-specific configuration (DB readers, storage, etc.)
+    metadata: {}             # Plugin-specific configuration (name, DB readers, storage, etc.)
     config: []               # Rules or conditions for the plugin
 ```
 
-The same class can appear multiple times in the list — each entry becomes its own plugin instance, so you can split rules across instances with different weights or response modes.
+The same class can appear multiple times in the list — each entry becomes its own plugin instance, so you can split rules across instances with different weights or response modes. When you do, give each one a `metadata.name` so the log can tell them apart.
+
+### `metadata.name` — naming a rule
+
+Without a name, a plugin logs the name its class carries, which is the same for every
+entry of that class. Four `IpAddress` entries — an allow list for the office, one for a
+monitoring vendor, a block list for known-bad ranges, a challenge list for cloud egress —
+all log as `IP Address`, and nothing reading those lines back can say which one fired:
+
+```
+firewall.INFO: Request bypassed {"plugin_name":"IP Address", …}
+```
+
+Declare a name and that stops being true:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
+    metadata:
+      name: office-network
+    config:
+      - 203.0.113.0/24
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -190
+    metadata:
+      name: uptime-robot
+    config:
+      - 198.51.100.0/24
+```
+
+```
+firewall.INFO: Request bypassed {"plugin_name":"office-network", …}
+```
+
+The name is a label. Nothing the firewall *does* depends on it — only what it says
+afterwards — so adding, changing, or removing one never changes whether a request is
+blocked.
+
+- **Declaring nothing keeps the name the plugin has always had.** No existing
+  configuration logs anything different than it did before.
+- **`plugin_type` remains the class**, so anything mapping a log line back to a rule type
+  still can once names are arbitrary.
+- **Two entries declaring the same name log a startup warning.** It is a warning rather
+  than a failure: a duplicate name is untidy, not dangerous.
+- **Whitespace is trimmed**, and a name that is empty or whitespace-only falls back to the
+  class name rather than logging nothing.
 
 **YAML Syntax Note**: The `plugin:` value must be quoted with double backslashes:
 - ✅ Correct: `plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"`

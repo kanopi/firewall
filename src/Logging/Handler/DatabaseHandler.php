@@ -500,7 +500,12 @@ class DatabaseHandler extends AbstractProcessingHandler
 
         if ($connection === null || $connection === []) {
             $this->disabled = true;
-            $this->getLogger()->error('Firewall log handler has no database connection configured', [
+            // Says which of the two ways of configuring this was missed.
+            // Reaching here on file or in-memory storage is the likely case:
+            // there is no storage connection to inherit, so the handler has to
+            // declare its own, and a config that looks complete otherwise
+            // would just never produce a table.
+            $this->getLogger()->error('Firewall log handler has no database connection: none declared under its `args`, and the configured storage is not database backed so there is none to inherit', [
                 'table' => $this->table,
             ]);
 

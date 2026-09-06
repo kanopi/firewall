@@ -27,6 +27,7 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Traits\DatabaseTrait;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
@@ -175,6 +176,13 @@ final class Firewall
         // logging to a database almost certainly already has one configured
         // for blocked clients, and repeating those credentials under `logger:`
         // only creates a second place for them to drift.
+        //
+        // Set on every create(), including to NULL. Most deployments are on
+        // file or in-memory storage and have nothing to offer here, and the
+        // property is static -- so this has to clear as readily as it seeds,
+        // or a second firewall built in the same process would inherit the
+        // first one's connection. `storageConnection()` returns NULL unless
+        // storage is genuinely database backed.
         DatabaseHandler::setDefaultConnection(self::storageConnection($config['storage']));
 
         LoggingFactory::setLogger(LoggingFactory::create($config['logger']));
@@ -212,6 +220,8 @@ final class Firewall
 
         // Normalize configuration to the new plugins: array format.
         $config = PluginConfigNormalizer::normalize($config);
+
+        self::warnOnDuplicatePluginNames($config['plugins'] ?? []);
 
         // Partition plugins by response type and sort by weight.
         $partitioned = PluginConfigNormalizer::partitionAndSort($config['plugins'] ?? []);
@@ -402,19 +412,34 @@ final class Firewall
     /**
      * Return the connection the storage backend is configured with, if any.
      *
-     * Only the parameters are read — no connection is opened here, and none
-     * is opened by handing them to `DatabaseHandler`, which connects lazily
-     * on its first write. A deployment on file or in-memory storage therefore
-     * pays nothing for this, and gets NULL.
+     * Only consulted when the configured storage class is itself database
+     * backed. `connection` under `storage.config` means "Doctrine connection
+     * parameters" to `DatabaseStorage` and to nothing else -- a custom storage
+     * is free to use the same key for a Redis config, an HTTP endpoint, or
+     * anything else, and handing that to `DriverManager` would produce a
+     * confusing connection failure attributed to the log handler. A deployment
+     * on file or in-memory storage has no such key at all and gets NULL, which
+     * is the common case this must stay cheap for.
+     *
+     * Only the parameters are read. No connection is opened here, and none is
+     * opened by handing them to `DatabaseHandler`, which connects lazily on
+     * its first write.
      *
      * @param array<string, mixed> $storageConfig
      *   The `storage` block, as normalised by `create()`.
      *
      * @return array<string, mixed>|null
-     *   Doctrine connection parameters, or NULL when storage declares none.
+     *   Doctrine connection parameters, or NULL when storage is not database
+     *   backed or declares no connection.
      */
     private static function storageConnection(array $storageConfig): ?array
     {
+        $type = $storageConfig['type'] ?? null;
+
+        if (!is_string($type) || !class_exists($type) || !self::isDatabaseBacked($type)) {
+            return null;
+        }
+
         $storageInnerConfig = $storageConfig['config'] ?? null;
 
         if (!is_array($storageInnerConfig)) {
@@ -424,6 +449,89 @@ final class Firewall
         $connection = $storageInnerConfig['connection'] ?? null;
 
         return is_array($connection) && $connection !== [] ? $connection : null;
+    }
+
+    /**
+     * Whether a storage class connects through `DatabaseTrait`.
+     *
+     * Tested by trait rather than by `instanceof DatabaseStorage` so a host
+     * that writes its own database-backed storage -- which the custom-storage
+     * guide encourages -- gets the same convenience the shipped one does.
+     *
+     * @param class-string $class
+     *   The configured storage class.
+     *
+     * @return bool
+     *   TRUE when the class, or one of its parents, uses `DatabaseTrait`.
+     */
+    private static function isDatabaseBacked(string $class): bool
+    {
+        $candidates = [$class, ...array_values(class_parents($class) ?: [])];
+
+        foreach ($candidates as $candidate) {
+            if (in_array(DatabaseTrait::class, class_uses($candidate) ?: [], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Warn when two plugin entries declare the same `metadata.name`.
+     *
+     * The point of naming a rule is telling it apart from the others in the
+     * log, so two rules answering to `office` puts an operator back where they
+     * started -- and silently, because nothing about the config looks wrong.
+     *
+     * A warning rather than an exception: a duplicate name is untidy rather
+     * than dangerous. Nothing the firewall does depends on the name, only what
+     * it says afterwards, and refusing to start over a label would be a worse
+     * outcome than the ambiguity it prevents.
+     *
+     * Only declared names are checked. Two entries of the same class with no
+     * name still share one, which is the status quo this feature exists to let
+     * an operator opt out of -- warning about it would fire on almost every
+     * configuration in existence and say nothing actionable.
+     *
+     * @param array<int|string, mixed> $plugins
+     *   Plugin entries, after normalisation to the `plugins:` array format.
+     */
+    private static function warnOnDuplicatePluginNames(array $plugins): void
+    {
+        $seen = [];
+
+        foreach ($plugins as $plugin) {
+            // No `is_array()` guard: `??` already yields NULL for every entry
+            // shape that has no such offset, and the `is_string()` test below
+            // rejects it. An entry that is not an array at all does not reach
+            // here in practice -- `partitionAndSort()` refuses it first.
+            $name = $plugin['metadata']['name'] ?? null;
+
+            if (!is_string($name)) {
+                continue;
+            }
+
+            $name = trim($name);
+
+            if ($name === '') {
+                continue;
+            }
+
+            $seen[$name][] = is_string($plugin['plugin'] ?? null) ? $plugin['plugin'] : 'unknown';
+        }
+
+        foreach ($seen as $name => $classes) {
+            if (count($classes) < 2) {
+                continue;
+            }
+
+            LoggingFactory::logger()->warning('Two or more plugins declare the same name, so their log lines cannot be told apart', [
+                'name' => $name,
+                'declared_by' => $classes,
+                'count' => count($classes),
+            ]);
+        }
     }
 
     /**

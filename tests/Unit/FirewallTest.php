@@ -13,11 +13,14 @@ use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
+use Kanopi\Firewall\Storage\DatabaseStorage;
 use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Tests\Challenge\ReceiptlessSingleUseProvider;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
+use Kanopi\Firewall\Tests\Storage\FakeCustomStorage;
+use Kanopi\Firewall\Tests\Storage\FakeDatabaseBackedStorage;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -280,6 +283,7 @@ class FirewallTest extends AbstractTestCase
 
         try {
             Firewall::create([], [
+                '[storage][type]' => DatabaseStorage::class,
                 '[storage][config][connection][driver]' => 'pdo_sqlite',
                 '[storage][config][connection][memory]' => true,
             ]);
@@ -294,13 +298,46 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
-     * Storage that declares no connection seeds nothing.
+     * A storage class of the host's own gets the same convenience.
+     *
+     * The decision is made by looking for `DatabaseTrait`, not for
+     * `DatabaseStorage`, so a host that writes its own database-backed storage
+     * -- which the custom-storage guide encourages -- is not excluded.
+     */
+    public function testCreateSeedsFromACustomDatabaseBackedStorage(): void
+    {
+        DatabaseHandler::setDefaultConnection(null);
+
+        try {
+            Firewall::create([], [
+                '[storage][type]' => FakeDatabaseBackedStorage::class,
+                '[storage][config][connection][driver]' => 'pdo_sqlite',
+                '[storage][config][connection][memory]' => true,
+            ]);
+
+            self::assertSame(
+                ['driver' => 'pdo_sqlite', 'memory' => true],
+                DatabaseHandler::getDefaultConnection()
+            );
+        } finally {
+            DatabaseHandler::setDefaultConnection(null);
+        }
+    }
+
+    /**
+     * Storage that is not database backed lends nothing, whatever it declares.
+     *
+     * Most deployments are on file or in-memory storage. `connection` under
+     * `storage.config` means "Doctrine parameters" to `DatabaseStorage` and to
+     * nothing else, so a custom storage using the same key for a Redis config
+     * or an HTTP endpoint must not have it handed to `DriverManager` -- that
+     * would surface as a connection failure blamed on the log handler.
      *
      * @param array<string, mixed> $overrides
      *   Configuration overrides describing the storage block.
      */
     #[DataProvider('connectionlessStorageProvider')]
-    public function testCreateSeedsNothingWhenStorageDeclaresNoConnection(array $overrides): void
+    public function testCreateSeedsNothingWhenStorageLendsNoConnection(array $overrides): void
     {
         DatabaseHandler::setDefaultConnection(['driver' => 'pdo_mysql']);
 
@@ -314,18 +351,80 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
-     * Storage blocks that carry no usable connection.
+     * Storage blocks with no connection to lend, and why each has none.
      *
      * @return array<string, array{array<string, mixed>}>
-     *   Override sets, keyed by what makes each one connectionless.
+     *   Override sets, keyed by what disqualifies each one.
      */
     public static function connectionlessStorageProvider(): array
     {
+        $connection = [
+            '[storage][config][connection][driver]' => 'pdo_sqlite',
+            '[storage][config][connection][memory]' => true,
+        ];
+
         return [
             'no storage config at all' => [[]],
-            'connection is not an array' => [['[storage][config][connection]' => 'nonsense']],
-            'connection is empty' => [['[storage][config][connection]' => []]],
+            'the default in-memory storage, with a connection declared anyway' => [$connection],
+            'file storage, with a connection declared anyway' => [
+                ['[storage][type]' => FileStorage::class] + $connection,
+            ],
+            'a custom storage using `connection` for something else entirely' => [
+                ['[storage][type]' => FakeCustomStorage::class] + $connection,
+            ],
+            'a storage type that does not exist' => [
+                ['[storage][type]' => 'App\\Nope'] + $connection,
+            ],
+            'a storage type that is not even a string' => [
+                ['[storage][type]' => 42] + $connection,
+            ],
+            'database backed, but no config block at all' => [
+                ['[storage][type]' => FakeDatabaseBackedStorage::class],
+            ],
+            // Database backed, so the type check passes and the connection
+            // shape is what disqualifies these. `FakeDatabaseBackedStorage`
+            // rather than `DatabaseStorage` because the latter would go on to
+            // fail construction on the same bad connection, which is correct
+            // but is not what these two are about.
+            'database backed, but the connection is not an array' => [[
+                '[storage][type]' => FakeDatabaseBackedStorage::class,
+                '[storage][config][connection]' => 'nonsense',
+            ]],
+            'database backed, but the connection is empty' => [[
+                '[storage][type]' => FakeDatabaseBackedStorage::class,
+                '[storage][config][connection]' => [],
+            ]],
         ];
+    }
+
+    /**
+     * A second firewall in one process does not inherit the first one's.
+     *
+     * The fallback is a static, so it has to clear as readily as it seeds --
+     * otherwise a host that builds one firewall on database storage and
+     * another on file storage would have the second one's log handler quietly
+     * writing to the first one's database.
+     */
+    public function testCreateClearsTheFallbackWhenTheNextStorageHasNone(): void
+    {
+        try {
+            Firewall::create([], [
+                '[storage][type]' => DatabaseStorage::class,
+                '[storage][config][connection][driver]' => 'pdo_sqlite',
+                '[storage][config][connection][memory]' => true,
+            ]);
+
+            self::assertNotNull(DatabaseHandler::getDefaultConnection());
+
+            Firewall::create([], ['[storage][type]' => FileStorage::class]);
+
+            self::assertNull(
+                DatabaseHandler::getDefaultConnection(),
+                'The file-storage firewall must not inherit the database one\'s connection.'
+            );
+        } finally {
+            DatabaseHandler::setDefaultConnection(null);
+        }
     }
 
     /**
@@ -876,6 +975,122 @@ class FirewallTest extends AbstractTestCase
         } finally {
             Request::setTrustedProxies($previous, $previousHeaderSet);
         }
+    }
+
+    /**
+     * Two rules answering to one name is worth saying out loud.
+     *
+     * The point of naming a rule is telling it apart in the log, so a
+     * duplicate silently puts the operator back where they started -- and
+     * nothing about the config looks wrong.
+     */
+    public function testCreateWarnsWhenTwoPluginsDeclareTheSameName(): void
+    {
+        $handler = $this->captureLogger();
+
+        Firewall::create([
+            [
+                'logger' => [['class' => $handler]],
+                'plugins' => [
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'allow',
+                        'metadata' => ['name' => 'office'],
+                        'config' => ['203.0.113.0/24'],
+                    ],
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'block',
+                        'metadata' => ['name' => ' office '],
+                        'config' => ['198.51.100.0/24'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertTrue(
+            $handler->hasWarningContaining('declare the same name'),
+            'Expected a warning when two plugins share a declared name.'
+        );
+    }
+
+    /**
+     * Distinct names, and the ones that were never declared, warn about nothing.
+     *
+     * The second half matters more than the first: two unnamed entries of one
+     * class do share a name, but that is the status quo this feature exists to
+     * let an operator opt out of. Warning about it would fire on nearly every
+     * configuration in existence and say nothing actionable.
+     */
+    public function testCreateDoesNotWarnAboutDistinctOrUndeclaredNames(): void
+    {
+        $handler = $this->captureLogger();
+
+        Firewall::create([
+            [
+                'logger' => [['class' => $handler]],
+                'plugins' => [
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'allow',
+                        'metadata' => ['name' => 'office'],
+                        'config' => ['203.0.113.0/24'],
+                    ],
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'block',
+                        'metadata' => ['name' => 'known-bad'],
+                        'config' => ['198.51.100.0/24'],
+                    ],
+                    // No name at all, twice, plus entries of shapes the loop
+                    // has to survive rather than warn about.
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'config' => ['192.0.2.1']],
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'config' => ['192.0.2.2']],
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'metadata' => ['name' => '  ']],
+                    ['plugin' => IpAddress::class, 'response' => 'block', 'metadata' => ['name' => ['office']]],
+                    ['response' => 'block', 'metadata' => ['name' => 'unnamed-class']],
+                ],
+            ],
+        ]);
+
+        $this->assertFalse(
+            $handler->hasWarningContaining('declare the same name'),
+            'No two plugins share a declared name here.'
+        );
+    }
+
+    /**
+     * A declared name is what reaches the log when the rule fires.
+     */
+    public function testDeclaredPluginNameReachesTheLog(): void
+    {
+        $handler = $this->captureLogger();
+
+        $firewall = Firewall::create([
+            [
+                'global' => ['mode' => 'exception'],
+                'logger' => [['class' => $handler]],
+                'plugins' => [
+                    [
+                        'plugin' => IpAddress::class,
+                        'response' => 'allow',
+                        'metadata' => ['name' => 'office-network'],
+                        'config' => ['203.0.113.5'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $firewall->evaluate(Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '203.0.113.5']));
+
+        $bypassed = array_values(array_filter(
+            $handler->records,
+            static fn($record): bool => $record->message === 'Request bypassed'
+        ));
+
+        $this->assertNotSame([], $bypassed, 'The allow rule should have logged a bypass.');
+        $this->assertSame('office-network', $bypassed[0]->context['plugin_name']);
+        $this->assertSame(IpAddress::class, $bypassed[0]->context['plugin_type']);
     }
 
     /**
