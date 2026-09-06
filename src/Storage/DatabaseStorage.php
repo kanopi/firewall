@@ -417,10 +417,21 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
                     ->where('remote_address = :remote_address')
                     ->andWhere('timestamp >= :start AND timestamp <= :end')
                     ->setParameter('remote_address', $key)
-                    ->setParameter('start', $start)
-                    ->setParameter('end', $end)
+                    ->setParameter('start', self::clampTimestampBound($start))
+                    ->setParameter('end', self::clampTimestampBound($end))
             );
-        } catch (\Exception) {
+        } catch (\Exception $exception) {
+            // Logged, not swallowed. Pre-fix this was a bare
+            // `catch (\Exception) { return 0; }` -- the only method in this
+            // class that reported nothing -- and it hid a PostgreSQL failure
+            // that made every count zero. A count that cannot be taken is not
+            // the same fact as a count of none.
+            $this->getLogger()->error('Failed to count offenses', [
+                'table' => $this->config['offenses_table'],
+                'key' => $key,
+                'error' => $exception->getMessage(),
+            ]);
+
             return 0;
         }
     }
@@ -437,8 +448,8 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
                 ->where('remote_address = :remote_address')
                 ->andWhere('timestamp >= :start AND timestamp <= :end')
                 ->setParameter('remote_address', $key)
-                ->setParameter('start', $start)
-                ->setParameter('end', $end)
+                ->setParameter('start', self::clampTimestampBound($start))
+                ->setParameter('end', self::clampTimestampBound($end))
                 // Ordered and limited by the database rather than in PHP: a client
                 // that has been blocked for months can have thousands of rows, and
                 // the caller only ever wants the recent end of that.

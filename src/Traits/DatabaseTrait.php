@@ -264,6 +264,42 @@ trait DatabaseTrait
     }
 
     /**
+     * Clamp a timestamp bound to what the column can actually hold.
+     *
+     * `countOffenses()` and `listOffenses()` default their upper bound to
+     * `PHP_INT_MAX`, meaning "no upper bound". Every timestamp column these
+     * classes declare is `Type::getType('integer')`, which PostgreSQL creates
+     * as a 4-byte `INT`, and PostgreSQL refuses to compare it against a value
+     * outside that range rather than deciding the comparison is trivially
+     * true:
+     *
+     *     SQLSTATE[22003]: Numeric value out of range: 7 ERROR:
+     *     value "9223372036854775807" is out of range for type integer
+     *
+     * MySQL and SQLite accept it, so the whole family of range queries worked
+     * everywhere except PostgreSQL -- and `countOffenses()` caught the failure
+     * without logging it, so on PostgreSQL it silently returned 0 for every
+     * client. `find()` calls it for the offense count shown next to each
+     * blocked address, so an admin listing showed every client as having
+     * offended zero times.
+     *
+     * Clamping rather than dropping the clause: a caller that passes a real
+     * bound still gets it, and one that passes the sentinel gets a bound the
+     * column can hold, which for a 4-byte column is every timestamp it could
+     * ever contain.
+     *
+     * @param int $bound
+     *   A timestamp bound as the caller supplied it.
+     *
+     * @return int
+     *   The bound, clamped to the signed 32-bit range.
+     */
+    protected static function clampTimestampBound(int $bound): int
+    {
+        return max(-2147483648, min(2147483647, $bound));
+    }
+
+    /**
      * Count the rows a query matches, in the database rather than in PHP.
      *
      * Named, rather than left as a line in each caller, because the mistake it
