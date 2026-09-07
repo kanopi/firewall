@@ -22,6 +22,21 @@ use Symfony\Component\HttpFoundation\Request;
 class RateLimit extends AbstractPluginBase
 {
     /**
+     * The smallest limit that can be enforced.
+     *
+     * The check is `$count >= $rate`, and a count is never negative, so a rate
+     * of 0 is satisfied by no request at all -- including the first, which has
+     * recorded nothing. An operator who writes 0 means "do not limit this";
+     * enforced literally it refuses the whole site (#229).
+     *
+     * A rate below this is therefore treated as "not limited" rather than
+     * obeyed. Falling back to `default_rate`'s documented 10 was the other
+     * option and is worse: 10 requests per 10 seconds across every unlisted
+     * path is close to the outage the operator wrote 0 to avoid.
+     */
+    protected const MINIMUM_ENFORCEABLE_RATE = 1;
+
+    /**
      * Rate Limit Storage.
      */
     protected ?RateLimitStorageInterface $storage = null;
@@ -36,6 +51,8 @@ class RateLimit extends AbstractPluginBase
         // Set 10 seconds as the default sample size.
         $metadata['default_sample'] ??= 10;
         parent::__construct($metadata, $config);
+
+        $this->warnAboutUnenforceableRates();
 
         if (isset($this->metadata['storage'])) {
             $this->storage = RateLimitStorageFactory::create($this->metadata['storage']['type'], $this->metadata['storage']['config'] ?? []);
@@ -66,6 +83,51 @@ class RateLimit extends AbstractPluginBase
     }
 
     /**
+     * Tell the operator about any rate that cannot be enforced.
+     *
+     * Once per construction rather than once per request: a misconfigured rate
+     * is a property of the configuration, and repeating it on every request
+     * buries it in the traffic it is describing.
+     */
+    protected function warnAboutUnenforceableRates(): void
+    {
+        $unenforceable = [];
+
+        if (intval($this->metadata['default_rate']) < self::MINIMUM_ENFORCEABLE_RATE) {
+            $unenforceable[] = [
+                'setting' => 'metadata.default_rate',
+                'rate' => $this->metadata['default_rate'],
+            ];
+        }
+
+        foreach ($this->config as $index => $rule) {
+            if (!is_array($rule) || !array_key_exists('rate', $rule)) {
+                continue;
+            }
+
+            if (intval($rule['rate']) < self::MINIMUM_ENFORCEABLE_RATE) {
+                $unenforceable[] = [
+                    'setting' => sprintf('rule "%s"', strval($rule['path'] ?? '#' . $index)),
+                    'rate' => $rule['rate'],
+                ];
+            }
+        }
+
+        foreach ($unenforceable as $problem) {
+            $this->getLogger()->warning(
+                'Rate limit is below 1 and cannot be enforced - treating it as no limit',
+                [
+                    'plugin_name' => $this->getName(),
+                    'setting' => $problem['setting'],
+                    'rate' => $problem['rate'],
+                    'detail' => 'A rate of 0 would refuse every request, including the first. '
+                        . 'Remove the rule to stop limiting these paths, or set a rate of 1 or more.',
+                ]
+            );
+        }
+    }
+
+    /**
      * Build the rate key to search for.
      *
      * @param Request $request
@@ -93,6 +155,19 @@ class RateLimit extends AbstractPluginBase
         $path = $request->getPathInfo();
         $matchedRule = $this->matchRule($path);
 
+        $rate = intval($matchedRule['rate']);
+
+        // A rule that cannot be enforced does not count, and does not record.
+        // Recording would be pure cost -- the counter store is the expensive
+        // part of this plugin, and nothing would ever read what it wrote.
+        if ($rate < self::MINIMUM_ENFORCEABLE_RATE) {
+            $this->getLogger()->debug('Rate limit rule is not enforceable, skipping', $this->getContext($request, [
+                'matched_rule' => $matchedRule['path'],
+                'rate_limit' => $rate,
+            ]));
+            return false;
+        }
+
         $key = $this->buildRateKey($request, $matchedRule);
         $now = time();
         $windowStart = $now - intval($matchedRule['sample']);
@@ -101,15 +176,15 @@ class RateLimit extends AbstractPluginBase
 
         $this->getLogger()->debug('Rate limit check', $this->getContext($request, [
             'matched_rule' => $matchedRule['path'],
-            'rate_limit' => intval($matchedRule['rate']),
+            'rate_limit' => $rate,
             'window_seconds' => intval($matchedRule['sample']),
             'current_count' => $count,
             'key' => $key,
         ]));
 
-        if ($count >= intval($matchedRule['rate'])) {
+        if ($count >= $rate) {
             $this->getLogger()->warning('Rate limit exceeded', $this->getContext($request, [
-                'rate_limit' => intval($matchedRule['rate']),
+                'rate_limit' => $rate,
                 'window_seconds' => intval($matchedRule['sample']),
                 'request_count' => $count,
             ]));

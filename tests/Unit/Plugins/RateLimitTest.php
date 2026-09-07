@@ -246,6 +246,136 @@ class RateLimitTest extends AbstractTestCase
     }
 
     /**
+     * A default_rate of 0 must not refuse every request (#229).
+     *
+     * The check is `$count >= $rate`. With a rate of 0 that is `$count >= 0`,
+     * which is true for the very first request from a client that has recorded
+     * nothing -- so the value that reads as "unlimited" refused the whole site.
+     */
+    public function testZeroDefaultRateDoesNotBlockEveryRequest(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 0, 'default_sample' => 60],
+            [],
+            $this->getMockStorage(0)
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * The same, for a client that has already been seen many times.
+     *
+     * Guards against a fix that only special-cases the first request.
+     */
+    public function testZeroDefaultRateDoesNotBlockAnEstablishedClient(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 0, 'default_sample' => 60],
+            [],
+            $this->getMockStorage(9_999)
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * An unenforceable rule records nothing, so it costs no storage round trip.
+     */
+    public function testZeroRateRecordsNothing(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $mock = $this->getMockStorage(0);
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 0, 'default_sample' => 60],
+            [],
+            $mock
+        );
+
+        $plugin->evaluate($request);
+
+        $this->assertSame([], $mock->recorded);
+    }
+
+    /**
+     * A per-rule rate of 0 is unenforceable for the same reason.
+     */
+    public function testZeroRuleRateDoesNotBlock(): void
+    {
+        $request = Request::create('/login');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 10, 'default_sample' => 10],
+            [['path' => '/login', 'rate' => 0, 'sample' => 60]],
+            $this->getMockStorage(50)
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * A negative rate is unenforceable too -- `$count >= -1` is always true.
+     */
+    public function testNegativeRateDoesNotBlock(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => -1, 'default_sample' => 60],
+            [],
+            $this->getMockStorage(0)
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * A rate of 1 is the smallest enforceable limit, and still enforces.
+     *
+     * The boundary matters: the fix must not turn 1 into "no limit" as well.
+     */
+    public function testRateOfOneStillEnforces(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 1, 'default_sample' => 60],
+            [],
+            $this->getMockStorage(1)
+        );
+
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * A rate of 1 still allows a client that has recorded nothing yet.
+     */
+    public function testRateOfOneAllowsTheFirstRequest(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 1, 'default_sample' => 60],
+            [],
+            $this->getMockStorage(0)
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
      * Test wildcard path matching.
      */
     public function testWildcardMatch(): void
