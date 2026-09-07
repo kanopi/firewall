@@ -12,7 +12,7 @@ configs:
 storage:
   type: Kanopi\Firewall\Storage\FileStorage
   config:
-    file: /tmp/firewall-blocked.data
+    storage_file: /tmp/firewall-blocked.data
 ```
 
 This provides immediate protection without requiring GeoIP databases. For enhanced detection with geographic scoring, see [Enabling GeoIP Scoring](#enabling-geoip-scoring) below.
@@ -66,7 +66,7 @@ configs:
 storage:
   type: Kanopi\Firewall\Storage\FileStorage
   config:
-    file: /tmp/firewall-blocked.data
+    storage_file: /tmp/firewall-blocked.data
 ```
 
 ## Combine Multiple Presets
@@ -184,11 +184,12 @@ configs:
 storage:
   type: Kanopi\Firewall\Storage\DatabaseStorage
   config:
-    type: mysql
-    host: localhost
-    database: firewall
-    username: firewall_user
-    password: secure_password
+    connection:
+      driver: pdo_mysql
+      host: localhost
+      dbname: firewall
+      user: firewall_user
+      password: "%env(DB_PASSWORD)%"
 ```
 
 ## Rate Limiting Storage Options
@@ -230,7 +231,7 @@ plugins:
       storage:
         type: "Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage"
         config:
-          storage-table: firewall_ratelimit
+          storage_table: firewall_ratelimit
           connection:
             dsn: "pdo-mysql://user:pass@localhost:3306/db"
             # Or use connection details:
