@@ -8,7 +8,35 @@ A quick reference for every rate limit defined in the shipped [`rate-limiting.ym
 - **Status Code**: 429 (Too Many Requests)
 - **Expiration**: 300 seconds (5 minutes)
 
+!!! warning "\"General Traffic\" is one shared budget, not a per-path allowance"
+
+    A request matching no rule below falls through to a catch-all built from
+    `default_rate`, and **every** such request counts into a single bucket per client
+    address. Browsing five uncovered pages spends five of the sixty — it is a site-wide
+    budget per visitor, not sixty requests for each URL.
+
+    On a site where PHP serves anything beyond the HTML document, that is reachable by
+    ordinary browsing, and it lands hardest on visitors sharing an address behind a
+    corporate or carrier NAT.
+
+    To limit only the paths listed here, set `limit_unlisted_paths: false` — see
+    [Paths with no rule of their own](../plugins/rate-limit.md#paths-with-no-rule-of-their-own).
+
+    Note also that the plugin's own defaults, used when `default_rate` and `default_sample`
+    are not set at all, are **10 requests per 10 seconds** — considerably stricter than the
+    60/60 this preset configures.
+
 ## Rate Limit Rules by Category
+
+!!! note "A wildcard rule is one bucket, not one per matching path"
+
+    Counts are keyed on the client address and the **rule pattern**, not the requested
+    path. So `/api/*` at 100/min is 100 requests across `/api/users`, `/api/posts`,
+    `/api/search` and everything else beneath it — combined.
+
+    "100 requests per API endpoint" cannot be expressed by a wildcard; each endpoint needs
+    its own rule. Adding endpoints under a wildcard silently tightens the effective
+    per-endpoint allowance, because they all share the one budget.
 
 ### Authentication & Security
 
@@ -370,10 +398,17 @@ plugins:
 
 ### Too many false positives
 
-1. Increase rate limits for affected endpoints
-2. Add an IpAddress `response: allow` plugin entry for trusted sources
-3. Increase time window (sample)
-4. Check if behind proxy (ensure X-Forwarded-For is trusted)
+1. **Check whether the catch-all is doing it.** A path with no rule of its own counts into
+   one site-wide bucket per client, so ordinary browsing can trip a limit nobody wrote for
+   it. `limit_unlisted_paths: false` limits only what you listed
+2. **Check whether a wildcard is sharing a bucket.** `/api/*` is one budget across every
+   endpoint under it, not one each
+3. **Check whether visitors share an address.** A corporate or carrier NAT puts thousands
+   of people in one bucket, because the key is the client address
+4. Increase rate limits for affected endpoints
+5. Add an IpAddress `response: allow` plugin entry for trusted sources
+6. Increase time window (sample)
+7. Check if behind proxy (ensure X-Forwarded-For is trusted)
 
 ### Performance issues
 
@@ -400,7 +435,11 @@ that never returns stays put. That is disk space rather than a correctness probl
 1. **Start Conservative**: Begin with stricter limits, then relax if needed
 2. **Monitor First**: Run in log-only mode initially, then enable blocking
 3. **Bypass Trusted IPs**: Whitelist monitoring services, internal IPs
-4. **Different Tiers**: Use different limits for authenticated/premium users
+4. **Scope by path, not by user**: counts are keyed on client address plus rule pattern,
+   so a rule cannot currently distinguish an authenticated caller from an anonymous one on
+   the same path. A premium endpoint can carry its own limit; *who* is calling it cannot
+   enter the key. Overriding the `protected buildRateKey()` in a subclass is the only way
+   to change that today
 5. **Progressive Limits**: Start lenient, tighten after detecting abuse
 6. **Index the table**: If your database table predates pruning, add the
    `(rule, timestamp)` index — the schema is only created when the table is absent
