@@ -100,7 +100,6 @@ jobs:
         name: redis
     steps:
       - checkout
-      - ci-tools/install-github-cli
       - run:
           name: Install GeoIP DBs
           command: |
@@ -185,7 +184,6 @@ jobs:
                 $min,
                 $argv[3]
               );
-              file_put_contents("/tmp/report.md", $report, FILE_APPEND);
               echo $report;
               if ($pct < $min) {
                 printf("Line coverage %.2f%% is below the %.2f%% floor.\n", $pct, $min);
@@ -193,16 +191,6 @@ jobs:
               }
               printf("Line coverage %.2f%% meets the %.2f%% floor.\n", $pct, $min);
             ' "${PASSING}" "<<parameters.php>>" "${CIRCLE_WORKFLOW_JOB_ID}"
-      - ci-tools/post-to-github-commit:
-          body: '@/tmp/report.md'
-          when: always
-      - run:
-          name: "Comment on PR"
-          when: always
-          command: |
-            if [[ "${CI_PULL_REQUEST}" != "" ]]; then
-              gh pr comment --body-file /tmp/report.md
-            fi
       - store_test_results:
           path: reports/junit.xml
       - store_artifacts:
@@ -315,7 +303,6 @@ jobs:
     resource_class: small
     steps:
       - checkout
-      - ci-tools/install-github-cli
       - restore_cache:
           keys:
             - docs-pip-{{ checksum "docs/requirements.txt" }}
@@ -337,17 +324,6 @@ jobs:
           root: .
           paths:
             - site
-      - run:
-          name: Comment preview link on PR
-          when: on_success
-          command: |
-            if [[ "${CI_PULL_REQUEST}" == "" ]]; then
-              echo "Not a PR — skipping preview comment."
-              exit 0
-            fi
-            PREVIEW="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/docs/index.html"
-            echo "📖 **Docs preview** for this PR: [${PREVIEW}](${PREVIEW})" > /tmp/docs-preview.md
-            gh pr comment --body-file /tmp/docs-preview.md
 
   # Publish the reviewed build to the gh-pages branch, which GitHub Pages
   # serves at https://kanopi.github.io/firewall/. Deploys exactly the site/
