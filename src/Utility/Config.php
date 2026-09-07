@@ -228,12 +228,55 @@ class Config
             return file_get_contents($cacheFile);
         }
 
+        // Offline means offline, for every remote fetch and not only rule
+        // sources (#228). Past this line a visitor pays for an HTTP round trip
+        // inside Firewall::create(), before the application it is protecting
+        // has done anything.
+        if (self::isOffline()) {
+            if (file_exists($cacheFile)) {
+                $stale = @file_get_contents($cacheFile);
+
+                if ($stale !== false) {
+                    self::recordLoadWarning($url, sprintf(
+                        'Running offline; served a cached copy %ds old without fetching. '
+                        . 'The rules are active, but they are not necessarily current.',
+                        time() - (int) @filemtime($cacheFile)
+                    ));
+
+                    return $stale;
+                }
+            }
+
+            self::recordLoadError(
+                $url,
+                'Running offline with nothing cached, so this remote config contributed nothing. '
+                . 'Warm the cache before serving requests, or unset KANOPI_FIREWALL_SOURCES_OFFLINE.'
+            );
+
+            return false;
+        }
+
+        // Only one process should pay for the refresh. Without this, a TTL
+        // lapsing under load sends every concurrent worker at the same URL at
+        // once -- and each of them can wait the full timeout (#228).
+        $singleFlight = self::claimRefresh($cacheFile);
+
+        if ($singleFlight === false && file_exists($cacheFile)) {
+            $stale = @file_get_contents($cacheFile);
+
+            if ($stale !== false) {
+                return $stale;
+            }
+        }
+
         // Add timeout context
         $context = stream_context_create([
             'http' => ['timeout' => $timeout],
         ]);
 
         $content = @file_get_contents($url, false, $context);
+
+        self::releaseRefresh($singleFlight, $cacheFile);
 
         if ($content === false) {
             // The fetch failed, but a copy that once worked may be sitting
@@ -244,8 +287,94 @@ class Config
             return self::serveStaleCache($url, $cacheFile, $maxStale);
         }
 
-        file_put_contents($cacheFile, $content);
+        self::writeCache($cacheFile, $content);
         return $content;
+    }
+
+    /**
+     * Whether remote fetching is switched off.
+     *
+     * Reads the constant rule sources already use. The name says "sources",
+     * but an operator who set it meant "do not make HTTP requests while
+     * serving a request", and a remote `configs:` include is one of those.
+     */
+    private static function isOffline(): bool
+    {
+        return defined('KANOPI_FIREWALL_SOURCES_OFFLINE')
+            && (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE');
+    }
+
+    /**
+     * Try to become the one process that refreshes this URL.
+     *
+     * Never blocks. A caller that does not get the claim serves its cached
+     * copy if it has one, and otherwise fetches anyway -- a cold cache with no
+     * copy to fall back on needs the content more than it needs the politeness.
+     *
+     * @param string $cacheFile
+     *   The cache file being refreshed.
+     *
+     * @return resource|false
+     *   The held handle, or false when another process holds the claim.
+     */
+    private static function claimRefresh(string $cacheFile)
+    {
+        $handle = @fopen($cacheFile . '.refresh', 'c');
+
+        if ($handle === false) {
+            return false;
+        }
+
+        if (!@flock($handle, LOCK_EX | LOCK_NB)) {
+            @fclose($handle);
+            return false;
+        }
+
+        return $handle;
+    }
+
+    /**
+     * Release a refresh claim.
+     *
+     * @param resource|false $handle
+     *   Whatever claimRefresh() returned.
+     * @param string $cacheFile
+     *   The cache file being refreshed.
+     */
+    private static function releaseRefresh($handle, string $cacheFile): void
+    {
+        if ($handle === false) {
+            return;
+        }
+
+        @flock($handle, LOCK_UN);
+        @fclose($handle);
+        @unlink($cacheFile . '.refresh');
+    }
+
+    /**
+     * Publish the cache file atomically.
+     *
+     * Written in place before, so a concurrent reader could pick up a partial
+     * file and hand it to the YAML parser as though it were the whole config
+     * (#228, and the same fix as #225 for storage).
+     *
+     * @param string $cacheFile
+     *   Destination.
+     * @param string $content
+     *   What to write.
+     */
+    private static function writeCache(string $cacheFile, string $content): void
+    {
+        $temporary = $cacheFile . '.' . getmypid() . '.tmp';
+
+        if (@file_put_contents($temporary, $content, LOCK_EX) === false) {
+            return;
+        }
+
+        if (!@rename($temporary, $cacheFile)) {
+            @unlink($temporary);
+        }
     }
 
     /**

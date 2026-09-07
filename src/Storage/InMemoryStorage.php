@@ -105,7 +105,15 @@ class InMemoryStorage extends AbstractStorageBase implements QueryableStorageInt
                 ]);
             }
 
-            $this->delete($key);
+            // Only when there is something to remove. An absent key used to
+            // take this path too, and FileStorage::delete() overrides it with
+            // an exclusive lock plus a full file load -- so the overwhelming
+            // majority of traffic, an allowed request from an unknown address,
+            // paid for a write that never wrote anything (#225).
+            if ($value !== null) {
+                $this->delete($key);
+            }
+
             return $default;
         }
 

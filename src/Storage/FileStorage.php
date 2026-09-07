@@ -56,11 +56,23 @@ class FileStorage extends InMemoryStorage
 
     /**
      * Internal method used for loading the storage file.
+     *
+     * A file that cannot be decoded leaves the in-memory store alone. It used
+     * to be replaced with `[]`, and an empty block list means "nobody is
+     * blocked" -- so an unreadable file let every blocked client through
+     * (#225). Keeping the last known state is the conservative reading, and
+     * for a block list conservative means still blocking.
      */
     protected function loadStorageFile(): void
     {
+        $entries = $this->readFromFile($this->filePath);
+
+        if ($entries === null) {
+            return;
+        }
+
         /** @phpstan-ignore assign.propertyType */
-        $this->store = $this->loadFromFile($this->filePath);
+        $this->store = $entries;
     }
 
     /**
@@ -73,11 +85,20 @@ class FileStorage extends InMemoryStorage
 
     /**
      * Internal method used for loading the offense file.
+     *
+     * Same reasoning as loadStorageFile(): an undecodable file keeps the last
+     * known offense counts rather than resetting every client to zero.
      */
     protected function loadOffenseFile(): void
     {
+        $entries = $this->readFromFile($this->offensesFilePath);
+
+        if ($entries === null) {
+            return;
+        }
+
         /** @phpstan-ignore assign.propertyType */
-        $this->offenses = $this->loadFromFile($this->offensesFilePath);
+        $this->offenses = $entries;
     }
 
     /**

@@ -35,6 +35,31 @@ trait FileTrait
      */
     protected function loadFromFile(string $filePath): array
     {
+        return $this->readFromFile($filePath) ?? [];
+    }
+
+    /**
+     * Read the file, distinguishing "empty" from "could not be read".
+     *
+     * `loadFromFile()` collapses both to `[]`, which in a block list means
+     * "nobody is blocked" -- so a torn or corrupt file used to fail open and
+     * let a blocked client straight through (#225). Callers that hold prior
+     * state should use this instead and keep what they already had when it
+     * returns null.
+     *
+     * `loadFromFile()` is kept, delegating here, because it is a protected
+     * method a subclass outside this package may already override or call.
+     *
+     * @param string $filePath
+     *   File to read.
+     *
+     * @return array<mixed>|null
+     *   The decoded entries, or null when the file exists but could not be
+     *   understood. An absent or empty file is `[]`, not null: it genuinely
+     *   holds no entries.
+     */
+    protected function readFromFile(string $filePath): ?array
+    {
         $contents = @file_get_contents($filePath);
         $store = [];
         if ($contents === false || trim($contents) === '') {
@@ -46,20 +71,36 @@ trait FileTrait
 
         try {
             $data = json_decode($contents, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
-        } catch (\JsonException $jsonException) {
-            $this->getLogger()->warning('Failed to decode storage file as JSON, ignoring contents', [
-                'file' => $filePath,
-                'error' => $jsonException->getMessage(),
-            ]);
-            return $store;
+        } catch (\JsonException) {
+            // One retry, unlocked and immediate. Writes are staged and renamed
+            // into place now, so our own writes cannot be observed half-done --
+            // but a file left torn by an older release, or by something else
+            // sharing the path, still can be, and the rename may well have
+            // landed between the two reads.
+            $retry = @file_get_contents($filePath);
+
+            try {
+                $data = json_decode(
+                    $retry === false ? '' : $retry,
+                    true,
+                    512,
+                    JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING
+                );
+            } catch (\JsonException $jsonException) {
+                $this->getLogger()->error('Storage file could not be decoded, keeping the last known state', [
+                    'file' => $filePath,
+                    'error' => $jsonException->getMessage(),
+                ]);
+                return null;
+            }
         }
 
         if (!is_array($data)) {
-            $this->getLogger()->warning('File data is not an array, ignoring', [
+            $this->getLogger()->error('Storage file is not an array, keeping the last known state', [
                 'file' => $filePath,
                 'type' => gettype($data),
             ]);
-            return $store;
+            return null;
         }
 
         $count = 0;
@@ -101,8 +142,28 @@ trait FileTrait
             return false;
         }
 
-        if (@file_put_contents($filePath, $encoded) === false) {
+        // Stage and rename rather than writing in place. rename() is atomic
+        // within a filesystem, so a concurrent reader sees either the old file
+        // or the new one and never a half-written one -- which is what let a
+        // torn read empty the block list (#225). It also means readers need no
+        // lock at all. The pattern is already used by SourceCache::write().
+        $temporary = $filePath . '.' . getmypid() . '.tmp';
+
+        if (@file_put_contents($temporary, $encoded, LOCK_EX) === false) {
             $this->getLogger()->error('Failed to write to storage file', [
+                'file' => $filePath,
+                'data_size' => strlen($encoded),
+            ]);
+            return false;
+        }
+
+        // Before the rename, so the file is never briefly readable by others.
+        // 0600 matches what validateFilePath() gives a file it creates.
+        @chmod($temporary, 0600);
+
+        if (!@rename($temporary, $filePath)) {
+            @unlink($temporary);
+            $this->getLogger()->error('Failed to publish storage file', [
                 'file' => $filePath,
                 'data_size' => strlen($encoded),
             ]);
@@ -207,10 +268,8 @@ trait FileTrait
         }
 
         @chmod($lockFile, 0600);
-        if (!@flock($handle, LOCK_EX)) {
-            $this->getLogger()->warning('Unable to acquire exclusive lock, proceeding without lock', [
-                'lock_file' => $lockFile,
-            ]);
+
+        if (!$this->acquireExclusiveLock($handle, $lockFile)) {
             @fclose($handle);
             return $action();
         }
@@ -221,6 +280,57 @@ trait FileTrait
             @flock($handle, LOCK_UN);
             @fclose($handle);
         }
+    }
+
+    /**
+     * Take the exclusive lock, but give up rather than wait forever.
+     *
+     * A blocking `flock(LOCK_EX)` has no timeout and no retry budget, so one
+     * stalled holder on slow network-backed storage blocked every other worker
+     * until the FPM request timeout -- nothing gave up (#225). Non-blocking
+     * attempts with a bounded budget cost a lost update instead of a stalled
+     * request.
+     *
+     * Proceeding unlocked on exhaustion is now a much smaller risk than it was:
+     * writes are staged and renamed, so the failure mode is a lost update
+     * rather than a file torn in half.
+     *
+     * @param resource $handle
+     *   Open handle to the lock file.
+     * @param string $lockFile
+     *   Path, for logging.
+     *
+     * @return bool
+     *   True when the lock is held.
+     */
+    protected function acquireExclusiveLock($handle, string $lockFile): bool
+    {
+        // Locals rather than class constants: constants in traits are PHP 8.2
+        // and up, and this package supports 8.1.
+        //
+        // 50 attempts two milliseconds apart is a ceiling just under 100ms.
+        // Long enough that ordinary contention still gets the lock, short
+        // enough that a stalled holder costs a lost update rather than a
+        // worker.
+        $maxAttempts = 50;
+        $retryMicroseconds = 2000;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            if (@flock($handle, LOCK_EX | LOCK_NB)) {
+                return true;
+            }
+
+            if ($attempt < $maxAttempts) {
+                usleep($retryMicroseconds);
+            }
+        }
+
+        $this->getLogger()->warning('Unable to acquire exclusive lock, proceeding without lock', [
+            'lock_file' => $lockFile,
+            'waited_ms' => ($maxAttempts - 1) * $retryMicroseconds / 1000,
+        ]);
+
+        return false;
     }
 
     /**
