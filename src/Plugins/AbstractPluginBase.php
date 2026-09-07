@@ -19,12 +19,15 @@ use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\NestedArray;
 use Kanopi\Firewall\Utility\RuleDiagnostics;
 use Kanopi\Firewall\Utility\Path;
+use Kanopi\Firewall\Utility\ReverseDnsVerifier;
+use Psr\Cache\CacheItemPoolInterface;
+use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Abstract Plugin used for creating a plugin.
  */
-abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterface, ChallengeProviderAwareInterface
+abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterface, IdentityVerificationInterface, ChallengeProviderAwareInterface
 {
     use LoggingTrait;
 
@@ -43,6 +46,115 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
      * @var array<int, string>
      */
     protected array $sourceProvenance = [];
+
+    /**
+     * Lazily built verifier, so a rule that never matches never builds one.
+     */
+    protected ?ReverseDnsVerifier $reverseDnsVerifier = null;
+
+    /**
+     * {@inheritdoc}
+     *
+     * Reads `metadata.verify`. Absent means no verification, which is every existing
+     * configuration.
+     */
+    public function passesIdentityVerification(Request $request): bool
+    {
+        $verify = $this->metadata['verify'] ?? null;
+
+        if ($verify === null) {
+            return true;
+        }
+
+        if (!is_string($verify) || strtolower(trim($verify)) !== 'reverse-dns') {
+            $this->getLogger()->warning('Plugin verify method is not recognised - the rule will not match', [
+                'plugin' => $this->getName(),
+                'verify' => is_scalar($verify) ? (string) $verify : gettype($verify),
+                'detail' => 'The only supported value is "reverse-dns". Remove the key to skip verification.',
+            ]);
+
+            // Not "match anyway". An operator who asked for verification and
+            // mistyped it should not silently get an unverified allow rule.
+            return false;
+        }
+
+        $suffixes = $this->metadata['verify_suffixes'] ?? [];
+        $suffixes = is_array($suffixes) ? array_values(array_filter($suffixes, is_string(...))) : [];
+
+        if ($suffixes === []) {
+            $this->getLogger()->warning('Plugin verify is set with no verify_suffixes - the rule will not match', [
+                'plugin' => $this->getName(),
+                'detail' => 'Without a domain list any host with a PTR record would verify, '
+                    . 'which is not verification. List the crawler domains you accept.',
+            ]);
+
+            return false;
+        }
+
+        $ip = $request->getClientIp();
+
+        if (!is_string($ip) || $ip === '') {
+            return false;
+        }
+
+        return $this->reverseDnsVerifier()->verify($ip, $suffixes);
+    }
+
+    /**
+     * The verifier, built from this plugin's cache configuration.
+     *
+     * @return ReverseDnsVerifier
+     *   The verifier.
+     */
+    protected function reverseDnsVerifier(): ReverseDnsVerifier
+    {
+        if (!$this->reverseDnsVerifier instanceof ReverseDnsVerifier) {
+            $ttl = $this->metadata['verify_ttl'] ?? 3600;
+            $this->reverseDnsVerifier = new ReverseDnsVerifier(
+                $this->identityCachePool(),
+                is_numeric($ttl) ? (int) $ttl : 3600
+            );
+        }
+
+        return $this->reverseDnsVerifier;
+    }
+
+    /**
+     * A filesystem pool for verification verdicts.
+     *
+     * Its own namespace rather than sharing whatever a plugin uses for other things, so
+     * clearing one cache cannot quietly widen an allow rule by discarding verdicts.
+     *
+     * @return CacheItemPoolInterface|null
+     *   The pool, or NULL when one cannot be built.
+     */
+    protected function identityCachePool(): ?CacheItemPoolInterface
+    {
+        $configured = $this->metadata['verify_cache'] ?? null;
+
+        if ($configured instanceof CacheItemPoolInterface) {
+            return $configured;
+        }
+
+        try {
+            return new FilesystemAdapter(
+                'kanopi_firewall_rdns',
+                3600,
+                defined('KANOPI_FIREWALL_CACHE_DIR')
+                    ? (string) constant('KANOPI_FIREWALL_CACHE_DIR')
+                    : sys_get_temp_dir() . '/kanopi-firewall-rdns'
+            );
+        } catch (\Throwable $throwable) {
+            // No cache means a DNS round trip per request, which is slow but
+            // still correct. Losing the rule entirely would be worse.
+            $this->getLogger()->warning('Reverse DNS cache could not be created - verifying without a cache', [
+                'plugin' => $this->getName(),
+                'error' => $throwable->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
 
     /**
      * {@inheritdoc}

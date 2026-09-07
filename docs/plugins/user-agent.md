@@ -150,6 +150,87 @@ database knows still reports all three fields, and one only the crawler list kno
 field going empty, but do not expect `bot.category` to be populated for everything
 `bot:true` now matches.
 
+## Verifying the crawler is who it says
+
+A user-agent rule matches on **an assertion the client makes**, not a fact. For a block
+rule that is fine: the cost of being lied to is that an attacker declines to be blocked.
+For an **allow** rule it is not, because `response: allow` short-circuits evaluation
+entirely — no block, no challenge, no rate limit. `Googlebot` in a header is one `curl`
+flag away.
+
+`verify: reverse-dns` makes the rule prove it:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: allow
+    weight: -200
+    metadata:
+      name: verified-search-crawlers
+      verify: reverse-dns
+      verify_suffixes:
+        - .googlebot.com
+        - .google.com
+        - .search.msn.com
+        - .applebot.apple.com
+    config:
+      - "bot:true"
+```
+
+The rule matches as usual, and then the match has to survive three steps — the same ones
+Google, Bing and Apple all document:
+
+1. **Reverse lookup** the client address to a hostname.
+2. **Check the hostname** is inside one of `verify_suffixes`.
+3. **Forward-resolve that hostname** and confirm it comes back to the address it started
+   from.
+
+Step 3 is the one that matters. Anyone can point reverse DNS for an address they control
+at `crawl-1-2-3-4.googlebot.com`; only Google can make that name resolve back.
+
+### Anything less than a confirmed round trip is no match
+
+No PTR record, a hostname outside the list, a forward lookup that does not come back, DNS
+unreachable — all of them mean the rule does not match, and evaluation carries on to the
+rules below it.
+
+That is the opposite of the fail-**open** posture that is right for a reputation source
+like [AbuseIPDB](abuseipdb.md), and deliberately so. A block source that cannot be reached
+should not start blocking everyone; an allow rule that cannot be verified must not start
+allowing everyone.
+
+### Suffixes are matched on a label boundary
+
+`googlebot.com` accepts `crawl.googlebot.com` and `googlebot.com` itself. It does **not**
+accept `evilgooglebot.com`, which anyone can register. Writing the leading dot
+(`.googlebot.com`) is clearer and behaves identically.
+
+### The cost, and the cache
+
+Two DNS lookups is far too much to spend on a request, so verdicts are cached per address —
+refusals as well as acceptances, so a flood of clients pretending to be Googlebot cannot
+turn into a flood of DNS traffic.
+
+| Key | Default | |
+|---|---|---|
+| `verify_ttl` | `3600` | Seconds a verdict stays good |
+| `verify_cache` | filesystem | Any PSR-6 pool; falls back to `KANOPI_FIREWALL_CACHE_DIR` |
+
+Verification only runs **after** the rule has already matched, so an ordinary request that
+matches nothing never pays for it.
+
+!!! warning "A mistyped `verify` does not match"
+
+    The only supported value is `reverse-dns`. Anything else logs a warning at construction
+    and the rule matches nothing — rather than silently reverting to an unverified allow,
+    which is the failure an operator would never notice.
+
+    `verify` with no `verify_suffixes` behaves the same way: without a domain list, any
+    address with a PTR record would pass, and that is not verification.
+
+Available on any plugin extending `AbstractPluginBase`, so `IpAddress` and the rest accept
+the same keys.
+
 ## Caching
 
 The plugin's detection is backed by `matomo/device-detector`, which compiles a 1.7&nbsp;MB corpus of regex files on the first parse in each PHP process. That costs **110–637&nbsp;ms** depending on the user agent — ordinary mobile browsers are among the worst cases, because brand and model detection walks the largest part of the corpus. Once warm it is roughly 4&nbsp;ms.

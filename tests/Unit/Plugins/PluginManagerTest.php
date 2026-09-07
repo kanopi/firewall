@@ -480,4 +480,58 @@ class PluginManagerTest extends AbstractTestCase
             'A plugin that does not implement ObserveModeInterface still enforces'
         );
     }
+
+    /**
+     * A verify method that is not recognised turns the match off (#199).
+     *
+     * Not "match anyway": an operator who asked for verification and mistyped it
+     * must not silently get an unverified allow rule.
+     */
+    public function testAnUnrecognisedVerifyMethodStopsTheMatch(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['verify' => 'reverse-lookup']],
+        ]);
+
+        $this->assertFalse($manager->evaluate(new Request()));
+    }
+
+    /**
+     * Verification with no domain list is not verification.
+     *
+     * Any address with a PTR record would otherwise pass, which for an allow rule
+     * is worse than no rule at all.
+     */
+    public function testVerifyWithNoSuffixesStopsTheMatch(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['verify' => 'reverse-dns']],
+        ]);
+
+        $this->assertFalse($manager->evaluate(new Request()));
+    }
+
+    /**
+     * A rule declaring no verification is untouched, which is every existing config.
+     */
+    public function testWithoutVerifyTheMatchStands(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => []],
+        ]);
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate(new Request()));
+    }
+
+    /**
+     * A plugin implementing PluginInterface directly is unaffected by the key.
+     */
+    public function testAPluginWithoutTheInterfaceIgnoresVerify(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestTruePlugin::class, 'metadata' => ['verify' => 'reverse-dns']],
+        ]);
+
+        $this->assertInstanceOf(TestTruePlugin::class, $manager->evaluate(new Request()));
+    }
 }
