@@ -93,6 +93,41 @@ class RedisRateLimitStorageTest extends AbstractTestCase
     }
 
     /**
+     * `forget()` issues the exclusive-upper-bound ZREMRANGEBYSCORE (#183).
+     *
+     * The bound matters: `(` makes it exclusive, so a member scored exactly at
+     * the cutoff survives -- `countRequests()` treats its start as inclusive,
+     * and dropping that member would lose a request the current window still
+     * counts. What Redis actually does with the range is asserted against a
+     * real server in `tests/Integration/RateLimitStorage`.
+     */
+    public function testForgetRemovesTheScoreRangeBelowTheCutoff(): void
+    {
+        $mockRedis = $this->createMock(Redis::class);
+        $mockRedis->expects($this->once())
+            ->method('zRemRangeByScore')
+            ->with('ratelimit:test-key', '-inf', '(1234567890')
+            ->willReturn(4);
+
+        $storage = new RedisRateLimitStorage(['instance' => $mockRedis, 'redis' => []]);
+
+        $this->assertSame(4, $storage->forget('test-key', 1234567890));
+    }
+
+    /**
+     * A Redis failure while pruning is reported and survived.
+     */
+    public function testForgetSurvivesARedisFailure(): void
+    {
+        $mockRedis = $this->createMock(Redis::class);
+        $mockRedis->method('zRemRangeByScore')->willThrowException(new RedisException('gone'));
+
+        $storage = new RedisRateLimitStorage(['instance' => $mockRedis, 'redis' => []]);
+
+        $this->assertSame(0, $storage->forget('test-key', 1234567890));
+    }
+
+    /**
      * Test countRequests returns Redis zCount value.
      */
     public function testCountRequests(): void

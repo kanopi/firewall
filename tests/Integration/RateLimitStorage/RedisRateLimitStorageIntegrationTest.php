@@ -223,4 +223,84 @@ class RedisRateLimitStorageIntegrationTest extends IntegrationTestCase
         $this->assertSame(3, $storage->countRequests('bursty', $now - 60, $now + 10));
         $this->assertSame(13, $storage->countRequests('bursty', $now - 3600, $now + 10));
     }
+
+    /**
+     * `forget()` removes the members that have aged out (#183).
+     *
+     * The `ttl` bounds how long a key survives, not how large it gets, so
+     * before this the sorted set held every request made in the last hour
+     * however narrow the rule's window was. `ZREMRANGEBYSCORE` is what a
+     * sorted-set sliding window is supposed to be paired with, and whether it
+     * actually removes the right members is a property of Redis rather than of
+     * our call sequence -- so it is asserted here rather than against a mock.
+     */
+    public function testForgetRemovesMembersOutsideTheWindow(): void
+    {
+        $storage = $this->storage();
+        $now = time();
+
+        foreach ([$now - 600, $now - 300, $now - 5, $now] as $timestamp) {
+            $storage->recordRequest('prunable', $timestamp);
+        }
+
+        $this->assertSame(2, $storage->forget('prunable', $now - 10));
+        $this->assertSame(2, $storage->countRequests('prunable', 0, $now + 10));
+    }
+
+    /**
+     * A member scored exactly at the cutoff survives.
+     *
+     * `countRequests()` treats its start as inclusive, so dropping the member
+     * at `$windowStart` would lose a request the current window still counts
+     * and let a client exceed its limit by one.
+     */
+    public function testAMemberExactlyAtTheCutoffIsKept(): void
+    {
+        $storage = $this->storage();
+        $now = time();
+        $windowStart = $now - 10;
+
+        $storage->recordRequest('boundary', $windowStart);
+
+        $this->assertSame(0, $storage->forget('boundary', $windowStart));
+        $this->assertSame(1, $storage->countRequests('boundary', $windowStart, $now));
+    }
+
+    /**
+     * Pruning one key leaves another alone.
+     */
+    public function testForgetTouchesOnlyTheKeyItIsGiven(): void
+    {
+        $storage = $this->storage();
+        $now = time();
+
+        $storage->recordRequest('one', $now - 600);
+        $storage->recordRequest('two', $now - 600);
+
+        $this->assertSame(1, $storage->forget('one', $now - 10));
+        $this->assertSame(0, $storage->countRequests('one', 0, $now + 10));
+        $this->assertSame(1, $storage->countRequests('two', 0, $now + 10));
+    }
+
+    /**
+     * Sustained traffic leaves the sorted set bounded by the window.
+     */
+    public function testSustainedTrafficLeavesTheSortedSetBounded(): void
+    {
+        $storage = $this->storage();
+        $start = time() - 120;
+        $sample = 10;
+
+        for ($i = 0; $i < 300; $i++) {
+            $now = $start + intdiv($i, 5);
+            $storage->forget('sustained', $now - $sample);
+            $storage->recordRequest('sustained', $now);
+        }
+
+        $this->assertLessThanOrEqual(
+            ($sample + 1) * 5,
+            $storage->countRequests('sustained', 0, PHP_INT_MAX),
+            'Only the window should be held, however long the traffic runs'
+        );
+    }
 }

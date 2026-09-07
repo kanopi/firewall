@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 use Kanopi\Firewall\Plugins\RateLimit;
+use Kanopi\Firewall\RateLimitStorage\PrunableRateLimitStorageInterface;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
@@ -47,6 +48,118 @@ class RateLimitTest extends AbstractTestCase
                 $this->storage = $mockStorage;
             }
         };
+    }
+
+    /**
+     * A storage that also records the `forget()` calls it receives.
+     */
+    protected function getPrunableMockStorage(int $count): RateLimitStorageInterface
+    {
+        return new class ($count) implements RateLimitStorageInterface, PrunableRateLimitStorageInterface {
+            public array $recorded = [];
+
+            public array $forgotten = [];
+
+            public function __construct(private int $count)
+            {
+            }
+
+            public function recordRequest(string $key, int $timestamp): void
+            {
+                $this->recorded[] = [$key, $timestamp];
+            }
+
+            public function countRequests(string $key, int $start, int $end): int
+            {
+                return $this->count;
+            }
+
+            public function forget(string $key, int $before): int
+            {
+                $this->forgotten[] = [$key, $before];
+
+                return 0;
+            }
+        };
+    }
+
+    /**
+     * An allowed request prunes this key's window before adding to it (#183).
+     *
+     * The cutoff must be the window start the count used, not something
+     * looser: everything older has already stopped affecting the verdict, and
+     * everything newer is still counted.
+     */
+    public function testAnAllowedRequestPrunesItsOwnWindow(): void
+    {
+        $request = Request::create('/test');
+        $request->server->set('REMOTE_ADDR', '127.0.0.1');
+
+        $storage = $this->getPrunableMockStorage(0);
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 2, 'default_sample' => 30],
+            [['path' => '/test', 'rate' => 2, 'sample' => 60]],
+            $storage
+        );
+
+        $before = time();
+        $this->assertFalse($plugin->evaluate($request));
+        $after = time();
+
+        $this->assertCount(1, $storage->forgotten);
+        [$key, $cutoff] = $storage->forgotten[0];
+
+        $this->assertSame($storage->recorded[0][0], $key, 'Pruned under the same key it recorded');
+        $this->assertGreaterThanOrEqual($before - 60, $cutoff);
+        $this->assertLessThanOrEqual($after - 60, $cutoff);
+    }
+
+    /**
+     * A throttled request does no pruning.
+     *
+     * Records are only added on the allowed path, so pruning there is enough
+     * to bound the growth -- a key over its limit stops being appended to and
+     * stops growing on its own. Doing the work anyway would mean the firewall
+     * spending more effort on traffic it is busy refusing.
+     */
+    public function testAThrottledRequestPrunesNothing(): void
+    {
+        $request = Request::create('/test');
+        $request->server->set('REMOTE_ADDR', '127.0.0.1');
+
+        $storage = $this->getPrunableMockStorage(3);
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 5, 'default_sample' => 10],
+            [['path' => '/test', 'rate' => 2, 'sample' => 60]],
+            $storage
+        );
+
+        $this->assertTrue($plugin->evaluate($request));
+        $this->assertSame([], $storage->forgotten);
+        $this->assertSame([], $storage->recorded);
+    }
+
+    /**
+     * A storage without the capability still works, and is not called.
+     *
+     * `plugins[].metadata.storage.type` accepts any implementor of
+     * `RateLimitStorageInterface`, so a host's own backend that predates this
+     * must keep working untouched.
+     */
+    public function testAStorageWithoutTheCapabilityIsUnaffected(): void
+    {
+        $request = Request::create('/test');
+        $request->server->set('REMOTE_ADDR', '127.0.0.1');
+
+        $storage = $this->getMockStorage(0);
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 2, 'default_sample' => 30],
+            [['path' => '/test', 'rate' => 2, 'sample' => 60]],
+            $storage
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+        $this->assertCount(1, $storage->recorded);
     }
 
     /**

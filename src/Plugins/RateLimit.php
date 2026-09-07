@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\RateLimitStorage\PrunableRateLimitStorageInterface;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageFactory;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
 use Symfony\Component\HttpFoundation\Request;
@@ -113,6 +114,26 @@ class RateLimit extends AbstractPluginBase
                 'request_count' => $count,
             ]));
             return true;
+        }
+
+        // Drop what has aged out of this key's window before adding to it
+        // (#183). Nothing in the storage interface removed a record, so every
+        // backend grew -- the file and database ones without any bound at all.
+        //
+        // The plugin is the only place that knows the cutoff. A rate limit is
+        // a rolling window and `$windowStart` is where this key's window now
+        // begins, so everything older has already stopped affecting the
+        // verdict and can never affect a later one. That is exact, and it
+        // needs no retention setting for an operator to choose and then keep
+        // in step with the widest `sample` they have configured.
+        //
+        // Only on this path, deliberately. Records are added here and nowhere
+        // else, so pruning here is enough to bound the growth; a key that is
+        // over its limit stops being appended to, so it stops growing on its
+        // own and does not need the firewall doing extra work on behalf of
+        // traffic it is busy refusing.
+        if ($this->storage instanceof PrunableRateLimitStorageInterface) {
+            $this->storage->forget($key, $windowStart);
         }
 
         $this->storage?->recordRequest($key, $now);

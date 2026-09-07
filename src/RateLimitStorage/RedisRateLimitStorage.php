@@ -16,7 +16,7 @@ use Redis;
 /**
  * Redis-based rate limit storage.
  */
-class RedisRateLimitStorage extends AbstractRateLimitStorage
+class RedisRateLimitStorage extends AbstractRateLimitStorage implements PrunableRateLimitStorageInterface
 {
     /**
      * Redis Connection class.
@@ -99,6 +99,48 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage
                 'error' => $exception->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * `ZREMRANGEBYSCORE` is the canonical other half of the sorted-set sliding
+     * window, and its absence is why the `ttl` was doing all the work here.
+     * The TTL bounds how long a key survives, not how large it gets: a key
+     * taking 1,000 requests a second accumulated 3.6 million members before
+     * the hour was up, and every `zCount()` ranged over all of them.
+     */
+    public function forget(string $key, int $before): int
+    {
+        $redisKey = $this->redisPrefix . $key;
+
+        try {
+            // `(` makes the upper bound exclusive, so a member scored exactly
+            // at the cutoff survives -- `countRequests()` treats its `$start`
+            // as inclusive, and dropping it would lose a request the current
+            // window still counts.
+            $dropped = (int) $this->redis->zRemRangeByScore($redisKey, '-inf', '(' . $before);
+        } catch (\Exception $exception) {
+            $this->getLogger()->error('Failed to drop rate limit records outside the window in Redis', [
+                'key' => $key,
+                'redis_key' => $redisKey,
+                'before' => $before,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return 0;
+        }
+
+        if ($dropped > 0) {
+            $this->getLogger()->debug('Dropped rate limit records outside the window', [
+                'key' => $key,
+                'redis_key' => $redisKey,
+                'before' => $before,
+                'dropped' => $dropped,
+            ]);
+        }
+
+        return $dropped;
     }
 
     /**

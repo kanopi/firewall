@@ -20,7 +20,7 @@ use Kanopi\Firewall\Traits\DatabaseTrait;
 /**
  * Connection to Database Rate Limit Storage related items.
  */
-class DatabaseRateLimitStorage extends AbstractRateLimitStorage
+class DatabaseRateLimitStorage extends AbstractRateLimitStorage implements PrunableRateLimitStorageInterface
 {
     use DatabaseTrait;
 
@@ -60,9 +60,13 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
      */
     protected function getStorageTables(): array
     {
+        // Read once into a local: the value comes from YAML, so it reaches
+        // here as `mixed`, and the index name below is built from it.
+        $table = (string) $this->config['storage_table'];
+
         return [
             new Table(
-                $this->config['storage_table'],
+                $table,
                 [
                     new Column('id', Type::getType('integer'), ['autoincrement' => true, 'unsigned' => true]),
                     new Column('rule', Type::getType('string'), ['length' => 255]),
@@ -70,6 +74,20 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
                 ], // Columns.
                 [
                     new Index('PRIMARY', ['id'], true, true),
+                    // Every query this table serves is "this rule, this window":
+                    // `countRequests()` and `forget()` both filter on `rule`
+                    // and range over `timestamp`, and neither had an index to
+                    // do it with, so both were full scans of a table that grew
+                    // without bound (#183).
+                    //
+                    // `getStorageTables()` only runs when the table is absent,
+                    // so an existing installation does not gain these. Adding
+                    // them by hand is one statement per index and is worth
+                    // doing:
+                    //
+                    //   CREATE INDEX firewall_rate_limit_storage_rule_window_idx
+                    //     ON firewall_rate_limit_storage (rule, timestamp);
+                    new Index($table . '_rule_window_idx', ['rule', 'timestamp']),
                 ], // Indexes.
             )
         ];
@@ -99,6 +117,49 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage
                 'error' => $exception->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function forget(string $key, int $before): int
+    {
+        try {
+            $dropped = (int) $this->connection->createQueryBuilder()
+                ->delete($this->config['storage_table'])
+                ->where('rule = :rule')
+                ->andWhere('timestamp < :before')
+                ->setParameter('rule', $key)
+                // Clamped for the same reason the offense queries are: the
+                // column is `Type::getType('integer')`, which PostgreSQL
+                // creates as a 4-byte `INT` and refuses to compare against a
+                // value outside that range.
+                ->setParameter('before', self::clampTimestampBound($before))
+                ->executeStatement();
+        } catch (\Exception $exception) {
+            // Housekeeping. A rate limit that still counts correctly against a
+            // table it could not tidy is working, so this is reported and the
+            // request carries on.
+            $this->getLogger()->error('Failed to drop rate limit records outside the window', [
+                'key' => $key,
+                'before' => $before,
+                'table' => $this->config['storage_table'],
+                'error' => $exception->getMessage(),
+            ]);
+
+            return 0;
+        }
+
+        if ($dropped > 0) {
+            $this->getLogger()->debug('Dropped rate limit records outside the window', [
+                'key' => $key,
+                'before' => $before,
+                'dropped' => $dropped,
+                'table' => $this->config['storage_table'],
+            ]);
+        }
+
+        return $dropped;
     }
 
     /**
