@@ -22,20 +22,6 @@ trait FileTrait
     use LoggingTrait;
 
     /**
-     * How many times to try for the exclusive lock before giving up.
-     */
-    protected const LOCK_MAX_ATTEMPTS = 50;
-
-    /**
-     * How long to wait between attempts, in microseconds.
-     *
-     * 50 attempts two milliseconds apart is a ceiling just under 100ms. Long
-     * enough that ordinary contention still gets the lock, short enough that a
-     * stalled holder costs a lost update rather than a worker.
-     */
-    protected const LOCK_RETRY_MICROSECONDS = 2000;
-
-    /**
      * Load data from file into memory.
      *
      * Storage uses JSON, not PHP `serialize()`, to eliminate the PHP Object
@@ -319,19 +305,29 @@ trait FileTrait
      */
     protected function acquireExclusiveLock($handle, string $lockFile): bool
     {
-        for ($attempt = 1; $attempt <= self::LOCK_MAX_ATTEMPTS; $attempt++) {
+        // Locals rather than class constants: constants in traits are PHP 8.2
+        // and up, and this package supports 8.1.
+        //
+        // 50 attempts two milliseconds apart is a ceiling just under 100ms.
+        // Long enough that ordinary contention still gets the lock, short
+        // enough that a stalled holder costs a lost update rather than a
+        // worker.
+        $maxAttempts = 50;
+        $retryMicroseconds = 2000;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             if (@flock($handle, LOCK_EX | LOCK_NB)) {
                 return true;
             }
 
-            if ($attempt < self::LOCK_MAX_ATTEMPTS) {
-                usleep(self::LOCK_RETRY_MICROSECONDS);
+            if ($attempt < $maxAttempts) {
+                usleep($retryMicroseconds);
             }
         }
 
         $this->getLogger()->warning('Unable to acquire exclusive lock, proceeding without lock', [
             'lock_file' => $lockFile,
-            'waited_ms' => (self::LOCK_MAX_ATTEMPTS - 1) * self::LOCK_RETRY_MICROSECONDS / 1000,
+            'waited_ms' => ($maxAttempts - 1) * $retryMicroseconds / 1000,
         ]);
 
         return false;
