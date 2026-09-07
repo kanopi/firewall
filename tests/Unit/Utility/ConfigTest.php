@@ -1301,4 +1301,104 @@ class ConfigTest extends AbstractTestCase
         Config::clearLoadErrors();
         $this->assertSame([], Config::getLoadErrors());
     }
+
+    /**
+     * Offline must cover remote configs:, not only rule sources (#228).
+     *
+     * The cached copy is stale, so without the offline check this would go to
+     * the network inside Firewall::create() -- up to a five second timeout
+     * before the application it protects has done anything.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testOfflineServesAStaleCacheWithoutFetching(): void
+    {
+        $cacheDir = sys_get_temp_dir() . '/firewall_offline_' . uniqid();
+        mkdir($cacheDir, 0775, true);
+
+        define('KANOPI_FIREWALL_CACHE_DIR', $cacheDir);
+        define('KANOPI_FIREWALL_SOURCES_OFFLINE', true);
+
+        // A host that would fail slowly if anything actually reached for it.
+        $url = 'https://offline-must-not-fetch.invalid/config.yml';
+        $cacheFile = $cacheDir . '/' . md5($url) . '.cache';
+
+        file_put_contents($cacheFile, Yaml::dump(['served' => 'from_cache']));
+        // Older than the 3600s default TTL, so the fresh-cache path is missed.
+        touch($cacheFile, time() - 7200);
+
+        Config::clearLoadErrors();
+        $result = Config::load([$url]);
+
+        $this->assertSame('from_cache', $result['served'] ?? null);
+
+        // The message has to say it skipped the fetch, not that the fetch
+        // failed. Both paths end up serving the same stale copy, so a weaker
+        // assertion here passes against the unfixed code -- the stale-cache
+        // fallback catches the failed request and serves it anyway.
+        $warnings = Config::getLoadWarnings();
+        $this->assertNotEmpty($warnings, 'Serving a stale copy offline should be reported');
+        $this->assertStringContainsString(
+            'without fetching',
+            $warnings[0]['message'],
+            'Offline must skip the request, not fail it and fall back'
+        );
+
+        @unlink($cacheFile);
+        @rmdir($cacheDir);
+    }
+
+    /**
+     * Offline with nothing cached contributes nothing, and says why.
+     *
+     * Same contract rule sources already have: no cache, no rules, no fetch.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testOfflineWithNoCacheContributesNothingAndReportsIt(): void
+    {
+        $cacheDir = sys_get_temp_dir() . '/firewall_offline_empty_' . uniqid();
+        mkdir($cacheDir, 0775, true);
+
+        define('KANOPI_FIREWALL_CACHE_DIR', $cacheDir);
+        define('KANOPI_FIREWALL_SOURCES_OFFLINE', true);
+
+        Config::clearLoadErrors();
+        $result = Config::load(['https://offline-must-not-fetch.invalid/none.yml']);
+
+        $this->assertSame([], $result);
+
+        $errors = Config::getLoadErrors();
+        $this->assertNotEmpty($errors, 'An uncached remote config offline should be reported');
+        $this->assertStringContainsString('offline', strtolower($errors[0]['message']));
+
+        @rmdir($cacheDir);
+    }
+
+    /**
+     * A fresh cache is still served without consulting the offline flag.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testAFreshCacheIsServedWhenOffline(): void
+    {
+        $cacheDir = sys_get_temp_dir() . '/firewall_offline_fresh_' . uniqid();
+        mkdir($cacheDir, 0775, true);
+
+        define('KANOPI_FIREWALL_CACHE_DIR', $cacheDir);
+        define('KANOPI_FIREWALL_SOURCES_OFFLINE', true);
+
+        $url = 'https://offline-must-not-fetch.invalid/fresh.yml';
+        $cacheFile = $cacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, Yaml::dump(['served' => 'fresh']));
+
+        Config::clearLoadErrors();
+        $result = Config::load([$url]);
+
+        $this->assertSame('fresh', $result['served'] ?? null);
+        $this->assertEmpty(Config::getLoadWarnings(), 'A fresh cache needs no staleness warning');
+
+        @unlink($cacheFile);
+        @rmdir($cacheDir);
+    }
 }
