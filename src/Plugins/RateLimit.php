@@ -101,7 +101,11 @@ class RateLimit extends AbstractPluginBase
         }
 
         foreach ($this->config as $index => $rule) {
-            if (!is_array($rule) || !array_key_exists('rate', $rule)) {
+            if (!is_array($rule)) {
+                continue;
+            }
+
+            if (!array_key_exists('rate', $rule)) {
                 continue;
             }
 
