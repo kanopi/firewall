@@ -1,0 +1,219 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Delete firewall log rows older than the retention window, out of band.
+ *
+ * `DatabaseHandler` can prune itself on a fraction of writes, which needs no
+ * scheduling and is what a deployment with nowhere to hang a cron gets. This
+ * is the honest version of the same job: it runs when you say it runs, it
+ * deletes the same rows, and it tells you how many. Set
+ * `prune_probability: 0` on the handler and pruning happens only here.
+ *
+ * Usage:
+ *   bin/firewall-log-prune config.yml [more.yml ...] [options]
+ *
+ * Options:
+ *   --days=N         Prune to N days instead of each handler's retention_days.
+ *   --dry-run        Report what would be deleted without deleting it.
+ *   --quiet          Only report failures.
+ *   --help           Show this message.
+ *
+ * Exit codes:
+ *   0  every handler pruned
+ *   1  at least one handler failed
+ *   2  the configuration itself could not be read, or declared no log table
+ */
+
+use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
+use Kanopi\Firewall\Utility\Config;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(Config::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(2);
+}
+
+$arguments = array_slice($argv, 1);
+$files = [];
+$days = null;
+$dryRun = false;
+$quiet = false;
+
+foreach ($arguments as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        fwrite(STDOUT, trim(<<<TEXT
+        Delete firewall log rows older than the configured retention window.
+
+          bin/firewall-log-prune config.yml [more.yml ...] [options]
+
+          --days=N     Prune to N days instead of each handler's retention_days.
+          --dry-run    Report what would be deleted without deleting it.
+          --quiet      Only report failures.
+        TEXT) . "\n");
+        exit(0);
+    }
+
+    if ($argument === '--dry-run') {
+        $dryRun = true;
+        continue;
+    }
+
+    if ($argument === '--quiet') {
+        $quiet = true;
+        continue;
+    }
+
+    if (str_starts_with($argument, '--days=')) {
+        $value = substr($argument, strlen('--days='));
+
+        if (!ctype_digit($value) || (int) $value < 1) {
+            fwrite(STDERR, "--days must be a positive whole number of days.\n");
+            exit(2);
+        }
+
+        $days = (int) $value;
+        continue;
+    }
+
+    $files[] = $argument;
+}
+
+if ($files === []) {
+    fwrite(STDERR, "No configuration files given. Try --help.\n");
+    exit(2);
+}
+
+foreach ($files as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, sprintf("Configuration file not found: %s\n", $file));
+        exit(2);
+    }
+}
+
+Config::clearLoadErrors();
+$config = Config::load($files);
+
+foreach (Config::getLoadErrors() as $error) {
+    fwrite(STDERR, sprintf("Could not load %s: %s\n", $error['file'], $error['message']));
+}
+
+$loggerConfig = is_array($config['logger'] ?? null) ? $config['logger'] : [];
+$handlers = [];
+
+foreach ($loggerConfig as $handlerConfig) {
+    if (!is_array($handlerConfig)) {
+        continue;
+    }
+
+    $class = $handlerConfig['class'] ?? '';
+
+    if (!is_string($class) || !is_a(ltrim($class, '\\'), DatabaseHandler::class, true)) {
+        continue;
+    }
+
+    $args = $handlerConfig['args'][0] ?? [];
+
+    if (!is_array($args)) {
+        $args = [];
+    }
+
+    if ($days !== null) {
+        $args['retention_days'] = $days;
+    }
+
+    // Pruning is this script's whole job, so a handler that would otherwise
+    // also prune itself on write must not do so during this run.
+    $args['prune_probability'] = 0;
+
+    $handlers[] = new DatabaseHandler($args);
+}
+
+if ($handlers === []) {
+    fwrite(STDERR, "Configuration declares no DatabaseHandler under `logger:`.\n");
+    exit(2);
+}
+
+$failed = 0;
+
+foreach ($handlers as $handler) {
+    $table = $handler->getTable();
+    $retention = $handler->getRetentionDays();
+
+    if ($retention <= 0) {
+        if (!$quiet) {
+            fwrite(STDOUT, sprintf(
+                "  - %-28s no retention_days configured, nothing to prune\n",
+                $table
+            ));
+        }
+
+        continue;
+    }
+
+    if ($dryRun) {
+        $countable = $handler->countPrunable();
+
+        if ($countable === null) {
+            $failed++;
+            fwrite(STDERR, sprintf("  ✗ %-28s could not be read\n", $table));
+            continue;
+        }
+
+        if (!$quiet) {
+            fwrite(STDOUT, sprintf(
+                "  %-28s %d %s older than %d days\n",
+                $table,
+                $countable,
+                $countable === 1 ? 'row' : 'rows',
+                $retention
+            ));
+        }
+
+        continue;
+    }
+
+    $deleted = $handler->prune();
+
+    if ($deleted === null) {
+        $failed++;
+        fwrite(STDERR, sprintf("  ✗ %-28s could not be pruned\n", $table));
+        continue;
+    }
+
+    if (!$quiet) {
+        fwrite(STDOUT, sprintf(
+            "  ✓ %-28s %d %s deleted\n",
+            $table,
+            $deleted,
+            $deleted === 1 ? 'row' : 'rows'
+        ));
+    }
+}
+
+if ($failed > 0) {
+    fwrite(STDERR, sprintf("\n%d of %d log tables failed.\n", $failed, count($handlers)));
+    exit(1);
+}
+
+exit(0);

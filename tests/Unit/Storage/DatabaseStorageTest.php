@@ -902,7 +902,9 @@ class DatabaseStorageTest extends AbstractTestCase
         $this->mockBuilder->method('andWhere')->willReturnSelf();
         $this->mockBuilder->method('setParameter')->willReturnSelf();
         $this->mockBuilder->method('executeQuery')->willReturn($this->mockResult);
-        $this->mockResult->method('fetchAllAssociative')->willReturn([['remote_address' => '1.2.3.4']]);
+        // `fetchOne()`, not `fetchAllAssociative()`: the count is done by the
+        // database now rather than by fetching every row and counting it here.
+        $this->mockResult->method('fetchOne')->willReturn(1);
 
         $request = $this->getRequest('1.2.3.4');
         $this->assertEquals(1, $this->storage->countOffenses($request->getClientIp()));

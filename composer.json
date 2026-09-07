@@ -15,6 +15,7 @@
     "license": "MIT",
     "bin": [
         "bin/firewall-check",
+        "bin/firewall-log-prune",
         "bin/firewall-sources"
     ],
     "autoload": {
@@ -127,6 +128,7 @@
         "perf:validate": "php tests/Performance/bin/validate-scenarios.php --skip-geoip",
         "perf:down": "docker compose -f tests/Performance/docker-compose.yml down --volumes --remove-orphans",
         "check:request": "php bin/firewall-check",
+        "log:prune": "php bin/firewall-log-prune",
         "sources:sync": "php bin/firewall-sources",
         "sources:status": "php bin/firewall-sources --dry-run"
     },
@@ -144,6 +146,7 @@
         "perf:quick": "Short benchmark over baseline, bootstrap, crs and all-on — enough to sanity check a change in a couple of minutes",
         "perf:validate": "Check every performance scenario config loads and evaluates, in seconds. Run this before a full benchmark",
         "perf:down": "Tear down the performance harness stack and drop its volumes (GeoIP databases and caches)",
+        "log:prune": "Delete firewall log rows older than the handler's retention_days. Pass options after `--`, e.g. `composer log:prune -- firewall.yml --dry-run`",
         "check:request": "Ask whether a given request would be blocked, and by what. Pass options after `--`, e.g. `composer check:request -- --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/`"
     },
     "prefer-stable": true,

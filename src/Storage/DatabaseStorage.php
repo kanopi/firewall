@@ -41,20 +41,19 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
      */
     public function __construct(array $config)
     {
-        // `isset()` first: the connection is genuinely optional here -- a caller that
-        // injects it after load, or a misconfiguration -- and createConnection() below
-        // already reports its absence as a StorageConnectionException. Reaching for the
-        // key unguarded put a PHP warning in front of that message on every such
-        // request, which is noise the exception has already said better.
-        if (isset($config['connection']) && is_array($config['connection']) && isset($config['connection']['port']) && is_numeric($config['connection']['port'])) {
-            $config['connection']['port'] = intval($config['connection']['port']);
-        }
+        // The connection is genuinely optional here -- a caller that injects it
+        // after load, or a misconfiguration -- and createConnection() below
+        // already reports its absence as a StorageConnectionException.
+        // `normalizeConnectionParameters()` gives back NULL rather than
+        // reaching for a key that may not be there, so no PHP warning lands in
+        // front of the message that explains the real problem.
+        $config['connection'] = self::normalizeConnectionParameters($config['connection'] ?? null) ?? [];
 
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_storage';
         $this->config['offenses_table'] ??= 'firewall_offenses';
 
-        $this->createConnection($config['connection'] ?? []);
+        $this->createConnection($config['connection']);
         $this->getLogger()->info('Database storage initialized', [
             'storage_table' => $this->config['storage_table'],
             'offenses_table' => $this->config['offenses_table'],
@@ -408,21 +407,33 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
     public function countOffenses(string $key, int $start = 0, int $end = PHP_INT_MAX): int
     {
         try {
-            $results = $this->connection->createQueryBuilder()
-                ->select('remote_address')
-                ->from($this->config['offenses_table'])
-                ->where('remote_address = :remote_address')
-                ->andWhere('timestamp >= :start AND timestamp <= :end')
-                ->setParameter('remote_address', $key)
-                ->setParameter('start', $start)
-                ->setParameter('end', $end)
-                ->executeQuery()
-                ->fetchAllAssociative();
-        } catch (\Exception) {
+            // Counted by the database. Pre-fix this selected every matching
+            // row and counted them in PHP, and a client blocked for months can
+            // have thousands -- `listOffenses()` right below already limits
+            // and orders in SQL for exactly that reason.
+            return $this->countRows(
+                $this->connection->createQueryBuilder()
+                    ->from($this->config['offenses_table'])
+                    ->where('remote_address = :remote_address')
+                    ->andWhere('timestamp >= :start AND timestamp <= :end')
+                    ->setParameter('remote_address', $key)
+                    ->setParameter('start', self::clampTimestampBound($start))
+                    ->setParameter('end', self::clampTimestampBound($end))
+            );
+        } catch (\Exception $exception) {
+            // Logged, not swallowed. Pre-fix this was a bare
+            // `catch (\Exception) { return 0; }` -- the only method in this
+            // class that reported nothing -- and it hid a PostgreSQL failure
+            // that made every count zero. A count that cannot be taken is not
+            // the same fact as a count of none.
+            $this->getLogger()->error('Failed to count offenses', [
+                'table' => $this->config['offenses_table'],
+                'key' => $key,
+                'error' => $exception->getMessage(),
+            ]);
+
             return 0;
         }
-
-        return count($results);
     }
 
     /**
@@ -437,8 +448,8 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
                 ->where('remote_address = :remote_address')
                 ->andWhere('timestamp >= :start AND timestamp <= :end')
                 ->setParameter('remote_address', $key)
-                ->setParameter('start', $start)
-                ->setParameter('end', $end)
+                ->setParameter('start', self::clampTimestampBound($start))
+                ->setParameter('end', self::clampTimestampBound($end))
                 // Ordered and limited by the database rather than in PHP: a client
                 // that has been blocked for months can have thousands of rows, and
                 // the caller only ever wants the recent end of that.

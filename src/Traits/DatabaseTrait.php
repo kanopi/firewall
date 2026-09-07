@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Traits;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
@@ -92,6 +93,54 @@ trait DatabaseTrait
             // the same way the swallowed exception used to.
             throw new StorageConnectionException(sprintf('Firewall database storage could not connect (%s): %s', $target, $throwable->getMessage()), (int) $throwable->getCode(), previous: $throwable);
         }
+    }
+
+    /**
+     * Reduce a configured `connection` to something DriverManager will accept.
+     *
+     * Every consumer of this trait reads its connection from YAML, so every
+     * one of them needs the same two fixes applied before Doctrine sees it:
+     * YAML hands back `port` as a string where `DriverManager` wants an int,
+     * and a sequence-shaped key would arrive as an int where the parameter
+     * names are strings. All three used to do the first of those inline and
+     * they did not agree -- `DatabaseRateLimitStorage` reached for
+     * `$config['connection']` without checking it was there, so a config with
+     * no connection at all emitted `Undefined array key "connection"` ahead of
+     * the exception that explains the real problem. That is the noise
+     * `DatabaseStorage` has a comment about having removed; the removal never
+     * reached its sibling. Doing it once here is why it now has.
+     *
+     * @param mixed $connection
+     *   Whatever the config carried: parameters, a `dsn`, a ready
+     *   `Connection`, or nothing usable.
+     *
+     * @return array<string, mixed>|Connection|null
+     *   Parameters ready for `createConnection()`, the connection as given, or
+     *   NULL when there is nothing usable to connect with. Callers decide what
+     *   NULL means for them -- storage passes `[]` on to fail loudly, the log
+     *   handler falls back to the storage connection.
+     */
+    protected static function normalizeConnectionParameters(mixed $connection): array|Connection|null
+    {
+        if ($connection instanceof Connection) {
+            return $connection;
+        }
+
+        if (!is_array($connection) || $connection === []) {
+            return null;
+        }
+
+        $parameters = [];
+
+        foreach ($connection as $key => $value) {
+            $parameters[(string) $key] = $value;
+        }
+
+        if (isset($parameters['port']) && is_numeric($parameters['port'])) {
+            $parameters['port'] = (int) $parameters['port'];
+        }
+
+        return $parameters;
     }
 
     /**
@@ -184,8 +233,16 @@ trait DatabaseTrait
                     ]);
                 }
             } else {
+                // The table being iterated, not `config['storage_table']`.
+                // A class using this trait may declare several tables --
+                // `DatabaseStorage` declares two -- so the config key named
+                // only the first of them, and it is not a key every consumer
+                // sets at all: a class whose config has no `storage_table`
+                // took an undefined-index warning here on every construction
+                // where its table already existed, which is every request
+                // after the first.
                 $this->getLogger()->debug('Database table already exists', [
-                    'table' => $this->config['storage_table'],
+                    'table' => $table->getName(),
                 ]);
             }
         }
@@ -204,6 +261,81 @@ trait DatabaseTrait
     protected function getStorageTables(): array
     {
         return [];
+    }
+
+    /**
+     * Clamp a timestamp bound to what the column can actually hold.
+     *
+     * `countOffenses()` and `listOffenses()` default their upper bound to
+     * `PHP_INT_MAX`, meaning "no upper bound". Every timestamp column these
+     * classes declare is `Type::getType('integer')`, which PostgreSQL creates
+     * as a 4-byte `INT`, and PostgreSQL refuses to compare it against a value
+     * outside that range rather than deciding the comparison is trivially
+     * true:
+     *
+     *     SQLSTATE[22003]: Numeric value out of range: 7 ERROR:
+     *     value "9223372036854775807" is out of range for type integer
+     *
+     * MySQL and SQLite accept it, so the whole family of range queries worked
+     * everywhere except PostgreSQL -- and `countOffenses()` caught the failure
+     * without logging it, so on PostgreSQL it silently returned 0 for every
+     * client. `find()` calls it for the offense count shown next to each
+     * blocked address, so an admin listing showed every client as having
+     * offended zero times.
+     *
+     * Clamping rather than dropping the clause: a caller that passes a real
+     * bound still gets it, and one that passes the sentinel gets a bound the
+     * column can hold, which for a 4-byte column is every timestamp it could
+     * ever contain.
+     *
+     * @param int $bound
+     *   A timestamp bound as the caller supplied it.
+     *
+     * @return int
+     *   The bound, clamped to the signed 32-bit range.
+     */
+    protected static function clampTimestampBound(int $bound): int
+    {
+        return max(-2147483648, min(2147483647, $bound));
+    }
+
+    /**
+     * Count the rows a query matches, in the database rather than in PHP.
+     *
+     * Named, rather than left as a line in each caller, because the mistake it
+     * replaces was made independently in two of the three classes using this
+     * trait: both `DatabaseStorage::countOffenses()` and
+     * `DatabaseRateLimitStorage::countRequests()` selected every matching row,
+     * pulled it all back, and called `count()` on the result.
+     *
+     * That is worst exactly where it hurts most. `countRequests()` is the rate
+     * limiter's per-request hot path, so a client being rate-limited makes the
+     * firewall fetch every row it is counting, on every request, and the
+     * database backend never deletes those rows -- so the set only grows.
+     * Measured over 20,000 rows on SQLite: 8.5ms and a 14MB peak to fetch and
+     * count, against 2.2ms to ask the database. Over a socket to MySQL it is
+     * 20,000 rows on the wire instead of one integer.
+     *
+     * Exceptions are left to propagate: the three callers disagree about what
+     * a failed count means -- 0, 0 with a logged error, or NULL and a handler
+     * that stops trying -- and that disagreement is deliberate.
+     *
+     * @param QueryBuilder $queryBuilder
+     *   A builder with its `from()` and any constraints already applied. Its
+     *   select list is replaced.
+     *
+     * @return int
+     *   Number of matching rows.
+     *
+     * @throws \Doctrine\DBAL\Exception
+     *   If the query cannot be run.
+     */
+    protected function countRows(QueryBuilder $queryBuilder): int
+    {
+        return (int) $queryBuilder
+            ->select('COUNT(*)')
+            ->executeQuery()
+            ->fetchOne();
     }
 
     /**

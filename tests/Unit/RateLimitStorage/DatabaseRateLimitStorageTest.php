@@ -58,6 +58,49 @@ class DatabaseRateLimitStorageTest extends AbstractTestCase
     }
 
     /**
+     * A config with no connection reports the exception, and nothing else.
+     *
+     * Pre-fix the constructor read `$config['connection']` unguarded, so this
+     * emitted `Undefined array key "connection"` in front of the exception
+     * that explains the real problem -- and with `display_errors` on, in front
+     * of whatever the host was writing. `DatabaseStorage` had already fixed
+     * that for itself; sharing `normalizeConnectionParameters()` is what
+     * brought the fix here.
+     */
+    public function testMissingConnectionRaisesTheExceptionWithoutAPhpWarning(): void
+    {
+        $notices = [];
+
+        set_error_handler(static function (int $number, string $message) use (&$notices): bool {
+            $notices[] = $message;
+
+            return true;
+        });
+
+        try {
+            new DatabaseRateLimitStorage([]);
+            self::fail('Expected a StorageConnectionException.');
+        } catch (StorageConnectionException $exception) {
+            self::assertStringContainsString('no connection parameters', $exception->getMessage());
+        } finally {
+            restore_error_handler();
+        }
+
+        self::assertSame([], $notices, 'Construction should raise no PHP notices of its own.');
+    }
+
+    /**
+     * An empty `connection:` is treated the same as declaring none at all.
+     */
+    public function testEmptyConnectionIsTreatedAsNoConnection(): void
+    {
+        $this->expectException(StorageConnectionException::class);
+        $this->expectExceptionMessage('no connection parameters');
+
+        new DatabaseRateLimitStorage(['connection' => []]);
+    }
+
+    /**
      * Tests that recordRequest silently handles insertion errors.
      */
     public function testRecordRequestCatchesException(): void
