@@ -126,9 +126,23 @@ class IpAddress extends AbstractPluginBase
             return false;
         }
 
-        // Must be the same type (IPv4 = 4 bytes, IPv6 = 16 bytes)
+        // Must be the same type (IPv4 = 4 bytes, IPv6 = 16 bytes).
+        //
+        // Logged at debug, not warning. Two valid addresses of different
+        // families cannot overlap, so "no match" is the arithmetic working,
+        // not a problem to report: any dual-stack list warns once per
+        // opposite-family entry for every request that reaches it, forever.
+        // Uptime Robot's published list is 206 entries, exactly half of them
+        // IPv6, so an IPv4 client produced 103 warnings per request — enough
+        // to bury the block it was logged alongside.
+        //
+        // Debug keeps it available to somebody tracing why a rule did not
+        // match, which is the level the rest of this plugin's match tracing
+        // already uses. The warnings above and below stay warnings: a CIDR
+        // with no slash, an unparseable address and an out-of-range prefix
+        // are all configuration that cannot ever work.
         if (strlen($ipPacked) !== strlen($subnetPacked)) {
-            $this->getLogger()->warning('IP type mismatch in CIDR check', [
+            $this->getLogger()->debug('IP type mismatch in CIDR check', [
                 'ip' => $ip,
                 'cidr' => $cidr,
                 'ip_type' => strlen($ipPacked) === 4 ? 'IPv4' : 'IPv6',

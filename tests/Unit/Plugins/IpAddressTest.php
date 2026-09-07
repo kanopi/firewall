@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
+use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\IpAddress;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Monolog\Handler\TestHandler;
+use Monolog\Level;
+use Monolog\Logger;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 
 class IpAddressTest extends AbstractTestCase
@@ -110,6 +115,72 @@ class IpAddressTest extends AbstractTestCase
         $instance = new IpAddress();
 
         $this->assertFalse($method->invoke($instance, '127.0.0.1', '::1/128'));
+    }
+
+    /**
+     * Tests a family mismatch is not reported as a problem.
+     *
+     * A dual-stack list holds both families by design, so every request that
+     * reaches it compares against entries it cannot possibly match. Reporting
+     * each of those at warning made a correct list look broken and buried the
+     * records that mattered: Uptime Robot's published list is 206 entries,
+     * half of them IPv6, so one IPv4 client produced 103 warnings per request.
+     */
+    public function testFamilyMismatchIsNotWarned(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = new IpAddress([], ['192.0.2.0/24', '2001:db8:bad::/48']);
+        $this->assertFalse($plugin->evaluate($this->getRequest('198.51.100.7')));
+
+        $this->assertFalse(
+            $handler->hasWarningRecords(),
+            'A list holding both families must not warn about the family that cannot match.',
+        );
+        $this->assertTrue(
+            $handler->hasRecordThatContains('IP type mismatch in CIDR check', Level::Debug),
+            'The mismatch stays available at debug, for tracing why a rule did not match.',
+        );
+    }
+
+    /**
+     * Tests configuration that can never work is still reported.
+     *
+     * The counterpart to the test above: the point of moving the family
+     * mismatch to debug is that these three stay at warning. A CIDR with no
+     * slash, an unparseable address and an out-of-range prefix are not
+     * arithmetic that came out false, they are entries that will never match
+     * anything, and their author wants to know.
+     */
+    #[DataProvider('malformedEntryProvider')]
+    public function testMalformedEntriesAreStillWarned(string $entry): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = new IpAddress([], [$entry]);
+        $this->assertFalse($plugin->evaluate($this->getRequest('198.51.100.7')));
+
+        $this->assertTrue(
+            $handler->hasWarningRecords(),
+            sprintf('Expected a warning for the unusable entry "%s".', $entry),
+        );
+    }
+
+    /**
+     * Supplies entries that cannot ever match.
+     *
+     * @return array<string, array{string}>
+     *   Test cases.
+     */
+    public static function malformedEntryProvider(): array
+    {
+        return [
+            'unparseable address' => ['not-an-address/24'],
+            'prefix out of range' => ['192.0.2.0/300'],
+            'prefix not a number' => ['192.0.2.0/two'],
+        ];
     }
 
     /**
