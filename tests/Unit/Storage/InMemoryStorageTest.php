@@ -364,4 +364,57 @@ final class InMemoryStorageTest extends AbstractTestCase
 
         $this->assertSame([], $storage->find('nonsense/8'));
     }
+
+    /**
+     * A lookup miss must not go through delete() (#225).
+     *
+     * FileStorage overrides delete() with an exclusive lock plus a full file
+     * load, so an allowed request from an unknown address -- the overwhelming
+     * majority of traffic -- paid for a write that never wrote anything.
+     */
+    public function testGetDoesNotDeleteWhenTheKeyIsAbsent(): void
+    {
+        $storage = new class () extends InMemoryStorage {
+            public int $deleteCalls = 0;
+
+            public function delete(string $key): bool
+            {
+                $this->deleteCalls++;
+                return parent::delete($key);
+            }
+        };
+
+        $this->assertNull($storage->get('never-seen-this-address'));
+        $this->assertSame(0, $storage->deleteCalls, 'An absent key must not be deleted');
+    }
+
+    /**
+     * An expired key still gets cleaned up, which is real work worth doing.
+     */
+    public function testGetStillDeletesAnExpiredKey(): void
+    {
+        $storage = new class () extends InMemoryStorage {
+            public int $deleteCalls = 0;
+
+            public function delete(string $key): bool
+            {
+                $this->deleteCalls++;
+                return parent::delete($key);
+            }
+
+            /**
+             * set()'s $expire is a TTL, so it can only ever land in the future.
+             * Plant the record directly to get one that has already lapsed.
+             */
+            public function plantExpired(string $key): void
+            {
+                $this->store[$key] = ['value' => ['x'], 'expire' => time() - 60];
+            }
+        };
+
+        $storage->plantExpired('expired');
+
+        $this->assertNull($storage->get('expired'));
+        $this->assertSame(1, $storage->deleteCalls, 'An expired key should be cleaned up');
+    }
 }
