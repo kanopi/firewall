@@ -92,6 +92,26 @@ class Config
             }
         }
 
+        // `%config(...)%` references are resolved last, once there is a whole
+        // configuration to point into (#184). `%env()%` and `%file()%` are
+        // handled per file during the parse, because a variable and a path
+        // mean the same thing wherever they appear; a reference to another
+        // part of the configuration does not, and resolving it here is what
+        // lets one cross a `configs:` include -- which a YAML anchor cannot.
+        //
+        // After the overrides, so a reference written by one is resolved and a
+        // reference pointing at a value an override replaced sees the new one.
+        $problems = [];
+        $merged = ConfigReference::resolve($merged, $problems);
+
+        foreach ($problems as $problem) {
+            // A warning rather than an error: the token is left in place, so
+            // whatever reads it fails in its own terms with its own message,
+            // and a bad reference in one corner of a config should not stop a
+            // firewall whose rules are fine.
+            self::recordLoadWarning('config references', $problem);
+        }
+
         return $merged;
     }
 

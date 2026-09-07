@@ -213,3 +213,99 @@ plugins.*.metadata.config.*
 With these patterns, paths like `geo/GeoLite2-ASN.mmdb` or `limits/rate.yml` will be resolved relative to the YAML file and stored as absolute paths at runtime.
 
 Log file paths are handled separately, without a pattern: `args.0` is a path for `StreamHandler` and `RotatingFileHandler` but an ident string or an address for other handlers, so the loader resolves it based on the handler class instead. See [Logging](logging.md).
+
+## `%config(...)%` — reusing a value from elsewhere in the config
+
+`%env()%` and `%file()%` reach outside the configuration. `%config()%` reaches *inside* it:
+the value is whatever sits at a dot-path in the merged configuration.
+
+The case it exists for is a database connection declared once and used in several places:
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\DatabaseStorage"
+  config:
+    connection:
+      driver: pdo_mysql
+      host: "%env(DB_HOST)%"
+      dbname: "%env(DB_NAME)%"
+      user: "%env(DB_USER)%"
+      password: "%env(DB_PASSWORD)%"
+
+logger:
+  - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+    args:
+      - table: firewall_log
+        connection: "%config(storage.config.connection)%"
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    metadata:
+      storage:
+        type: "Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage"
+        config:
+          connection: "%config(storage.config.connection)%"
+```
+
+One declaration; three consumers. Change the host in one place.
+
+### Prefer a YAML anchor within a single file
+
+If everything is in one file, a plain YAML anchor does the same job with no library
+involvement, and is the better answer:
+
+```yaml
+storage:
+  config:
+    connection: &db
+      driver: pdo_mysql
+      host: "%env(DB_HOST)%"
+
+logger:
+  - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+    args:
+      - table: firewall_log
+        connection: *db
+```
+
+An anchor cannot cross a file boundary — each file is parsed on its own — so it is no help
+once `storage:` and `logger:` live in different [included files](loading-and-includes.md).
+That is what `%config()%` is for.
+
+### Rules
+
+- **Paths are literal**, matched segment by segment: `storage.config.connection`. List
+  indexes are segments too: `logger.0.args.0.table`. There are no wildcards — a reference
+  names one thing, and `*` resolving to "the first of several" would be a trap rather than
+  a convenience.
+- **A value that is exactly one token keeps its type.** That is what lets a reference stand
+  in for an array like a connection block.
+- **A token inside a larger string is interpolated**, so the target must be a scalar:
+  `"mysql://%config(storage.config.connection.host)%:3306"`. Pointing at an array there is
+  reported rather than guessed at.
+- **References may chain** — a reference to a reference resolves through. A cycle is
+  reported instead of recursing.
+
+### When it does not resolve
+
+The token is left in place as written, and a warning is logged (`Firewall config loaded in
+a degraded state`). Leaving the literal is deliberate: whatever reads the value then fails
+in its own terms, rather than the value looking like something that was never configured at
+all.
+
+```
+Reference "storage.config.connection" points at nothing in the merged configuration.
+```
+
+### Ordering
+
+`%env()%` and `%file()%` are resolved per file while it is parsed. `%config()%` is resolved
+once, after every file has been merged **and after any
+[runtime overrides](overrides.md)** — so a referenced value already has its environment
+tokens filled in, an override can write a reference, and a reference sees values an
+override replaced.
+
+> A reference copies whatever is at the path, including secrets. That is no more exposure
+> than writing the value twice, but note that a remote config included over HTTP can use
+> one — as it already can use `%env()%`. Only include remote configuration you control.

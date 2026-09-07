@@ -139,7 +139,21 @@ logger:
         level: Monolog\Level::Warning
 ```
 
-A YAML anchor (`&db` / `*db`) keeps it to one declaration within a single file.
+A YAML anchor (`&db` / `*db`) keeps it to one declaration within a single file. An anchor
+cannot cross a file boundary, so if `storage:` and `logger:` live in different
+[included files](loading-and-includes.md), reference the value instead:
+
+```yaml
+logger:
+  - class: "Kanopi\\Firewall\\Logging\\Handler\\DatabaseHandler"
+    args:
+      - table: firewall_log
+        connection: "%config(storage.config.connection)%"
+        level: Monolog\Level::Warning
+```
+
+`%config(...)%` is resolved after every file is merged, which is what gives it the reach an
+anchor lacks. See [`%config(...)%`](environment-variables.md#config-reusing-a-value-from-elsewhere-in-the-config).
 
 | Key | Default | What it does |
 |---|---|---|
