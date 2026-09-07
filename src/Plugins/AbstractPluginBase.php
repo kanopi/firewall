@@ -24,7 +24,7 @@ use Symfony\Component\HttpFoundation\Request;
 /**
  * Abstract Plugin used for creating a plugin.
  */
-abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderAwareInterface
+abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterface, ChallengeProviderAwareInterface
 {
     use LoggingTrait;
 
@@ -43,6 +43,47 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
      * @var array<int, string>
      */
     protected array $sourceProvenance = [];
+
+    /**
+     * {@inheritdoc}
+     *
+     * Reads `metadata.mode`. Absent -- which is every existing configuration -- means
+     * enforce, so nothing changes for a rule that declares nothing.
+     */
+    public function isObserveMode(): bool
+    {
+        $mode = $this->metadata['mode'] ?? null;
+
+        return is_string($mode) && strtolower(trim($mode)) === 'log';
+    }
+
+    /**
+     * Tell the operator when `metadata.mode` says something unrecognised.
+     *
+     * A typo here fails in the dangerous direction: `mode: lgo` or `mode: observe` is not
+     * observe mode, so a rule the operator believed was watching quietly is enforcing on
+     * live traffic. Silence would be the worst possible answer.
+     *
+     * Once per construction, because it is a configuration problem.
+     */
+    protected function reportUnrecognisedMode(): void
+    {
+        $mode = $this->metadata['mode'] ?? null;
+
+        if ($mode === null) {
+            return;
+        }
+
+        if (is_string($mode) && in_array(strtolower(trim($mode)), ['log', 'block', 'enforce'], true)) {
+            return;
+        }
+
+        $this->getLogger()->warning('Plugin mode is not recognised - the rule will enforce', [
+            'plugin' => $this->getName(),
+            'mode' => is_scalar($mode) ? (string) $mode : gettype($mode),
+            'detail' => 'Use "log" to match without acting. Omit the key, or use "block", to enforce.',
+        ]);
+    }
 
     /**
      * Return logging context for the plugin.
@@ -198,6 +239,7 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
 
         $this->config = $this->mergeSourceEntries($entries, $this->config);
         $this->reportUnusableRules();
+        $this->reportUnrecognisedMode();
     }
 
     /**

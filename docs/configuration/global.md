@@ -118,6 +118,51 @@ The `mode` setting controls how the firewall responds when a request is matched 
 - **`exception`** — Throws instead of calling `exit()`, allowing host frameworks (Laravel, Symfony, etc.) to catch and render their own responses. A block throws `FirewallBlockedException`, which carries the status code (via `getStatusCode()`) and banning message. The challenge flow throws `ChallengeRequiredException` or `ChallengeSolvedException` instead — see [Error Handling & Exceptions](../guides/error-handling.md) for all of them and what to do with each.
 - **`disabled`** — Bypasses the firewall entirely. No plugins are evaluated and the request is immediately allowed. Useful for maintenance or feature-flag toggling.
 
+### Observing one rule while the rest enforce
+
+`global.mode` is all or nothing. Putting the firewall in `log` to try out a single new rule
+stops **everything else** enforcing too, which is rarely what an operator wants on a live
+site.
+
+A rule can carry its own `mode: log` instead:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Crs"
+    response: block
+    metadata:
+      name: crs-paranoia-2
+      mode: log        # match, report it, carry on
+```
+
+The rule is evaluated normally. When it matches, the match is logged at `warning` and then
+treated as **no match**, so evaluation continues to the rules after it and the request is
+never blocked by this one. Every other rule enforces as usual.
+
+The line carries `enforced: false` as a separate context key rather than a different
+message, so a log table can tell an observed match from an enforced one without parsing
+prose:
+
+```
+firewall.WARNING: Rule matched in observe mode - not enforced
+  {"plugin_name":"crs-paranoia-2","enforced":false, …}
+```
+
+That makes the intended workflow a query: add the rule in observe mode, leave it a week,
+count what it *would* have blocked and who it would have caught, then remove the key.
+
+!!! note "A mode this does not recognise enforces, and says so"
+
+    `mode: observe` or a typo like `mode: lgo` is not observe mode. The rule enforces, which
+    is the dangerous direction to be wrong in, so an unrecognised value logs a warning at
+    construction rather than failing silently.
+
+    Only `log` observes. `block` and `enforce` are accepted as explicit no-ops.
+
+Available on any plugin extending `AbstractPluginBase`, which is every built-in one. A
+custom plugin implementing `PluginInterface` directly can opt in by also implementing
+`ObserveModeInterface` — see [Custom Plugins](../guides/custom-plugins.md).
+
 ## Status Code
 
 The status code of the default message can be defined here. By default, it sets it to 400 but can be set to something
