@@ -157,11 +157,14 @@ jobs:
             # peer". A gate that can fail for reasons unrelated to the code
             # under test is worse than no gate, and PHP is definitionally
             # present in a PHP image.
-            # Ratchet, not a target. Set below the figure measured when
-            # coverage started including the integration suite, so the gain
-            # cannot silently regress. Raise it as coverage improves; see the
-            # tracking issue for where the remaining gaps are.
-            PASSING=90
+            # Ratchet, not a target. Sits just under the figure last measured
+            # so the gain cannot silently regress, and moves up as coverage
+            # does -- it is not a number to write tests against.
+            #
+            # 90 held from when coverage first included the integration suite
+            # until v2.19.2, by which point the real figure was 98.60% and the
+            # gate was defending a number eight points below reality (#215).
+            PASSING=97
             # Read, report and compare entirely inside PHP. Nothing parses
             # PHP's stdout in the shell, because on this image every `php`
             # invocation prints "Module ... is already loaded" warnings to

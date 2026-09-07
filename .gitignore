@@ -22,3 +22,12 @@ coverage-report
 # The published site lives on the gh-pages branch, built by CI.
 /site/
 .venv-docs/
+
+# Local scratch: debugging scaffolds and working notes that live alongside a
+# checkout but are nobody else's business. Root-anchored so a legitimately
+# committed config of the same name elsewhere in the tree is unaffected.
+/check-challenge-page.php
+/diagnose-altcha.php
+/firewall.yml
+/logs/
+/release.md
