@@ -41,7 +41,7 @@ Create a `config/firewall.yml` file:
 storage:
   type: "Kanopi\\Firewall\\Storage\\FileStorage"
   config:
-    file: /var/log/firewall/blocked.data
+    storage_file: /var/log/firewall/blocked.data
 
 # Plugins evaluated for every request
 plugins:

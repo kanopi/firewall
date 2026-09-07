@@ -16,7 +16,7 @@ configs:
 storage:
   type: Kanopi\Firewall\Storage\FileStorage
   config:
-    file: /tmp/firewall-blocked-ips.data
+    storage_file: /tmp/firewall-blocked-ips.data
 
 # =====================================================================
 # Plugin Configuration
