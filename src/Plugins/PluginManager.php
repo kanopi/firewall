@@ -197,6 +197,19 @@ class PluginManager
 
             $status = $plugin->evaluate($request);
 
+            // A match on something the client asserts is only worth what the
+            // assertion is worth. Verification runs after the match, so it costs
+            // nothing on the requests that did not match -- which is nearly all
+            // of them (#199).
+            if ($status && $plugin instanceof IdentityVerificationInterface && !$plugin->passesIdentityVerification($request)) {
+                $this->getLogger()->debug('Plugin matched but the client did not verify', $this->getContext($request, [
+                    'plugin_name' => $pluginName,
+                    'plugin_type' => $plugin::class,
+                ]));
+
+                $status = false;
+            }
+
             $evaluationTime = round((microtime(true) - $startTime) * 1000, 2); // Convert to ms
             $observed = $status && $plugin instanceof ObserveModeInterface && $plugin->isObserveMode();
             $evaluatedPlugins[] = [
