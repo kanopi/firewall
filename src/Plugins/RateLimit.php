@@ -83,6 +83,29 @@ class RateLimit extends AbstractPluginBase
     }
 
     /**
+     * Whether paths with no rule of their own are limited.
+     *
+     * The catch-all applies to every path, so adding a rule to protect
+     * `/user/login` used to bring a site-wide cap with it, and put the counter
+     * store on the path of every allowed request (#226). Declaring
+     * `limit_unlisted_paths: false` limits only what was listed.
+     *
+     * Defaults to true, which is what the plugin has always done.
+     *
+     * This is deliberately separate from `default_rate` rather than overloading
+     * a rate of 0 to mean "unlimited". `default_rate` is still the fallback for
+     * a listed rule that omits its own `rate`, so a value that switched the
+     * catch-all off would silently unlimit those rules too.
+     *
+     * @return bool
+     *   True when unlisted paths are limited.
+     */
+    protected function limitsUnlistedPaths(): bool
+    {
+        return (bool) ($this->metadata['limit_unlisted_paths'] ?? true);
+    }
+
+    /**
      * Tell the operator about any rate that cannot be enforced.
      *
      * Once per construction rather than once per request: a misconfigured rate
@@ -125,7 +148,8 @@ class RateLimit extends AbstractPluginBase
                     'setting' => $problem['setting'],
                     'rate' => $problem['rate'],
                     'detail' => 'A rate of 0 would refuse every request, including the first. '
-                        . 'Remove the rule to stop limiting these paths, or set a rate of 1 or more.',
+                        . 'To stop limiting paths with no rule of their own, declare '
+                        . 'limit_unlisted_paths: false. Otherwise set a rate of 1 or more.',
                 ]
             );
         }
@@ -158,6 +182,13 @@ class RateLimit extends AbstractPluginBase
     {
         $path = $request->getPathInfo();
         $matchedRule = $this->matchRule($path);
+
+        if (($matchedRule['catch_all'] ?? false) && !$this->limitsUnlistedPaths()) {
+            $this->getLogger()->debug('Path is not covered by a rate limit rule, skipping', $this->getContext($request, [
+                'path' => $path,
+            ]));
+            return false;
+        }
 
         $rate = intval($matchedRule['rate']);
 
@@ -258,6 +289,10 @@ class RateLimit extends AbstractPluginBase
             'path' => '*',
             'rate' => $this->metadata['default_rate'],
             'sample' => $this->metadata['default_sample'],
+            // Marks a rule nobody wrote. `path` alone cannot say so: an
+            // operator is free to configure a rule whose pattern is literally
+            // "*", and that one they do mean.
+            'catch_all' => true,
         ];
     }
 

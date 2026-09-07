@@ -376,6 +376,99 @@ class RateLimitTest extends AbstractTestCase
     }
 
     /**
+     * limit_unlisted_paths: false limits only what was listed (#226).
+     */
+    public function testUnlistedPathsAreNotLimitedWhenOptedOut(): void
+    {
+        $request = Request::create('/some/ordinary/page');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $mock = $this->getMockStorage(9_999);
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 60, 'default_sample' => 60, 'limit_unlisted_paths' => false],
+            [['path' => '/login', 'rate' => 5, 'sample' => 300]],
+            $mock
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+        $this->assertSame([], $mock->recorded, 'An unlimited path must not touch the counter store');
+    }
+
+    /**
+     * Opting out must not stop the rules the operator did write.
+     */
+    public function testListedPathsAreStillLimitedWhenOptedOut(): void
+    {
+        $request = Request::create('/login');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 60, 'default_sample' => 60, 'limit_unlisted_paths' => false],
+            [['path' => '/login', 'rate' => 5, 'sample' => 300]],
+            $this->getMockStorage(5)
+        );
+
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * default_rate stays the fallback for a listed rule with no rate of its own.
+     *
+     * The reason this is a separate key rather than overloading a rate of 0:
+     * a value that switched the catch-all off would silently unlimit these too.
+     */
+    public function testDefaultRateStillAppliesToAListedRuleWhenOptedOut(): void
+    {
+        $request = Request::create('/api/thing');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 3, 'default_sample' => 60, 'limit_unlisted_paths' => false],
+            [['path' => '/api/*']],
+            $this->getMockStorage(3)
+        );
+
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * Declaring nothing keeps the catch-all, which is what it has always done.
+     */
+    public function testUnlistedPathsAreLimitedByDefault(): void
+    {
+        $request = Request::create('/some/ordinary/page');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 60, 'default_sample' => 60],
+            [['path' => '/login', 'rate' => 5, 'sample' => 300]],
+            $this->getMockStorage(60)
+        );
+
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * A rule the operator wrote with the pattern "*" is theirs, and is honoured.
+     *
+     * The opt-out keys off a marker on the synthesised rule rather than off the
+     * pattern, precisely so this stays true.
+     */
+    public function testAnExplicitWildcardRuleIsHonouredWhenOptedOut(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 60, 'default_sample' => 60, 'limit_unlisted_paths' => false],
+            [['path' => '*', 'rate' => 2, 'sample' => 60]],
+            $this->getMockStorage(2)
+        );
+
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
      * Test wildcard path matching.
      */
     public function testWildcardMatch(): void
