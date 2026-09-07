@@ -16,7 +16,7 @@ use Psr\Cache\CacheItemPoolInterface;
 /**
  * Generic Symfony cache-based rate limit storage.
  */
-class CacheRateLimitStorage extends AbstractRateLimitStorage
+class CacheRateLimitStorage extends AbstractRateLimitStorage implements PrunableRateLimitStorageInterface
 {
     /**
      * Symfony cache instance.
@@ -106,6 +106,65 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage
                 'cache_key' => $key,
             ]);
         }
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * The `ttl` bounds how long a key survives, not how large it gets. Every
+     * request appended a timestamp to one array and nothing removed any until
+     * the whole key expired, so a key taking sustained traffic held an hour of
+     * timestamps by default -- and `countRequests()` filtered the lot on every
+     * request to answer a question about the last few seconds.
+     */
+    public function forget(string $key, int $before): int
+    {
+        if (!$this->cache instanceof \Psr\Cache\CacheItemPoolInterface) {
+            $this->getLogger()->warning('Cannot drop rate limit records - cache not available');
+            return 0;
+        }
+
+        $originalKey = $key;
+        $key = $this->alterKey($key);
+        $cacheItem = $this->cache->getItem($key);
+
+        if (!$cacheItem->isHit()) {
+            return 0;
+        }
+
+        $timestamps = $cacheItem->get();
+
+        if (!is_array($timestamps)) {
+            return 0;
+        }
+
+        $kept = array_values(array_filter($timestamps, static fn($timestamp): bool => $timestamp >= $before));
+        $dropped = count($timestamps) - count($kept);
+
+        if ($dropped === 0) {
+            return 0;
+        }
+
+        // Deleted outright when nothing is left, rather than written back as
+        // an empty array: an empty entry holds a key in the pool for the whole
+        // TTL to say nothing.
+        if ($kept === []) {
+            $this->cache->deleteItem($key);
+        } else {
+            // The TTL is reset here, as it is on every record. It measures
+            // idleness either way -- a key nothing touches still ages out.
+            $this->cache->save($cacheItem->set($kept)->expiresAfter($this->ttl));
+        }
+
+        $this->getLogger()->debug('Dropped rate limit records outside the window', [
+            'key' => $originalKey,
+            'cache_key' => $key,
+            'before' => $before,
+            'dropped' => $dropped,
+            'remaining' => count($kept),
+        ]);
+
+        return $dropped;
     }
 
     /**

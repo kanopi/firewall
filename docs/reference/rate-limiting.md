@@ -115,6 +115,17 @@ A quick reference for every rate limit defined in the shipped [`rate-limiting.ym
 
 ## Storage Backends
 
+All five backends keep only the current window. Each recorded request is a timestamp, and
+a rate limit is a rolling window, so once a timestamp falls out of the widest window its
+key is counted over it can never affect a verdict again — the plugin drops it on the next
+allowed request for that key.
+
+That was not always true. Before it, nothing removed a record: the Redis and cache
+backends were bounded only by their `ttl` (how long a key *survives*, not how large it
+gets), and the file and database backends were not bounded at all. A long-running site
+accumulated every request it had ever rate limited. If you have been running one of those
+two, see [Reclaiming space](#reclaiming-space) below.
+
 ### Redis (Recommended)
 
 **Pros:**
@@ -164,7 +175,6 @@ A quick reference for every rate limit defined in the shipped [`rate-limiting.ym
 - Single server only
 - Slowest option
 - File locking overhead
-- Manual cleanup needed
 
 **Use when:**
 - Development/testing
@@ -187,6 +197,75 @@ A quick reference for every rate limit defined in the shipped [`rate-limiting.ym
 - Using Symfony/Laravel with cache
 - Want to use existing cache layer
 - Framework integration important
+
+## Reclaiming space
+
+Pruning happens per key, on the next allowed request for that key. So records belonging to
+keys that never come back — a client that has not returned, a path nobody requests any more
+— are never visited again and stay where they are. On a site that ran without pruning, that
+is most of what is stored.
+
+Nothing needs to happen for rate limiting to keep working correctly; this is disk space,
+not correctness. To reclaim it, delete anything older than the widest `sample` you have
+configured.
+
+**Database.** With a widest window of, say, 3600 seconds:
+
+```sql
+DELETE FROM firewall_rate_limit_storage WHERE timestamp < UNIX_TIMESTAMP() - 3600;
+```
+
+The table is also created with an index on `(rule, timestamp)`, which is the shape both
+queries against it use. **An existing table does not gain it** — the schema is only created
+when the table is absent — and without it every count is a full scan. Add it once:
+
+```sql
+CREATE INDEX firewall_rate_limit_storage_rule_window_idx
+  ON firewall_rate_limit_storage (rule, timestamp);
+```
+
+**File.** The store is a single JSON file of `key => [timestamps]`. Deleting it is safe: the
+worst case is that clients mid-window get their allowance reset, and the file is rebuilt on
+the next request.
+
+```bash
+rm /path/to/ratelimit_data.json
+```
+
+**Redis and PSR-6 cache.** Nothing to do. Their `ttl` already drops whole keys, so anything
+left over from before clears itself within one TTL.
+
+## Custom storage backends
+
+`plugins[].metadata.storage.type` accepts any class implementing
+`RateLimitStorageInterface`, and that interface is unchanged — a backend written before
+pruning existed keeps working exactly as it did.
+
+To have yours pruned too, also implement `PrunableRateLimitStorageInterface`:
+
+```php
+use Kanopi\Firewall\RateLimitStorage\PrunableRateLimitStorageInterface;
+use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
+
+class MyRateLimitStorage implements RateLimitStorageInterface, PrunableRateLimitStorageInterface
+{
+    // ...
+
+    public function forget(string $key, int $before): int
+    {
+        // Drop records for $key older than $before. Touch no other key.
+        // A record exactly at $before must be KEPT: countRequests() treats
+        // its $start as inclusive, so dropping it loses a request the
+        // current window still counts.
+        // Return how many were dropped. Report failures and return 0 —
+        // pruning is housekeeping and must not fail a request.
+    }
+}
+```
+
+The plugin calls it on the allowed path only, immediately before recording. Records are
+added nowhere else, so pruning there is enough to bound growth — and a key that is over its
+limit stops being appended to, so it stops growing on its own.
 
 ## Common Customizations
 
@@ -267,7 +346,8 @@ plugins:
 ### Performance issues
 
 1. Switch to Redis if using file/database
-2. Optimize database queries (add indexes)
+2. On a database table created before pruning existed, add the `(rule, timestamp)` index —
+   see [Reclaiming space](#reclaiming-space). Without it every count is a full scan
 3. Use connection pooling for database
 4. Consider caching layer
 
@@ -275,8 +355,13 @@ plugins:
 
 1. Check expiration time settings
 2. Verify Redis/Database TTL working
-3. For file storage, manually clean old entries
-4. Check system time is correct
+3. Check system time is correct — the window is computed from it
+
+### Storage keeps growing
+
+Only records for keys that come back are pruned, so anything belonging to a client or path
+that never returns stays put. That is disk space rather than a correctness problem, and
+[Reclaiming space](#reclaiming-space) covers clearing it.
 
 ## Best Practices
 
@@ -285,7 +370,8 @@ plugins:
 3. **Bypass Trusted IPs**: Whitelist monitoring services, internal IPs
 4. **Different Tiers**: Use different limits for authenticated/premium users
 5. **Progressive Limits**: Start lenient, tighten after detecting abuse
-6. **Clean Up**: Regularly clean old rate limit data (especially file storage)
+6. **Index the table**: If your database table predates pruning, add the
+   `(rule, timestamp)` index — the schema is only created when the table is absent
 7. **Test Thoroughly**: Test rate limits in staging before production
 8. **Document Changes**: Keep track of customizations for troubleshooting
 
