@@ -110,9 +110,20 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
     {
         if (!$this->reverseDnsVerifier instanceof ReverseDnsVerifier) {
             $ttl = $this->metadata['verify_ttl'] ?? 3600;
+            $negativeTtl = $this->metadata['verify_negative_ttl'] ?? 86400;
+            $threshold = $this->metadata['verify_slow_threshold_ms'] ?? 250;
+
             $this->reverseDnsVerifier = new ReverseDnsVerifier(
                 $this->identityCachePool(),
-                is_numeric($ttl) ? (int) $ttl : 3600
+                is_numeric($ttl) ? (int) $ttl : 3600,
+                is_numeric($negativeTtl) ? (int) $negativeTtl : 86400,
+                // The same switch that keeps rule sources and remote configs off
+                // the request path (#228). An operator who set it meant "make no
+                // network calls while serving a request", and two DNS lookups are
+                // exactly that.
+                defined('KANOPI_FIREWALL_SOURCES_OFFLINE')
+                    && (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE'),
+                is_numeric($threshold) ? (float) $threshold : 250.0
             );
         }
 

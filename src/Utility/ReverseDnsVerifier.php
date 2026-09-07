@@ -36,13 +36,31 @@ class ReverseDnsVerifier
     /**
      * @param CacheItemPoolInterface|null $cache
      *   Where verdicts are kept. A DNS round trip on the request path is otherwise
-     *   unaffordable -- it is two lookups, and the request waits for both.
+     *   unaffordable -- measured at ~38ms for the reverse lookup and ~74ms for the
+     *   forward confirmation against an ordinary resolver, so ~112ms cold. The whole
+     *   firewall evaluation is 3.5-5ms.
      * @param int $ttl
-     *   How long a verdict stays good, in seconds.
+     *   How long an acceptance stays good, in seconds.
+     * @param int $negativeTtl
+     *   How long a refusal stays good. Much longer than an acceptance on purpose: a
+     *   refusal is the stable fact -- an address that is not Googlebot will not become
+     *   Googlebot -- and refusals are what an attacker generates, so they are the ones
+     *   worth remembering.
+     * @param bool $offline
+     *   When true, never resolve. A cached verdict is still used, because reading it
+     *   costs no network.
+     * @param float $slowThresholdMs
+     *   A lookup slower than this trips the breaker.
+     * @param int $breakerCooldown
+     *   How long to skip DNS entirely after a slow lookup, in seconds.
      */
     public function __construct(
         protected ?CacheItemPoolInterface $cache = null,
-        protected int $ttl = 3600
+        protected int $ttl = 3600,
+        protected int $negativeTtl = 86400,
+        protected bool $offline = false,
+        protected float $slowThresholdMs = 250.0,
+        protected int $breakerCooldown = 300
     ) {
     }
 
@@ -81,15 +99,151 @@ class ReverseDnsVerifier
             }
         }
 
+        // Past this point the request would pay for DNS. Everything below is a
+        // reason not to let it.
+
+        if ($this->offline) {
+            $this->getLogger()->debug('Running offline, so the client was not verified', ['ip' => $ip]);
+            return false;
+        }
+
+        if ($this->breakerIsOpen()) {
+            $this->getLogger()->debug('Reverse DNS breaker is open, skipping the lookup', ['ip' => $ip]);
+            return false;
+        }
+
+        if (!$this->claimLookup($key)) {
+            // Another worker is already resolving this address. Waiting would
+            // put this request behind a lookup it does not need to make; the
+            // verdict will be cached by the time the client comes back.
+            $this->getLogger()->debug('Another process is verifying this address', ['ip' => $ip]);
+            return false;
+        }
+
+        $startedAt = microtime(true);
         $verdict = $this->resolve($ip, $suffixes);
+        $elapsedMs = (microtime(true) - $startedAt) * 1000;
+
+        $this->releaseLookup($key);
+
+        if ($elapsedMs > $this->slowThresholdMs) {
+            // PHP cannot bound gethostbyaddr() or dns_get_record() -- neither
+            // takes a timeout, so they are bounded only by the system resolver,
+            // typically 5s per nameserver with two attempts. One worker eating
+            // that is survivable; every worker eating it is an outage. Trip
+            // the breaker so the rest skip DNS until the resolver recovers.
+            $this->tripBreaker();
+            $this->getLogger()->warning('Reverse DNS lookup was slow - skipping verification for a while', [
+                'ip' => $ip,
+                'elapsed_ms' => round($elapsedMs, 2),
+                'threshold_ms' => $this->slowThresholdMs,
+                'cooldown_seconds' => $this->breakerCooldown,
+                'detail' => 'Run a local caching resolver (systemd-resolved, dnsmasq, unbound) '
+                    . 'on the host. Verification is unaffordable without one.',
+            ]);
+        }
 
         if ($item instanceof CacheItemInterface && $this->cache instanceof CacheItemPoolInterface) {
             $item->set($verdict);
-            $item->expiresAfter($this->ttl);
+            $item->expiresAfter($verdict ? $this->ttl : $this->negativeTtl);
             $this->cache->save($item);
         }
 
         return $verdict;
+    }
+
+    /**
+     * Whether DNS is being skipped after a slow lookup.
+     *
+     * @return bool
+     *   True while the breaker is open.
+     */
+    protected function breakerIsOpen(): bool
+    {
+        if (!$this->cache instanceof CacheItemPoolInterface) {
+            return false;
+        }
+
+        try {
+            return $this->cache->getItem('rdns_breaker')->isHit();
+        } catch (\Psr\Cache\InvalidArgumentException) {
+            return false;
+        }
+    }
+
+    /**
+     * Stop attempting lookups for the cooldown period.
+     */
+    protected function tripBreaker(): void
+    {
+        if (!$this->cache instanceof CacheItemPoolInterface) {
+            return;
+        }
+
+        try {
+            $item = $this->cache->getItem('rdns_breaker');
+            $item->set(true);
+            $item->expiresAfter($this->breakerCooldown);
+            $this->cache->save($item);
+        } catch (\Psr\Cache\InvalidArgumentException) {
+            // Nothing to do -- without a cache there is no breaker.
+        }
+    }
+
+    /**
+     * Try to become the process that resolves this address.
+     *
+     * Best effort, not a mutex: two workers arriving in the same instant can both
+     * claim it. That is fine -- the point is to collapse a stampede of many workers
+     * onto one address into roughly one lookup, not to guarantee exactly one.
+     *
+     * @param string $key
+     *   The verdict cache key.
+     *
+     * @return bool
+     *   True when this process should do the lookup.
+     */
+    protected function claimLookup(string $key): bool
+    {
+        if (!$this->cache instanceof CacheItemPoolInterface) {
+            return true;
+        }
+
+        try {
+            $item = $this->cache->getItem($key . '_inflight');
+
+            if ($item->isHit()) {
+                return false;
+            }
+
+            $item->set(true);
+            // Short: a crashed worker must not lock an address out for long.
+            $item->expiresAfter(10);
+            $this->cache->save($item);
+
+            return true;
+        } catch (\Psr\Cache\InvalidArgumentException) {
+            return true;
+        }
+    }
+
+    /**
+     * Release the claim.
+     *
+     * @param string $key
+     *   The verdict cache key.
+     */
+    protected function releaseLookup(string $key): void
+    {
+        if (!$this->cache instanceof CacheItemPoolInterface) {
+            return;
+        }
+
+        try {
+            $this->cache->deleteItem($key . '_inflight');
+        } catch (\Psr\Cache\InvalidArgumentException) {
+            // It expires on its own.
+        }
     }
 
     /**

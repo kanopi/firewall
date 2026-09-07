@@ -25,22 +25,34 @@ class ReverseDnsVerifierTest extends AbstractTestCase
      * @param \Psr\Cache\CacheItemPoolInterface|null $cache
      *   Optional pool.
      */
-    private function verifier(string|false $ptr, array|false $forward, $cache = null): ReverseDnsVerifier
-    {
-        return new class ($ptr, $forward, $cache) extends ReverseDnsVerifier {
+    private function verifier(
+        string|false $ptr,
+        array|false $forward,
+        $cache = null,
+        bool $offline = false,
+        float $sleepMs = 0.0
+    ): ReverseDnsVerifier {
+        return new class ($ptr, $forward, $cache, $offline, $sleepMs) extends ReverseDnsVerifier {
             public int $reverseCalls = 0;
 
             public function __construct(
                 private string|false $ptr,
                 private array|false $forward,
-                $cache = null
+                $cache = null,
+                bool $offline = false,
+                private float $sleepMs = 0.0
             ) {
-                parent::__construct($cache, 3600);
+                parent::__construct($cache, 3600, 86400, $offline, 250.0, 300);
             }
 
             protected function reverseLookup(string $ip): string|false
             {
                 $this->reverseCalls++;
+
+                if ($this->sleepMs > 0) {
+                    usleep((int) ($this->sleepMs * 1000));
+                }
+
                 return $this->ptr;
             }
 
@@ -195,5 +207,101 @@ class ReverseDnsVerifierTest extends AbstractTestCase
         $verifier = $this->verifier('crawl.googlebot.com.', [['ip' => '66.249.66.1']]);
 
         $this->assertTrue($verifier->verify('66.249.66.1', ['.googlebot.com']));
+    }
+
+    /**
+     * Offline means no DNS, the same as it means no HTTP for sources (#228).
+     */
+    public function testOfflineDoesNotResolve(): void
+    {
+        $verifier = $this->verifier(
+            'crawl.googlebot.com',
+            [['ip' => '66.249.66.1']],
+            new ArrayAdapter(),
+            true
+        );
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame(0, $verifier->reverseCalls, 'Offline must make no lookup at all');
+    }
+
+    /**
+     * A cached verdict is still honoured offline -- reading it costs no network.
+     */
+    public function testOfflineStillUsesACachedVerdict(): void
+    {
+        $pool = new ArrayAdapter();
+
+        $online = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], $pool);
+        $this->assertTrue($online->verify('66.249.66.1', ['.googlebot.com']));
+
+        $offline = $this->verifier(false, false, $pool, true);
+        $this->assertTrue(
+            $offline->verify('66.249.66.1', ['.googlebot.com']),
+            'A verdict already in the cache should still be usable offline'
+        );
+        $this->assertSame(0, $offline->reverseCalls);
+    }
+
+    /**
+     * A slow lookup trips the breaker, so the next request skips DNS entirely.
+     *
+     * PHP cannot bound gethostbyaddr(), so a degraded resolver would otherwise
+     * stall every worker in turn. One worker paying is survivable; all of them
+     * paying is an outage.
+     */
+    public function testASlowLookupTripsTheBreaker(): void
+    {
+        $pool = new ArrayAdapter();
+
+        // 300ms, over the 250ms threshold.
+        $slow = $this->verifier('crawl.evilbot.com', [['ip' => '203.0.113.5']], $pool, false, 300.0);
+        $slow->verify('203.0.113.5', ['.googlebot.com']);
+
+        $next = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], $pool);
+        $this->assertFalse(
+            $next->verify('66.249.66.1', ['.googlebot.com']),
+            'While the breaker is open, verification fails closed without resolving'
+        );
+        $this->assertSame(0, $next->reverseCalls, 'The breaker must prevent the lookup');
+    }
+
+    /**
+     * A refusal is remembered far longer than an acceptance.
+     *
+     * Refusals are what an attacker generates, and an address that is not
+     * Googlebot will not become Googlebot.
+     */
+    public function testARefusalIsCachedForLongerThanAnAcceptance(): void
+    {
+        $pool = new ArrayAdapter();
+        $verifier = $this->verifier('crawl.evilgooglebot.com', [['ip' => '203.0.113.5']], $pool);
+
+        $verifier->verify('203.0.113.5', ['.googlebot.com']);
+
+        $key = 'rdns_' . hash('sha256', '203.0.113.5|.googlebot.com');
+        $values = $pool->getValues();
+
+        $this->assertArrayHasKey($key, $values, 'The refusal should be cached');
+    }
+
+    /**
+     * A concurrent lookup for the same address does not start a second one.
+     */
+    public function testAnInFlightLookupIsNotDuplicated(): void
+    {
+        $pool = new ArrayAdapter();
+        $key = 'rdns_' . hash('sha256', '66.249.66.1|.googlebot.com');
+
+        // Plant the in-flight marker another worker would have left.
+        $item = $pool->getItem($key . '_inflight');
+        $item->set(true);
+        $item->expiresAfter(10);
+        $pool->save($item);
+
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], $pool);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame(0, $verifier->reverseCalls, 'It should not resolve behind another worker');
     }
 }
