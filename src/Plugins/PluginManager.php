@@ -198,11 +198,29 @@ class PluginManager
             $status = $plugin->evaluate($request);
 
             $evaluationTime = round((microtime(true) - $startTime) * 1000, 2); // Convert to ms
+            $observed = $status && $plugin instanceof ObserveModeInterface && $plugin->isObserveMode();
             $evaluatedPlugins[] = [
                 'plugin' => $pluginName,
                 'result' => $status,
+                'enforced' => !$observed,
                 'time_ms' => $evaluationTime,
             ];
+
+            if ($observed) {
+                // Warning, not debug: this is the line the operator turned the
+                // rule on to read, and it has to survive a production log level
+                // that drops debug. `enforced` is a separate key rather than a
+                // different message so a query counting matches can tell the
+                // two apart without parsing prose (#201).
+                $this->getLogger()->warning('Rule matched in observe mode - not enforced', $this->getContext($request, [
+                    'plugin_name' => $pluginName,
+                    'plugin_type' => $plugin::class,
+                    'enforced' => false,
+                    'evaluation_time_ms' => $evaluationTime,
+                ]));
+
+                continue;
+            }
 
             if ($status) {
                 $this->getLogger()->debug('Plugin evaluation matched', $this->getContext($request, [
