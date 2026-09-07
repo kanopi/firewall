@@ -198,6 +198,38 @@ two, see [Reclaiming space](#reclaiming-space) below.
 - Want to use existing cache layer
 - Framework integration important
 
+## Sharing a database connection
+
+The database backend needs the same connection details as `storage.config.connection` when
+both point at one database. Declare it once and reference it, rather than keeping two
+copies in step:
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\DatabaseStorage"
+  config:
+    connection:
+      driver: pdo_mysql
+      host: "%env(DB_HOST)%"
+      dbname: "%env(DB_NAME)%"
+      user: "%env(DB_USER)%"
+      password: "%env(DB_PASSWORD)%"
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    metadata:
+      storage:
+        type: "Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage"
+        config:
+          connection: "%config(storage.config.connection)%"
+```
+
+Within a single file a YAML anchor does the same thing with no library involvement and is
+the better choice; `%config()%` is what works once the two blocks live in different
+[included files](../configuration/loading-and-includes.md). See
+[`%config(...)%`](../configuration/environment-variables.md#config-reusing-a-value-from-elsewhere-in-the-config).
+
 ## Reclaiming space
 
 Pruning happens per key, on the next allowed request for that key. So records belonging to
