@@ -50,6 +50,12 @@ class FileTraitTest extends TestCase
                 return $this->loadFromFile($path);
             }
 
+            /** @return array<mixed>|null */
+            public function read(string $path): ?array
+            {
+                return $this->readFromFile($path);
+            }
+
             /** @param array<mixed> $data */
             public function save(array $data, string $path): bool
             {
@@ -142,9 +148,71 @@ class FileTraitTest extends TestCase
 
         $handler = LoggingFactory::logger()->getHandlers()[0];
         $this->assertTrue(
-            $handler->hasWarningContaining('Failed to decode storage file as JSON'),
-            'A decode failure should be logged at warning level'
+            $handler->hasErrorContaining('Storage file could not be decoded'),
+            'A decode failure should be logged at error level'
         );
+    }
+
+    /**
+     * An unreadable file is null, not an empty store (#225).
+     *
+     * `loadFromFile()` collapses both to `[]`. For a block list that reads as
+     * "nobody is blocked", which is why a torn read used to fail open.
+     */
+    public function testReadFromFileReturnsNullWhenTheFileCannotBeDecoded(): void
+    {
+        file_put_contents($this->tempFile, '{"203.0.113.1": {"expire"');
+
+        $this->assertNull($this->subject->read($this->tempFile));
+    }
+
+    /**
+     * An absent or empty file genuinely holds no entries, so it is [] not null.
+     */
+    public function testReadFromFileReturnsEmptyArrayForAnEmptyFile(): void
+    {
+        file_put_contents($this->tempFile, '');
+
+        $this->assertSame([], $this->subject->read($this->tempFile));
+    }
+
+    /**
+     * loadFromFile() keeps returning [] so a subclass calling it is unaffected.
+     */
+    public function testLoadFromFileStillCollapsesAnUnreadableFileToEmpty(): void
+    {
+        file_put_contents($this->tempFile, '{"broken');
+
+        $this->assertSame([], $this->subject->load($this->tempFile));
+    }
+
+    /**
+     * The write is staged and renamed, so no reader can observe a partial file.
+     */
+    public function testPersistLeavesNoTemporaryFileBehind(): void
+    {
+        $this->subject->save(['203.0.113.1' => ['expire' => 0]], $this->tempFile);
+
+        $leftovers = glob($this->tempFile . '.*.tmp') ?: [];
+
+        $this->assertSame([], $leftovers, 'The staged file should have been renamed away');
+        $this->assertSame(
+            ['203.0.113.1' => ['expire' => 0]],
+            $this->subject->read($this->tempFile)
+        );
+    }
+
+    /**
+     * A staged write must not widen permissions on the published file.
+     */
+    public function testPersistedFileIsNotReadableByOtherUsers(): void
+    {
+        $this->subject->save(['203.0.113.1' => ['expire' => 0]], $this->tempFile);
+
+        clearstatcache(true, $this->tempFile);
+        $mode = fileperms($this->tempFile) & 0777;
+
+        $this->assertSame(0, $mode & 0077, sprintf('Expected no group/other bits, got %o', $mode));
     }
 
     public function testGarbageContentsIsTreatedAsEmptyStore(): void
@@ -162,8 +230,8 @@ class FileTraitTest extends TestCase
 
         $handler = LoggingFactory::logger()->getHandlers()[0];
         $this->assertTrue(
-            $handler->hasWarningContaining('not an array'),
-            'A non-array JSON document should be rejected with a warning'
+            $handler->hasErrorContaining('not an array'),
+            'A non-array JSON document should be rejected with an error'
         );
     }
 

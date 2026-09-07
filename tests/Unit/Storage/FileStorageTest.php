@@ -81,6 +81,63 @@ class FileStorageTest extends AbstractTestCase
     }
 
     /**
+     * An undecodable file must not read as "nobody is blocked" (#225).
+     *
+     * This is the fail-open defect. `loadStorageFile()` replaced the in-memory
+     * store with `[]` whenever the file could not be decoded, so a client that
+     * was blocked a moment ago was let straight through -- under exactly the
+     * concurrency an attack produces.
+     */
+    public function testAnUndecodableFileDoesNotReleaseABlockedClient(): void
+    {
+        $storage = new FileStorage(['storage_file' => $this->tempFile]);
+        $request = $this->getRequest();
+        $ip = $request->getClientIp();
+
+        $storage->set($ip, $storage->getStorageData($request, null));
+        $this->assertNotNull($storage->get($ip), 'Precondition: the client is blocked');
+
+        // Something leaves the file torn -- an older release writing in place,
+        // or anything else sharing the path.
+        file_put_contents($this->tempFile, '{"' . $ip . '": {"expi');
+
+        $this->assertNotNull(
+            $storage->get($ip),
+            'A file that cannot be decoded must keep the last known block list'
+        );
+    }
+
+    /**
+     * The same for the offense sidecar: counts are kept, not reset to zero.
+     */
+    public function testAnUndecodableOffenseFileKeepsItsCounts(): void
+    {
+        // An explicit offense file: the default is shared by every FileStorage
+        // built against the same directory, so tests would see each other's.
+        $offenseFile = tempnam(sys_get_temp_dir(), 'filestorage_offense_test_');
+
+        $storage = new FileStorage([
+            'storage_file' => $this->tempFile,
+            'offense_file' => $offenseFile,
+        ]);
+        $request = $this->getRequest();
+        $ip = $request->getClientIp();
+
+        $storage->recordOffense($ip);
+        $this->assertSame(1, $storage->countOffenses($ip), 'Precondition: one offense');
+
+        file_put_contents($offenseFile, '{"' . $ip . '": [12345');
+
+        $this->assertSame(
+            1,
+            $storage->countOffenses($ip),
+            'An undecodable offense file must not reset every client to zero'
+        );
+
+        @unlink($offenseFile);
+    }
+
+    /**
      * Tests that set() persists data to file.
      */
     public function testSetPersistsToFile(): void
