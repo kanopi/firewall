@@ -48,6 +48,48 @@ class RedisConnectionsTest extends AbstractTestCase
     }
 
     /**
+     * A connection is given a bounded timeout even when the config names none.
+     *
+     * `new Redis($options)` connects during construction, and with no timeout
+     * among the options `ext-redis` falls back to `default_socket_timeout` --
+     * 60 seconds on a stock PHP. A host that silently drops packets, which is
+     * what a firewalled or wrong-subnet Redis looks like, therefore hung the
+     * request for a minute (#273).
+     *
+     * Asserted through identity rather than by reading the option back: the
+     * defaults are applied before the key is taken, so a bare config and one
+     * naming the same values are the same target.
+     */
+    public function testATimeoutIsAppliedWhenNoneIsConfigured(): void
+    {
+        $this->assertSame(
+            RedisConnections::get(['host' => '127.0.0.1', 'port' => 6379]),
+            RedisConnections::get([
+                'host' => '127.0.0.1',
+                'port' => 6379,
+                'connectTimeout' => 1.5,
+                'readTimeout' => 1.5,
+            ]),
+            'A bare config should already carry the default timeouts'
+        );
+    }
+
+    /**
+     * A configured timeout is not overwritten by the default.
+     *
+     * A deployment reaching a Redis over a link slow enough to need longer must
+     * be able to say so, and gets its own connection for saying it.
+     */
+    public function testAConfiguredTimeoutWins(): void
+    {
+        $this->assertNotSame(
+            RedisConnections::get(['host' => '127.0.0.1', 'port' => 6379]),
+            RedisConnections::get(['host' => '127.0.0.1', 'port' => 6379, 'connectTimeout' => 5]),
+            'An explicit timeout is a different target, not the default'
+        );
+    }
+
+    /**
      * Option order is not part of the target's identity.
      */
     public function testOptionOrderDoesNotMatter(): void

@@ -58,6 +58,32 @@ Two things about the call:
 
 An empty array means every configured rule is constructed and active. It says nothing about rules you disabled with `enable: false` or left out of the config — those never enter the registry, and are not failures.
 
+## Checking that a backend can reach its server
+
+`getFailedRules()` answers one question — *which rules are not running?* There is a second, and an empty answer to the first does not settle it: **a rule can be running and have nothing to consult.**
+
+`RedisStorage` and `RedisRateLimitStorage` deliberately catch a connection failure, log it, and answer every read as though nothing were stored, so the firewall carries on enforcing every rule that does not depend on them. The plugin therefore constructs successfully, and `getFailedRules()` correctly reports nothing — while a rate limit rule counts nothing and lets every request through.
+
+```php
+foreach ($firewall->getDegradedBackends() as $backend) {
+    // component: 'block list' | 'rate limit'
+    // backend:   Kanopi\Firewall\Storage\RedisStorage
+    // error:     Connection refused
+    $status->addWarning(sprintf(
+        'The firewall %s is running without its store: %s (%s)',
+        $backend['component'],
+        $backend['error'],
+        $backend['backend']
+    ));
+}
+```
+
+The two together are the health check. A rule in `getFailedRules()` **is not running**; a backend in `getDegradedBackends()` **is running blind**.
+
+- **It builds every rule to find out**, for the same reason `getFailedRules()` does — a rate limit store is constructed by its plugin, so before the rules exist there is no backend to have failed.
+- **It reports what was found at construction**, which is when a connection is opened. A backend that connects and later loses its server logs, as it always did, and does not appear here.
+- **A `DatabaseStorage` that cannot connect does not appear either** — that one throws at construction, so it shows up in `getFailedRules()` instead. The two lists are exhaustive between them, not overlapping.
+
 ## Handling blocks in a framework
 
 ```php
