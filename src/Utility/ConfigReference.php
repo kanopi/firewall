@@ -127,13 +127,23 @@ final class ConfigReference
     /**
      * Whether a structure contains a reference token anywhere.
      *
+     * Public because `Config` needs the answer before it has a configuration to resolve.
+     * `resolve()` already skips a structure with no references, but discovering that means
+     * walking the whole thing -- 0.109 ms on the shipped presets, which is most of what a
+     * cached load now costs. Asking once when the cache is built and storing the answer
+     * lets a cache hit skip the walk entirely (#259).
+     *
+     * Deliberately loose: it answers "there might be one", never "there is one". A false
+     * positive costs a walk that would have happened anyway; a false negative would leave a
+     * token unresolved, so the test is a plain substring rather than the real pattern.
+     *
      * @param mixed $node
      *   The node to scan.
      *
      * @return bool
      *   TRUE when at least one `%config(` appears in a string value or key.
      */
-    private static function containsReference(mixed $node): bool
+    public static function containsReference(mixed $node): bool
     {
         if (is_string($node)) {
             return str_contains($node, '%config(');

@@ -248,8 +248,35 @@ class ConfigCacheTest extends AbstractTestCase
      * to keep PHP deserialisation out of anything the library writes and reads
      * back. A configuration assembled in code can legitimately hold an object;
      * one parsed from YAML never can.
+     *
+     * It takes a file to reach this at all -- an inline array on its own reads
+     * nothing and so is never a cache candidate -- which is why the object
+     * arrives beside one.
      */
     public function testAConfigurationContainingAnObjectIsNotCached(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        $result = Config::load([$file, ['logger' => new \stdClass()]]);
+
+        $after = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        $this->assertInstanceOf(\stdClass::class, $result['logger'] ?? null, 'The object still reaches the caller');
+        $this->assertSame($before, $after, 'Nothing containing an object should have been written');
+    }
+
+    /**
+     * An object in an override does not cost the whole configuration its cache.
+     *
+     * It used to. Overrides were part of the cache key and were applied before
+     * the object check ran, so a host application handing the firewall a logger
+     * it built itself -- something no YAML file can express, and the reason
+     * overrides exist -- reparsed every file on every request. The files are
+     * cached on their own now and the override is reapplied to the result (#259).
+     */
+    public function testAnObjectInAnOverrideStillLeavesTheFileMergeCached(): void
     {
         $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
 
@@ -260,7 +287,28 @@ class ConfigCacheTest extends AbstractTestCase
         $after = count(glob($this->cacheDir() . '/*.php') ?: []);
 
         $this->assertInstanceOf(\stdClass::class, $result['logger'] ?? null, 'The object still reaches the caller');
-        $this->assertSame($before, $after, 'Nothing containing an object should have been written');
+        $this->assertSame('block', $result['global']['mode'] ?? null);
+        $this->assertSame($before + 1, $after, 'The file merge behind the override is cacheable');
+    }
+
+    /**
+     * Two loads of the same files with different overrides share one entry.
+     *
+     * A consequence of the same change: the key names the files, so an
+     * override no longer multiplies the cache by the number of callers.
+     */
+    public function testDifferentOverridesShareOneCacheEntry(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        $this->assertSame('log', Config::load([$file], ['[global][mode]' => 'log'])['global']['mode'] ?? null);
+        $this->assertSame('challenge', Config::load([$file], ['[global][mode]' => 'challenge'])['global']['mode'] ?? null);
+
+        $after = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        $this->assertSame($before + 1, $after, 'One entry for the files, not one per set of overrides');
     }
 
     /**
