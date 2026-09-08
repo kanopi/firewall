@@ -174,6 +174,75 @@ class FileStorage extends InMemoryStorage
 
     /**
      * {@inheritdoc}
+     *
+     * One lock, one read, one write -- for the whole sweep rather than per key.
+     *
+     * The inherited implementation calls `delete()` once per expired key, and
+     * this class overrides `delete()` with an exclusive lock plus a full file
+     * load and a full rewrite. So a sweep cost that per expired entry: measured
+     * at 2.1ms for 50 and 7.9ms for 200, against 0.0004ms when nothing had
+     * expired (#250).
+     *
+     * That cost is not spread across requests. `Firewall::__construct()` calls
+     * this on every request, and it is free until a batch of bans lapses
+     * together -- then the whole bill lands on whichever request arrives next.
+     * With the default 300-second ban that is the first real visitor after an
+     * attack, paying for the attacker's expired blocks.
+     *
+     * Offenses are deliberately left alone. `deleteMatching()` drops them
+     * alongside a block because an operator lifting a ban should not have it
+     * escalated straight back; an expiry is the opposite case -- the ban ran
+     * its course, and the offense history is exactly what
+     * `blocking_escalation` needs to give a repeat offender a longer one next
+     * time.
+     */
+    public function expire(): bool
+    {
+        return (bool) $this->withExclusiveLock($this->filePath, function (): bool {
+            $this->loadStorageFile();
+
+            $currentTime = time();
+            $cleared = 0;
+
+            foreach ($this->store as $key => $value) {
+                if (!is_array($value)) {
+                    continue;
+                }
+
+                if (($value['expire'] ?? 0) <= 0) {
+                    continue;
+                }
+
+                if ($value['expire'] >= $currentTime) {
+                    continue;
+                }
+
+                // Unset directly rather than calling $this->delete().
+                //
+                // delete() is overridden here to take the same exclusive lock
+                // this closure already holds, and flock() locks attach to the
+                // open file description -- so a nested acquisition blocks on a
+                // lock this very process holds. A permanent self-deadlock, not
+                // a slow path. `deleteMatching()` documents the same trap.
+                unset($this->store[$key]);
+                $cleared++;
+            }
+
+            if ($cleared > 0) {
+                $this->persistStorageFile();
+
+                $this->getLogger()->debug('Expired entries cleared from file storage', [
+                    'file' => $this->filePath,
+                    'entries_cleared' => $cleared,
+                ]);
+            }
+
+            return true;
+        });
+    }
+
+    /**
+     * {@inheritdoc}
      */
     public function reset(): bool
     {

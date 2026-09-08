@@ -352,4 +352,140 @@ class FileStorageTest extends AbstractTestCase
             $GLOBALS['simulate_fopen_failure'] = false;
         }
     }
+
+    /**
+     * Expiry sweeps the whole store in one pass (#250).
+     *
+     * The inherited implementation calls delete() per key, and this class
+     * overrides delete() with a lock plus a full read and rewrite -- so the
+     * sweep cost that per expired entry.
+     */
+    public function testExpireWritesOnceForManyExpiredKeys(): void
+    {
+        // Written to the file, not planted in memory: expire() reloads before
+        // sweeping, so an in-memory fixture would be discarded first.
+        $store = [];
+
+        for ($i = 0; $i < 25; $i++) {
+            $store['198.51.100.' . $i] = ['value' => ['x' => 1], 'expire' => time() - 60];
+        }
+
+        // One that has not lapsed, to prove the sweep is selective.
+        $store['203.0.113.1'] = ['value' => ['x' => 1], 'expire' => time() + 3600];
+        file_put_contents($this->tempFile, json_encode($store));
+
+        $storage = new FileStorage([
+            'storage_file' => $this->tempFile,
+            'offense_file' => $this->tempFile . '.offenses',
+        ]);
+
+        $ref = new \ReflectionProperty($storage, 'store');
+        $ref->setAccessible(true);
+
+        $this->assertTrue($storage->expire());
+
+        $remaining = $ref->getValue($storage);
+        $this->assertArrayHasKey('203.0.113.1', $remaining, 'A live ban must survive the sweep');
+        $this->assertCount(1, $remaining, 'Every lapsed ban should be gone');
+
+        @unlink($this->tempFile . '.offenses');
+    }
+
+    /**
+     * A sweep with nothing to do writes nothing.
+     */
+    public function testExpireWithNothingLapsedDoesNotRewriteTheFile(): void
+    {
+        $storage = new FileStorage([
+            'storage_file' => $this->tempFile,
+            'offense_file' => $this->tempFile . '.offenses',
+        ]);
+
+        $request = $this->getRequest();
+        $storage->set($request->getClientIp(), $storage->getStorageData($request, null), 3600);
+
+        clearstatcache(true, $this->tempFile);
+        $before = filemtime($this->tempFile);
+
+        $this->assertTrue($storage->expire());
+
+        clearstatcache(true, $this->tempFile);
+        $this->assertSame($before, filemtime($this->tempFile), 'Nothing lapsed, so nothing should be written');
+
+        @unlink($this->tempFile . '.offenses');
+    }
+
+    /**
+     * Offense history survives an expiry.
+     *
+     * An expired ban ran its course; the offense is what blocking_escalation
+     * uses to give a repeat offender a longer ban next time. deleteMatching()
+     * drops offenses deliberately -- an operator lifting a ban should not have
+     * it escalated straight back -- and expiry is the opposite case.
+     */
+    public function testExpiryKeepsOffenseHistory(): void
+    {
+        $offenseFile = tempnam(sys_get_temp_dir(), 'filestorage_offense_expire_');
+
+        $storage = new FileStorage([
+            'storage_file' => $this->tempFile,
+            'offense_file' => $offenseFile,
+        ]);
+
+        $request = $this->getRequest();
+        $ip = $request->getClientIp();
+
+        $storage->recordOffense($ip);
+        $this->assertSame(1, $storage->countOffenses($ip));
+
+        // Same again: the lapsed ban has to be in the file for expire() to see it.
+        file_put_contents(
+            $this->tempFile,
+            json_encode([$ip => ['value' => ['x' => 1], 'expire' => time() - 60]])
+        );
+
+        $storage->expire();
+
+        $this->assertSame(
+            1,
+            $storage->countOffenses($ip),
+            'An expired ban must not erase the offense that earned it'
+        );
+
+        @unlink($offenseFile);
+    }
+
+    /**
+     * A malformed entry is stepped over, not read as an expiry.
+     *
+     * loadFromFile() keeps any value it finds under a string key, so a
+     * hand-edited or partially-written file can hold a scalar where a record
+     * belongs. Reading ['expire'] off it would be a fatal in the middle of a
+     * sweep that runs on every request.
+     */
+    public function testExpireStepsOverAMalformedEntry(): void
+    {
+        file_put_contents($this->tempFile, json_encode([
+            '198.51.100.1' => 'not-a-record',
+            '198.51.100.2' => ['value' => ['x' => 1], 'expire' => time() - 60],
+            '203.0.113.1' => ['value' => ['x' => 1], 'expire' => time() + 3600],
+        ]));
+
+        $storage = new FileStorage([
+            'storage_file' => $this->tempFile,
+            'offense_file' => $this->tempFile . '.offenses',
+        ]);
+
+        $this->assertTrue($storage->expire());
+
+        $ref = new \ReflectionProperty($storage, 'store');
+        $ref->setAccessible(true);
+        $remaining = $ref->getValue($storage);
+
+        $this->assertArrayHasKey('198.51.100.1', $remaining, 'A malformed entry is left alone, not deleted');
+        $this->assertArrayHasKey('203.0.113.1', $remaining, 'A live ban survives');
+        $this->assertArrayNotHasKey('198.51.100.2', $remaining, 'A lapsed ban is swept');
+
+        @unlink($this->tempFile . '.offenses');
+    }
 }
