@@ -215,18 +215,105 @@ trait DatabaseTrait
      * @throws \Doctrine\DBAL\Exception
      *   If there is an issue with creating the table an exception is thrown.
      */
+    /**
+     * When each table was last confirmed, keyed by target and name.
+     *
+     * Holds a timestamp rather than a flag, because "this table exists" does go
+     * stale. Dropping a table is a documented workflow here -- the v2.19.0
+     * notes tell operators to drop and recreate `firewall_log` to pick up a new
+     * column -- and a flag would mean a long-lived worker never recreated it,
+     * failing every write until somebody restarted PHP.
+     *
+     * Re-checking at most once a MEMO_SECONDS window keeps almost all of the
+     * saving. At ten requests a second that is one information_schema round
+     * trip per table per minute instead of ten a second, and a dropped table
+     * comes back within the window rather than never.
+     *
+     * @var array<string, int>
+     */
+    private static array $tablesKnownToExist = [];
+
+    /**
+     * How long a confirmation stays good, in seconds.
+     */
+    private const MEMO_SECONDS = 60;
+
+    /**
+     * Identify a table by the connection it lives on as well as its name.
+     *
+     * Two consumers of this trait can be pointed at different databases -- a
+     * block list on one, the log handler on another -- and a bare table name
+     * would let one answer for the other.
+     *
+     * @param array<string, mixed> $params
+     *   Connection parameters.
+     * @param string $table
+     *   Table name.
+     *
+     * @return string|null
+     *   Memo key, or null when this connection must not be memoised.
+     */
+    private static function tableMemoKey(array $params, string $table): ?string
+    {
+        // An in-memory SQLite database is a new, empty database every time it
+        // is opened, while its connection parameters never change. Memoising it
+        // would have one connection vouch for tables that exist only in
+        // another -- which reads as "no such table" on the first write.
+        //
+        // Nothing is lost: an in-memory database is per-connection by
+        // definition, so there was never a second construction to save.
+        $path = $params['path'] ?? null;
+
+        if (($params['memory'] ?? false) === true || (is_string($path) && str_contains($path, ':memory:'))) {
+            return null;
+        }
+
+        return hash('xxh128', serialize([
+            $params['driver'] ?? null,
+            $params['host'] ?? null,
+            $params['port'] ?? null,
+            $params['dbname'] ?? null,
+            $params['path'] ?? null,
+            $params['unix_socket'] ?? null,
+            $table,
+        ]));
+    }
+
     protected function createTable(): void
     {
         $tables = $this->getStorageTables();
         /** @var Table[] $tables */
         foreach ($tables as $table) {
+            // Asked once per process, not once per construction. This runs from
+            // connect(), which runs on every request, and every consumer of this
+            // trait pays it -- a deployment on database storage with the database
+            // log handler asks four times per request, each an information_schema
+            // round trip that is free on a local socket and is not over a network
+            // (#227).
+            //
+            // Memoised per connection target and table, so two consumers pointed
+            // at different databases do not answer for each other.
+            $known = self::tableMemoKey($this->connection->getParams(), $table->getName());
+
+            $confirmedAt = $known === null ? 0 : (self::$tablesKnownToExist[$known] ?? 0);
+
+            if ($confirmedAt > time() - self::MEMO_SECONDS) {
+                continue;
+            }
+
             if (!$this->schemaManager->tablesExist([$table->getName()])) {
                 try {
                     $this->schemaManager->createTable($table);
                     $this->getLogger()->info('Database table created', [
                         'table' => $table->getName(),
                     ]);
+                    if ($known !== null) {
+                        self::$tablesKnownToExist[$known] = time();
+                    }
                 } catch (\Exception $e) {
+                    // Deliberately not memoised: a creation that failed may
+                    // succeed once someone fixes the permission, and a process
+                    // that had recorded it would never try again.
                     $this->getLogger()->error('Failed to create database table', [
                         'table' => $table->getName(),
                         'error' => $e->getMessage(),
@@ -241,6 +328,10 @@ trait DatabaseTrait
                 // took an undefined-index warning here on every construction
                 // where its table already existed, which is every request
                 // after the first.
+                if ($known !== null) {
+                    self::$tablesKnownToExist[$known] = time();
+                }
+
                 $this->getLogger()->debug('Database table already exists', [
                     'table' => $table->getName(),
                 ]);
