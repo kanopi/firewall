@@ -29,6 +29,55 @@ trait GeoLocationTrait
     protected Reader|Client|null $reader = null;
 
     /**
+     * Records already looked up during this request, keyed by method and address.
+     *
+     * `getValue()` is called once per rule variable, and each call did its own
+     * database read -- so `country:US` and `city:London` in one rule set read the
+     * same record twice, and `asn` alongside `asn_org` did the same (#6). The
+     * record for one address cannot change within a request, so the second read
+     * can never return anything different.
+     *
+     * @var array<string, object|null>
+     */
+    protected array $lookupMemo = [];
+
+    /**
+     * Look a record up once per address per request.
+     *
+     * A failed lookup is memoised as null and not retried, for the same reason a
+     * successful one is not: nothing about the request changes between calls, so
+     * a second attempt would fail identically while paying for it again.
+     *
+     * @param string $method
+     *   Reader method to call -- `city` or `asn`.
+     * @param string $clientIp
+     *   Address to look up.
+     *
+     * @return object|null
+     *   The record, or null when the lookup failed.
+     */
+    protected function lookupRecord(string $method, string $clientIp): ?object
+    {
+        $key = $method . ':' . $clientIp;
+
+        if (array_key_exists($key, $this->lookupMemo)) {
+            return $this->lookupMemo[$key];
+        }
+
+        if (!$this->reader instanceof Reader && !$this->reader instanceof Client) {
+            return $this->lookupMemo[$key] = null;
+        }
+
+        if (!method_exists($this->reader, $method)) {
+            return $this->lookupMemo[$key] = null;
+        }
+
+        $record = $this->reader->{$method}($clientIp);
+
+        return $this->lookupMemo[$key] = is_object($record) ? $record : null;
+    }
+
+    /**
      * Create an object for use.
      *
      * @param string|null $type

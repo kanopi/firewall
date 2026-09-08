@@ -306,11 +306,17 @@ class GeoLocation extends AbstractPluginBase
         }
 
         try {
-            $clientIp = $request->getClientIp();
-            $record = $this->reader->city($clientIp);
+            $clientIp = strval($request->getClientIp());
+            $record = $this->lookupRecord('city', $clientIp);
+
+            if ($record === null) {
+                return null;
+            }
 
             $this->getLogger()->debug('GeoLocation lookup successful', $this->getContext($request, [
+                /** @phpstan-ignore-next-line */
                 'country' => $record->country->isoCode ?? 'unknown',
+                /** @phpstan-ignore-next-line */
                 'city' => $record->city->name ?? 'unknown',
                 'variable' => $variable,
             ]));

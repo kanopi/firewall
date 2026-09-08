@@ -138,13 +138,15 @@ class Asn extends AbstractPluginBase
         }
 
         try {
-            $clientIp = $request->getClientIp();
-            $record = $this->reader->asn($clientIp);
+            $clientIp = strval($request->getClientIp());
+            $record = $this->lookupRecord('asn', $clientIp);
+
+            if ($record === null) {
+                return null;
+            }
 
             $this->getLogger()->debug('ASN lookup successful', $this->getContext($request, [
-                /** @phpstan-ignore-next-line  */
                 'asn' => $record->autonomousSystemNumber ?? 'unknown',
-                /** @phpstan-ignore-next-line  */
                 'asn_org' => $record->autonomousSystemOrganization ?? 'unknown',
                 'variable' => $variable,
             ]));
