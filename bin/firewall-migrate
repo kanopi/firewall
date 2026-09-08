@@ -1,0 +1,270 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Bring existing firewall tables up to the schema this release declares.
+ *
+ * Tables are created on first write and were then never touched again, so a
+ * release that added a column or an index reached only installations created
+ * after it. v2.19.0 shipped the symptom: its notes ask anyone with an existing
+ * rate limit table to run a `CREATE INDEX` by hand. This is that instruction,
+ * executable (#217).
+ *
+ * Only ever additive. It adds columns and indexes that are missing, and never
+ * drops, renames or rewrites anything, so no sequence of runs can lose a row.
+ * A change it will not make safely is reported unapplied with the reason.
+ *
+ * Usage:
+ *   bin/firewall-migrate config.yml [more.yml ...] [options]
+ *
+ * Options:
+ *   --dry-run        Report what is missing, and the statements, without running them.
+ *   --quiet          Only report changes and failures.
+ *   --help           Show this message.
+ *
+ * Exit codes:
+ *   0  every table matches the declared schema, or was brought up to it
+ *   1  at least one change could not be applied
+ *   2  the configuration itself could not be read, or declared no database tables
+ *   3  changes are pending (--dry-run only), so this can gate a deploy
+ */
+
+use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
+use Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage;
+use Kanopi\Firewall\Storage\DatabaseStorage;
+use Kanopi\Firewall\Utility\Config;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(Config::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(2);
+}
+
+$arguments = array_slice($argv, 1);
+$files = [];
+$dryRun = false;
+$quiet = false;
+
+foreach ($arguments as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        fwrite(STDOUT, trim(<<<TEXT
+        Add the columns and indexes existing firewall tables are missing.
+
+          bin/firewall-migrate config.yml [more.yml ...] [options]
+
+          --dry-run    Report what is missing without changing anything.
+          --quiet      Only report changes and failures.
+
+        Only ever adds. Nothing is dropped, renamed or rewritten.
+        TEXT) . "\n");
+        exit(0);
+    }
+
+    if ($argument === '--dry-run') {
+        $dryRun = true;
+        continue;
+    }
+
+    if ($argument === '--quiet') {
+        $quiet = true;
+        continue;
+    }
+
+    $files[] = $argument;
+}
+
+if ($files === []) {
+    fwrite(STDERR, "No configuration files given. Try --help.\n");
+    exit(2);
+}
+
+foreach ($files as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, sprintf("Configuration file not found: %s\n", $file));
+        exit(2);
+    }
+}
+
+Config::clearLoadErrors();
+$config = Config::load($files);
+
+foreach (Config::getLoadErrors() as $error) {
+    fwrite(STDERR, sprintf("Could not load %s: %s\n", $error['file'], $error['message']));
+}
+
+/*
+ * Every consumer of DatabaseTrait the configuration reaches.
+ *
+ * Constructed rather than described, because the declared schema lives on the
+ * class -- `getStorageTables()` is where a column is added when a release adds
+ * one, and a second list here would be a second place to forget.
+ *
+ * Construction also creates a table that does not exist yet, which is the
+ * right outcome for a script whose job is making the schema current.
+ */
+$consumers = [];
+$failures = [];
+
+$build = static function (string $label, callable $factory) use (&$consumers, &$failures): void {
+    try {
+        $consumers[$label] = $factory();
+    } catch (\Exception $e) {
+        $failures[] = sprintf('%s: %s', $label, $e->getMessage());
+    }
+};
+
+$storage = is_array($config['storage'] ?? null) ? $config['storage'] : [];
+$storageType = is_string($storage['type'] ?? null) ? ltrim($storage['type'], '\\') : '';
+
+if (is_a($storageType, DatabaseStorage::class, true)) {
+    $settings = is_array($storage['config'] ?? null) ? $storage['config'] : [];
+    $build('storage', static fn(): object => new DatabaseStorage($settings));
+}
+
+$plugins = is_array($config['plugins'] ?? null) ? $config['plugins'] : [];
+
+foreach ($plugins as $index => $plugin) {
+    if (!is_array($plugin)) {
+        continue;
+    }
+
+    // Rate limit storage is declared on the plugin, not globally, and a config
+    // may hold several rate limit rules pointed at different tables.
+    $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+    $rateStorage = is_array($metadata['storage'] ?? null) ? $metadata['storage'] : [];
+    $rateType = is_string($rateStorage['type'] ?? null) ? ltrim($rateStorage['type'], '\\') : '';
+
+    if (!is_a($rateType, DatabaseRateLimitStorage::class, true)) {
+        continue;
+    }
+
+    $settings = is_array($rateStorage['config'] ?? null) ? $rateStorage['config'] : [];
+    $build('rate limit (plugin ' . $index . ')', static fn(): object => new DatabaseRateLimitStorage($settings));
+}
+
+$loggers = is_array($config['logger'] ?? null) ? $config['logger'] : [];
+
+foreach ($loggers as $index => $handler) {
+    if (!is_array($handler)) {
+        continue;
+    }
+
+    $class = is_string($handler['class'] ?? null) ? ltrim($handler['class'], '\\') : '';
+
+    if (!is_a($class, DatabaseHandler::class, true)) {
+        continue;
+    }
+
+    $args = is_array($handler['args'][0] ?? null) ? $handler['args'][0] : [];
+
+    // Writing a log row is not this script's job, and a handler that pruned on
+    // construction would be doing something the operator did not ask for.
+    $args['prune_probability'] = 0;
+
+    $build('logger (handler ' . $index . ')', static function () use ($args): object {
+        $built = new DatabaseHandler($args);
+
+        // The handler connects lazily, on its first write. Nothing here writes,
+        // so the connection has to be asked for.
+        $connect = new \ReflectionMethod($built, 'connect');
+        $connect->setAccessible(true);
+        $connect->invoke($built);
+
+        return $built;
+    });
+}
+
+foreach ($failures as $failure) {
+    fwrite(STDERR, sprintf("  ✗ %s\n", $failure));
+}
+
+if ($consumers === []) {
+    if ($failures !== []) {
+        exit(1);
+    }
+
+    fwrite(STDERR, "Configuration declares no database-backed storage, rate limit storage or log handler.\n");
+    exit(2);
+}
+
+$pending = 0;
+$applied = 0;
+$refused = 0;
+
+foreach ($consumers as $label => $consumer) {
+    $changes = $dryRun ? $consumer->pendingSchemaChanges() : $consumer->migrateSchema();
+
+    if ($changes === []) {
+        if (!$quiet) {
+            fwrite(STDOUT, sprintf("  ✓ %-28s up to date\n", $label));
+        }
+
+        continue;
+    }
+
+    foreach ($changes as $change) {
+        $what = sprintf('%s.%s %s', $change['table'], $change['name'], $change['kind']);
+
+        if (!$change['safe']) {
+            $refused++;
+            fwrite(STDERR, sprintf("  ✗ %-28s %s\n      refused: %s\n", $label, $what, $change['reason']));
+            continue;
+        }
+
+        if ($dryRun) {
+            $pending++;
+            fwrite(STDOUT, sprintf("  + %-28s %s\n", $label, $what));
+
+            foreach ($change['sql'] as $statement) {
+                fwrite(STDOUT, sprintf("      %s\n", $statement));
+            }
+
+            continue;
+        }
+
+        $applied++;
+        fwrite(STDOUT, sprintf("  ✓ %-28s %s added\n", $label, $what));
+    }
+}
+
+if ($failures !== [] || $refused > 0) {
+    fwrite(STDERR, sprintf(
+        "\n%d change%s could not be applied.\n",
+        $refused + count($failures),
+        $refused + count($failures) === 1 ? '' : 's'
+    ));
+
+    exit(1);
+}
+
+if ($dryRun && $pending > 0) {
+    // Distinct from success, so this can gate a deploy without parsing output.
+    fwrite(STDOUT, sprintf("\n%d change%s pending.\n", $pending, $pending === 1 ? '' : 's'));
+    exit(3);
+}
+
+if (!$quiet && $applied > 0) {
+    fwrite(STDOUT, sprintf("\n%d change%s applied.\n", $applied, $applied === 1 ? '' : 's'));
+}
+
+exit(0);
