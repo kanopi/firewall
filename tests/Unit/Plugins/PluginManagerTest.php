@@ -8,6 +8,7 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Tests\Plugins\TestFalsePlugin;
 use Kanopi\Firewall\Tests\Plugins\TestObservablePlugin;
+use Kanopi\Firewall\Tests\Plugins\TestThrowingPlugin;
 use Kanopi\Firewall\Tests\Plugins\TestPluginWithMetadata;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginHigh;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginLow;
@@ -533,5 +534,98 @@ class PluginManagerTest extends AbstractTestCase
         ]);
 
         $this->assertInstanceOf(TestTruePlugin::class, $manager->evaluate(new Request()));
+    }
+
+    /**
+     * A plugin whose constructor throws must not fatal the request (#243).
+     *
+     * The registry caught the throw and yielded null, and evaluate() called
+     * getName() on it -- `Call to a member function getName() on null`. An
+     * Error rather than an Exception, so a host catching \Exception, and
+     * FirewallMode::Exception with it, never saw it.
+     */
+    public function testAPluginThatCannotBeConstructedDoesNotFatal(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestThrowingPlugin::class],
+        ]);
+
+        $this->assertFalse($manager->evaluate(new Request()));
+    }
+
+    /**
+     * The rules around a broken one still run.
+     */
+    public function testARuleAfterABrokenOneStillEvaluates(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestThrowingPlugin::class, 'weight' => -10],
+            ['plugin' => TestTruePlugin::class, 'weight' => 0],
+        ]);
+
+        $this->assertInstanceOf(TestTruePlugin::class, $manager->evaluate(new Request()));
+    }
+
+    /**
+     * A broken plugin is not counted among the live ones.
+     */
+    public function testABrokenPluginIsNotReturnedByGetPlugins(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestThrowingPlugin::class],
+            ['plugin' => TestTruePlugin::class],
+        ]);
+
+        $plugins = $manager->getPlugins();
+
+        $this->assertCount(1, $plugins, 'Only the plugin that constructed should be returned');
+        $this->assertNotContains(null, $plugins);
+    }
+
+    /**
+     * Construction is attempted once, not once per iteration.
+     *
+     * Retrying would re-run a constructor that throws on every request -- and for
+     * a storage backend, reattempt a connection that is not coming back.
+     */
+    public function testABrokenPluginIsNotReconstructedOnEveryPass(): void
+    {
+        TestThrowingPlugin::$constructions = 0;
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestThrowingPlugin::class],
+        ]);
+
+        $manager->evaluate(new Request());
+        $manager->evaluate(new Request());
+        $manager->getPlugins();
+
+        $this->assertSame(1, TestThrowingPlugin::$constructions);
+    }
+
+    /**
+     * The failure is logged where an operator will see it.
+     *
+     * A rule that cannot be constructed is a rule that is not running, and for a
+     * block rule that is a fail-open with no other symptom.
+     */
+    public function testABrokenPluginIsLoggedAsInactive(): void
+    {
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(
+            \Kanopi\Firewall\Logging\LoggingFactory::create([
+                ['class' => \Kanopi\Firewall\Tests\Logging\TestLogHandler::class],
+            ])
+        );
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestThrowingPlugin::class],
+        ]);
+        $manager->evaluate(new Request());
+
+        $handler = \Kanopi\Firewall\Logging\LoggingFactory::logger()->getHandlers()[0];
+        $this->assertTrue(
+            $handler->hasErrorContaining('could not be constructed'),
+            'A rule that failed to construct should be an error, not a warning'
+        );
     }
 }
