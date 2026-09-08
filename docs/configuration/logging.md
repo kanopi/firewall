@@ -279,9 +279,24 @@ through the firewall logger.
 
 ### Schema changes
 
-The table is created on first write and never migrated. If a future release adds a column,
-an existing table will not gain it — drop the table and let it be recreated, which loses
-history but breaks nothing. Worth knowing before you build reporting on it.
+The table is created on first write. When a later release adds a column or an index, an
+existing table does not gain it on its own — but it no longer has to be dropped to get it,
+which was the old answer and cost you the history the table exists to hold.
+
+The firewall notices and says so, once per worker:
+
+```
+firewall.WARNING: Database table is behind the schema this release declares
+  {"table":"firewall_log","missing":["column severity_hint"],"remedy":"Run bin/firewall-migrate ..."}
+```
+
+[`bin/firewall-migrate`](../guides/schema-migrations.md) adds what is missing. It only ever
+adds — nothing is dropped, renamed or rewritten — so no run of it can lose a row.
+
+The check behind that warning introspects the table, which costs more than it sounds, so it
+runs on 1% of constructions rather than all of them. `schema_check_probability: 0` alongside
+`prune_probability` turns it off and leaves the question to the script — see
+[what the check costs](../guides/schema-migrations.md#what-the-check-costs-and-why-it-is-sampled).
 
 ## Email alerts
 

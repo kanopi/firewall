@@ -47,6 +47,9 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage implements Pruna
 
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_rate_limit_storage';
+        $this->schemaCheckProbability = self::normalizeSchemaCheckProbability(
+            $config['schema_check_probability'] ?? null
+        );
 
         $this->createConnection($config['connection']);
         $this->getLogger()->info('Database rate limit storage initialized', [

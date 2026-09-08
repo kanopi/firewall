@@ -12,12 +12,18 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Utility;
 
 use Symfony\Component\PropertyAccess\PropertyAccess;
+use Symfony\Component\PropertyAccess\PropertyAccessorInterface;
 
 /**
  * Config related items.
  */
 class Config
 {
+    /**
+     * The accessor overrides are written through, built once per process.
+     */
+    private static ?PropertyAccessorInterface $propertyAccessor = null;
+
     /**
      * Load failures recorded since the last `clearLoadErrors()`.
      *
@@ -64,40 +70,72 @@ class Config
      */
     public static function load(array $configs = [], array $overrides = []): array
     {
-        $cacheKey = self::configCacheKey($configs, $overrides);
+        // Keyed on the files alone. Overrides used to take part, which made one
+        // object in an override -- a Monolog handler a host application built
+        // itself, say -- discard the cache for the whole configuration, because
+        // the object check ran on the merged result after they were applied. A
+        // CMS integration routing firewall logs into its own logger cannot
+        // express that handler in YAML, so the release's headline saving was
+        // unavailable to exactly the deployments that most needed it (#259).
+        //
+        // Reapplying them on a hit is not free -- it costs 0.007 ms on the
+        // shipped presets, where a hit that returned the finished array
+        // outright took 0.057 ms -- but that buys 1.74 ms back on the load
+        // that could not be cached at all, and one entry per file set instead
+        // of one per set of overrides.
+        $cacheKey = self::configCacheKey($configs);
         $cached = self::readConfigCache($cacheKey);
+        $merged = $cached['config'] ?? null;
+        $mayHoldReferences = $cached['references'] ?? true;
 
-        if ($cached !== null) {
-            return $cached;
-        }
+        if ($merged === null) {
+            ConfigLoader::takeLoadedFiles();
 
-        ConfigLoader::takeLoadedFiles();
+            $merged = [];
 
-        $merged = [];
+            /**
+             * @param array<int, string|array<string, mixed>|null> $configs
+             */
+            foreach ($configs as $config) {
+                if (is_string($config)) {
+                    $config = self::loadFile($config);
+                } elseif (!is_array($config)) {
+                    $config = [];
+                }
 
-        /**
-         * @param array<int, string|array<string, mixed>|null> $configs
-         */
-        foreach ($configs as $config) {
-            if (is_string($config)) {
-                $config = self::loadFile($config);
-            } elseif (!is_array($config)) {
-                $config = [];
+                // Merge current config into merged config
+                /** @var array<string, mixed> $config */
+                $merged = NestedArray::mergeDeepArray([$merged, $config]);
             }
 
-            // Merge current config into merged config
-            /** @var array<string, mixed> $config */
-            $merged = NestedArray::mergeDeepArray([$merged, $config]);
+            $mayHoldReferences = ConfigReference::containsReference($merged);
+
+            // Only a clean load is cached. A degraded one -- a file that could
+            // not be read, a remote include served stale -- would otherwise be
+            // frozen in place, and the operator would keep getting the degraded
+            // result long after fixing the cause.
+            if (self::$loadErrors === [] && self::$loadWarnings === []) {
+                self::writeConfigCache(
+                    $cacheKey,
+                    $merged,
+                    ConfigLoader::takeLoadedFiles(),
+                    $mayHoldReferences
+                );
+            }
         }
 
-        $propertyAccessor = PropertyAccess::createPropertyAccessorBuilder()
-            ->getPropertyAccessor();
+        if ($overrides !== []) {
+            // Built here rather than above it: constructing an accessor is the
+            // larger part of applying a handful of overrides, and most loads
+            // pass none at all.
+            $propertyAccessor = self::propertyAccessor();
 
-        foreach ($overrides as $key => $value) {
-            try {
-                self::openOverridePath($merged, (string) $key);
-                $propertyAccessor->setValue($merged, $key, $value);
-            } catch (\Exception) {
+            foreach ($overrides as $key => $value) {
+                try {
+                    self::openOverridePath($merged, (string) $key);
+                    $propertyAccessor->setValue($merged, $key, $value);
+                } catch (\Exception) {
+                }
             }
         }
 
@@ -110,42 +148,61 @@ class Config
         //
         // After the overrides, so a reference written by one is resolved and a
         // reference pointing at a value an override replaced sees the new one.
-        $problems = [];
-        $merged = ConfigReference::resolve($merged, $problems);
+        // That ordering is why resolution cannot live inside the cache: a
+        // cached, already-resolved configuration would have baked in whatever
+        // the values were before any override touched them.
+        //
+        // Skipped entirely when neither the configuration nor the overrides
+        // contain a token, which is the common case and saves walking the whole
+        // structure -- 0.109 ms on the shipped presets.
+        if ($mayHoldReferences || ConfigReference::containsReference($overrides)) {
+            $problems = [];
+            $merged = ConfigReference::resolve($merged, $problems);
 
-        foreach ($problems as $problem) {
-            // A warning rather than an error: the token is left in place, so
-            // whatever reads it fails in its own terms with its own message,
-            // and a bad reference in one corner of a config should not stop a
-            // firewall whose rules are fine.
-            self::recordLoadWarning('config references', $problem);
-        }
-
-        // Only a clean load is cached. A degraded one -- a file that could not
-        // be read, a remote include served stale -- would otherwise be frozen
-        // in place, and the operator would keep getting the degraded result
-        // long after fixing the cause.
-        if (self::$loadErrors === [] && self::$loadWarnings === []) {
-            self::writeConfigCache($cacheKey, $merged, ConfigLoader::takeLoadedFiles());
+            foreach ($problems as $problem) {
+                // A warning rather than an error: the token is left in place, so
+                // whatever reads it fails in its own terms with its own message,
+                // and a bad reference in one corner of a config should not stop a
+                // firewall whose rules are fine.
+                self::recordLoadWarning('config references', $problem);
+            }
         }
 
         return $merged;
     }
 
     /**
-     * Identify a load by what was asked for, not by what it read.
+     * The property accessor overrides are applied through.
+     *
+     * Held for the process. It carries no per-load state -- it is a reader and
+     * writer of paths into whatever array it is handed -- and building one is
+     * most of the cost of applying a few overrides.
+     *
+     * @return PropertyAccessorInterface
+     *   A reusable accessor.
+     */
+    private static function propertyAccessor(): PropertyAccessorInterface
+    {
+        return self::$propertyAccessor ??= PropertyAccess::createPropertyAccessorBuilder()
+            ->getPropertyAccessor();
+    }
+
+    /**
+     * Identify a load by the files it was asked for.
+     *
+     * Overrides are not part of it. They are applied after the cache is read, so they no
+     * longer decide whether a configuration is cacheable -- and two loads of the same files
+     * with different overrides now share one entry instead of two (#259).
      *
      * @param array<int, string|array<string, mixed>|null> $configs
      *   The requested configuration sources.
-     * @param array<string, mixed> $overrides
-     *   Runtime overrides.
      *
      * @return string
      *   A cache key.
      */
-    private static function configCacheKey(array $configs, array $overrides): string
+    private static function configCacheKey(array $configs): string
     {
-        return hash('xxh128', serialize([$configs, $overrides]));
+        return hash('xxh128', serialize($configs));
     }
 
     /**
@@ -189,8 +246,9 @@ class Config
      * @param string $key
      *   Cache key.
      *
-     * @return array<string, mixed>|null
-     *   The cached configuration, or null when there is none or it is stale.
+     * @return array{config: array<string, mixed>, references: bool}|null
+     *   The cached configuration and whether it may hold references, or null when there is
+     *   none or it is stale.
      */
     private static function readConfigCache(string $key): ?array
     {
@@ -240,7 +298,12 @@ class Config
             }
         }
 
-        return $payload['config'];
+        return [
+            'config' => is_array($payload['config']) ? $payload['config'] : [],
+            // Absent in an entry written before this was recorded; assuming a
+            // reference may be present costs a walk rather than correctness.
+            'references' => (bool) ($payload['references'] ?? true),
+        ];
     }
 
     /**
@@ -252,8 +315,11 @@ class Config
      *   The merged configuration.
      * @param array<string, string> $files
      *   Files read, absolute path to fingerprint.
+     * @param bool $references
+     *   Whether the merge may hold `%config(...)%` tokens, so a later cache hit can skip
+     *   scanning for them (#259).
      */
-    private static function writeConfigCache(string $key, array $merged, array $files): void
+    private static function writeConfigCache(string $key, array $merged, array $files, bool $references): void
     {
         $dir = self::configCacheDir();
 
@@ -285,6 +351,7 @@ class Config
             'config' => $merged,
             'files' => $files,
             'env' => self::environmentFingerprint(),
+            'references' => $references,
         ];
 
         $code = '<?php return ' . var_export($payload, true) . ';';

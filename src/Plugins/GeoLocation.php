@@ -305,8 +305,36 @@ class GeoLocation extends AbstractPluginBase
             return null;
         }
 
+        $clientIp = strval($request->getClientIp());
+
+        return $this->cachedValue($clientIp, $variable, fn(): mixed => $this->resolveValue($request, $variable, $clientIp));
+    }
+
+    /**
+     * Read one variable out of the city database.
+     *
+     * Split from getValue() so the cross-request cache wraps the database read
+     * rather than the guards around it (#6).
+     *
+     * @param Request $request
+     *   Request being evaluated.
+     * @param string $variable
+     *   Variable to resolve.
+     * @param string $clientIp
+     *   Address to look up.
+     *
+     * @return mixed
+     *   The value, or null when there is no record.
+     */
+    protected function resolveValue(Request $request, string $variable, string $clientIp): mixed
+    {
+        // Re-split here rather than passing it in: getValue() splits to decide
+        // whether the variable is usable at all, and this needs the parts to
+        // read the field out of the record. Splitting a short string twice is
+        // cheaper than widening the signature to carry it.
+        $parts = $this->splitQuery($variable);
+
         try {
-            $clientIp = strval($request->getClientIp());
             $record = $this->lookupRecord('city', $clientIp);
 
             // @codeCoverageIgnoreStart

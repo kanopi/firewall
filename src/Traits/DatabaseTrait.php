@@ -19,6 +19,7 @@ use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Kanopi\Firewall\Exception\StorageConnectionException;
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Utility\SchemaMigrator;
 
 /**
  * Database Trait used for referencing database.
@@ -215,18 +216,182 @@ trait DatabaseTrait
      * @throws \Doctrine\DBAL\Exception
      *   If there is an issue with creating the table an exception is thrown.
      */
+    /**
+     * When each table was last confirmed, keyed by target and name.
+     *
+     * Holds a timestamp rather than a flag, because "this table exists" does go
+     * stale. Dropping a table is a documented workflow here -- the v2.19.0
+     * notes tell operators to drop and recreate `firewall_log` to pick up a new
+     * column -- and a flag would mean a long-lived worker never recreated it,
+     * failing every write until somebody restarted PHP.
+     *
+     * Re-checking at most once a MEMO_SECONDS window keeps almost all of the
+     * saving. At ten requests a second that is one information_schema round
+     * trip per table per minute instead of ten a second, and a dropped table
+     * comes back within the window rather than never.
+     *
+     * @var array<string, int>
+     */
+    private static array $tablesKnownToExist = [];
+
+    /**
+     * Tables already compared against the schema this release declares.
+     *
+     * Unlike `$tablesKnownToExist` this never expires, and is deliberately a
+     * flag rather than a timestamp. A table cannot fall behind mid-process:
+     * the declaration is fixed in the code that is running, and the only thing
+     * that changes the live table is a migration, which can only bring it
+     * closer.
+     *
+     * It bounds the check to once per process, and under PHP-FPM that is
+     * once per worker. It is **not** the whole answer: where the process is
+     * the request -- mod_php, CGI -- a static lives for one request, so this
+     * alone would put a 4 ms introspection on every one of them (#269). The
+     * probability in `schemaCheckProbability()` is what bounds it there, and
+     * this then stops a persistent worker repeating it.
+     *
+     * Doubling as the record of having warned, for the same reason.
+     *
+     * @var array<string, bool>
+     */
+    private static array $schemasChecked = [];
+
+    /**
+     * The chance, per construction, of comparing the tables against the declaration.
+     *
+     * Introspecting a table is not free -- 4.06 ms for the two tables
+     * `DatabaseStorage` declares, against 0.70 ms to ask whether they exist,
+     * measured over a socket to MariaDB and worse over a network. A firewall
+     * must not put that on a request, and `$schemasChecked` alone does not
+     * prevent it: under PHP-FPM a static lives for the worker, but under
+     * mod_php or CGI it lives for a single request, so "once per process"
+     * becomes once per request and a four-table deployment pays about 12 ms of
+     * it (#269).
+     *
+     * So the check is drawn for rather than always run. At 1% the amortised
+     * cost is about 0.04 ms per request whatever the SAPI, and an operator
+     * learns the schema is behind within a few hundred requests -- timely
+     * enough for a warning about a missing column or index.
+     *
+     * This is `DatabaseHandler`'s `prune_probability` exactly: the same
+     * problem, periodic maintenance that cannot live on the request path, with
+     * the same escape hatch. `schema_check_probability: 0` switches it off and
+     * leaves the question to `bin/firewall-migrate --dry-run`, which answers
+     * it deterministically and exits 3 when something is pending.
+     */
+    protected float $schemaCheckProbability = 0.01;
+
+    /**
+     * How long a confirmation stays good, in seconds.
+     *
+     * A method rather than a constant: constants in traits are PHP 8.2 and up,
+     * and this package supports 8.1. The same trap caught FileTrait in 2.19.2,
+     * and PHPCompatibility does not flag it -- only a lint under an 8.1 runtime
+     * does.
+     *
+     * @return int
+     *   Seconds a table confirmation remains valid.
+     */
+    private static function memoSeconds(): int
+    {
+        return 60;
+    }
+
+    /**
+     * Normalise a configured schema-check probability.
+     *
+     * @param mixed $value
+     *   The configured value, or null.
+     *
+     * @return float
+     *   A probability between 0 and 1, defaulting to 0.01.
+     */
+    protected static function normalizeSchemaCheckProbability(mixed $value): float
+    {
+        if (!is_numeric($value)) {
+            return 0.01;
+        }
+
+        return min(1.0, max(0.0, (float) $value));
+    }
+
+    /**
+     * Identify a table by the connection it lives on as well as its name.    /**
+     * Identify a table by the connection it lives on as well as its name.
+     *
+     * Two consumers of this trait can be pointed at different databases -- a
+     * block list on one, the log handler on another -- and a bare table name
+     * would let one answer for the other.
+     *
+     * @param array<string, mixed> $params
+     *   Connection parameters.
+     * @param string $table
+     *   Table name.
+     *
+     * @return string|null
+     *   Memo key, or null when this connection must not be memoised.
+     */
+    private static function tableMemoKey(array $params, string $table): ?string
+    {
+        // An in-memory SQLite database is a new, empty database every time it
+        // is opened, while its connection parameters never change. Memoising it
+        // would have one connection vouch for tables that exist only in
+        // another -- which reads as "no such table" on the first write.
+        //
+        // Nothing is lost: an in-memory database is per-connection by
+        // definition, so there was never a second construction to save.
+        $path = $params['path'] ?? null;
+
+        if (($params['memory'] ?? false) === true || (is_string($path) && str_contains($path, ':memory:'))) {
+            return null;
+        }
+
+        return hash('xxh128', serialize([
+            $params['driver'] ?? null,
+            $params['host'] ?? null,
+            $params['port'] ?? null,
+            $params['dbname'] ?? null,
+            $params['path'] ?? null,
+            $params['unix_socket'] ?? null,
+            $table,
+        ]));
+    }
+
     protected function createTable(): void
     {
         $tables = $this->getStorageTables();
         /** @var Table[] $tables */
         foreach ($tables as $table) {
+            // Asked once per process, not once per construction. This runs from
+            // connect(), which runs on every request, and every consumer of this
+            // trait pays it -- a deployment on database storage with the database
+            // log handler asks four times per request, each an information_schema
+            // round trip that is free on a local socket and is not over a network
+            // (#227).
+            //
+            // Memoised per connection target and table, so two consumers pointed
+            // at different databases do not answer for each other.
+            $known = self::tableMemoKey($this->connection->getParams(), $table->getName());
+
+            $confirmedAt = $known === null ? 0 : (self::$tablesKnownToExist[$known] ?? 0);
+
+            if ($confirmedAt > time() - self::memoSeconds()) {
+                continue;
+            }
+
             if (!$this->schemaManager->tablesExist([$table->getName()])) {
                 try {
                     $this->schemaManager->createTable($table);
                     $this->getLogger()->info('Database table created', [
                         'table' => $table->getName(),
                     ]);
+                    if ($known !== null) {
+                        self::$tablesKnownToExist[$known] = time();
+                    }
                 } catch (\Exception $e) {
+                    // Deliberately not memoised: a creation that failed may
+                    // succeed once someone fixes the permission, and a process
+                    // that had recorded it would never try again.
                     $this->getLogger()->error('Failed to create database table', [
                         'table' => $table->getName(),
                         'error' => $e->getMessage(),
@@ -241,14 +406,164 @@ trait DatabaseTrait
                 // took an undefined-index warning here on every construction
                 // where its table already existed, which is every request
                 // after the first.
+                if ($known !== null) {
+                    self::$tablesKnownToExist[$known] = time();
+                }
+
                 $this->getLogger()->debug('Database table already exists', [
                     'table' => $table->getName(),
                 ]);
+
+                $this->reportSchemaDrift($table);
             }
         }
     }
 
     /**
+     * The additive schema changes this consumer's tables are missing.
+     *
+     * The public counterpart of the startup warning, and what
+     * `bin/firewall-migrate --dry-run` reports. Answers for every table the
+     * class declares, so `DatabaseStorage` covers both of its.
+     *
+     * Introspects, and changes nothing.
+     *
+     * @return array<int, array{table: string, kind: string, name: string, sql: array<int, string>, safe: bool, reason: string}>
+     *   One entry per missing column or index. Empty when every table matches
+     *   what this release declares, or does not exist yet -- a table about to
+     *   be created from this same declaration is not behind it.
+     */
+    public function pendingSchemaChanges(): array
+    {
+        $schemaMigrator = new SchemaMigrator($this->connection, $this->schemaManager);
+        $pending = [];
+
+        foreach ($this->getStorageTables() as $storageTable) {
+            foreach ($schemaMigrator->pending($storageTable) as $change) {
+                $pending[] = $change;
+            }
+        }
+
+        return $pending;
+    }
+
+    /**
+     * Add the columns and indexes this consumer's tables are missing.
+     *
+     * Only ever additive: it adds, and never drops, renames or rewrites, so no
+     * sequence of runs can lose a row. A change it will not make safely is
+     * returned unapplied with the reason, and does not stop the rest.
+     *
+     * Not called from anywhere in the request path. An `ALTER TABLE` takes a
+     * lock, and a firewall that decides to take one under load is not
+     * something to switch on by default -- `bin/firewall-migrate` is when an
+     * operator says so.
+     *
+     * @return array<int, array{table: string, kind: string, name: string, sql: array<int, string>, safe: bool, reason: string, applied: bool}>
+     *   Every pending change, each marked with whether it ran.
+     */
+    public function migrateSchema(): array
+    {
+        $schemaMigrator = new SchemaMigrator($this->connection, $this->schemaManager);
+        $results = [];
+
+        foreach ($this->getStorageTables() as $storageTable) {
+            foreach ($schemaMigrator->apply($storageTable) as $result) {
+                $results[] = $result;
+            }
+        }
+
+        // A table that just gained a column is no longer the table this
+        // process recorded as matching the declaration, and on the next
+        // request it would be compared again and found clean anyway. Clearing
+        // it keeps a long-lived worker from warning about a table it has since
+        // migrated itself.
+        self::$schemasChecked = [];
+
+        return $results;
+    }
+
+    /**
+     * Say so when an existing table is behind the schema this release declares.    /**
+     * Say so when an existing table is behind the schema this release declares.
+     *
+     * Tables are created on first write and were then never looked at again,
+     * so a release that adds a column or an index reached only installations
+     * created after it. v2.19.0 shipped the symptom: its notes ask anyone with
+     * an existing rate limit table to run a `CREATE INDEX` by hand, which is a
+     * migration performed in prose (#217).
+     *
+     * Reports; does not migrate. An `ALTER TABLE` on a large `firewall_log`
+     * takes a lock, and a firewall that decides to take one on a cold cache
+     * under load is not something to switch on by default. `bin/firewall-migrate`
+     * applies these, and this is what tells an operator to run it.
+     *
+     * @param Table $table
+     *   The table as this release declares it.
+     */
+    private function reportSchemaDrift(Table $table): void
+    {
+        $key = self::tableMemoKey($this->connection->getParams(), $table->getName());
+
+        // A connection that cannot be memoised -- in-memory SQLite -- is one
+        // whose tables were created moments ago from this same declaration, so
+        // there is nothing for them to be behind.
+        if ($key === null || (self::$schemasChecked[$key] ?? false)) {
+            return;
+        }
+
+        // Drawn before the flag is set, so a process that does not draw it
+        // stays eligible: under FPM a worker that skips it on one request can
+        // still find out on a later one, rather than deciding once at startup
+        // never to look.
+        //
+        // `mt_rand()` rather than `random_int()`, matching `DatabaseHandler`:
+        // this decides whether to run housekeeping, not anything an attacker
+        // gains from predicting, and it is on the request path.
+        if ($this->schemaCheckProbability <= 0.0) {
+            return;
+        }
+
+        if (mt_rand(1, PHP_INT_MAX) / PHP_INT_MAX > $this->schemaCheckProbability) {
+            return;
+        }
+
+        self::$schemasChecked[$key] = true;
+
+        try {
+            $pending = (new SchemaMigrator($this->connection, $this->schemaManager))->pending($table);
+        } catch (\Exception $exception) {
+            // Introspection is not the job. A user without the privilege to
+            // read the schema can still read and write the rows, and must keep
+            // running.
+            $this->getLogger()->debug('Could not compare the table against the declared schema', [
+                'table' => $table->getName(),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return;
+        }
+
+        if ($pending === []) {
+            return;
+        }
+
+        // Warning, not error: everything the table is asked to do today, it
+        // still does. What is missing is whatever the newer columns and
+        // indexes were added for, which is a degradation rather than a
+        // failure -- a missing index makes a query slow, not wrong.
+        $this->getLogger()->warning('Database table is behind the schema this release declares', [
+            'table' => $table->getName(),
+            'missing' => array_map(
+                static fn(array $change): string => $change['kind'] . ' ' . $change['name'],
+                $pending
+            ),
+            'remedy' => 'Run bin/firewall-migrate to add them, or bin/firewall-migrate --dry-run to see the statements first.',
+        ]);
+    }
+
+    /**
+     * Describe the tables this storage requires.    /**
      * Describe the tables this storage requires.
      *
      * Optional hook. Classes using this trait override this to declare their

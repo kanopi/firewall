@@ -258,6 +258,39 @@ makes this affordable at all. Without one, every cache expiry is 112 ms of block
     worker paying it in turn is an outage. After one slow lookup the rest skip DNS and
     fail closed until the resolver recovers.
 
+### A cold cache under concurrency refuses most of them
+
+Measured with 25 processes verifying the same uncached address at the same instant
+(`tests/Performance/bin/reverse-dns-probe.php`):
+
+| Resolver latency | DNS lookups | Verified |
+|---|---|---|
+| instant | 7 of 25 | 25 of 25 |
+| 50 ms | 1 of 25 | **14 of 25** |
+| 300 ms | 2 of 25 | **2 of 25** |
+
+The in-flight claim does its job — one address being resolved by 25 workers costs one or two
+lookups, not 25, and it collapses *better* as the resolver slows, because the claim is held
+longer. The breaker does its job too: at 300 ms, one worker absorbed the full latency and
+the median request took 0.78 ms.
+
+**The cost is that the others fail closed.** A worker that cannot claim the lookup does not
+queue behind it — it returns "not verified", so the allow rule does not match and the
+request falls through to whatever comes next. On a cold cache, with a slow resolver, that is
+most of a concurrent burst.
+
+For a crawler this is usually survivable: it retries, the cache is warm by then, and the
+verdict is cached for a day. But it means **a genuine crawler arriving in parallel on a cold
+cache is treated as unverified**, and if a rule below the allow blocks it, it is blocked.
+
+Two things make it a non-issue in practice, and both are worth doing:
+
+- **Warm the cache before it matters.** A single request per crawler address is enough, and
+  crawler address ranges are stable.
+- **Keep the allow rule scoped**, as `presets/search-bots.yml` does. An unverified crawler
+  then meets the rest of the firewall on public paths only, rather than being blocked
+  outright.
+
 ### Offline switches it off
 
 `KANOPI_FIREWALL_SOURCES_OFFLINE` covers this too, exactly as it covers

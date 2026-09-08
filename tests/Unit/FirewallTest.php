@@ -15,8 +15,10 @@ use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Tests\Challenge\ReceiptlessSingleUseProvider;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
+use Kanopi\Firewall\Tests\Plugins\TestThrowingPlugin;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -652,6 +654,147 @@ class FirewallTest extends AbstractTestCase
      * are routed to the blocking PluginManager (not the bypass manager) and
      * reach sendBlockingResponse().
      */
+    /**
+     * A rule that could not be constructed is reportable from the Firewall.
+     *
+     * The route out for a host application with a status report: three rules
+     * configured in three buckets, one of them broken, and the report names
+     * which bucket it was in and what its constructor said (#260).
+     */
+    public function testGetFailedRulesNamesTheBucketAndTheError(): void
+    {
+        $config = [
+            'plugins' => [
+                ['plugin' => IpAddress::class, 'response' => 'allow', 'enable' => true, 'config' => ['10.0.0.1']],
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'block', 'enable' => true],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $failed = Firewall::create([$config])->getFailedRules();
+
+        $this->assertSame(
+            [[
+                'bucket' => 'block',
+                'plugin' => TestThrowingPlugin::class . ':0',
+                'error' => 'cannot connect to storage',
+            ]],
+            $failed
+        );
+    }
+
+    /**
+     * It answers without an evaluation having happened.
+     *
+     * A status report runs in its own request, where nothing has been built.
+     * Reporting "no failures" there because nothing was attempted would be the
+     * exact false clean bill of health this exists to prevent.
+     */
+    public function testGetFailedRulesBuildsRulesItselfRatherThanWaitingForAnEvaluation(): void
+    {
+        TestThrowingPlugin::$constructions = 0;
+
+        $config = [
+            'plugins' => [
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'block', 'enable' => true],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $firewall = Firewall::create([$config]);
+
+        $this->assertCount(1, $firewall->getFailedRules());
+        $this->assertSame(1, TestThrowingPlugin::$constructions, 'It constructed the rule to find out');
+
+        // And having found out, it does not go back and ask again.
+        $this->assertCount(1, $firewall->getFailedRules());
+        $this->assertSame(1, TestThrowingPlugin::$constructions);
+    }
+
+    /**
+     * A firewall whose every rule builds reports nothing.
+     */
+    public function testGetFailedRulesIsEmptyWhenEveryRuleBuilds(): void
+    {
+        $config = [
+            'plugins' => [
+                ['plugin' => IpAddress::class, 'response' => 'allow', 'enable' => true, 'config' => ['10.0.0.1']],
+                ['plugin' => IpAddress::class, 'response' => 'block', 'enable' => true, 'config' => ['127.0.0.1']],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $this->assertSame([], Firewall::create([$config])->getFailedRules());
+    }
+
+    /**
+     * A backend that started degraded is reportable, though its rule is running.
+     *
+     * The other half of `getFailedRules()`. `RedisStorage` and its rate limit
+     * sibling catch a connection failure and answer as though nothing were
+     * stored, so the plugin constructs, the registry never marks it failed, and
+     * `getFailedRules()` is empty -- correctly, because the rule *is* running.
+     * It is just counting nothing (#273).
+     *
+     * Recorded directly here rather than through Redis: what is under test is
+     * that the Firewall surfaces the record, and requiring a Redis server to
+     * assert that would test the wrong thing.
+     */
+    public function testGetDegradedBackendsReportsABackendThatCannotReachItsServer(): void
+    {
+        DegradedBackends::reset();
+
+        $config = [
+            'plugins' => [
+                ['plugin' => IpAddress::class, 'response' => 'block', 'enable' => true, 'config' => ['127.0.0.1']],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $firewall = Firewall::create([$config]);
+
+        $this->assertSame([], $firewall->getDegradedBackends(), 'Nothing degraded means nothing reported');
+
+        DegradedBackends::record('rate limit', 'Some\RedisRateLimitStorage', 'Connection refused');
+
+        $this->assertSame(
+            [['component' => 'rate limit', 'backend' => 'Some\RedisRateLimitStorage', 'error' => 'Connection refused']],
+            $firewall->getDegradedBackends()
+        );
+
+        // The rule itself built, so it is not a failed rule -- the two lists
+        // answer different questions.
+        $this->assertSame([], $firewall->getFailedRules());
+
+        DegradedBackends::reset();
+    }
+
+    /**
+     * It builds the rules first, because a rate limit backend belongs to one.
+     *
+     * A rate limit store is constructed by its plugin, so on a request that has
+     * evaluated nothing there is no backend to have failed yet — and a status
+     * report would be told everything was fine.
+     */
+    public function testGetDegradedBackendsBuildsTheRulesItself(): void
+    {
+        DegradedBackends::reset();
+        TestThrowingPlugin::$constructions = 0;
+
+        $config = [
+            'plugins' => [
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'block', 'enable' => true],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        Firewall::create([$config])->getDegradedBackends();
+
+        $this->assertSame(1, TestThrowingPlugin::$constructions, 'It built the rules to find out');
+
+        DegradedBackends::reset();
+    }
+
     public function testResponseBlockEntryBlocksAtRuntime(): void
     {
         $config = [

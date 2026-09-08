@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\RateLimitStorage;
 
+use Kanopi\Firewall\Utility\DegradedBackends;
+use Kanopi\Firewall\Utility\RedisConnections;
 use Redis;
 
 /**
@@ -49,9 +51,13 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
             // key the documentation tells them to set.
             unset($redisOptions['prefix']);
 
+            // Through the registry, so a deployment using Redis for both the
+            // block list and rate limiting opens one connection rather than two
+            // to the same server on every request (#263). An injected instance
+            // still wins.
             $this->redis = (($config['instance'] ?? null) instanceof Redis)
                 ? $config['instance']
-                : new Redis($redisOptions);
+                : RedisConnections::get($redisOptions);
             $this->redis->echo('Connected');
 
             $this->getLogger()->info('Redis rate limit storage initialized', [
@@ -62,6 +68,10 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
             $this->getLogger()->error('Failed to initialize Redis rate limit storage', [
                 'error' => $exception->getMessage(),
             ]);
+
+            // See RedisStorage: the rule runs, counting nothing, and a status
+            // report needs to be able to say so (#273).
+            DegradedBackends::record('rate limit', self::class, $exception->getMessage());
         }
     }
 

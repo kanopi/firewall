@@ -276,8 +276,16 @@ DELETE FROM firewall_rate_limit_storage WHERE timestamp < UNIX_TIMESTAMP() - 360
 ```
 
 The table is also created with an index on `(rule, timestamp)`, which is the shape both
-queries against it use. **An existing table does not gain it** — the schema is only created
-when the table is absent — and without it every count is a full scan. Add it once:
+queries against it use. A table created before v2.19.0 does not have it, and without it
+every count is a full scan. Since v2.22.0 the firewall reports that at startup and
+[`bin/firewall-migrate`](../guides/schema-migrations.md) adds it:
+
+```bash
+bin/firewall-migrate firewall.yml --dry-run   # what is missing, and the SQL
+bin/firewall-migrate firewall.yml             # add it
+```
+
+Or by hand, which is what earlier releases asked for and still works:
 
 ```sql
 CREATE INDEX firewall_rate_limit_storage_rule_window_idx

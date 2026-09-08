@@ -137,8 +137,30 @@ class Asn extends AbstractPluginBase
             return false;
         }
 
+        $clientIp = strval($request->getClientIp());
+
+        return $this->cachedValue($clientIp, $variable, fn(): mixed => $this->resolveValue($request, $variable, $clientIp));
+    }
+
+    /**
+     * Read one variable out of the ASN database.
+     *
+     * Split from getValue() so the cross-request cache wraps the database read
+     * rather than the guards around it (#6).
+     *
+     * @param Request $request
+     *   Request being evaluated.
+     * @param string $variable
+     *   Variable to resolve.
+     * @param string $clientIp
+     *   Address to look up.
+     *
+     * @return mixed
+     *   The value, or null when there is no record.
+     */
+    protected function resolveValue(Request $request, string $variable, string $clientIp): mixed
+    {
         try {
-            $clientIp = strval($request->getClientIp());
             $record = $this->lookupRecord('asn', $clientIp);
 
             // @codeCoverageIgnoreStart

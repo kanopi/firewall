@@ -52,6 +52,9 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
         parent::__construct($config);
         $this->config['storage_table'] ??= 'firewall_storage';
         $this->config['offenses_table'] ??= 'firewall_offenses';
+        $this->schemaCheckProbability = self::normalizeSchemaCheckProbability(
+            $config['schema_check_probability'] ?? null
+        );
 
         $this->createConnection($config['connection']);
         $this->getLogger()->info('Database storage initialized', [

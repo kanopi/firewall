@@ -11,6 +11,18 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.22.0](https://github.com/kanopi/firewall/releases/tag/v2.22.0) — 2026-09-08
+
+A store that can evict, and the caching that needs one: Redis for the block list, opt-in cross-request GeoIP caching on top of it, and database tables that migrate instead of asking to be dropped.
+
+## [2.21.0](https://github.com/kanopi/firewall/releases/tag/v2.21.0) — 2026-09-08
+
+The cost of a request, measured: the fixed work the firewall did on every one of them whether or not a rule matched.
+
+## [2.20.0](https://github.com/kanopi/firewall/releases/tag/v2.20.0) — 2026-09-08
+
+The gaps a patch could not carry — a preset whose own header explained how to bypass it, two documented behaviours the code did not have, and per-rule observe mode.
+
 ## [2.19.2](https://github.com/kanopi/firewall/releases/tag/v2.19.2) — 2026-09-07
 
 Three fixes, and they share a shape: each is a place where the library did not hold a guarantee it already makes.

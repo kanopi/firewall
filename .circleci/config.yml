@@ -174,9 +174,19 @@ jobs:
             #
             # Verified at 100.00% for lines and methods with ext-redis present
             # and a Redis server reachable. A developer machine usually has
-            # neither, so a local run reports about 98.9% with
-            # RedisRateLimitStorage uncovered; that is the environment, not a
-            # regression. CI installs the extension and runs the service.
+            # neither, so a local run reports about 95.7% with RedisStorage,
+            # RedisRateLimitStorage and RedisConnections uncovered; that is the
+            # environment, not a regression. CI installs the extension and runs
+            # the service.
+            #
+            # The figure moves as Redis-backed code is added -- it was ~98.9%
+            # when only RedisRateLimitStorage existed, before 2.22.0 added a
+            # block list backend and a connection registry. If a local run
+            # surprises you, check which files are short before assuming a
+            # regression: everything uncovered locally should be Redis.
+            #
+            # Only the line figure is compared below. Method coverage is held to
+            # the same bar by review rather than by this gate (#270).
             PASSING=100
             # Read, report and compare entirely inside PHP. Nothing parses
             # PHP's stdout in the shell, because on this image every `php`

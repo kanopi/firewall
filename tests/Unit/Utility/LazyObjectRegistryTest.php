@@ -125,4 +125,80 @@ class LazyObjectRegistryTest extends AbstractTestCase
         $this->assertCount(2, $objects);
         $this->assertSame([['duplicate', 2], ['duplicate', 1]], $objects);
     }
+
+    /**
+     * A registry nothing has iterated reports no failures.
+     *
+     * Not because everything works -- because nothing has been tried. Entries
+     * are constructed lazily, so this is the honest answer rather than a
+     * healthy one, and it is the reason a caller wanting to know has to build
+     * them first (#260).
+     */
+    public function testNothingHasFailedBeforeAnythingIsConstructed(): void
+    {
+        $registry = new LazyObjectRegistry();
+        $registry->add('never built', fn() => throw new RuntimeException('Connection refused'));
+
+        $this->assertSame([], $registry->getFailed());
+    }
+
+    /**
+     * A failed construction is reported with the message it threw.
+     */
+    public function testAFailedEntryIsReportedWithItsError(): void
+    {
+        $registry = new LazyObjectRegistry();
+        $registry->add('works', fn() => (object) ['id' => 1], 1);
+        $registry->add('broken', fn() => throw new RuntimeException('Connection refused'), 2);
+
+        iterator_to_array($registry->getIterator());
+
+        $this->assertSame(
+            [['name' => 'broken', 'error' => 'Connection refused']],
+            $registry->getFailed()
+        );
+    }
+
+    /**
+     * The report survives re-iteration and does not grow.
+     *
+     * A failed entry is never retried, so a second pass must not record a
+     * second failure for the same rule.
+     */
+    public function testAFailedEntryIsReportedOnceAcrossReiteration(): void
+    {
+        $attempts = 0;
+        $registry = new LazyObjectRegistry();
+        $registry->add('broken', function () use (&$attempts) {
+            $attempts++;
+            throw new RuntimeException('No such file or directory');
+        });
+
+        iterator_to_array($registry->getIterator());
+        iterator_to_array($registry->getIterator());
+
+        $this->assertSame(1, $attempts, 'A failed constructor is not re-run');
+        $this->assertCount(1, $registry->getFailed());
+    }
+
+    /**
+     * Failures are reported in registration order, alongside what still runs.
+     */
+    public function testEveryFailureIsReportedInOrder(): void
+    {
+        $registry = new LazyObjectRegistry();
+        $registry->add('first', fn() => throw new RuntimeException('one'), 1);
+        $registry->add('second', fn() => (object) ['id' => 2], 2);
+        $registry->add('third', fn() => throw new RuntimeException('three'), 3);
+
+        $this->assertCount(1, iterator_to_array($registry->getIterator()), 'Only the one that built is yielded');
+        $this->assertSame(3, $registry->getCount(), 'The count still includes the failures');
+        $this->assertSame(
+            [
+                ['name' => 'first', 'error' => 'one'],
+                ['name' => 'third', 'error' => 'three'],
+            ],
+            $registry->getFailed()
+        );
+    }
 }

@@ -22,6 +22,7 @@ storage:
   type: "Kanopi\\Firewall\\Storage\\FileStorage"
   config:
     storage_file: /var/log/firewall/blocked_ips.data
+    # offense_file: /var/log/firewall/blocked_ips.data.offenses
     offense_file: /var/log/firewall/blocked_ip_offenses.data
 ```
 
@@ -63,6 +64,124 @@ try {
 ```
 
 The rate-limit plugin builds its storage lazily, so a `DatabaseRateLimitStorage` that cannot connect surfaces the same exception on the first request the plugin evaluates rather than at startup.
+
+#### Where offenses are kept
+
+Offense counts drive [escalating bans](global.md#multiple-offenses-defense), and they live in
+a sidecar beside the storage file — `blocked_ips.data.offenses` for the example above — unless
+`offense_file` names somewhere else.
+
+!!! warning "This default changed in 2.22.0"
+
+    It used to be `storage_data_offenses.json` in the **directory** holding the storage file,
+    so two stores in one directory shared a single offense history: two sites, two
+    environments, or one site running two stores all escalated each other's clients. An
+    address that offended twice against one and once against another reached a
+    three-offense stage on both.
+
+    On first start after upgrading, an existing shared file is **copied** to each store's own
+    sidecar, so escalation stages survive rather than resetting every client to zero. The old
+    file is left in place and can be deleted once every store that used it has started.
+
+    Nothing changes for a configuration that already sets `offense_file`.
+
+### 4. Redis Storage
+
+Stores blocked clients in Redis, shared across every server that points at it.
+
+Requires `ext-redis`, which is a Composer `suggest` rather than a `require` — every other
+backend works without it.
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\RedisStorage"
+  config:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      prefix: "firewall:"     # namespaces every key this backend owns
+      # auth: "password"
+      # auth: ["username", "password"]
+```
+
+**Use this when more than one server shares a block list.** `FileStorage` cannot, and its
+cost rises with the size of the list — measured at 15.66 ms per request with 2,000 blocked
+clients against 7.58 ms for the database, and it gets worse *during* an attack, which is
+when the block list is largest and the firewall busiest.
+
+#### Expiry is the server's job
+
+A block is stored with a Redis TTL rather than a stored timestamp, so a lapsed ban is
+removed by Redis itself. `expire()` therefore has nothing to do.
+
+That matters more than it sounds: on file storage the same sweep runs on every request and
+is free until a batch of bans lapses together, at which point the whole cost lands on one
+visitor — 185 ms at 500 expired bans before it was
+[batched](https://github.com/kanopi/firewall/issues/250). Here it never happens.
+
+#### Offenses outlive the block
+
+Offenses are kept in their own sorted set, `{prefix}offense:{address}`, with no TTL. An
+expired ban leaves its history behind on purpose: that history is exactly what
+[escalating bans](global.md#multiple-offenses-defense) need to give a repeat offender a
+longer ban next time.
+
+`deleteMatching()` is the opposite case and removes both — an operator lifting a ban should
+not have it escalated straight back on the client's next offence.
+
+#### Two keyspaces, one prefix
+
+| Key | Holds |
+|---|---|
+| `{prefix}block:{address}` | The block record, as JSON, with the ban's lifetime as a TTL |
+| `{prefix}offense:{address}` | A sorted set of offence timestamps |
+
+`prefix` defaults to `firewall:`. Give each site its own if several share a Redis, and note
+that `reset()` only clears keys under the configured prefix — a neighbouring application's
+keys are left alone.
+
+#### One connection per server, not per backend
+
+`RedisStorage` and
+[`RedisRateLimitStorage`](../plugins/rate-limit.md) share a connection when they are pointed
+at the same server, so using Redis for both the block list and rate limiting costs one
+connection per request rather than two.
+
+Sharing is decided by the resolved options, so different hosts — or different databases on
+one host — still get their own. An injected `instance` always wins over the shared one.
+
+#### A Redis it cannot reach degrades rather than fails
+
+Unlike `DatabaseStorage`, an unreachable Redis is **not** a startup exception. The error is
+logged and every read answers as though nothing were stored, so a firewall whose block list
+is unreachable carries on enforcing every rule that does not depend on it.
+
+That is a deliberate trade and worth understanding: it fails *open* for the block list
+specifically. `Firewall::getDegradedBackends()` reports it, so a status page can say so
+without scraping for `Failed to initialize Redis storage` — see
+[Checking that a backend can reach its server](../guides/error-handling.md#checking-that-a-backend-can-reach-its-server).
+
+#### Connections are given a bounded timeout
+
+`new Redis(...)` connects during construction, and with no timeout configured `ext-redis`
+falls back to PHP's `default_socket_timeout` — **60 seconds** on a stock install. A Redis
+host that refuses a connection or fails to resolve answers straight away, so the bad case is
+the one that silently drops packets: a firewalled port, a wrong subnet, a security group
+nobody updated. That hung the request for a minute.
+
+`connectTimeout` and `readTimeout` therefore default to **1.5 seconds**, which is far longer
+than a Redis on the same network needs and far shorter than the alternative. A deployment
+reaching a Redis over a slower link can say so:
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\RedisStorage"
+  config:
+    redis:
+      host: redis.internal
+      connectTimeout: 5
+      readTimeout: 5
+```
 
 ## Searching and Un-blocking
 

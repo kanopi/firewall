@@ -28,6 +28,7 @@ use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -676,6 +677,117 @@ final class Firewall
     }
 
     /**
+     * The rules that could not be constructed, and why.
+     *
+     * A rule whose constructor throws is logged and skipped rather than
+     * allowed to fatal the request (#247). For a block rule that is a
+     * fail-open, and until now the only thing recording it was a log line --
+     * so an integration with a status report could not tell a healthy firewall
+     * from one quietly running three rules short. `drupal/basic_firewall`
+     * reads the compiled configuration precisely so that "healthy" means
+     * something, and a rate limit rule pointed at an unreachable Redis host
+     * compiled, validated and reported healthy without ever running (#260).
+     *
+     * **This builds every rule that has not been built yet**, which is the
+     * only way to answer the question on a request that has evaluated nothing.
+     * Building a rule is what opens its storage connection, so reachability is
+     * tested rather than assumed -- and that is the cost. Call it from a status
+     * report or a health check, not from a request path. Anything built here
+     * is reused by a later `evaluate()` in the same process, so it is paid
+     * once.
+     *
+     * A rule that already failed is not retried, here or anywhere: a
+     * constructor that throws on every request is not worth re-running, least
+     * of all a connection that is not coming back.
+     *
+     * @return array<int, array{bucket: string, plugin: string, error: string}>
+     *   One entry per rule that failed, naming the bucket it was configured in
+     *   (`allow`, `challenge` or `block`), the rule as `Class:index` -- the
+     *   index distinguishing two rules of the same class -- and the message
+     *   its constructor threw. Empty when every configured rule is running.
+     */
+    public function getFailedRules(): array
+    {
+        $failed = [];
+
+        foreach ($this->buckets() as $bucket => $pluginManager) {
+            // Forces construction. The return is deliberately discarded: it is
+            // the successes, and this method reports the failures, which the
+            // manager collected on the way past.
+            $pluginManager->getPlugins();
+
+            foreach ($pluginManager->getFailedPlugins() as $entry) {
+                $failed[] = [
+                    'bucket' => $bucket,
+                    'plugin' => $entry['plugin'],
+                    'error' => $entry['error'],
+                ];
+            }
+        }
+
+        return $failed;
+    }
+
+    /**
+     * The three rule buckets, ordered the way `evaluate()` consults them.
+     *
+     * So a report reads in the order the firewall would have applied the rules.
+     *
+     * @return array<string, PluginManager>
+     *   Keyed by the bucket name an operator configured.
+     */
+    private function buckets(): array
+    {
+        return [
+            'allow' => $this->bypassPluginManager,
+            'challenge' => $this->challengePluginManager,
+            'block' => $this->blockingPluginManager,
+        ];
+    }
+
+    /**
+     * The backends that started but cannot reach what they store things in.
+     *
+     * The other half of `getFailedRules()`, and a different condition. A rule
+     * in that list is **not running**. A backend in this one is running and
+     * has nothing to consult: `RedisStorage` and `RedisRateLimitStorage`
+     * deliberately catch a connection failure, log it, and answer as though
+     * nothing were stored, so the firewall keeps enforcing every rule that does
+     * not depend on them.
+     *
+     * That degrade is right -- taking a site down because the block list is
+     * unreachable helps nobody -- but it is invisible to a host application,
+     * because a plugin whose storage failed still constructs. So a status
+     * report could show a rate limit rule as healthy while it counted nothing
+     * (#273).
+     *
+     * **Builds every rule that has not been built yet**, for the same reason
+     * `getFailedRules()` does: a rate limit backend is constructed by its
+     * plugin, and on a request that has evaluated nothing there is no backend
+     * to have failed. Call it from a status report, not from a request path.
+     *
+     * Records what was found at construction, which is when a connection is
+     * opened. A backend that connects and later loses its server logs, as it
+     * always did, and is not listed here.
+     *
+     * @return array<int, array<string, string>>
+     *   One entry per degraded backend, naming the component it serves
+     *   (`block list`, `rate limit`), the backend class, and what it reported.
+     *   Empty when every backend reached its server.
+     */
+    public function getDegradedBackends(): array
+    {
+        foreach ($this->buckets() as $pluginManager) {
+            // A rate limit rule builds its backend when the rule is built, so
+            // there is nothing to report until the rules exist.
+            $pluginManager->getPlugins();
+        }
+
+        return DegradedBackends::all();
+    }
+
+    /**
+     * Evaluate the current request to see if valid and can pass the firewall.    /**
      * Evaluate the current request to see if valid and can pass the firewall.
      *
      * @param \Symfony\Component\HttpFoundation\Request|null $request
