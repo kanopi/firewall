@@ -632,6 +632,56 @@ class PluginManagerTest extends AbstractTestCase
     }
 
     /**
+     * The failed rule is reportable, not only loggable.
+     *
+     * A log line is not something a status report can read. The name carries the
+     * `Class:index` id the registry was given, so two rules of the same class are
+     * distinguishable, and the error is the constructor's own message (#260).
+     */
+    public function testABrokenPluginIsReportedWithItsError(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestTruePlugin::class],
+            ['plugin' => TestThrowingPlugin::class],
+        ]);
+
+        $manager->getPlugins();
+
+        $this->assertSame(
+            [['plugin' => TestThrowingPlugin::class . ':1', 'error' => 'cannot connect to storage']],
+            $manager->getFailedPlugins()
+        );
+    }
+
+    /**
+     * Nothing is reported before anything is constructed.
+     *
+     * Rules are built lazily, so an empty report from a manager that has not
+     * evaluated means "nothing attempted", not "nothing wrong".
+     */
+    public function testNoFailureIsReportedBeforeConstruction(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestThrowingPlugin::class],
+        ]);
+
+        $this->assertSame([], $manager->getFailedPlugins());
+    }
+
+    /**
+     * A manager whose rules all build reports nothing.
+     */
+    public function testAWorkingManagerReportsNoFailures(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestTruePlugin::class],
+        ]);
+
+        $this->assertCount(1, $manager->getPlugins(), 'The rule really did build');
+        $this->assertSame([], $manager->getFailedPlugins());
+    }
+
+    /**
      * A recognised mode is accepted silently; only an unrecognised one warns.
      */
     public function testAnExplicitEnforceModeIsAcceptedWithoutWarning(): void

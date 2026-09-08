@@ -27,6 +27,37 @@ Note that the three request-time exceptions are thrown **only** in `mode: except
 
 Config *loading* problems are conditional: a missing, unreadable, or malformed config file — including circular `configs:` includes, unresolvable `%env(...)%` tokens, and use of a disabled filesystem processor — is logged at `error` level and produces an empty or partial ruleset, and raises `ConfigurationException` only when [`global.require_config: true`](../configuration/global.md#requiring-the-config-to-load) is set. See [Fail open or fail closed?](#fail-open-or-fail-closed) for why that matters.
 
+## Checking that every rule is running
+
+A rule whose constructor throws — a rate limit backend pointed at a Redis host that is not answering, a storage path that lost its permissions — is logged at `error` level and skipped. The request is evaluated by the rules that *did* build, which is deliberate: a broken backend should not take the site down. But for a `block` rule it is a fail-open, and a firewall running three rules short looks exactly like a firewall running correctly.
+
+`getFailedRules()` is how a health check asks:
+
+```php
+$firewall = Firewall::create([__DIR__ . '/firewall.yml']);
+
+foreach ($firewall->getFailedRules() as $rule) {
+    // bucket: allow | challenge | block
+    // plugin: Kanopi\Firewall\Plugins\RateLimit:2
+    // error:  Connection refused
+    $status->addError(sprintf(
+        'Firewall %s rule %s is not running: %s',
+        $rule['bucket'],
+        $rule['plugin'],
+        $rule['error']
+    ));
+}
+```
+
+The plugin name carries the index of the rule within your `plugins:` list, so two rules of the same class are distinguishable — `RateLimit:2` is the third entry, not the second rule of that type.
+
+Two things about the call:
+
+- **It builds every rule to find out.** Rules are constructed lazily, on the first request that evaluates them, so a status page that only asked what had failed so far would always be told "nothing" — and that is the false clean bill of health this exists to replace. Building a rule is what opens its storage connection, so reachability is genuinely tested. **Call it from a status report or a health check, not from a request path.** Anything it builds is reused by a later `evaluate()` in the same process, so nothing is paid twice.
+- **A rule that already failed is never retried.** Re-running a constructor that throws on every request buys nothing, least of all a connection that is not coming back.
+
+An empty array means every configured rule is constructed and active. It says nothing about rules you disabled with `enable: false` or left out of the config — those never enter the registry, and are not failures.
+
 ## Handling blocks in a framework
 
 ```php
