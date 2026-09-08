@@ -235,8 +235,19 @@ trait DatabaseTrait
 
     /**
      * How long a confirmation stays good, in seconds.
+     *
+     * A method rather than a constant: constants in traits are PHP 8.2 and up,
+     * and this package supports 8.1. The same trap caught FileTrait in 2.19.2,
+     * and PHPCompatibility does not flag it -- only a lint under an 8.1 runtime
+     * does.
+     *
+     * @return int
+     *   Seconds a table confirmation remains valid.
      */
-    private const MEMO_SECONDS = 60;
+    private static function memoSeconds(): int
+    {
+        return 60;
+    }
 
     /**
      * Identify a table by the connection it lives on as well as its name.
@@ -297,7 +308,7 @@ trait DatabaseTrait
 
             $confirmedAt = $known === null ? 0 : (self::$tablesKnownToExist[$known] ?? 0);
 
-            if ($confirmedAt > time() - self::MEMO_SECONDS) {
+            if ($confirmedAt > time() - self::memoSeconds()) {
                 continue;
             }
 
