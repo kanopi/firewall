@@ -53,7 +53,7 @@
         "symfony/var-dumper": "~6.4 || ~7.3 || ~8.1"
     },
     "suggest": {
-        "ext-redis": "Required only by Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage, for distributed rate limiting. Every other rate-limit backend (memory, file, database, PSR-6 cache) works without it."
+        "ext-redis": "Required by Kanopi\\Firewall\\Storage\\RedisStorage and Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage, for a shared block list and distributed rate limiting across more than one server. Every other backend works without it."
     },
     "scripts": {
         "server:start": [
