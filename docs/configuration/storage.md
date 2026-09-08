@@ -64,6 +64,71 @@ try {
 
 The rate-limit plugin builds its storage lazily, so a `DatabaseRateLimitStorage` that cannot connect surfaces the same exception on the first request the plugin evaluates rather than at startup.
 
+### 4. Redis Storage
+
+Stores blocked clients in Redis, shared across every server that points at it.
+
+Requires `ext-redis`, which is a Composer `suggest` rather than a `require` — every other
+backend works without it.
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\RedisStorage"
+  config:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      prefix: "firewall:"     # namespaces every key this backend owns
+      # auth: "password"
+      # auth: ["username", "password"]
+```
+
+**Use this when more than one server shares a block list.** `FileStorage` cannot, and its
+cost rises with the size of the list — measured at 15.66 ms per request with 2,000 blocked
+clients against 7.58 ms for the database, and it gets worse *during* an attack, which is
+when the block list is largest and the firewall busiest.
+
+#### Expiry is the server's job
+
+A block is stored with a Redis TTL rather than a stored timestamp, so a lapsed ban is
+removed by Redis itself. `expire()` therefore has nothing to do.
+
+That matters more than it sounds: on file storage the same sweep runs on every request and
+is free until a batch of bans lapses together, at which point the whole cost lands on one
+visitor — 185 ms at 500 expired bans before it was
+[batched](https://github.com/kanopi/firewall/issues/250). Here it never happens.
+
+#### Offenses outlive the block
+
+Offenses are kept in their own sorted set, `{prefix}offense:{address}`, with no TTL. An
+expired ban leaves its history behind on purpose: that history is exactly what
+[escalating bans](global.md#multiple-offenses-defense) need to give a repeat offender a
+longer ban next time.
+
+`deleteMatching()` is the opposite case and removes both — an operator lifting a ban should
+not have it escalated straight back on the client's next offence.
+
+#### Two keyspaces, one prefix
+
+| Key | Holds |
+|---|---|
+| `{prefix}block:{address}` | The block record, as JSON, with the ban's lifetime as a TTL |
+| `{prefix}offense:{address}` | A sorted set of offence timestamps |
+
+`prefix` defaults to `firewall:`. Give each site its own if several share a Redis, and note
+that `reset()` only clears keys under the configured prefix — a neighbouring application's
+keys are left alone.
+
+#### A Redis it cannot reach degrades rather than fails
+
+Unlike `DatabaseStorage`, an unreachable Redis is **not** a startup exception. The error is
+logged and every read answers as though nothing were stored, so a firewall whose block list
+is unreachable carries on enforcing every rule that does not depend on it.
+
+That is a deliberate trade and worth understanding: it fails *open* for the block list
+specifically. If a shared block list is load-bearing for you, watch for
+`Failed to initialize Redis storage` in the log.
+
 ## Searching and Un-blocking
 
 `StorageInterface` gives you keyed access — `get()`, `set()`, `delete()` for an address you already know. That covers the firewall's own hot path, but it leaves two operational questions unanswered: *who is currently blocked?*, and *how do I lift a block that should not have been applied?*
