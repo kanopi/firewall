@@ -588,6 +588,17 @@ class DatabaseHandlerTest extends AbstractTestCase
     /**
      * A prune that cannot run is reported as a failure, not as "nothing to do".
      */
+    /**
+     * Clear the table-existence memo (#227), so a dropped table is noticed at
+     * once rather than when its window lapses.
+     */
+    private function forgetKnownTables(): void
+    {
+        $property = new \ReflectionProperty(\Kanopi\Firewall\Logging\Handler\DatabaseHandler::class, 'tablesKnownToExist');
+        $property->setAccessible(true);
+        $property->setValue(null, []);
+    }
+
     public function testPruneReportsFailureRatherThanZero(): void
     {
         $handler = $this->createHandler(['retention_days' => 1, 'prune_probability' => 0]);
@@ -597,6 +608,11 @@ class DatabaseHandlerTest extends AbstractTestCase
         $this->connection()->executeStatement('DROP TABLE firewall_log');
 
         self::assertNull($handler->countPrunable());
+
+        // Table existence is memoised for a short window (#227), so a table
+        // dropped a moment ago is still believed to exist. Forget it, as the
+        // window lapsing would.
+        $this->forgetKnownTables();
 
         $handler = $this->createHandler(['retention_days' => 1, 'prune_probability' => 0]);
         $handler->handle($this->record(Level::Warning, 'Creates the table again'));
