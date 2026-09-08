@@ -462,4 +462,27 @@ class ReverseDnsVerifierTest extends AbstractTestCase
 
         $this->assertTrue($verifier->verify('66.249.66.1', ['.googlebot.com']));
     }
+
+    /**
+     * A slow lookup with no cache has no breaker to trip, and still answers.
+     */
+    public function testASlowLookupWithNoCacheStillReturns(): void
+    {
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], null, false, 300.0);
+
+        $this->assertTrue($verifier->verify('66.249.66.1', ['.googlebot.com']));
+    }
+
+    /**
+     * A forward lookup that fails outright, rather than returning nothing.
+     *
+     * `dns_get_record()` returns false on failure and an empty array when the
+     * name resolves to nothing; both mean the round trip did not confirm.
+     */
+    public function testAForwardLookupThatFailsOutrightFailsClosed(): void
+    {
+        $verifier = $this->verifier('crawl.googlebot.com', false);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+    }
 }

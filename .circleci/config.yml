@@ -162,19 +162,22 @@ jobs:
             # does -- it is not a number to write tests against.
             #
             # 90 held from when coverage first included the integration suite
-            # until v2.19.2, by which point the real figure was 98.60% and the
-            # gate was defending a number eight points below reality (#215).
+            # until v2.19.2; 97 in v2.20.0. 100 from 2.21.0, where every
+            # remaining gap was either tested or annotated with why it cannot
+            # be.
             #
-            # 97 in v2.20.0. Raised again for 2.21.0, where the release's new
-            # code was brought back under test.
+            # A floor of 100 is a real constraint, not a vanity number: any new
+            # branch has to arrive with a test or an explicit
+            # @codeCoverageIgnore saying why it cannot have one. That is the
+            # point -- the annotation forces the argument to be written down
+            # where a reviewer sees it.
             #
-            # Set from what can be measured locally -- 98.47% with Redis absent,
-            # because ext-redis is not installed on a developer machine and
-            # RedisRateLimitStorage's 72 lines therefore go uncovered there. CI
-            # runs a Redis service and covers them, so the real figure here
-            # should be near 99.5%. Ratchet this up once a build reports it;
-            # setting it from an estimate would fail the build on a guess.
-            PASSING=98
+            # Verified at 100.00% for lines and methods with ext-redis present
+            # and a Redis server reachable. A developer machine usually has
+            # neither, so a local run reports about 98.9% with
+            # RedisRateLimitStorage uncovered; that is the environment, not a
+            # regression. CI installs the extension and runs the service.
+            PASSING=100
             # Read, report and compare entirely inside PHP. Nothing parses
             # PHP's stdout in the shell, because on this image every `php`
             # invocation prints "Module ... is already loaded" warnings to

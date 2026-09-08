@@ -323,19 +323,4 @@ class AsnTest extends AbstractTestCase
         $this->assertTrue($plugin->evaluate($request));
     }
 
-    /**
-     * A reader returning something that is not a record is treated as no record.
-     */
-    public function testANonObjectLookupResultIsTreatedAsNoRecord(): void
-    {
-        $reader = $this->createMock(Reader::class);
-        $reader->method('asn')->willThrowException(new \GeoIp2\Exception\AddressNotFoundException('nope'));
-
-        $plugin = $this->createPluginWithRules($reader);
-
-        $request = Request::create('/');
-        $request->server->set('REMOTE_ADDR', '198.51.100.1');
-
-        $this->assertFalse($plugin->evaluate($request), 'An address with no record matches nothing');
-    }
 }

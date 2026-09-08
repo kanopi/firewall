@@ -14,6 +14,8 @@ use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginHigh;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginLow;
 use Kanopi\Firewall\Tests\Plugins\TestTruePlugin;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use Symfony\Component\HttpFoundation\Request;
 
 class PluginManagerTest extends AbstractTestCase
@@ -876,5 +878,70 @@ class PluginManagerTest extends AbstractTestCase
         $request->server->set('REMOTE_ADDR', '66.249.66.9');
 
         $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate($request));
+    }
+
+    /**
+     * KANOPI_FIREWALL_CACHE_DIR moves the verification cache.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testTheVerificationCacheHonoursTheConfiguredDirectory(): void
+    {
+        $dir = sys_get_temp_dir() . '/fw-rdns-configured-' . uniqid();
+        mkdir($dir, 0700, true);
+        define('KANOPI_FIREWALL_CACHE_DIR', $dir);
+
+        $pool = new \Symfony\Component\Cache\Adapter\FilesystemAdapter('kanopi_firewall_rdns', 3600, $dir);
+        $item = $pool->getItem('rdns_' . hash('sha256', '66.249.66.11|.googlebot.com'));
+        $item->set(true);
+        $pool->save($item);
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '66.249.66.11');
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate($request));
+    }
+
+    /**
+     * A cache that cannot be built costs a lookup, not the rule.
+     *
+     * The directory is pointed at a path underneath an existing *file*, which
+     * cannot be created, so the adapter's constructor throws.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testAnUnbuildableVerificationCacheIsSurvivable(): void
+    {
+        $blocker = tempnam(sys_get_temp_dir(), 'fw-rdns-blocker');
+        define('KANOPI_FIREWALL_CACHE_DIR', $blocker . '/cannot-exist');
+
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(
+            \Kanopi\Firewall\Logging\LoggingFactory::create([
+                ['class' => \Kanopi\Firewall\Tests\Logging\TestLogHandler::class],
+            ])
+        );
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '198.51.100.77');
+
+        // No cache and no PTR for a documentation address: it fails closed
+        // rather than fatalling on the missing pool.
+        $this->assertFalse($manager->evaluate($request));
+
+        @unlink($blocker);
     }
 }

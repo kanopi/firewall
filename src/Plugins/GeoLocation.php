@@ -309,9 +309,17 @@ class GeoLocation extends AbstractPluginBase
             $clientIp = strval($request->getClientIp());
             $record = $this->lookupRecord('city', $clientIp);
 
+            // @codeCoverageIgnoreStart
+            // lookupRecord() may return null -- no reader, or a reader without
+            // the method -- but getValue() has already refused both above, and
+            // the GeoIP2 reader's return type forbids null. Unreachable from
+            // here, and kept because the trait's contract permits it and a
+            // future caller may not guard as carefully.
             if ($record === null) {
                 return null;
             }
+
+            // @codeCoverageIgnoreEnd
 
             $this->getLogger()->debug('GeoLocation lookup successful', $this->getContext($request, [
                 /** @phpstan-ignore-next-line */

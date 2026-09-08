@@ -25,6 +25,12 @@ class ConfigCacheTest extends AbstractTestCase
         parent::setUp();
         $this->dir = sys_get_temp_dir() . '/fw-config-cache-test-' . uniqid();
         mkdir($this->dir, 0700, true);
+
+        // Config's error and warning buffers are static, and a load that
+        // reported either is not cached. Without this, one test that
+        // deliberately fails a load stops every test after it from caching
+        // anything -- which quietly turns the rest into no-ops.
+        Config::clearLoadErrors();
     }
 
     protected function tearDown(): void
@@ -41,6 +47,20 @@ class ConfigCacheTest extends AbstractTestCase
      * Write a file with a distinct mtime, so a same-second rewrite is not the thing
      * under test here.
      */
+    /**
+     * Where Config keeps compiled entries, resolved the way Config resolves it.
+     *
+     * Another test in the same process may have defined KANOPI_FIREWALL_CACHE_DIR,
+     * which moves the directory. Assuming the default made earlier versions of
+     * these tests pass while poisoning nothing.
+     */
+    private function cacheDir(): string
+    {
+        return defined('KANOPI_FIREWALL_CACHE_DIR')
+            ? (string) KANOPI_FIREWALL_CACHE_DIR . '/compiled'
+            : sys_get_temp_dir() . '/kanopi-firewall-config';
+    }
+
     private function write(string $name, string $contents, int $ageSeconds = 0): string
     {
         $path = $this->dir . '/' . $name;
@@ -188,7 +208,7 @@ class ConfigCacheTest extends AbstractTestCase
 
         $poisoned = 0;
 
-        foreach (glob(sys_get_temp_dir() . '/kanopi-firewall-config/*.php') ?: [] as $entry) {
+        foreach (glob($this->cacheDir() . '/*.php') ?: [] as $entry) {
             file_put_contents($entry, '<?php return \NoSuchClassAtAll::__set_state([]);');
             $poisoned++;
         }
@@ -212,7 +232,7 @@ class ConfigCacheTest extends AbstractTestCase
         $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
         Config::load([$file]);
 
-        foreach (glob(sys_get_temp_dir() . '/kanopi-firewall-config/*.php') ?: [] as $entry) {
+        foreach (glob($this->cacheDir() . '/*.php') ?: [] as $entry) {
             // Valid PHP, valid array, missing the keys the reader needs.
             file_put_contents($entry, '<?php return ["nothing" => "useful"];');
         }
@@ -233,11 +253,11 @@ class ConfigCacheTest extends AbstractTestCase
     {
         $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
 
-        $before = count(glob(sys_get_temp_dir() . '/kanopi-firewall-config/*.php') ?: []);
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
 
         $result = Config::load([$file], ['[logger]' => new \stdClass()]);
 
-        $after = count(glob(sys_get_temp_dir() . '/kanopi-firewall-config/*.php') ?: []);
+        $after = count(glob($this->cacheDir() . '/*.php') ?: []);
 
         $this->assertInstanceOf(\stdClass::class, $result['logger'] ?? null, 'The object still reaches the caller');
         $this->assertSame($before, $after, 'Nothing containing an object should have been written');
@@ -249,11 +269,11 @@ class ConfigCacheTest extends AbstractTestCase
      */
     public function testAnInlineConfigurationIsNotCached(): void
     {
-        $before = count(glob(sys_get_temp_dir() . '/kanopi-firewall-config/*.php') ?: []);
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
 
         $result = Config::load([['global' => ['mode' => 'log']]]);
 
-        $after = count(glob(sys_get_temp_dir() . '/kanopi-firewall-config/*.php') ?: []);
+        $after = count(glob($this->cacheDir() . '/*.php') ?: []);
 
         $this->assertSame('log', $result['global']['mode'] ?? null);
         $this->assertSame($before, $after);
@@ -288,7 +308,7 @@ class ConfigCacheTest extends AbstractTestCase
     {
         $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
 
-        $dir = sys_get_temp_dir() . '/kanopi-firewall-config';
+        $dir = $this->cacheDir();
         $GLOBALS['simulate_utility_rename_failure'] = true;
 
         try {
@@ -317,5 +337,153 @@ class ConfigCacheTest extends AbstractTestCase
         }
 
         $this->assertSame('log', $result['global']['mode'] ?? null);
+    }
+
+    /**
+     * A cache directory that cannot be created disables the cache.
+     */
+    public function testACacheDirectoryThatCannotBeCreatedDisablesTheCache(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+
+        // is_dir() false throughout, and mkdir() on a directory that already
+        // exists fails -- so the create path is taken and still comes up empty.
+        $GLOBALS['simulate_utility_is_dir_failure'] = true;
+
+        try {
+            $result = Config::load([$file]);
+        } finally {
+            $GLOBALS['simulate_utility_is_dir_failure'] = false;
+        }
+
+        $this->assertSame('block', $result['global']['mode'] ?? null);
+    }
+
+    /**
+     * A remote include whose refresh cannot be claimed serves its cached copy.
+     *
+     * The single-flight guard from #228: one process refreshes, the rest use what
+     * they have rather than queueing behind a fetch they do not need to make.
+     */
+    public function testARefreshItCannotClaimServesTheCachedCopy(): void
+    {
+        $url = 'https://single-flight-test.invalid/config.yml';
+
+        // Where fileGetContents() keeps remote copies, resolved its way.
+        $cacheDir = defined('KANOPI_FIREWALL_CACHE_DIR')
+            ? (string) KANOPI_FIREWALL_CACHE_DIR
+            : '/tmp/cache';
+
+        if (!is_dir($cacheDir)) {
+            mkdir($cacheDir, 0775, true);
+        }
+
+        $cacheFile = $cacheDir . '/' . md5($url) . '.cache';
+        file_put_contents($cacheFile, "global:\n  mode: log\n");
+        touch($cacheFile, time() - 7200); // stale, so a refresh is attempted
+
+        // Another process already holds the claim.
+        $GLOBALS['simulate_utility_flock_failure'] = true;
+
+        try {
+            Config::clearLoadErrors();
+            $result = Config::load([$url]);
+        } finally {
+            $GLOBALS['simulate_utility_flock_failure'] = false;
+            @unlink($cacheFile);
+            @unlink($cacheFile . '.refresh');
+        }
+
+        $this->assertSame('log', $result['global']['mode'] ?? null);
+    }
+
+    /**
+     * Where fileGetContents() keeps remote copies, resolved its way.
+     */
+    private function remoteCacheDir(): string
+    {
+        $dir = defined('KANOPI_FIREWALL_CACHE_DIR')
+            ? (string) KANOPI_FIREWALL_CACHE_DIR
+            : '/tmp/cache';
+
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        return $dir;
+    }
+
+    /**
+     * A refresh claim that cannot even be opened does not stop the fetch.
+     *
+     * With nothing cached to fall back on, the caller needs the content more
+     * than it needs the politeness -- so it fetches anyway.
+     */
+    public function testARefreshClaimThatCannotBeOpenedStillFetches(): void
+    {
+        $url = 'https://claim-open-fail.invalid/config.yml';
+
+        $GLOBALS['simulate_utility_fopen_failure'] = true;
+        $GLOBALS['utility_file_get_contents_return'] = "global:\n  mode: exception\n";
+
+        try {
+            Config::clearLoadErrors();
+            $result = Config::load([$url]);
+        } finally {
+            $GLOBALS['simulate_utility_fopen_failure'] = false;
+            $GLOBALS['utility_file_get_contents_return'] = null;
+            @unlink($this->remoteCacheDir() . '/' . md5($url) . '.cache');
+        }
+
+        $this->assertSame('exception', $result['global']['mode'] ?? null);
+    }
+
+    /**
+     * A remote copy that cannot be written still serves the content it fetched.
+     *
+     * Failing to cache is a performance problem; failing to return the rules is
+     * a correctness one.
+     */
+    public function testAnUnwritableRemoteCacheStillServesTheFetch(): void
+    {
+        $url = 'https://remote-write-fail.invalid/config.yml';
+
+        $GLOBALS['utility_file_get_contents_return'] = "global:\n  mode: log\n";
+        $GLOBALS['simulate_utility_file_put_contents_failure'] = true;
+
+        try {
+            Config::clearLoadErrors();
+            $result = Config::load([$url]);
+        } finally {
+            $GLOBALS['utility_file_get_contents_return'] = null;
+            $GLOBALS['simulate_utility_file_put_contents_failure'] = false;
+            @unlink($this->remoteCacheDir() . '/' . md5($url) . '.cache');
+        }
+
+        $this->assertSame('log', $result['global']['mode'] ?? null);
+    }
+
+    /**
+     * A remote copy that cannot be published leaves no temporary behind.
+     */
+    public function testAnUnpublishableRemoteCacheCleansUp(): void
+    {
+        $url = 'https://remote-publish-fail.invalid/config.yml';
+        $dir = $this->remoteCacheDir();
+
+        $GLOBALS['utility_file_get_contents_return'] = "global:\n  mode: block\n";
+        $GLOBALS['simulate_utility_rename_failure'] = true;
+
+        try {
+            Config::clearLoadErrors();
+            $result = Config::load([$url]);
+        } finally {
+            $GLOBALS['utility_file_get_contents_return'] = null;
+            $GLOBALS['simulate_utility_rename_failure'] = false;
+            @unlink($dir . '/' . md5($url) . '.cache');
+        }
+
+        $this->assertSame('block', $result['global']['mode'] ?? null);
+        $this->assertSame([], glob($dir . '/' . md5($url) . '.cache.*.tmp') ?: []);
     }
 }

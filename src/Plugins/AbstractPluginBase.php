@@ -155,6 +155,14 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
                     ? (string) constant('KANOPI_FIREWALL_CACHE_DIR')
                     : sys_get_temp_dir() . '/kanopi-firewall-rdns'
             );
+            // @codeCoverageIgnoreStart
+            // FilesystemAdapter defers its directory work to first use, so its
+            // constructor does not throw for a path that cannot be created --
+            // pointing it at a path under an existing file proves as much.
+            // Kept because the contract permits a throw and a different pool
+            // implementation may take it; excluded because nothing can trigger
+            // it here, and a test that cannot fail is worse than an annotation
+            // that says why.
         } catch (\Throwable $throwable) {
             // No cache means a DNS round trip per request, which is slow but
             // still correct. Losing the rule entirely would be worse.
@@ -165,6 +173,8 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
 
             return null;
         }
+
+        // @codeCoverageIgnoreEnd
     }
 
     /**
