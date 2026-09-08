@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Storage;
 
 use Kanopi\Firewall\Traits\AddressMatchTrait;
+use Kanopi\Firewall\Utility\RedisConnections;
 use Redis;
 
 /**
@@ -81,9 +82,13 @@ class RedisStorage extends AbstractStorageBase implements QueryableStorageInterf
             // documentation tells them to set. Same reason as the rate limiter.
             unset($redisOptions['prefix']);
 
+            // Through the registry, so a deployment using Redis for both the
+            // block list and rate limiting opens one connection rather than two
+            // to the same server on every request (#263). An injected instance
+            // still wins.
             $this->redis = (($config['instance'] ?? null) instanceof Redis)
                 ? $config['instance']
-                : new Redis($redisOptions);
+                : RedisConnections::get($redisOptions);
             $this->redis->echo('Connected');
 
             $this->getLogger()->info('Redis storage initialized', [
