@@ -19,12 +19,15 @@ use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\NestedArray;
 use Kanopi\Firewall\Utility\RuleDiagnostics;
 use Kanopi\Firewall\Utility\Path;
+use Kanopi\Firewall\Utility\ReverseDnsVerifier;
+use Psr\Cache\CacheItemPoolInterface;
+use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Abstract Plugin used for creating a plugin.
  */
-abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderAwareInterface
+abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterface, IdentityVerificationInterface, ChallengeProviderAwareInterface
 {
     use LoggingTrait;
 
@@ -43,6 +46,167 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
      * @var array<int, string>
      */
     protected array $sourceProvenance = [];
+
+    /**
+     * Lazily built verifier, so a rule that never matches never builds one.
+     */
+    protected ?ReverseDnsVerifier $reverseDnsVerifier = null;
+
+    /**
+     * {@inheritdoc}
+     *
+     * Reads `metadata.verify`. Absent means no verification, which is every existing
+     * configuration.
+     */
+    public function passesIdentityVerification(Request $request): bool
+    {
+        $verify = $this->metadata['verify'] ?? null;
+
+        if ($verify === null) {
+            return true;
+        }
+
+        if (!is_string($verify) || strtolower(trim($verify)) !== 'reverse-dns') {
+            $this->getLogger()->warning('Plugin verify method is not recognised - the rule will not match', [
+                'plugin' => $this->getName(),
+                'verify' => is_scalar($verify) ? (string) $verify : gettype($verify),
+                'detail' => 'The only supported value is "reverse-dns". Remove the key to skip verification.',
+            ]);
+
+            // Not "match anyway". An operator who asked for verification and
+            // mistyped it should not silently get an unverified allow rule.
+            return false;
+        }
+
+        $suffixes = $this->metadata['verify_suffixes'] ?? [];
+        $suffixes = is_array($suffixes) ? array_values(array_filter($suffixes, is_string(...))) : [];
+
+        if ($suffixes === []) {
+            $this->getLogger()->warning('Plugin verify is set with no verify_suffixes - the rule will not match', [
+                'plugin' => $this->getName(),
+                'detail' => 'Without a domain list any host with a PTR record would verify, '
+                    . 'which is not verification. List the crawler domains you accept.',
+            ]);
+
+            return false;
+        }
+
+        $ip = $request->getClientIp();
+
+        if (!is_string($ip) || $ip === '') {
+            return false;
+        }
+
+        return $this->reverseDnsVerifier()->verify($ip, $suffixes);
+    }
+
+    /**
+     * The verifier, built from this plugin's cache configuration.
+     *
+     * @return ReverseDnsVerifier
+     *   The verifier.
+     */
+    protected function reverseDnsVerifier(): ReverseDnsVerifier
+    {
+        if (!$this->reverseDnsVerifier instanceof ReverseDnsVerifier) {
+            $ttl = $this->metadata['verify_ttl'] ?? 3600;
+            $negativeTtl = $this->metadata['verify_negative_ttl'] ?? 86400;
+            $threshold = $this->metadata['verify_slow_threshold_ms'] ?? 250;
+
+            $this->reverseDnsVerifier = new ReverseDnsVerifier(
+                $this->identityCachePool(),
+                is_numeric($ttl) ? (int) $ttl : 3600,
+                is_numeric($negativeTtl) ? (int) $negativeTtl : 86400,
+                // The same switch that keeps rule sources and remote configs off
+                // the request path (#228). An operator who set it meant "make no
+                // network calls while serving a request", and two DNS lookups are
+                // exactly that.
+                defined('KANOPI_FIREWALL_SOURCES_OFFLINE')
+                    && (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE'),
+                is_numeric($threshold) ? (float) $threshold : 250.0
+            );
+        }
+
+        return $this->reverseDnsVerifier;
+    }
+
+    /**
+     * A filesystem pool for verification verdicts.
+     *
+     * Its own namespace rather than sharing whatever a plugin uses for other things, so
+     * clearing one cache cannot quietly widen an allow rule by discarding verdicts.
+     *
+     * @return CacheItemPoolInterface|null
+     *   The pool, or NULL when one cannot be built.
+     */
+    protected function identityCachePool(): ?CacheItemPoolInterface
+    {
+        $configured = $this->metadata['verify_cache'] ?? null;
+
+        if ($configured instanceof CacheItemPoolInterface) {
+            return $configured;
+        }
+
+        try {
+            return new FilesystemAdapter(
+                'kanopi_firewall_rdns',
+                3600,
+                defined('KANOPI_FIREWALL_CACHE_DIR')
+                    ? (string) constant('KANOPI_FIREWALL_CACHE_DIR')
+                    : sys_get_temp_dir() . '/kanopi-firewall-rdns'
+            );
+        } catch (\Throwable $throwable) {
+            // No cache means a DNS round trip per request, which is slow but
+            // still correct. Losing the rule entirely would be worse.
+            $this->getLogger()->warning('Reverse DNS cache could not be created - verifying without a cache', [
+                'plugin' => $this->getName(),
+                'error' => $throwable->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Reads `metadata.mode`. Absent -- which is every existing configuration -- means
+     * enforce, so nothing changes for a rule that declares nothing.
+     */
+    public function isObserveMode(): bool
+    {
+        $mode = $this->metadata['mode'] ?? null;
+
+        return is_string($mode) && strtolower(trim($mode)) === 'log';
+    }
+
+    /**
+     * Tell the operator when `metadata.mode` says something unrecognised.
+     *
+     * A typo here fails in the dangerous direction: `mode: lgo` or `mode: observe` is not
+     * observe mode, so a rule the operator believed was watching quietly is enforcing on
+     * live traffic. Silence would be the worst possible answer.
+     *
+     * Once per construction, because it is a configuration problem.
+     */
+    protected function reportUnrecognisedMode(): void
+    {
+        $mode = $this->metadata['mode'] ?? null;
+
+        if ($mode === null) {
+            return;
+        }
+
+        if (is_string($mode) && in_array(strtolower(trim($mode)), ['log', 'block', 'enforce'], true)) {
+            return;
+        }
+
+        $this->getLogger()->warning('Plugin mode is not recognised - the rule will enforce', [
+            'plugin' => $this->getName(),
+            'mode' => is_scalar($mode) ? (string) $mode : gettype($mode),
+            'detail' => 'Use "log" to match without acting. Omit the key, or use "block", to enforce.',
+        ]);
+    }
 
     /**
      * Return logging context for the plugin.
@@ -198,6 +362,7 @@ abstract class AbstractPluginBase implements PluginInterface, ChallengeProviderA
 
         $this->config = $this->mergeSourceEntries($entries, $this->config);
         $this->reportUnusableRules();
+        $this->reportUnrecognisedMode();
     }
 
     /**

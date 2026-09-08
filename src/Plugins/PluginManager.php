@@ -197,12 +197,43 @@ class PluginManager
 
             $status = $plugin->evaluate($request);
 
+            // A match on something the client asserts is only worth what the
+            // assertion is worth. Verification runs after the match, so it costs
+            // nothing on the requests that did not match -- which is nearly all
+            // of them (#199).
+            if ($status && $plugin instanceof IdentityVerificationInterface && !$plugin->passesIdentityVerification($request)) {
+                $this->getLogger()->debug('Plugin matched but the client did not verify', $this->getContext($request, [
+                    'plugin_name' => $pluginName,
+                    'plugin_type' => $plugin::class,
+                ]));
+
+                $status = false;
+            }
+
             $evaluationTime = round((microtime(true) - $startTime) * 1000, 2); // Convert to ms
+            $observed = $status && $plugin instanceof ObserveModeInterface && $plugin->isObserveMode();
             $evaluatedPlugins[] = [
                 'plugin' => $pluginName,
                 'result' => $status,
+                'enforced' => !$observed,
                 'time_ms' => $evaluationTime,
             ];
+
+            if ($observed) {
+                // Warning, not debug: this is the line the operator turned the
+                // rule on to read, and it has to survive a production log level
+                // that drops debug. `enforced` is a separate key rather than a
+                // different message so a query counting matches can tell the
+                // two apart without parsing prose (#201).
+                $this->getLogger()->warning('Rule matched in observe mode - not enforced', $this->getContext($request, [
+                    'plugin_name' => $pluginName,
+                    'plugin_type' => $plugin::class,
+                    'enforced' => false,
+                    'evaluation_time_ms' => $evaluationTime,
+                ]));
+
+                continue;
+            }
 
             if ($status) {
                 $this->getLogger()->debug('Plugin evaluation matched', $this->getContext($request, [

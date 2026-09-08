@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit\Plugins;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Tests\Plugins\TestFalsePlugin;
+use Kanopi\Firewall\Tests\Plugins\TestObservablePlugin;
 use Kanopi\Firewall\Tests\Plugins\TestPluginWithMetadata;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginHigh;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginLow;
@@ -387,5 +388,150 @@ class PluginManagerTest extends AbstractTestCase
         ]);
 
         $this->assertCount(1, $manager->getPlugins());
+    }
+
+    /**
+     * A rule in observe mode matches, says so, and is not enforced (#201).
+     */
+    public function testObserveModeMatchIsNotEnforced(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['mode' => 'log']],
+        ]);
+
+        $this->assertFalse(
+            $manager->evaluate(new Request()),
+            'An observed match must be treated as no match by the evaluation loop'
+        );
+    }
+
+    /**
+     * The same rule without the key enforces, which is every existing config.
+     */
+    public function testWithoutModeTheRuleEnforces(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => []],
+        ]);
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate(new Request()));
+    }
+
+    /**
+     * Observing one rule must not stop a later one enforcing.
+     *
+     * This is the whole point: the rest of the firewall keeps working while a
+     * single rule is being watched.
+     */
+    public function testALaterRuleStillEnforcesWhenAnEarlierOneIsObserved(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'weight' => -10, 'metadata' => ['mode' => 'log']],
+            ['plugin' => TestTruePlugin::class, 'weight' => 0],
+        ]);
+
+        $this->assertInstanceOf(TestTruePlugin::class, $manager->evaluate(new Request()));
+    }
+
+    /**
+     * The observed match is logged where an operator will actually see it.
+     *
+     * `enforced` is a separate context key rather than a different message, so a
+     * query counting matches can tell an observed one from an enforced one.
+     */
+    public function testObservedMatchIsLoggedAsUnenforced(): void
+    {
+        // The base test case installs a logger with no handlers, so give this
+        // one somewhere to look.
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(
+            \Kanopi\Firewall\Logging\LoggingFactory::create([
+                ['class' => \Kanopi\Firewall\Tests\Logging\TestLogHandler::class],
+            ])
+        );
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['mode' => 'log']],
+        ]);
+
+        $manager->evaluate(new Request());
+
+        $handler = \Kanopi\Firewall\Logging\LoggingFactory::logger()->getHandlers()[0];
+        $this->assertTrue(
+            $handler->hasWarningContaining('observe mode'),
+            'An observed match should be logged at warning level'
+        );
+    }
+
+    /**
+     * A plugin implementing PluginInterface directly is unaffected.
+     *
+     * Observe mode lives on a separate interface precisely so adding it cannot
+     * make an existing custom plugin fatally incomplete.
+     */
+    public function testAPluginWithoutTheInterfaceIsUnaffectedByMode(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestTruePlugin::class, 'metadata' => ['mode' => 'log']],
+        ]);
+
+        $this->assertInstanceOf(
+            TestTruePlugin::class,
+            $manager->evaluate(new Request()),
+            'A plugin that does not implement ObserveModeInterface still enforces'
+        );
+    }
+
+    /**
+     * A verify method that is not recognised turns the match off (#199).
+     *
+     * Not "match anyway": an operator who asked for verification and mistyped it
+     * must not silently get an unverified allow rule.
+     */
+    public function testAnUnrecognisedVerifyMethodStopsTheMatch(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['verify' => 'reverse-lookup']],
+        ]);
+
+        $this->assertFalse($manager->evaluate(new Request()));
+    }
+
+    /**
+     * Verification with no domain list is not verification.
+     *
+     * Any address with a PTR record would otherwise pass, which for an allow rule
+     * is worse than no rule at all.
+     */
+    public function testVerifyWithNoSuffixesStopsTheMatch(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['verify' => 'reverse-dns']],
+        ]);
+
+        $this->assertFalse($manager->evaluate(new Request()));
+    }
+
+    /**
+     * A rule declaring no verification is untouched, which is every existing config.
+     */
+    public function testWithoutVerifyTheMatchStands(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => []],
+        ]);
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate(new Request()));
+    }
+
+    /**
+     * A plugin implementing PluginInterface directly is unaffected by the key.
+     */
+    public function testAPluginWithoutTheInterfaceIgnoresVerify(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestTruePlugin::class, 'metadata' => ['verify' => 'reverse-dns']],
+        ]);
+
+        $this->assertInstanceOf(TestTruePlugin::class, $manager->evaluate(new Request()));
     }
 }

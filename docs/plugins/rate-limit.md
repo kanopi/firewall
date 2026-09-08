@@ -13,10 +13,14 @@ plugins:
     weight: 100   # Run after other plugins
     enable: true
     metadata:
-      # Default settings for all paths
+      # Fallback for a rule that omits its own rate or sample, and for
+      # paths with no rule at all -- see "Paths with no rule of their own".
       default_rate: 60        # Requests allowed
       default_sample: 60      # Time window in seconds
       default_expiration_time: 300  # Block duration in seconds
+
+      # Set false to limit only the paths listed under config:
+      # limit_unlisted_paths: false
 
       # Storage backend for rate limit data
       storage:
@@ -81,6 +85,49 @@ plugins:
         rate: 1
         sample: 3600  # Block direct script access
 ```
+
+## Paths with no rule of their own
+
+Every path is rate limited by default, not only the ones listed under `config:`. A request
+matching no rule falls through to a catch-all built from `default_rate` and
+`default_sample`.
+
+That is worth stating plainly, because it has two consequences:
+
+- Adding a rule to protect `/user/login` also brings a **site-wide cap on every other
+  URL**, at whatever `default_rate` says.
+- Every request to the site performs a read-modify-write of the counter store, including
+  requests the operator never intended to limit.
+
+To limit only what you listed:
+
+```yaml
+metadata:
+  default_rate: 60
+  default_sample: 60
+  limit_unlisted_paths: false
+config:
+  - path: /user/login
+    rate: 5
+    sample: 300
+```
+
+An unlisted path is then not counted and not recorded — it never reaches the counter store
+at all.
+
+`default_rate` still applies to a **listed** rule that omits its own `rate`, which is why
+this is a separate key rather than a special value for `default_rate`. A rate that meant
+"switch the catch-all off" would silently unlimit those rules too.
+
+!!! warning "`default_rate: 0` does not mean unlimited"
+
+    The limit check is `count >= rate`, and a count is never negative, so a rate of `0` is
+    satisfied by no request at all — including the first. Before v2.19.2 that refused every
+    request on the site.
+
+    Since v2.19.2 a rate below 1 is treated as unenforceable and logged at construction, so
+    it no longer takes a site down. Use `limit_unlisted_paths: false` to express the intent
+    properly.
 
 ## Path Patterns
 

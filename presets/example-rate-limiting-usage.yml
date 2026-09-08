@@ -261,19 +261,19 @@ plugins:
 # EXAMPLE 9: Allow Rate Limits for Trusted IPs
 # =============================================================================
 # Combine rate limiting with IP allow rules
-configs:
-  - presets/rate-limiting.yml
+# configs:
+#   - presets/rate-limiting.yml
 
-plugins:
-  # Allow ALL checks for trusted IPs (including rate limits)
-  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
-    response: allow
-    weight: -200  # Execute before rate limiting
-    enable: true
-    config:
-      - 192.168.1.0/24  # Internal network
-      - 10.0.0.0/8      # Office network
-      - 203.0.113.50    # Monitoring server
+# plugins:
+#   # Allow ALL checks for trusted IPs (including rate limits)
+#   - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+#     response: allow
+#     weight: -200  # Execute before rate limiting
+#     enable: true
+#     config:
+#       - 192.168.1.0/24  # Internal network
+#       - 10.0.0.0/8      # Office network
+#       - 203.0.113.50    # Monitoring server
 
 # =============================================================================
 # EXAMPLE 10: File Storage (Simple Deployment)

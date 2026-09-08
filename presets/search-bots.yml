@@ -26,8 +26,23 @@
 #      ranges; pair this with an IpAddress allow fed by those and require both.
 #      Correct, and needs a published-lists story to be practical.
 #   3. Verify by reverse DNS, which is what the search engines actually
-#      document — reverse lookup, then forward-confirm. The library has no
-#      mechanism for this today.
+#      document — reverse lookup, then forward-confirm. SUPPORTED SINCE 2.20.0,
+#      and it is the correct answer. Add to the rule below:
+#
+#        metadata:
+#          verify: reverse-dns
+#          verify_suffixes:
+#            - .googlebot.com
+#            - .google.com
+#            - .search.msn.com
+#            - .applebot.apple.com
+#            - .crawl.yahoo.net
+#            - .duckduckgo.com
+#
+#      The rule then matches only when the address reverse-resolves into one of
+#      those domains AND that hostname forward-resolves back to it. A spoofed
+#      User-Agent stops being a skeleton key. Costs two DNS lookups per address,
+#      cached; see docs/plugins/user-agent.md#verifying-the-crawler-is-who-it-says
 #
 # USAGE:
 #   configs:

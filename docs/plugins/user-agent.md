@@ -150,6 +150,136 @@ database knows still reports all three fields, and one only the crawler list kno
 field going empty, but do not expect `bot.category` to be populated for everything
 `bot:true` now matches.
 
+## Verifying the crawler is who it says
+
+A user-agent rule matches on **an assertion the client makes**, not a fact. For a block
+rule that is fine: the cost of being lied to is that an attacker declines to be blocked.
+For an **allow** rule it is not, because `response: allow` short-circuits evaluation
+entirely — no block, no challenge, no rate limit. `Googlebot` in a header is one `curl`
+flag away.
+
+`verify: reverse-dns` makes the rule prove it:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: allow
+    weight: -200
+    metadata:
+      name: verified-search-crawlers
+      verify: reverse-dns
+      verify_suffixes:
+        - .googlebot.com
+        - .google.com
+        - .search.msn.com
+        - .applebot.apple.com
+    config:
+      - "bot:true"
+```
+
+The rule matches as usual, and then the match has to survive three steps — the same ones
+Google, Bing and Apple all document:
+
+1. **Reverse lookup** the client address to a hostname.
+2. **Check the hostname** is inside one of `verify_suffixes`.
+3. **Forward-resolve that hostname** and confirm it comes back to the address it started
+   from.
+
+Step 3 is the one that matters. Anyone can point reverse DNS for an address they control
+at `crawl-1-2-3-4.googlebot.com`; only Google can make that name resolve back.
+
+### Anything less than a confirmed round trip is no match
+
+No PTR record, a hostname outside the list, a forward lookup that does not come back, DNS
+unreachable — all of them mean the rule does not match, and evaluation carries on to the
+rules below it.
+
+That is the opposite of the fail-**open** posture that is right for a reputation source
+like [AbuseIPDB](abuseipdb.md), and deliberately so. A block source that cannot be reached
+should not start blocking everyone; an allow rule that cannot be verified must not start
+allowing everyone.
+
+### Suffixes are matched on a label boundary
+
+`googlebot.com` accepts `crawl.googlebot.com` and `googlebot.com` itself. It does **not**
+accept `evilgooglebot.com`, which anyone can register. Writing the leading dot
+(`.googlebot.com`) is clearer and behaves identically.
+
+### The cost, and what bounds it
+
+**Read this before enabling it.** Two DNS lookups is far more than a request can afford:
+
+| | Measured |
+|---|---|
+| Reverse lookup, cold | ~38 ms |
+| Forward confirmation | ~74 ms |
+| **Round trip, cold** | **~112 ms** |
+| Round trip, OS resolver warm | ~2 ms |
+| **Cached verdict** | **0.02 ms** |
+| Skipped (offline or breaker open) | 0.007 ms |
+
+For scale, the firewall's entire evaluation is 3.5–5 ms. A cold verification is ~25× the
+cost of everything else it does.
+
+Five things keep that off the request path:
+
+1. **It only runs after the rule has already matched.** A request matching nothing never
+   pays anything.
+2. **Verdicts are cached per address**, and a cached verdict costs 0.02 ms.
+3. **Refusals are cached far longer than acceptances** (`verify_negative_ttl`, a day by
+   default). Refusals are what a spoofer generates, and an address that is not Googlebot
+   will not become Googlebot. One lookup per attacking address, then nothing.
+4. **Concurrent lookups for one address collapse to one.** The others fail closed rather
+   than queueing behind it.
+5. **A slow lookup trips a breaker** and DNS is skipped entirely for `verify_breaker_cooldown`
+   seconds.
+
+| Key | Default | |
+|---|---|---|
+| `verify_ttl` | `3600` | Seconds an acceptance stays good |
+| `verify_negative_ttl` | `86400` | Seconds a refusal stays good |
+| `verify_slow_threshold_ms` | `250` | A lookup slower than this trips the breaker |
+| `verify_cache` | filesystem | Any PSR-6 pool; falls back to `KANOPI_FIREWALL_CACHE_DIR` |
+
+### Run a local caching resolver
+
+Not a suggestion — a prerequisite. The 112 ms cold figure drops to ~2 ms once the host's
+resolver has the answer, so `systemd-resolved`, `dnsmasq` or `unbound` on the host is what
+makes this affordable at all. Without one, every cache expiry is 112 ms of blocked worker.
+
+!!! danger "PHP cannot put a timeout on a DNS lookup"
+
+    `gethostbyaddr()` takes no timeout, and neither does `dns_get_record()`. Both are
+    bounded only by the system resolver — commonly 5 seconds per nameserver with two
+    attempts, so a degraded resolver can block a worker for **tens of seconds**, and
+    nothing in PHP can make it give up.
+
+    That is what the breaker is for. One worker paying that cost is survivable; every
+    worker paying it in turn is an outage. After one slow lookup the rest skip DNS and
+    fail closed until the resolver recovers.
+
+### Offline switches it off
+
+`KANOPI_FIREWALL_SOURCES_OFFLINE` covers this too, exactly as it covers
+[rule sources](../configuration/sources.md) and remote `configs:` includes. An operator who
+set it meant *make no network calls while serving a request*, and two DNS lookups are
+precisely that.
+
+Offline, a verdict already in the cache is still honoured — reading it costs no network.
+An address with no cached verdict simply does not verify, so the rule does not match.
+
+!!! warning "A mistyped `verify` does not match"
+
+    The only supported value is `reverse-dns`. Anything else logs a warning at construction
+    and the rule matches nothing — rather than silently reverting to an unverified allow,
+    which is the failure an operator would never notice.
+
+    `verify` with no `verify_suffixes` behaves the same way: without a domain list, any
+    address with a PTR record would pass, and that is not verification.
+
+Available on any plugin extending `AbstractPluginBase`, so `IpAddress` and the rest accept
+the same keys.
+
 ## Caching
 
 The plugin's detection is backed by `matomo/device-detector`, which compiles a 1.7&nbsp;MB corpus of regex files on the first parse in each PHP process. That costs **110–637&nbsp;ms** depending on the user agent — ordinary mobile browsers are among the worst cases, because brand and model detection walks the largest part of the corpus. Once warm it is roughly 4&nbsp;ms.
