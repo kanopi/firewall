@@ -23,7 +23,7 @@ class LazyObjectRegistry
     use LoggingTrait;
 
     /**
-     * @var array<int, array{name: string, priority: int, factory: callable, instance?: object, failed?: bool}>
+     * @var array<int, array{name: string, priority: int, factory: callable, instance?: object, failed?: bool, error?: string}>
      */
     protected array $entries = [];
 
@@ -90,6 +90,16 @@ class LazyObjectRegistry
                     $entry['instance'] = null;
                     $entry['failed'] = true;
 
+                    // Kept, not just logged. A rule that is not running is a
+                    // fail-open, and until this was held the only record of it
+                    // was a log line -- so a host application with a status
+                    // report could learn that *something* failed by comparing
+                    // getCount() against what it iterated, but not which rule
+                    // or why (#260). The constructor's message is the
+                    // actionable half: "Connection refused" against "No such
+                    // file or directory".
+                    $entry['error'] = $e->getMessage();
+
                     // Error, not warning. A rule that cannot be constructed is
                     // a rule that is not running, and for a block rule that is
                     // a fail-open the operator has no other way to notice
@@ -111,6 +121,40 @@ class LazyObjectRegistry
 
             yield $entry['name'] => $entry['instance'];
         }
+    }
+
+    /**
+     * The entries whose construction was attempted and threw.
+     *
+     * Reports on attempts already made. Construction is lazy, so a registry
+     * nothing has iterated has attempted nothing and this is empty -- which is
+     * the honest answer, not a healthy one. A caller that wants to *know*
+     * must build them first; `getIterator()` does, and so does
+     * `PluginManager::getPlugins()`.
+     *
+     * @return array<int, array{name: string, error: string}>
+     *   Each failed entry, in registration order, with the message its
+     *   constructor threw.
+     */
+    public function getFailed(): array
+    {
+        $failed = [];
+
+        foreach ($this->entries as $entry) {
+            if (!($entry['failed'] ?? false)) {
+                continue;
+            }
+
+            $failed[] = [
+                'name' => $entry['name'],
+                // Defaulted rather than assumed. An entry can only be marked
+                // failed alongside its message, but reading a report should
+                // not be the thing that fatals.
+                'error' => $entry['error'] ?? 'Unknown error',
+            ];
+        }
+
+        return $failed;
     }
 
     /**

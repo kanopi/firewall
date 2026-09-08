@@ -17,6 +17,7 @@ use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Tests\Challenge\ReceiptlessSingleUseProvider;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
+use Kanopi\Firewall\Tests\Plugins\TestThrowingPlugin;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -652,6 +653,79 @@ class FirewallTest extends AbstractTestCase
      * are routed to the blocking PluginManager (not the bypass manager) and
      * reach sendBlockingResponse().
      */
+    /**
+     * A rule that could not be constructed is reportable from the Firewall.
+     *
+     * The route out for a host application with a status report: three rules
+     * configured in three buckets, one of them broken, and the report names
+     * which bucket it was in and what its constructor said (#260).
+     */
+    public function testGetFailedRulesNamesTheBucketAndTheError(): void
+    {
+        $config = [
+            'plugins' => [
+                ['plugin' => IpAddress::class, 'response' => 'allow', 'enable' => true, 'config' => ['10.0.0.1']],
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'block', 'enable' => true],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $failed = Firewall::create([$config])->getFailedRules();
+
+        $this->assertSame(
+            [[
+                'bucket' => 'block',
+                'plugin' => TestThrowingPlugin::class . ':0',
+                'error' => 'cannot connect to storage',
+            ]],
+            $failed
+        );
+    }
+
+    /**
+     * It answers without an evaluation having happened.
+     *
+     * A status report runs in its own request, where nothing has been built.
+     * Reporting "no failures" there because nothing was attempted would be the
+     * exact false clean bill of health this exists to prevent.
+     */
+    public function testGetFailedRulesBuildsRulesItselfRatherThanWaitingForAnEvaluation(): void
+    {
+        TestThrowingPlugin::$constructions = 0;
+
+        $config = [
+            'plugins' => [
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'block', 'enable' => true],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $firewall = Firewall::create([$config]);
+
+        $this->assertCount(1, $firewall->getFailedRules());
+        $this->assertSame(1, TestThrowingPlugin::$constructions, 'It constructed the rule to find out');
+
+        // And having found out, it does not go back and ask again.
+        $this->assertCount(1, $firewall->getFailedRules());
+        $this->assertSame(1, TestThrowingPlugin::$constructions);
+    }
+
+    /**
+     * A firewall whose every rule builds reports nothing.
+     */
+    public function testGetFailedRulesIsEmptyWhenEveryRuleBuilds(): void
+    {
+        $config = [
+            'plugins' => [
+                ['plugin' => IpAddress::class, 'response' => 'allow', 'enable' => true, 'config' => ['10.0.0.1']],
+                ['plugin' => IpAddress::class, 'response' => 'block', 'enable' => true, 'config' => ['127.0.0.1']],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $this->assertSame([], Firewall::create([$config])->getFailedRules());
+    }
+
     public function testResponseBlockEntryBlocksAtRuntime(): void
     {
         $config = [

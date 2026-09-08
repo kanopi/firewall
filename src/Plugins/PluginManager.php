@@ -270,6 +270,38 @@ class PluginManager
     }
 
     /**
+     * The rules that could not be constructed, and why.
+     *
+     * A rule whose constructor throws is logged at `error`, marked failed and
+     * never evaluated (#247). That is the right behaviour -- a rate limit
+     * backend pointed at an unreachable Redis host should not take the site
+     * down -- but it is a fail-open, and a log line is not something a status
+     * report can read. This is (#260).
+     *
+     * Reports on construction already attempted, and attempts none itself.
+     * Rules are built lazily, so on a request that has not evaluated yet this
+     * is empty; `getPlugins()` builds them all, and `Firewall::getFailedRules()`
+     * is the supported way to ask.
+     *
+     * @return array<int, array{plugin: string, error: string}>
+     *   The failed rules, each with the message its constructor threw.
+     */
+    public function getFailedPlugins(): array
+    {
+        return array_map(
+            // The registry keys an entry by the unique id
+            // `createFromPluginsArray()` built -- `Class:index`, so two
+            // instances of one plugin can be told apart. That is what a report
+            // needs to name the rule, so it is passed through as it is.
+            static fn(array $entry): array => [
+                'plugin' => $entry['name'],
+                'error' => $entry['error'],
+            ],
+            $this->registry->getFailed()
+        );
+    }
+
+    /**
      * Get the list of plugins.
      *
      * @return array<PluginInterface>
