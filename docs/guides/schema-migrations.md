@@ -97,12 +97,45 @@ firewall.WARNING: Database table is behind the schema this release declares
 `warning`, not `error`: everything the table is asked to do today, it still does. A missing
 index makes a query slow, not wrong.
 
-The check costs one schema introspection per table — 0.48 ms against the 0.02 ms an
-existence check costs — and is paid **once per table per PHP process**, not once per request
-and not on a timer. Drift cannot appear mid-process: the declaration is fixed in the code
-that is running, and the only thing that changes the live table is a migration, which brings
-it closer. The same flag doubles as the record of having warned, so an operator who cannot
-run the migration is not told once a minute for the life of the worker.
+### What the check costs, and why it is sampled
+
+Comparing a table against the declaration means introspecting it, and that is not free:
+
+| `DatabaseStorage`, 2 tables, over a socket to MariaDB | |
+|---|---|
+| Asking whether the tables exist | 0.70 ms |
+| Introspecting them | **4.06 ms** |
+
+So the check is **drawn for, not always run** — 1% of constructions by default. Two things
+make that the right shape rather than a fudge:
+
+- **A per-process flag is not enough on its own.** Under PHP-FPM a worker persists, so
+  "check once per process" really is once per worker. Under mod_php or CGI the process *is*
+  the request, so the same flag means once per request — and a deployment declaring four
+  tables would pay about 12 ms of introspection on every one of them.
+- **The warning does not need to be prompt.** An operator learns within a few hundred
+  requests that an index is missing, which is soon enough for something that has been missing
+  since the last upgrade.
+
+At 1% the amortised cost is small enough to be unmeasurable against the construction it sits
+in. Set it lower, or turn it off:
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\DatabaseStorage"
+  config:
+    schema_check_probability: 0    # never check on the request path
+```
+
+Accepted by `DatabaseStorage`, `DatabaseRateLimitStorage` and `DatabaseHandler`, and it is
+deliberately the same shape as the handler's existing `prune_probability`: the same problem —
+periodic maintenance that must not live on the request path — with the same escape hatch.
+
+**`0` does not disable migration**, only the warning. `bin/firewall-migrate --dry-run` answers
+the question deterministically and exits `3` when something is pending, which is the better
+place for it if you gate schema changes on deploy.
+
+### When it cannot check
 
 A database user without the privilege to read `information_schema` fails this check. That is
 logged at `debug` and stepped over — comparing the schema is not the job, enforcing the rules

@@ -293,6 +293,11 @@ firewall.WARNING: Database table is behind the schema this release declares
 [`bin/firewall-migrate`](../guides/schema-migrations.md) adds what is missing. It only ever
 adds — nothing is dropped, renamed or rewritten — so no run of it can lose a row.
 
+The check behind that warning introspects the table, which costs more than it sounds, so it
+runs on 1% of constructions rather than all of them. `schema_check_probability: 0` alongside
+`prune_probability` turns it off and leaves the question to the script — see
+[what the check costs](../guides/schema-migrations.md#what-the-check-costs-and-why-it-is-sampled).
+
 ## Email alerts
 
 Send an email when something critical happens. `NativeMailerHandler` uses PHP's `mail()` — no extra package required:

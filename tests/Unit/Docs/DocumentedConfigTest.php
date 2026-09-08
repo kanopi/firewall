@@ -39,11 +39,11 @@ class DocumentedConfigTest extends TestCase
      */
     private const STORAGE_KEYS = [
         'Kanopi\\Firewall\\Storage\\FileStorage' => ['storage_file', 'offense_file'],
-        'Kanopi\\Firewall\\Storage\\DatabaseStorage' => ['connection', 'storage_table', 'offenses_table'],
+        'Kanopi\\Firewall\\Storage\\DatabaseStorage' => ['connection', 'storage_table', 'offenses_table', 'schema_check_probability'],
         'Kanopi\\Firewall\\Storage\\InMemoryStorage' => [],
         'Kanopi\\Firewall\\Storage\\RedisStorage' => ['redis', 'instance'],
         'Kanopi\\Firewall\\RateLimitStorage\\FileRateLimitStorage' => ['file'],
-        'Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage' => ['connection', 'storage_table'],
+        'Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage' => ['connection', 'storage_table', 'schema_check_probability'],
         'Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage' => ['redis', 'ttl', 'instance'],
         'Kanopi\\Firewall\\RateLimitStorage\\CacheRateLimitStorage' => ['adaptor', 'args', 'ttl'],
         'Kanopi\\Firewall\\RateLimitStorage\\InMemoryRateLimitStorage' => [],

@@ -178,6 +178,10 @@ class DatabaseHandler extends AbstractProcessingHandler
         $probability = $config['prune_probability'] ?? 0.01;
         $this->pruneProbability = is_numeric($probability) ? min(1.0, max(0.0, (float) $probability)) : 0.01;
 
+        $this->schemaCheckProbability = self::normalizeSchemaCheckProbability(
+            $config['schema_check_probability'] ?? null
+        );
+
         $this->connectionParameters = self::normalizeConnectionParameters($config['connection'] ?? null);
     }
 
