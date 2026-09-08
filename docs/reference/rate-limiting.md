@@ -8,7 +8,7 @@ A quick reference for every rate limit defined in the shipped [`rate-limiting.ym
 - **Status Code**: 429 (Too Many Requests)
 - **Expiration**: 300 seconds (5 minutes)
 
-!!! warning "\"General Traffic\" is one shared budget, not a per-path allowance"
+!!! warning "“General Traffic” is one shared budget, not a per-path allowance"
 
     A request matching no rule below falls through to a catch-all built from
     `default_rate`, and **every** such request counts into a single bucket per client
