@@ -13,8 +13,6 @@ namespace Kanopi\Firewall\Utility;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
-use Doctrine\DBAL\Schema\Comparator;
-use Doctrine\DBAL\Schema\ComparatorConfig;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Schema\TableDiff;
 
@@ -99,8 +97,14 @@ final class SchemaMigrator
         }
 
         $live = $this->schemaManager->introspectTable($name);
-        $comparator = new Comparator($this->connection->getDatabasePlatform(), new ComparatorConfig());
-        $tableDiff = $comparator->compareTables($live, $table);
+
+        // Asked of the schema manager, not built here. `Comparator::__construct()`
+        // is marked `@internal` -- "can be only instantiated by a schema manager"
+        // -- and its signature has already moved: DBAL 4.3 added a required
+        // `ComparatorConfig`, a class that does not exist in 4.2. Since DBAL 4.3
+        // and up need PHP 8.2, this package's 8.1 support means both versions are
+        // live at once, and only the factory reads the same in both.
+        $tableDiff = $this->schemaManager->createComparator()->compareTables($live, $table);
 
         $changes = [];
 
