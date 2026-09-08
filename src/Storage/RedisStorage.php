@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Storage;
 
 use Kanopi\Firewall\Traits\AddressMatchTrait;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\RedisConnections;
 use Redis;
 
@@ -103,6 +104,12 @@ class RedisStorage extends AbstractStorageBase implements QueryableStorageInterf
             $this->getLogger()->error('Failed to initialize Redis storage', [
                 'error' => $exception->getMessage(),
             ]);
+
+            // Logged and also recorded, so a host application's status report
+            // can say the block list is unreachable rather than leaving it to
+            // a log scraper. The rule still runs; it just has nothing to
+            // consult (#273).
+            DegradedBackends::record('block list', self::class, $exception->getMessage());
         }
     }
 

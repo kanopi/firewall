@@ -157,8 +157,31 @@ logged and every read answers as though nothing were stored, so a firewall whose
 is unreachable carries on enforcing every rule that does not depend on it.
 
 That is a deliberate trade and worth understanding: it fails *open* for the block list
-specifically. If a shared block list is load-bearing for you, watch for
-`Failed to initialize Redis storage` in the log.
+specifically. `Firewall::getDegradedBackends()` reports it, so a status page can say so
+without scraping for `Failed to initialize Redis storage` — see
+[Checking that a backend can reach its server](../guides/error-handling.md#checking-that-a-backend-can-reach-its-server).
+
+#### Connections are given a bounded timeout
+
+`new Redis(...)` connects during construction, and with no timeout configured `ext-redis`
+falls back to PHP's `default_socket_timeout` — **60 seconds** on a stock install. A Redis
+host that refuses a connection or fails to resolve answers straight away, so the bad case is
+the one that silently drops packets: a firewalled port, a wrong subnet, a security group
+nobody updated. That hung the request for a minute.
+
+`connectTimeout` and `readTimeout` therefore default to **1.5 seconds**, which is far longer
+than a Redis on the same network needs and far shorter than the alternative. A deployment
+reaching a Redis over a slower link can say so:
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\RedisStorage"
+  config:
+    redis:
+      host: redis.internal
+      connectTimeout: 5
+      readTimeout: 5
+```
 
 ## Searching and Un-blocking
 

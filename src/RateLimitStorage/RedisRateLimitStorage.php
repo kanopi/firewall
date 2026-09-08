@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\RateLimitStorage;
 
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\RedisConnections;
 use Redis;
 
@@ -67,6 +68,10 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
             $this->getLogger()->error('Failed to initialize Redis rate limit storage', [
                 'error' => $exception->getMessage(),
             ]);
+
+            // See RedisStorage: the rule runs, counting nothing, and a status
+            // report needs to be able to say so (#273).
+            DegradedBackends::record('rate limit', self::class, $exception->getMessage());
         }
     }
 
