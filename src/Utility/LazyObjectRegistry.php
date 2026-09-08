@@ -23,7 +23,7 @@ class LazyObjectRegistry
     use LoggingTrait;
 
     /**
-     * @var array<int, array{name: string, priority: int, factory: callable, instance?: object}>
+     * @var array<int, array{name: string, priority: int, factory: callable, instance?: object, failed?: bool}>
      */
     protected array $entries = [];
 
@@ -64,6 +64,14 @@ class LazyObjectRegistry
     public function getIterator(): \Generator
     {
         foreach ($this->entries as &$entry) {
+            // Construction already failed once. Retrying would run a
+            // constructor that throws on every request, and for a storage
+            // backend that means reattempting a connection that is not
+            // coming back.
+            if ($entry['failed'] ?? false) {
+                continue;
+            }
+
             if (!isset($entry['instance'])) {
                 $this->getLogger()->debug('Lazy loading object', [
                     'name' => $entry['name'],
@@ -80,10 +88,24 @@ class LazyObjectRegistry
                     ]);
                 } catch (\Exception $e) {
                     $entry['instance'] = null;
-                    $this->getLogger()->error('Failed to load object', [
+                    $entry['failed'] = true;
+
+                    // Error, not warning. A rule that cannot be constructed is
+                    // a rule that is not running, and for a block rule that is
+                    // a fail-open the operator has no other way to notice
+                    // (#243).
+                    $this->getLogger()->error('Firewall rule could not be constructed and is NOT active', [
                         'name' => $entry['name'],
                         'error' => $e->getMessage(),
                     ]);
+
+                    // Never yielded. Every consumer treated what came back as
+                    // a live object -- PluginManager::evaluate() called
+                    // getName() on it immediately, which turned a
+                    // configuration error into `Call to a member function
+                    // getName() on null`: a fatal Error, so a host catching
+                    // \Exception never saw it either.
+                    continue;
                 }
             }
 
