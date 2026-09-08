@@ -10,6 +10,7 @@ use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use RuntimeException;
 
 require_once __DIR__ . '/../../Traits/NamespaceOverrides.php';
+require_once __DIR__ . '/../../Traits/StorageNamespaceOverrides.php';
 
 /**
  * Unit tests for FileStorage class.
@@ -487,5 +488,175 @@ class FileStorageTest extends AbstractTestCase
         $this->assertArrayNotHasKey('198.51.100.2', $remaining, 'A lapsed ban is swept');
 
         @unlink($this->tempFile . '.offenses');
+    }
+
+    /**
+     * Two stores in one directory keep separate offense histories (#244).
+     *
+     * The old default derived the sidecar from the directory, so two sites, two
+     * environments, or one site running two stores shared one history and
+     * escalated each other's clients.
+     */
+    public function testTwoStoresInOneDirectoryDoNotShareOffenses(): void
+    {
+        $dir = sys_get_temp_dir() . '/fw-offense-split-' . uniqid();
+        mkdir($dir, 0700, true);
+
+        try {
+            $a = new FileStorage(['storage_file' => $dir . '/site-a.data']);
+            $b = new FileStorage(['storage_file' => $dir . '/site-b.data']);
+
+            $request = $this->getRequest();
+            $ip = $request->getClientIp();
+
+            $a->recordOffense($ip);
+            $a->recordOffense($ip);
+            $b->recordOffense($ip);
+
+            $this->assertSame(2, $a->countOffenses($ip));
+            $this->assertSame(1, $b->countOffenses($ip), "One store's offenses must not count against another");
+        } finally {
+            array_map('unlink', glob($dir . '/*') ?: []);
+            @rmdir($dir);
+        }
+    }
+
+    /**
+     * An existing shared history is carried over rather than abandoned.
+     *
+     * Losing it resets every client to zero offenses, so a repeat offender gets
+     * a first-offender's ban until it earns its way back up -- a security
+     * regression on upgrade that nothing would announce.
+     */
+    public function testAnExistingSharedHistoryIsAdopted(): void
+    {
+        $dir = sys_get_temp_dir() . '/fw-offense-legacy-' . uniqid();
+        mkdir($dir, 0700, true);
+
+        try {
+            $request = $this->getRequest();
+            $ip = $request->getClientIp();
+
+            // The file an older release would have left behind.
+            file_put_contents(
+                $dir . '/storage_data_offenses.json',
+                json_encode([$ip => [['timestamp' => date('c')], ['timestamp' => date('c')]]])
+            );
+
+            $storage = new FileStorage(['storage_file' => $dir . '/blocked.data']);
+
+            $this->assertSame(
+                2,
+                $storage->countOffenses($ip),
+                'History from the shared file should survive the upgrade'
+            );
+            $this->assertFileExists(
+                $dir . '/blocked.data.offenses',
+                'It should have been copied to this store, not read in place'
+            );
+        } finally {
+            array_map('unlink', glob($dir . '/*') ?: []);
+            @rmdir($dir);
+        }
+    }
+
+    /**
+     * A store that already has its own history is left alone.
+     */
+    public function testAStoreWithItsOwnHistoryIgnoresTheLegacyFile(): void
+    {
+        $dir = sys_get_temp_dir() . '/fw-offense-own-' . uniqid();
+        mkdir($dir, 0700, true);
+
+        try {
+            $request = $this->getRequest();
+            $ip = $request->getClientIp();
+
+            file_put_contents(
+                $dir . '/storage_data_offenses.json',
+                json_encode([$ip => [['timestamp' => date('c')], ['timestamp' => date('c')]]])
+            );
+            file_put_contents(
+                $dir . '/blocked.data.offenses',
+                json_encode([$ip => [['timestamp' => date('c')]]])
+            );
+
+            $storage = new FileStorage(['storage_file' => $dir . '/blocked.data']);
+
+            $this->assertSame(1, $storage->countOffenses($ip), 'Its own history wins');
+        } finally {
+            array_map('unlink', glob($dir . '/*') ?: []);
+            @rmdir($dir);
+        }
+    }
+
+    /**
+     * An explicitly configured offense file is never second-guessed.
+     */
+    public function testAnExplicitOffenseFileIsNotOverridden(): void
+    {
+        $dir = sys_get_temp_dir() . '/fw-offense-explicit-' . uniqid();
+        mkdir($dir, 0700, true);
+
+        try {
+            $request = $this->getRequest();
+            $ip = $request->getClientIp();
+
+            file_put_contents(
+                $dir . '/storage_data_offenses.json',
+                json_encode([$ip => [['timestamp' => date('c')], ['timestamp' => date('c')]]])
+            );
+
+            $storage = new FileStorage([
+                'storage_file' => $dir . '/blocked.data',
+                'offense_file' => $dir . '/chosen.json',
+            ]);
+
+            $this->assertSame(0, $storage->countOffenses($ip), 'A named file starts where it starts');
+        } finally {
+            array_map('unlink', glob($dir . '/*') ?: []);
+            @rmdir($dir);
+        }
+    }
+
+    /**
+     * A history that cannot be carried over is reported, not silently dropped.
+     *
+     * Escalation stages restart from zero when this happens, so an operator who
+     * finds repeat offenders getting first-offender bans has something to read.
+     */
+    public function testAFailedOffenseAdoptionIsReported(): void
+    {
+        // The base test case installs a logger with no handlers.
+        LoggingFactory::setLogger(LoggingFactory::create([
+            ['class' => \Kanopi\Firewall\Tests\Logging\TestLogHandler::class],
+        ]));
+
+        $dir = sys_get_temp_dir() . '/fw-offense-copyfail-' . uniqid();
+        mkdir($dir, 0700, true);
+
+        try {
+            $request = $this->getRequest();
+            file_put_contents(
+                $dir . '/storage_data_offenses.json',
+                json_encode([$request->getClientIp() => [['timestamp' => date('c')]]])
+            );
+
+            $GLOBALS['simulate_storage_copy_failure'] = true;
+
+            try {
+                $storage = new FileStorage(['storage_file' => $dir . '/blocked.data']);
+            } finally {
+                $GLOBALS['simulate_storage_copy_failure'] = false;
+            }
+
+            $this->assertSame(0, $storage->countOffenses($request->getClientIp()));
+
+            $handler = LoggingFactory::logger()->getHandlers()[0];
+            $this->assertTrue($handler->hasWarningContaining('Could not carry the previous offense history over'));
+        } finally {
+            array_map('unlink', glob($dir . '/*') ?: []);
+            @rmdir($dir);
+        }
     }
 }

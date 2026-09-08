@@ -22,6 +22,7 @@ storage:
   type: "Kanopi\\Firewall\\Storage\\FileStorage"
   config:
     storage_file: /var/log/firewall/blocked_ips.data
+    # offense_file: /var/log/firewall/blocked_ips.data.offenses
     offense_file: /var/log/firewall/blocked_ip_offenses.data
 ```
 
@@ -63,6 +64,26 @@ try {
 ```
 
 The rate-limit plugin builds its storage lazily, so a `DatabaseRateLimitStorage` that cannot connect surfaces the same exception on the first request the plugin evaluates rather than at startup.
+
+#### Where offenses are kept
+
+Offense counts drive [escalating bans](global.md#multiple-offenses-defense), and they live in
+a sidecar beside the storage file — `blocked_ips.data.offenses` for the example above — unless
+`offense_file` names somewhere else.
+
+!!! warning "This default changed in 2.22.0"
+
+    It used to be `storage_data_offenses.json` in the **directory** holding the storage file,
+    so two stores in one directory shared a single offense history: two sites, two
+    environments, or one site running two stores all escalated each other's clients. An
+    address that offended twice against one and once against another reached a
+    three-offense stage on both.
+
+    On first start after upgrading, an existing shared file is **copied** to each store's own
+    sidecar, so escalation stages survive rather than resetting every client to zero. The old
+    file is left in place and can be deleted once every store that used it has started.
+
+    Nothing changes for a configuration that already sets `offense_file`.
 
 ### 4. Redis Storage
 

@@ -48,10 +48,81 @@ class FileStorage extends InMemoryStorage
         $this->getLogger()->debug('FileStorage initialized', ['file' => $this->filePath]);
 
         $this->offensesFilePath = $this->validateFilePath(
-            strval($config['offense_file'] ?? (\dirname(\realpath($this->filePath)) . '/storage_data_offenses.json'))
+            strval($config['offense_file'] ?? $this->defaultOffenseFile())
         );
+        $this->adoptLegacyOffenseFile($config);
         $this->loadOffenseFile();
         $this->getLogger()->debug('FileStorage offenses initialized', ['file' => $this->offensesFilePath]);
+    }
+
+    /**
+     * Where offenses go when the configuration does not say.
+     *
+     * Derived from the storage file, not from the directory holding it. The old default was
+     * `{dir}/storage_data_offenses.json`, so two stores in one directory -- two sites, two
+     * environments, or one site running two stores for different purposes -- shared a single
+     * offense history and escalated each other's clients (#244).
+     *
+     * Offenses drive `blocking_escalation`, so an address that offended twice against one
+     * store and once against another reached a three-offense stage on both.
+     *
+     * @return string
+     *   Path to this store's offense sidecar.
+     */
+    protected function defaultOffenseFile(): string
+    {
+        return $this->filePath . '.offenses';
+    }
+
+    /**
+     * Carry an old shared offense file over to this store's own, once.
+     *
+     * Only when the operator has not named a file, and only when this store has no history
+     * of its own yet. Without it, upgrading resets every client to zero offenses and a
+     * repeat offender gets a first-offender's ban until it earns its way back up -- a
+     * security regression on upgrade that nothing announces.
+     *
+     * Copied rather than shared, so two stores that were contaminating each other start from
+     * the same place and diverge correctly from here. The history they start with is the
+     * history they already had; this does not make it worse.
+     *
+     * @param array<string, mixed> $config
+     *   Storage configuration.
+     */
+    protected function adoptLegacyOffenseFile(array $config): void
+    {
+        if (isset($config['offense_file'])) {
+            return;
+        }
+
+        $legacy = \dirname(\realpath($this->filePath) ?: $this->filePath) . '/storage_data_offenses.json';
+
+        if ($legacy === $this->offensesFilePath || !is_file($legacy)) {
+            return;
+        }
+
+        // A store with its own history has already been through this.
+        if ((int) @filesize($this->offensesFilePath) > 0) {
+            return;
+        }
+
+        if (!@copy($legacy, $this->offensesFilePath)) {
+            $this->getLogger()->warning('Could not carry the previous offense history over', [
+                'from' => $legacy,
+                'to' => $this->offensesFilePath,
+                'impact' => 'Escalation stages restart from zero for every client.',
+            ]);
+
+            return;
+        }
+
+        $this->getLogger()->info('Adopted the previous shared offense history', [
+            'from' => $legacy,
+            'to' => $this->offensesFilePath,
+            'detail' => 'Offenses now live beside the storage file rather than being shared '
+                . 'by every store in the directory. The old file is left in place; it can be '
+                . 'removed once every store using it has started.',
+        ]);
     }
 
     /**
