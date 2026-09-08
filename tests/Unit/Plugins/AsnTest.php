@@ -301,4 +301,41 @@ class AsnTest extends AbstractTestCase
             $plugin->evaluate($request);
         }
     }
+
+    /**
+     * A reader that is not a reader looks nothing up, and does not blow up.
+     */
+    public function testNoReaderYieldsNoRecord(): void
+    {
+        $plugin = new class(
+            ['reader' => ['type' => 'mock', 'instance' => null]],
+            ['asn:99999']
+        ) extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return null;
+            }
+        };
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '198.51.100.1');
+
+        // Fails closed on a configured-but-unusable reader, and does not fatal.
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
+    /**
+     * A reader returning something that is not a record is treated as no record.
+     */
+    public function testANonObjectLookupResultIsTreatedAsNoRecord(): void
+    {
+        $reader = $this->createMock(Reader::class);
+        $reader->method('asn')->willThrowException(new \GeoIp2\Exception\AddressNotFoundException('nope'));
+
+        $plugin = $this->createPluginWithRules($reader);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '198.51.100.1');
+
+        $this->assertFalse($plugin->evaluate($request), 'An address with no record matches nothing');
+    }
 }

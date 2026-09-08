@@ -164,7 +164,17 @@ jobs:
             # 90 held from when coverage first included the integration suite
             # until v2.19.2, by which point the real figure was 98.60% and the
             # gate was defending a number eight points below reality (#215).
-            PASSING=97
+            #
+            # 97 in v2.20.0. Raised again for 2.21.0, where the release's new
+            # code was brought back under test.
+            #
+            # Set from what can be measured locally -- 98.47% with Redis absent,
+            # because ext-redis is not installed on a developer machine and
+            # RedisRateLimitStorage's 72 lines therefore go uncovered there. CI
+            # runs a Redis service and covers them, so the real figure here
+            # should be near 99.5%. Ratchet this up once a build reports it;
+            # setting it from an estimate would fail the build on a guess.
+            PASSING=98
             # Read, report and compare entirely inside PHP. Nothing parses
             # PHP's stdout in the shell, because on this image every `php`
             # invocation prints "Module ... is already loaded" warnings to

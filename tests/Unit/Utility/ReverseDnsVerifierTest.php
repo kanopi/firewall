@@ -304,4 +304,162 @@ class ReverseDnsVerifierTest extends AbstractTestCase
         $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
         $this->assertSame(0, $verifier->reverseCalls, 'It should not resolve behind another worker');
     }
+
+    /**
+     * With no cache there is no breaker and no in-flight marker, and it still works.
+     *
+     * A pool that cannot be built must not disable verification -- it should cost
+     * a lookup per request, which is slow but correct.
+     */
+    public function testItWorksWithNoCacheAtAll(): void
+    {
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], null);
+
+        $this->assertTrue($verifier->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertTrue($verifier->verify('66.249.66.1', ['.googlebot.com']));
+
+        $this->assertSame(2, $verifier->reverseCalls, 'Without a cache, every call resolves');
+    }
+
+    /**
+     * The breaker reopens once the cooldown lapses.
+     */
+    public function testTheBreakerStopsBlockingAfterTheCooldown(): void
+    {
+        $pool = new ArrayAdapter();
+
+        $slow = $this->verifier('crawl.evilbot.com', [['ip' => '203.0.113.5']], $pool, false, 300.0);
+        $slow->verify('203.0.113.5', ['.googlebot.com']);
+
+        // Clear the breaker the way its expiry would.
+        $pool->deleteItem('rdns_breaker');
+
+        $next = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], $pool);
+
+        $this->assertTrue($next->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame(1, $next->reverseCalls, 'Once the breaker lapses, lookups resume');
+    }
+
+    /**
+     * The in-flight marker is released, so the next request is not locked out.
+     */
+    public function testTheInFlightMarkerIsReleasedAfterTheLookup(): void
+    {
+        $pool = new ArrayAdapter();
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], $pool);
+
+        $verifier->verify('66.249.66.1', ['.googlebot.com']);
+
+        $key = 'rdns_' . hash('sha256', '66.249.66.1|.googlebot.com');
+
+        $this->assertFalse(
+            $pool->getItem($key . '_inflight')->isHit(),
+            'The claim must be released once the lookup finishes'
+        );
+    }
+
+    /**
+     * An empty address verifies nothing, and costs no lookup.
+     */
+    public function testAnEmptyAddressVerifiesNothing(): void
+    {
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']]);
+
+        $this->assertFalse($verifier->verify('', ['.googlebot.com']));
+        $this->assertSame(0, $verifier->reverseCalls);
+    }
+
+    /**
+     * A malformed address cannot forward-confirm, so it fails closed.
+     */
+    public function testAMalformedAddressFailsClosed(): void
+    {
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']]);
+
+        $this->assertFalse($verifier->verify('not-an-address', ['.googlebot.com']));
+    }
+
+    /**
+     * A blank or whitespace-only suffix is skipped rather than matching everything.
+     */
+    public function testABlankSuffixMatchesNothing(): void
+    {
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']]);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['', '   ']));
+    }
+
+    /**
+     * A forward record without a usable address is ignored, not trusted.
+     */
+    public function testAForwardRecordWithNoAddressIsIgnored(): void
+    {
+        $verifier = $this->verifier('crawl.googlebot.com', [['type' => 'A'], ['ip' => 123]]);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+    }
+
+    /**
+     * A pool that throws must not take verification down with it.
+     *
+     * PSR-6 permits getItem() to throw InvalidArgumentException, and a cache is
+     * an optimisation -- losing it should cost a DNS lookup, not the rule.
+     */
+    public function testAThrowingCacheDegradesToResolving(): void
+    {
+        $pool = new class implements \Psr\Cache\CacheItemPoolInterface {
+            public function getItem(string $key): \Psr\Cache\CacheItemInterface
+            {
+                throw new class ('unusable') extends \InvalidArgumentException implements \Psr\Cache\InvalidArgumentException {};
+            }
+
+            public function getItems(array $keys = []): iterable { return []; }
+            public function hasItem(string $key): bool { return false; }
+            public function clear(): bool { return true; }
+            public function deleteItem(string $key): bool
+            {
+                throw new class ('unusable') extends \InvalidArgumentException implements \Psr\Cache\InvalidArgumentException {};
+            }
+
+            public function deleteItems(array $keys): bool { return true; }
+            public function save(\Psr\Cache\CacheItemInterface $item): bool { return true; }
+            public function saveDeferred(\Psr\Cache\CacheItemInterface $item): bool { return true; }
+            public function commit(): bool { return true; }
+        };
+
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], $pool);
+
+        $this->assertTrue(
+            $verifier->verify('66.249.66.1', ['.googlebot.com']),
+            'A broken cache should cost a lookup, not the verification'
+        );
+        $this->assertSame(1, $verifier->reverseCalls);
+    }
+
+    /**
+     * A slow lookup against a throwing pool cannot record the breaker, and must
+     * still return its verdict rather than failing.
+     */
+    public function testASlowLookupWithAThrowingCacheStillReturns(): void
+    {
+        $pool = new class implements \Psr\Cache\CacheItemPoolInterface {
+            public function getItem(string $key): \Psr\Cache\CacheItemInterface
+            {
+                throw new class ('unusable') extends \InvalidArgumentException implements \Psr\Cache\InvalidArgumentException {};
+            }
+
+            public function getItems(array $keys = []): iterable { return []; }
+            public function hasItem(string $key): bool { return false; }
+            public function clear(): bool { return true; }
+            public function deleteItem(string $key): bool { return true; }
+            public function deleteItems(array $keys): bool { return true; }
+            public function save(\Psr\Cache\CacheItemInterface $item): bool { return true; }
+            public function saveDeferred(\Psr\Cache\CacheItemInterface $item): bool { return true; }
+            public function commit(): bool { return true; }
+        };
+
+        $verifier = $this->verifier('crawl.googlebot.com', [['ip' => '66.249.66.1']], $pool, false, 300.0);
+
+        $this->assertTrue($verifier->verify('66.249.66.1', ['.googlebot.com']));
+    }
 }

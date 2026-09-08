@@ -31,6 +31,11 @@ namespace Kanopi\Firewall\Utility;
 $GLOBALS['simulate_utility_file_get_contents_failure'] = false;
 $GLOBALS['simulate_utility_realpath_failure'] = false;
 $GLOBALS['simulate_utility_is_file_failure'] = false;
+$GLOBALS['simulate_utility_file_put_contents_failure'] = false;
+$GLOBALS['simulate_utility_fopen_failure'] = false;
+$GLOBALS['simulate_utility_flock_failure'] = false;
+$GLOBALS['simulate_utility_rename_failure'] = false;
+$GLOBALS['simulate_utility_is_writable_failure'] = false;
 
 /*
  * Every shim forwards its remaining arguments variadically. This is not
@@ -90,4 +95,58 @@ function is_file($filename)
     }
 
     return \is_file($filename);
+}
+
+/**
+ * Shadow the calls the compiled-config cache and the single-flight refresh
+ * guard depend on, so their failure paths can be exercised.
+ *
+ * All four are "the filesystem said no" branches: a lock file that cannot be
+ * opened, a lock that cannot be taken, a publish that fails after a successful
+ * write, and a cache directory that is not writable. None can be arranged
+ * reliably for real without racing the filesystem or running as another user.
+ */
+function fopen($filename, $mode, ...$args)
+{
+    if (!empty($GLOBALS['simulate_utility_fopen_failure'])) {
+        return false;
+    }
+
+    return \fopen($filename, $mode, ...$args);
+}
+
+function flock($handle, $operation, &$would_block = null)
+{
+    if (!empty($GLOBALS['simulate_utility_flock_failure'])) {
+        return false;
+    }
+
+    return \flock($handle, $operation, $would_block);
+}
+
+function rename($from, $to)
+{
+    if (!empty($GLOBALS['simulate_utility_rename_failure'])) {
+        return false;
+    }
+
+    return \rename($from, $to);
+}
+
+function is_writable($filename)
+{
+    if (!empty($GLOBALS['simulate_utility_is_writable_failure'])) {
+        return false;
+    }
+
+    return \is_writable($filename);
+}
+
+function file_put_contents($filename, $data, ...$args)
+{
+    if (!empty($GLOBALS['simulate_utility_file_put_contents_failure'])) {
+        return false;
+    }
+
+    return \file_put_contents($filename, $data, ...$args);
 }
