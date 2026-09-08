@@ -304,9 +304,20 @@ class Config
             return;
         }
 
+        // @codeCoverageIgnoreStart
+        // Reachable only where the opcache extension is loaded. It is absent
+        // from the CI image, so nothing there can execute this -- while a
+        // developer machine usually has it and does. Excluded rather than left
+        // to make coverage differ by environment.
+        //
+        // It matters in production precisely because it cannot be tested here:
+        // this file was just rewritten, and without invalidation opcache would
+        // keep serving the bytecode it compiled from the previous contents.
         if (function_exists('opcache_invalidate')) {
             @opcache_invalidate($file, true);
         }
+
+        // @codeCoverageIgnoreEnd
     }
 
     /**

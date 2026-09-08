@@ -582,4 +582,46 @@ class RateLimitTest extends AbstractTestCase
         $this->assertTrue($storage->recorded, 'Expected custom storage to be used and recordRequest to be called.');
     }
 
+
+    /**
+     * A rule entry that is not an array is skipped rather than inspected.
+     *
+     * A hand-written config can put a bare string in the rule list; reading
+     * `['rate']` off it would be a fatal.
+     */
+    public function testANonArrayRuleEntryIsSkipped(): void
+    {
+        // Before the guard this was a fatal:
+        // TypeError: Cannot access offset of type string on string
+
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 10, 'default_sample' => 10],
+            ['not-a-rule', ['path' => '/login', 'rate' => 5]],
+            $this->getMockStorage(0)
+        );
+
+        $this->assertFalse($plugin->evaluate($request));
+    }
+
+    /**
+     * A rule map with no `path` is skipped too, rather than matching everything.
+     */
+    public function testARuleWithoutAPathIsSkipped(): void
+    {
+        $request = Request::create('/anything');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $plugin = $this->getRateLimit(
+            ['default_rate' => 10, 'default_sample' => 10],
+            [['rate' => 1, 'sample' => 60]],
+            $this->getMockStorage(50)
+        );
+
+        // Falls through to the catch-all at default_rate 10, not to the
+        // path-less rule at 1.
+        $this->assertTrue($plugin->evaluate($request));
+    }
 }

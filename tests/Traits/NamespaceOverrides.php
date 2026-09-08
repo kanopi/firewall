@@ -7,6 +7,7 @@ $GLOBALS['simulate_file_put_contents_failure'] = false;
 $GLOBALS['simulate_is_readable_failure'] = false;
 $GLOBALS['simulate_is_writeable_failure'] = false;
 $GLOBALS['simulate_is_dir_failure'] = false;
+$GLOBALS['simulate_rename_failure'] = false;
 
 // `fake_fileperms` is deliberately left unset rather than NULL: the shim tests
 // with isset(), so an unset key means "report the real mode".
@@ -143,4 +144,20 @@ function chmod($filename, $permissions)
     }
 
     return \chmod($filename, $permissions);
+}
+
+/**
+ * Shadow rename() so the stage-then-publish failure path can be exercised.
+ *
+ * persistToFile() writes a temporary and renames it into place (#225). A rename
+ * that fails after a successful write is the one branch a test cannot arrange
+ * for real without racing the filesystem.
+ */
+function rename($from, $to)
+{
+    if (!empty($GLOBALS['simulate_rename_failure'])) {
+        return false;
+    }
+
+    return \rename($from, $to);
 }

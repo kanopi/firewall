@@ -14,6 +14,8 @@ use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginHigh;
 use Kanopi\Firewall\Tests\Plugins\TestPriorityPluginLow;
 use Kanopi\Firewall\Tests\Plugins\TestTruePlugin;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use Symfony\Component\HttpFoundation\Request;
 
 class PluginManagerTest extends AbstractTestCase
@@ -627,5 +629,319 @@ class PluginManagerTest extends AbstractTestCase
             $handler->hasErrorContaining('could not be constructed'),
             'A rule that failed to construct should be an error, not a warning'
         );
+    }
+
+    /**
+     * A recognised mode is accepted silently; only an unrecognised one warns.
+     */
+    public function testAnExplicitEnforceModeIsAcceptedWithoutWarning(): void
+    {
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(
+            \Kanopi\Firewall\Logging\LoggingFactory::create([
+                ['class' => \Kanopi\Firewall\Tests\Logging\TestLogHandler::class],
+            ])
+        );
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['mode' => 'block']],
+        ]);
+        $manager->evaluate(new Request());
+
+        $handler = \Kanopi\Firewall\Logging\LoggingFactory::logger()->getHandlers()[0];
+        $this->assertFalse(
+            $handler->hasWarningContaining('mode is not recognised'),
+            '"block" is an explicit no-op, not a mistake'
+        );
+    }
+
+    /**
+     * A non-string mode is reported rather than silently ignored.
+     */
+    public function testANonStringModeWarns(): void
+    {
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(
+            \Kanopi\Firewall\Logging\LoggingFactory::create([
+                ['class' => \Kanopi\Firewall\Tests\Logging\TestLogHandler::class],
+            ])
+        );
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => ['mode' => ['log']]],
+        ]);
+        $manager->evaluate(new Request());
+
+        $handler = \Kanopi\Firewall\Logging\LoggingFactory::logger()->getHandlers()[0];
+        $this->assertTrue($handler->hasWarningContaining('mode is not recognised'));
+    }
+
+    /**
+     * verify_suffixes that are not strings are discarded, leaving none -- which
+     * is not verification, so the rule matches nothing.
+     */
+    public function testNonStringVerifySuffixesAreRejected(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => [123, ['nested']],
+            ]],
+        ]);
+
+        $this->assertFalse($manager->evaluate(new Request()));
+    }
+
+    /**
+     * A request with no client address cannot be verified.
+     */
+    public function testAVerifiedRuleWithNoClientAddressDoesNotMatch(): void
+    {
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+            ]],
+        ]);
+
+        $request = new Request();
+        $request->server->remove('REMOTE_ADDR');
+
+        $this->assertFalse($manager->evaluate($request));
+    }
+
+    /**
+     * A verified rule matches when the verdict is already cached.
+     *
+     * Seeded through `verify_cache`, so the whole path -- the plugin building its
+     * verifier, the verifier reading its pool -- runs without a DNS query.
+     */
+    public function testAVerifiedRuleMatchesOnACachedVerdict(): void
+    {
+        $pool = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $key = 'rdns_' . hash('sha256', '66.249.66.1|.googlebot.com');
+        $item = $pool->getItem($key);
+        $item->set(true);
+        $pool->save($item);
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+                'verify_cache' => $pool,
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '66.249.66.1');
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate($request));
+    }
+
+    /**
+     * And does not match when the cached verdict is a refusal.
+     */
+    public function testAVerifiedRuleDoesNotMatchOnACachedRefusal(): void
+    {
+        $pool = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $key = 'rdns_' . hash('sha256', '203.0.113.5|.googlebot.com');
+        $item = $pool->getItem($key);
+        $item->set(false);
+        $pool->save($item);
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+                'verify_cache' => $pool,
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '203.0.113.5');
+
+        $this->assertFalse($manager->evaluate($request));
+    }
+
+    /**
+     * The verifier is built once per plugin, not once per request it handles.
+     */
+    public function testTheVerifierIsReusedAcrossRequests(): void
+    {
+        $pool = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+
+        foreach (['66.249.66.1', '66.249.66.2'] as $ip) {
+            $item = $pool->getItem('rdns_' . hash('sha256', $ip . '|.googlebot.com'));
+            $item->set(true);
+            $pool->save($item);
+        }
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+                'verify_cache' => $pool,
+            ]],
+        ]);
+
+        foreach (['66.249.66.1', '66.249.66.2'] as $ip) {
+            $request = Request::create('/');
+            $request->server->set('REMOTE_ADDR', $ip);
+            $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate($request));
+        }
+    }
+
+    /**
+     * With no pool configured, the plugin builds its own on the filesystem.
+     *
+     * Seeded through the same adapter the plugin constructs, so the default path
+     * is exercised without a DNS query.
+     */
+    public function testTheDefaultVerificationCacheIsUsedWhenNonePassed(): void
+    {
+        $dir = sys_get_temp_dir() . '/kanopi-firewall-rdns';
+        $pool = new \Symfony\Component\Cache\Adapter\FilesystemAdapter('kanopi_firewall_rdns', 3600, $dir);
+
+        $key = 'rdns_' . hash('sha256', '66.249.66.7|.googlebot.com');
+        $item = $pool->getItem($key);
+        $item->set(true);
+        $pool->save($item);
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '66.249.66.7');
+
+        $this->assertInstanceOf(
+            TestObservablePlugin::class,
+            $manager->evaluate($request),
+            'The plugin should find the verdict in the pool it builds by default'
+        );
+
+        $pool->deleteItem($key);
+    }
+
+    /**
+     * The TTL and threshold keys are read rather than ignored.
+     */
+    public function testVerificationTuningKeysAreAccepted(): void
+    {
+        $pool = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $key = 'rdns_' . hash('sha256', '66.249.66.8|.googlebot.com');
+        $item = $pool->getItem($key);
+        $item->set(true);
+        $pool->save($item);
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+                'verify_cache' => $pool,
+                'verify_ttl' => 60,
+                'verify_negative_ttl' => 120,
+                'verify_slow_threshold_ms' => 10,
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '66.249.66.8');
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate($request));
+    }
+
+    /**
+     * Non-numeric tuning values fall back to the documented defaults.
+     */
+    public function testNonNumericVerificationTuningFallsBack(): void
+    {
+        $pool = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $key = 'rdns_' . hash('sha256', '66.249.66.9|.googlebot.com');
+        $item = $pool->getItem($key);
+        $item->set(true);
+        $pool->save($item);
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+                'verify_cache' => $pool,
+                'verify_ttl' => 'soon',
+                'verify_negative_ttl' => ['later'],
+                'verify_slow_threshold_ms' => 'slow',
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '66.249.66.9');
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate($request));
+    }
+
+    /**
+     * KANOPI_FIREWALL_CACHE_DIR moves the verification cache.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testTheVerificationCacheHonoursTheConfiguredDirectory(): void
+    {
+        $dir = sys_get_temp_dir() . '/fw-rdns-configured-' . uniqid();
+        mkdir($dir, 0700, true);
+        define('KANOPI_FIREWALL_CACHE_DIR', $dir);
+
+        $pool = new \Symfony\Component\Cache\Adapter\FilesystemAdapter('kanopi_firewall_rdns', 3600, $dir);
+        $item = $pool->getItem('rdns_' . hash('sha256', '66.249.66.11|.googlebot.com'));
+        $item->set(true);
+        $pool->save($item);
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '66.249.66.11');
+
+        $this->assertInstanceOf(TestObservablePlugin::class, $manager->evaluate($request));
+    }
+
+    /**
+     * A cache that cannot be built costs a lookup, not the rule.
+     *
+     * The directory is pointed at a path underneath an existing *file*, which
+     * cannot be created, so the adapter's constructor throws.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testAnUnbuildableVerificationCacheIsSurvivable(): void
+    {
+        $blocker = tempnam(sys_get_temp_dir(), 'fw-rdns-blocker');
+        define('KANOPI_FIREWALL_CACHE_DIR', $blocker . '/cannot-exist');
+
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(
+            \Kanopi\Firewall\Logging\LoggingFactory::create([
+                ['class' => \Kanopi\Firewall\Tests\Logging\TestLogHandler::class],
+            ])
+        );
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => TestObservablePlugin::class, 'metadata' => [
+                'verify' => 'reverse-dns',
+                'verify_suffixes' => ['.googlebot.com'],
+            ]],
+        ]);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '198.51.100.77');
+
+        // No cache and no PTR for a documentation address: it fails closed
+        // rather than fatalling on the missing pool.
+        $this->assertFalse($manager->evaluate($request));
+
+        @unlink($blocker);
     }
 }
