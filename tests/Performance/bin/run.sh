@@ -53,6 +53,7 @@ ALL_SCENARIOS=(
     ip-address
     url
     user-agent
+    reverse-dns
     geolocation
     asn
     vulnerability-score

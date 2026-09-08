@@ -1,0 +1,54 @@
+# Scenario: reverse-dns
+#
+# Measures the cost of `verify: reverse-dns` (#199) under load.
+#
+# WHAT THIS SCENARIO ACTUALLY EXERCISES, because it is not the happy path:
+# the address pool is synthetic, so nothing in it reverse-resolves into
+# googlebot.com. Every verification therefore *refuses*, which makes this the
+# spoof-flood case — many distinct addresses claiming to be Googlebot — and
+# that is the case worth measuring. It is what an attacker produces for free
+# by setting one header, and it is where the negative cache, the in-flight
+# claim and the breaker all have to earn their place.
+#
+# It is NOT the steady-state case. A real crawler allow rule spends most of
+# its time on cache hits, which cost 0.02ms and would flatter this number.
+#
+# Read the numbers as: what does a rule with verification on cost when the
+# traffic is deliberately trying to make it expensive.
+global:
+  mode: exception
+  banning_message: "blocked"
+
+storage:
+  type: Kanopi\Firewall\Storage\InMemoryStorage
+
+plugins:
+  # The rule under test. `weight: -200` so it runs first, as a crawler allow
+  # rule would, and so verification is on the path of every matching request
+  # rather than behind something that already blocked it.
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: allow
+    weight: -200
+    enable: true
+    metadata:
+      name: verified-search-crawlers
+      verify: reverse-dns
+      verify_suffixes:
+        - .googlebot.com
+        - .google.com
+        - .search.msn.com
+        - .applebot.apple.com
+      # Deliberately left at the defaults. Tuning them for the benchmark would
+      # measure the tuning rather than the feature.
+    config:
+      - "bot:true"
+
+  # Something for an unverified crawler to fall through to, so the scenario
+  # measures a complete decision rather than a rule that matches nothing.
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    weight: 0
+    enable: true
+    config:
+      - "path:/wp-admin*"
+      - "path:/wp-login.php"
