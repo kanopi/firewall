@@ -49,6 +49,15 @@ pages describe *how to accomplish something*.
 
     [:octicons-arrow-right-24: Syncing rule sources](syncing-sources.md)
 
+-   :material-database-arrow-up-outline:{ .lg .middle } **Schema Migrations**
+
+    ---
+
+    Add the columns and indexes an existing database table is missing, without
+    dropping it. Only ever additive, so no run can lose a row.
+
+    [:octicons-arrow-right-24: Schema migrations](schema-migrations.md)
+
 -   :material-map-marker-radius-outline:{ .lg .middle } **GeoIP Setup**
 
     ---
