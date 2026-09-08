@@ -119,6 +119,16 @@ not have it escalated straight back on the client's next offence.
 that `reset()` only clears keys under the configured prefix — a neighbouring application's
 keys are left alone.
 
+#### One connection per server, not per backend
+
+`RedisStorage` and
+[`RedisRateLimitStorage`](../plugins/rate-limit.md) share a connection when they are pointed
+at the same server, so using Redis for both the block list and rate limiting costs one
+connection per request rather than two.
+
+Sharing is decided by the resolved options, so different hosts — or different databases on
+one host — still get their own. An injected `instance` always wins over the shared one.
+
 #### A Redis it cannot reach degrades rather than fails
 
 Unlike `DatabaseStorage`, an unreachable Redis is **not** a startup exception. The error is
