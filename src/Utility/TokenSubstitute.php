@@ -286,6 +286,12 @@ final class TokenSubstitute
             throw new ConfigurationException(\sprintf('Failed reading %%file(%s)%%', $path));
         }
 
+        // A %file()% read is a dependency of the parsed result just as much as
+        // the YAML itself, so a cached config has to notice when it changes
+        // (#227). Registered rather than returned, because this sits deep in a
+        // recursive substitution that has nowhere to hand it back to.
+        ConfigLoader::registerReadFile($path);
+
         return $contents;
     }
 
