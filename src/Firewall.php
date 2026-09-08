@@ -86,11 +86,18 @@ final class Firewall
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
 
+        // count(), not count(getPlugins()). The latter is
+        // iterator_to_array(getIterator()), which constructs every plugin -- and
+        // PHP evaluates arguments before the call, so it ran at every log level,
+        // including the production ones that discard this line. Plugin
+        // constructors open storage connections, read config files and build
+        // caches, so the whole registry was being built on every request to
+        // produce three numbers that were then thrown away (#248).
         $this->getLogger()->debug('Firewall instance created', [
             'storage_type' => $storage::class,
-            'blocking_plugins_count' => count($blockingPluginManager->getPlugins()),
-            'bypass_plugins_count' => count($bypassPluginManager->getPlugins()),
-            'challenge_plugins_count' => count($challengePluginManager->getPlugins()),
+            'blocking_plugins_count' => $blockingPluginManager->count(),
+            'bypass_plugins_count' => $bypassPluginManager->count(),
+            'challenge_plugins_count' => $challengePluginManager->count(),
             'config_keys' => array_keys($config), // Log keys instead of full config to avoid sensitive data
             'mode' => $this->firewallMode->value,
             'challenge_enabled' => $challengeProvider instanceof \Kanopi\Firewall\Challenge\ChallengeProviderInterface,

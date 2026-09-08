@@ -255,6 +255,21 @@ class PluginManager
     }
 
     /**
+     * How many rules are registered.
+     *
+     * Counts registrations, and constructs nothing. `count($manager->getPlugins())`
+     * looks equivalent and is not: it builds every plugin to arrive at the same
+     * number (#248).
+     *
+     * @return int
+     *   The number of registered plugins.
+     */
+    public function count(): int
+    {
+        return $this->registry->getCount();
+    }
+
+    /**
      * Get the list of plugins.
      *
      * @return array<PluginInterface>
