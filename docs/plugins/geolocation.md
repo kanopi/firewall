@@ -76,6 +76,74 @@ plugins:
 - `postal.code` - Postal/ZIP code
 
 
+## Caching lookups across requests
+
+Reading the MaxMind database costs about **0.305 ms** per lookup. Within a single request
+that is already paid once per address rather than once per rule variable — `country:US`
+alongside `city:London` reads one record, not two.
+
+Across requests, an optional PSR-6 cache holds the **resolved values**:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    metadata:
+      cache:
+        adaptor: "Symfony\\Component\\Cache\\Adapter\\RedisAdapter"
+        args: ["redis://127.0.0.1:6379", "geoip", 86400]
+        ttl: 86400
+      reader:
+        type: reader
+        db: /path/to/GeoLite2-City.mmdb
+    config: ["country:CN"]
+```
+
+The shape matches the one [user agent](user-agent.md#caching) and
+[rate limiting](rate-limit.md) already accept, so there is a single convention to learn.
+
+### It is off by default, and that is deliberate
+
+| | |
+|---|---|
+| Database lookup | 0.305 ms |
+| Cache **hit** (Redis) | 0.036 ms |
+| Cache **write** on a miss | 0.094 ms |
+
+A hit is roughly 8× cheaper than the lookup — but **a miss costs the lookup *plus* the
+write**, so it is more expensive than not caching at all. The break-even is about a **26%
+hit rate**.
+
+Ordinary traffic clears that comfortably: the same visitors and crawlers return, and their
+addresses repeat. A flood arriving from thousands of distinct addresses does not — and that
+is exactly when the firewall is busiest. Turning this on by default would make the worst
+case worse, so you are asked to decide.
+
+### Use a store that can evict
+
+Cached values are keyed per address, so a busy site accumulates one entry per distinct
+client. On a filesystem pool that is one file each — 20,000 addresses measured at 20,000
+files and **78 MB**, none of which goes away on its own.
+
+Redis with a `maxmemory-policy` of `allkeys-lru` bounds that: the least-used entries are
+evicted and the cache stays the size you allowed it. `ttl` (a day by default) is the other
+half of the answer, but eviction is what protects you from address diversity.
+
+### Only scalars are cached
+
+The GeoIP2 model is never stored — only the resolved value, which is a string, a number or
+null. A cache is a shared store, and an object in a shared store is an object somebody may
+deserialise. This library keeps PHP deserialisation out of everything it writes and reads
+back, and a country code is safe wherever it is kept.
+
+A resolved `null` is cached like any other answer: an address with no record will not
+acquire one, and re-asking costs the same read that produced the null.
+
+### If the cache cannot be built
+
+The rule still works — every lookup simply goes to the database, which is slower and not
+broken. A warning names the adaptor and the reason.
+
 ## Reading location from CDN headers
 
 A site behind Cloudflare, CloudFront, Akamai or Fastly has already had the lookup done at

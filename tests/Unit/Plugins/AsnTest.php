@@ -323,4 +323,126 @@ class AsnTest extends AbstractTestCase
         $this->assertTrue($plugin->evaluate($request));
     }
 
+
+    /**
+     * With a pool configured, a second request for the same address reads no
+     * database at all (#6).
+     */
+    public function testAResolvedValueIsCachedAcrossRequests(): void
+    {
+        $pool = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $model = new AsnModel([
+            'autonomous_system_number' => 12345,
+            'autonomous_system_organization' => 'MockOrg',
+            'ip_address' => '198.51.100.1',
+            'prefix_len' => 24,
+        ]);
+
+        $reader = $this->createMock(Reader::class);
+        $reader->expects($this->once())->method('asn')->willReturn($model);
+
+        foreach ([1, 2] as $ignored) {
+            // A fresh plugin each time, because a plugin is constructed per
+            // request. Reusing one instance would prove nothing: the
+            // per-request memo would answer the second call on its own.
+            $request = Request::create('/');
+            $request->server->set('REMOTE_ADDR', '198.51.100.1');
+            $this->cachingPlugin($reader, $pool)->evaluate($request);
+        }
+    }
+
+    /**
+     * A different address is looked up separately.
+     */
+    public function testTheCacheIsKeyedOnTheAddress(): void
+    {
+        $pool = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $model = new AsnModel([
+            'autonomous_system_number' => 12345,
+            'autonomous_system_organization' => 'MockOrg',
+            'ip_address' => '198.51.100.1',
+            'prefix_len' => 24,
+        ]);
+
+        $reader = $this->createMock(Reader::class);
+        $reader->expects($this->exactly(2))->method('asn')->willReturn($model);
+
+        foreach (['198.51.100.1', '203.0.113.9'] as $ip) {
+            $request = Request::create('/');
+            $request->server->set('REMOTE_ADDR', $ip);
+            $this->cachingPlugin($reader, $pool)->evaluate($request);
+        }
+    }
+
+    /**
+     * Caching is off unless asked for.
+     *
+     * Measured, a cache is a net loss below roughly a 26% hit rate -- a miss
+     * costs the database read plus a write. Defaulting it on would make the
+     * attack case worse.
+     */
+    public function testCachingIsOffByDefault(): void
+    {
+        $model = new AsnModel([
+            'autonomous_system_number' => 12345,
+            'autonomous_system_organization' => 'MockOrg',
+            'ip_address' => '198.51.100.1',
+            'prefix_len' => 24,
+        ]);
+
+        $reader = $this->createMock(Reader::class);
+        $reader->expects($this->exactly(2))->method('asn')->willReturn($model);
+
+        foreach ([1, 2] as $ignored) {
+            $request = Request::create('/');
+            $request->server->set('REMOTE_ADDR', '198.51.100.1');
+            $this->createPluginWithRules($reader)->evaluate($request);
+        }
+    }
+
+    /**
+     * A pool that cannot be built leaves the rule working, just uncached.
+     */
+    public function testAnUnusableCacheAdaptorStillResolves(): void
+    {
+        $model = new AsnModel([
+            'autonomous_system_number' => 12345,
+            'autonomous_system_organization' => 'MockOrg',
+            'ip_address' => '198.51.100.1',
+            'prefix_len' => 24,
+        ]);
+
+        $reader = $this->createMock(Reader::class);
+        $reader->method('asn')->willReturn($model);
+
+        foreach ([['adaptor' => 'NoSuchAdaptorClass'], ['adaptor' => \stdClass::class], []] as $cacheConfig) {
+            $plugin = $this->cachingPlugin($reader, $cacheConfig);
+
+            $request = Request::create('/');
+            $request->server->set('REMOTE_ADDR', '198.51.100.1');
+
+            $this->assertIsBool($plugin->evaluate($request));
+        }
+    }
+
+    /**
+     * The harness, with a cache configured.
+     *
+     * @param mixed $cache
+     *   A pool instance, or a `metadata.cache` array.
+     */
+    private function cachingPlugin(Reader $mockReader, mixed $cache): Asn
+    {
+        return new class(
+            [
+                'reader' => ['type' => 'mock', 'instance' => $mockReader],
+                'cache' => $cache,
+            ],
+            ['asn:99999', 'asn_org:NotThisOrg']
+        ) extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return $config['instance'] ?? null;
+            }
+        };
+    }
 }
