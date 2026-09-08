@@ -61,6 +61,24 @@ final class ConfigLoader
     private static array $includeStack = [];
 
     /**
+     * Every file actually read during the current load, absolute path to mtime.
+     *
+     * The set of files a configuration depends on is not knowable from the
+     * entry point: `configs:` includes recurse and glob, so what gets read is
+     * only discovered by reading it. Recording it here is what lets the merged
+     * result be cached and invalidated correctly (#227).
+     *
+     * Stored as "mtime:size" rather than mtime alone: mtime has one-second
+     * granularity, so a rewrite inside the same second would otherwise go
+     * unnoticed. Size does not close that window entirely -- a same-second
+     * edit of identical length still slips through -- but it closes the common
+     * case for the cost of one stat that has already been taken.
+     *
+     * @var array<string, string>
+     */
+    private static array $loadedFiles = [];
+
+    /**
      * Parse a YAML string whose "origin" is a specific config file path.
      *
      * Relative paths and "configs" includes will be resolved against dirname($configFilePath).
@@ -96,6 +114,49 @@ final class ConfigLoader
      * @return array<int, array{file: string, message: string}>
      *   One entry per input that parsed to something unusable.
      */
+    /**
+     * Record a file the parse depended on but did not itself parse.
+     *
+     * `%file(...)%` reads a file into a value, so the result is only valid
+     * while that file is unchanged.
+     *
+     * @param string $path
+     *   The file that was read.
+     */
+    public static function registerReadFile(string $path): void
+    {
+        $abs = Path::realOrGiven($path);
+        self::$loadedFiles[$abs] = self::fileFingerprint($abs);
+    }
+
+    /**
+     * A cheap stamp for detecting that a file changed.
+     *
+     * @param string $path
+     *   File to stamp.
+     *
+     * @return string
+     *   "mtime:size".
+     */
+    public static function fileFingerprint(string $path): string
+    {
+        return ((int) @filemtime($path)) . ':' . ((int) @filesize($path));
+    }
+
+    /**
+     * Files read since the last call, with the mtime each had when read.
+     *
+     * @return array<string, string>
+     *   Absolute path to fingerprint.
+     */
+    public static function takeLoadedFiles(): array
+    {
+        $files = self::$loadedFiles;
+        self::$loadedFiles = [];
+
+        return $files;
+    }
+
     public static function takeLoadErrors(): array
     {
         $errors = self::$loadErrors;
@@ -226,6 +287,7 @@ final class ConfigLoader
         self::$includeStack[$abs] = true;
         try {
             $baseDir = \dirname($abs);
+            self::$loadedFiles[$abs] = self::fileFingerprint($abs);
             $data = Yaml::parseFile($abs) ?? [];
 
             if (!is_array($data)) {

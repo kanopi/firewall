@@ -138,13 +138,23 @@ class Asn extends AbstractPluginBase
         }
 
         try {
-            $clientIp = $request->getClientIp();
-            $record = $this->reader->asn($clientIp);
+            $clientIp = strval($request->getClientIp());
+            $record = $this->lookupRecord('asn', $clientIp);
+
+            // @codeCoverageIgnoreStart
+            // lookupRecord() may return null -- no reader, or a reader without
+            // the method -- but getValue() has already refused both above, and
+            // the GeoIP2 reader's return type forbids null. Unreachable from
+            // here, and kept because the trait's contract permits it and a
+            // future caller may not guard as carefully.
+            if ($record === null) {
+                return null;
+            }
+
+            // @codeCoverageIgnoreEnd
 
             $this->getLogger()->debug('ASN lookup successful', $this->getContext($request, [
-                /** @phpstan-ignore-next-line  */
                 'asn' => $record->autonomousSystemNumber ?? 'unknown',
-                /** @phpstan-ignore-next-line  */
                 'asn_org' => $record->autonomousSystemOrganization ?? 'unknown',
                 'variable' => $variable,
             ]));

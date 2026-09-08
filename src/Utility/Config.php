@@ -64,6 +64,15 @@ class Config
      */
     public static function load(array $configs = [], array $overrides = []): array
     {
+        $cacheKey = self::configCacheKey($configs, $overrides);
+        $cached = self::readConfigCache($cacheKey);
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        ConfigLoader::takeLoadedFiles();
+
         $merged = [];
 
         /**
@@ -112,7 +121,242 @@ class Config
             self::recordLoadWarning('config references', $problem);
         }
 
+        // Only a clean load is cached. A degraded one -- a file that could not
+        // be read, a remote include served stale -- would otherwise be frozen
+        // in place, and the operator would keep getting the degraded result
+        // long after fixing the cause.
+        if (self::$loadErrors === [] && self::$loadWarnings === []) {
+            self::writeConfigCache($cacheKey, $merged, ConfigLoader::takeLoadedFiles());
+        }
+
         return $merged;
+    }
+
+    /**
+     * Identify a load by what was asked for, not by what it read.
+     *
+     * @param array<int, string|array<string, mixed>|null> $configs
+     *   The requested configuration sources.
+     * @param array<string, mixed> $overrides
+     *   Runtime overrides.
+     *
+     * @return string
+     *   A cache key.
+     */
+    private static function configCacheKey(array $configs, array $overrides): string
+    {
+        return hash('xxh128', serialize([$configs, $overrides]));
+    }
+
+    /**
+     * Where the compiled configuration is kept.
+     *
+     * @return string|null
+     *   A writable directory, or null when there is none.
+     */
+    private static function configCacheDir(): ?string
+    {
+        // The cast is taken before the concatenation, not inside it. Rector
+        // strips a cast adjacent to a concat (RemoveConcatAutocastRector,
+        // correctly -- concatenation casts anyway), and PHPStan then objects
+        // to concatenating a mixed constant. Split, both are satisfied.
+        if (defined('KANOPI_FIREWALL_CACHE_DIR')) {
+            $configured = (string) KANOPI_FIREWALL_CACHE_DIR;
+            $dir = $configured . '/compiled';
+        } else {
+            $dir = sys_get_temp_dir() . '/kanopi-firewall-config';
+        }
+
+        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+            return null;
+        }
+
+        return is_writable($dir) ? $dir : null;
+    }
+
+    /**
+     * Return a cached merge, if one is still valid.
+     *
+     * Validity is checked against every file the cached load actually read --
+     * including recursive `configs:` includes and `%file()%` reads, which are
+     * only discoverable by having loaded once -- and against the environment,
+     * because `%env()%` is resolved during the parse and baked into the result.
+     *
+     * Hashing the whole environment rather than tracking which variables were
+     * referenced: it costs 0.0065 ms against a 5.9 ms parse, it cannot miss a
+     * variable, and over-invalidating is the safe direction.
+     *
+     * @param string $key
+     *   Cache key.
+     *
+     * @return array<string, mixed>|null
+     *   The cached configuration, or null when there is none or it is stale.
+     */
+    private static function readConfigCache(string $key): ?array
+    {
+        $dir = self::configCacheDir();
+
+        if ($dir === null) {
+            return null;
+        }
+
+        $file = $dir . '/' . $key . '.php';
+
+        if (!is_file($file)) {
+            return null;
+        }
+
+        // The cache is PHP source, so a bad file does not merely fail to
+        // parse -- it can raise inside the include, and `@` does not suppress
+        // that. Left alone it would fatal on every subsequent request until
+        // somebody found and deleted the file, turning a cache into an outage.
+        // Catch it, throw the file away, and fall through to a real load.
+        try {
+            $payload = @include $file;
+        } catch (\Throwable $throwable) {
+            @unlink($file);
+
+            self::recordLoadWarning($file, sprintf(
+                'Compiled configuration cache could not be loaded and has been discarded: %s',
+                $throwable->getMessage()
+            ));
+
+            return null;
+        }
+
+        if (!is_array($payload) || !isset($payload['config'], $payload['files'], $payload['env'])) {
+            @unlink($file);
+
+            return null;
+        }
+
+        if ($payload['env'] !== self::environmentFingerprint()) {
+            return null;
+        }
+
+        foreach ($payload['files'] as $path => $fingerprint) {
+            if (ConfigLoader::fileFingerprint((string) $path) !== $fingerprint) {
+                return null;
+            }
+        }
+
+        return $payload['config'];
+    }
+
+    /**
+     * Store a merge against the files and environment it was built from.
+     *
+     * @param string $key
+     *   Cache key.
+     * @param array<string, mixed> $merged
+     *   The merged configuration.
+     * @param array<string, string> $files
+     *   Files read, absolute path to fingerprint.
+     */
+    private static function writeConfigCache(string $key, array $merged, array $files): void
+    {
+        $dir = self::configCacheDir();
+
+        if ($dir === null || $files === []) {
+            return;
+        }
+
+        // The cache is PHP source produced by var_export(), which cannot
+        // represent an object -- it emits `Foo::__set_state(...)`, and most
+        // classes do not implement it. A configuration assembled in code can
+        // legitimately hold one: a Monolog handler instance, a PSR-6 pool.
+        //
+        // serialize() would handle them and is deliberately not used. This
+        // library keeps PHP serialisation out of anything it writes and reads
+        // back, to eliminate the object-injection class of attack (CWE-502) --
+        // FileTrait says the same about storage. A cache file is exactly the
+        // kind of thing an attacker who gets a foothold would like to be
+        // unserialised.
+        //
+        // So a configuration containing an object is simply not cached. It
+        // cannot have come from YAML, which yields only scalars and arrays, so
+        // this costs nothing to the file-based configurations the cache exists
+        // for.
+        if (self::containsObject($merged)) {
+            return;
+        }
+
+        $payload = [
+            'config' => $merged,
+            'files' => $files,
+            'env' => self::environmentFingerprint(),
+        ];
+
+        $code = '<?php return ' . var_export($payload, true) . ';';
+        $temporary = $dir . '/' . $key . '.' . getmypid() . '.tmp';
+
+        if (@file_put_contents($temporary, $code, LOCK_EX) === false) {
+            return;
+        }
+
+        @chmod($temporary, 0600);
+
+        $file = $dir . '/' . $key . '.php';
+
+        if (!@rename($temporary, $file)) {
+            @unlink($temporary);
+
+            return;
+        }
+
+        // @codeCoverageIgnoreStart
+        // Reachable only where the opcache extension is loaded. It is absent
+        // from the CI image, so nothing there can execute this -- while a
+        // developer machine usually has it and does. Excluded rather than left
+        // to make coverage differ by environment.
+        //
+        // It matters in production precisely because it cannot be tested here:
+        // this file was just rewritten, and without invalidation opcache would
+        // keep serving the bytecode it compiled from the previous contents.
+        if (function_exists('opcache_invalidate')) {
+            @opcache_invalidate($file, true);
+        }
+
+        // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Whether a value holds an object anywhere inside it.
+     *
+     * @param mixed $value
+     *   Value to inspect.
+     *
+     * @return bool
+     *   True when an object is present.
+     */
+    private static function containsObject(mixed $value): bool
+    {
+        if (is_object($value)) {
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (self::containsObject($item)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * A fingerprint of the environment the parse would see.
+     *
+     * @return string
+     *   The fingerprint.
+     */
+    private static function environmentFingerprint(): string
+    {
+        return hash('xxh128', serialize(getenv()) . serialize($_SERVER));
     }
 
     /**

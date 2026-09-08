@@ -521,4 +521,42 @@ class FileTraitTest extends TestCase
         );
         $this->assertSame(0600, $requested, 'Owner read/write must survive.');
     }
+
+    /**
+     * A rename that fails leaves no temporary behind and reports failure.
+     *
+     * The write succeeded, so the data exists -- but it never became the real
+     * file, and saying otherwise would tell the caller its block was persisted
+     * when it was not.
+     */
+    public function testPersistReportsFailureWhenThePublishFails(): void
+    {
+        $GLOBALS['simulate_rename_failure'] = true;
+
+        try {
+            $result = $this->subject->save(['203.0.113.1' => ['expire' => 0]], $this->tempFile);
+        } finally {
+            $GLOBALS['simulate_rename_failure'] = false;
+        }
+
+        $this->assertFalse($result, 'A failed publish must be reported as a failed write');
+        $this->assertSame([], glob($this->tempFile . '.*.tmp') ?: [], 'The staged file should be cleaned up');
+
+        $handler = LoggingFactory::logger()->getHandlers()[0];
+        $this->assertTrue($handler->hasErrorContaining('Failed to publish storage file'));
+    }
+
+    /**
+     * Data that cannot be encoded is reported rather than written as nothing.
+     */
+    public function testPersistReportsUnencodableData(): void
+    {
+        // NAN has no JSON representation.
+        $result = $this->subject->save(['bad' => NAN], $this->tempFile);
+
+        $this->assertFalse($result);
+
+        $handler = LoggingFactory::logger()->getHandlers()[0];
+        $this->assertTrue($handler->hasErrorContaining('Failed to encode'));
+    }
 }

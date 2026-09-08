@@ -262,6 +262,19 @@ class RateLimit extends AbstractPluginBase
     protected function matchRule(string $path): array
     {
         foreach ($this->config as $rule) {
+            // A hand-written config can put a bare string, or a map with no
+            // `path`, in the rule list. Reading ['path'] off either was a fatal
+            // -- "Cannot access offset of type string on string" -- which turned
+            // a typo into a 500 rather than a rule that does not match.
+            // warnAboutUnenforceableRates() already guards the same way.
+            if (!is_array($rule)) {
+                continue;
+            }
+
+            if (!is_string($rule['path'] ?? null)) {
+                continue;
+            }
+
             $pattern = $this->wildcardToRegex($rule['path']);
             if (preg_match($pattern, $path)) {
                 $rule['rate'] ??= $this->metadata['default_rate'];
@@ -274,7 +287,7 @@ class RateLimit extends AbstractPluginBase
                     'sample' => $rule['sample'],
                 ]);
 
-                return (array)$rule;
+                return $rule;
             }
         }
 

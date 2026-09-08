@@ -1582,4 +1582,79 @@ class FirewallTest extends AbstractTestCase
 
         return $firewall;
     }
+
+    /**
+     * Building a Firewall must not build every plugin (#248).
+     *
+     * LazyObjectRegistry exists so a rule is constructed when evaluation reaches
+     * it. `count($manager->getPlugins())` in the constructor's debug line defeated
+     * that: getPlugins() is iterator_to_array(getIterator()), and PHP evaluates
+     * arguments before the call, so it ran at every log level -- including the
+     * production ones that discard the line.
+     *
+     * Plugin constructors are not free. RateLimit opens its storage connection,
+     * AbstractPluginBase loads config files and builds source managers, UserAgent
+     * sets up its device-detector cache.
+     */
+    public function testCreatingAFirewallDoesNotConstructPlugins(): void
+    {
+        \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::$constructions = 0;
+
+        $manager = PluginManager::createFromPluginsArray([
+            ['plugin' => \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::class],
+        ]);
+
+        $this->assertSame(
+            0,
+            \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::$constructions,
+            'Registering a plugin must not construct it'
+        );
+
+        $this->assertSame(1, $manager->count(), 'count() should report the registration');
+        $this->assertSame(
+            0,
+            \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::$constructions,
+            'count() must not construct anything'
+        );
+
+        // Evaluation is what builds it.
+        $manager->evaluate(Request::create('/'));
+        $this->assertSame(
+            1,
+            \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::$constructions,
+            'Evaluation should construct the plugin'
+        );
+    }
+
+    /**
+     * The real path: Firewall::create() must not construct the rules either.
+     *
+     * This is where the defect actually lived -- the constructor's debug line.
+     */
+    public function testFirewallCreateDoesNotConstructPlugins(): void
+    {
+        \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::$constructions = 0;
+
+        Firewall::create([[
+            'plugins' => [
+                [
+                    'plugin' => \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::class,
+                    'response' => 'block',
+                    'enable' => true,
+                ],
+                [
+                    'plugin' => \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::class,
+                    'response' => 'allow',
+                    'enable' => true,
+                ],
+            ],
+            'global' => ['mode' => 'exception'],
+        ]]);
+
+        $this->assertSame(
+            0,
+            \Kanopi\Firewall\Tests\Plugins\TestConstructionCountingPlugin::$constructions,
+            'Firewall::create() must not construct any rule'
+        );
+    }
 }

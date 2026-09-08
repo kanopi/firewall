@@ -297,6 +297,11 @@ class ReverseDnsVerifier
      *
      * @return string|false
      *   The hostname, the address unchanged when there is no PTR record, or false.
+     *
+     * @codeCoverageIgnore
+     *   One line wrapping a PHP function, and the reason this seam exists is so
+     *   the tests never touch the network. Covering it would mean making a real
+     *   DNS query from the unit suite, which is exactly what the seam prevents.
      */
     protected function reverseLookup(string $ip): string|false
     {
@@ -311,6 +316,10 @@ class ReverseDnsVerifier
      *
      * @return array<int, array<string, mixed>>|false
      *   DNS records, or false.
+     *
+     * @codeCoverageIgnore
+     *   As reverseLookup(): a one-line seam whose whole purpose is to keep the
+     *   network out of the suite.
      */
     protected function forwardLookup(string $host): array|false
     {

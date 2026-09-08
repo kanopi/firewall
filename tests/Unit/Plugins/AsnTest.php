@@ -39,6 +39,21 @@ class AsnTest extends AbstractTestCase
         };
     }
 
+    /**
+     * The same harness, with rules that read two different variables.
+     */
+    private function createPluginWithRules(Reader $mockReader): Asn
+    {
+        return new class(
+            ['reader' => ['type' => 'mock', 'instance' => $mockReader]],
+            ['asn:99999', 'asn_org:NotThisOrg']
+        ) extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return $config['instance'] ?? null;
+            }
+        };
+    }
+
     /** Tests the plugin name string. */
     public function testGetName(): void
     {
@@ -233,4 +248,79 @@ class AsnTest extends AbstractTestCase
         $request = new \Symfony\Component\HttpFoundation\Request([], [], [], [], [], ['REMOTE_ADDR' => '8.8.8.8']);
         $this->assertFalse($method->invoke($plugin, $request, 'asn'), 'Should return false when asn method is missing');
     }
+
+    /**
+     * The database is read once per address per request, not once per variable (#6).
+     *
+     * getValue() is called once for each rule variable, and each call used to do
+     * its own read -- so `asn` and `asn_org` in one rule set read the same record
+     * twice. The record for one address cannot change within a request, so the
+     * second read could never return anything different.
+     */
+    public function testTheDatabaseIsReadOncePerAddress(): void
+    {
+        $model = new AsnModel([
+            'autonomous_system_number' => 12345,
+            'autonomous_system_organization' => 'MockOrg',
+            'ip_address' => '127.0.0.1',
+            'prefix_len' => 24,
+        ]);
+
+        $reader = $this->createMock(Reader::class);
+        // The assertion: exactly one read, across both variables.
+        $reader->expects($this->once())->method('asn')->willReturn($model);
+
+        $plugin = $this->createPluginWithRules($reader);
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '127.0.0.1');
+
+        $plugin->evaluate($request);
+    }
+
+    /**
+     * Two different addresses still get their own read.
+     */
+    public function testADifferentAddressIsReadSeparately(): void
+    {
+        $model = new AsnModel([
+            'autonomous_system_number' => 12345,
+            'autonomous_system_organization' => 'MockOrg',
+            'ip_address' => '127.0.0.1',
+            'prefix_len' => 24,
+        ]);
+
+        $reader = $this->createMock(Reader::class);
+        $reader->expects($this->exactly(2))->method('asn')->willReturn($model);
+
+        $plugin = $this->createPluginWithRules($reader);
+
+        foreach (['198.51.100.1', '203.0.113.9'] as $ip) {
+            $request = Request::create('/');
+            $request->server->set('REMOTE_ADDR', $ip);
+            $plugin->evaluate($request);
+        }
+    }
+
+    /**
+     * A reader that is not a reader looks nothing up, and does not blow up.
+     */
+    public function testNoReaderYieldsNoRecord(): void
+    {
+        $plugin = new class(
+            ['reader' => ['type' => 'mock', 'instance' => null]],
+            ['asn:99999']
+        ) extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return null;
+            }
+        };
+
+        $request = Request::create('/');
+        $request->server->set('REMOTE_ADDR', '198.51.100.1');
+
+        // Fails closed on a configured-but-unusable reader, and does not fatal.
+        $this->assertTrue($plugin->evaluate($request));
+    }
+
 }
