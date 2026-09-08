@@ -241,16 +241,45 @@ trait DatabaseTrait
      * flag rather than a timestamp. A table cannot fall behind mid-process:
      * the declaration is fixed in the code that is running, and the only thing
      * that changes the live table is a migration, which can only bring it
-     * closer. So the answer is worth exactly one introspection per table per
-     * process -- 0.48 ms against the 0.02 ms an existence check costs, which
-     * is why it is not folded into the 60-second window.
+     * closer.
      *
-     * Doubling as the record of having warned: an operator who cannot run the
-     * migration should not be told once a minute for the life of the worker.
+     * It bounds the check to once per process, and under PHP-FPM that is
+     * once per worker. It is **not** the whole answer: where the process is
+     * the request -- mod_php, CGI -- a static lives for one request, so this
+     * alone would put a 4 ms introspection on every one of them (#269). The
+     * probability in `schemaCheckProbability()` is what bounds it there, and
+     * this then stops a persistent worker repeating it.
+     *
+     * Doubling as the record of having warned, for the same reason.
      *
      * @var array<string, bool>
      */
     private static array $schemasChecked = [];
+
+    /**
+     * The chance, per construction, of comparing the tables against the declaration.
+     *
+     * Introspecting a table is not free -- 4.06 ms for the two tables
+     * `DatabaseStorage` declares, against 0.70 ms to ask whether they exist,
+     * measured over a socket to MariaDB and worse over a network. A firewall
+     * must not put that on a request, and `$schemasChecked` alone does not
+     * prevent it: under PHP-FPM a static lives for the worker, but under
+     * mod_php or CGI it lives for a single request, so "once per process"
+     * becomes once per request and a four-table deployment pays about 12 ms of
+     * it (#269).
+     *
+     * So the check is drawn for rather than always run. At 1% the amortised
+     * cost is about 0.04 ms per request whatever the SAPI, and an operator
+     * learns the schema is behind within a few hundred requests -- timely
+     * enough for a warning about a missing column or index.
+     *
+     * This is `DatabaseHandler`'s `prune_probability` exactly: the same
+     * problem, periodic maintenance that cannot live on the request path, with
+     * the same escape hatch. `schema_check_probability: 0` switches it off and
+     * leaves the question to `bin/firewall-migrate --dry-run`, which answers
+     * it deterministically and exits 3 when something is pending.
+     */
+    protected float $schemaCheckProbability = 0.01;
 
     /**
      * How long a confirmation stays good, in seconds.
@@ -269,6 +298,25 @@ trait DatabaseTrait
     }
 
     /**
+     * Normalise a configured schema-check probability.
+     *
+     * @param mixed $value
+     *   The configured value, or null.
+     *
+     * @return float
+     *   A probability between 0 and 1, defaulting to 0.01.
+     */
+    protected static function normalizeSchemaCheckProbability(mixed $value): float
+    {
+        if (!is_numeric($value)) {
+            return 0.01;
+        }
+
+        return min(1.0, max(0.0, (float) $value));
+    }
+
+    /**
+     * Identify a table by the connection it lives on as well as its name.    /**
      * Identify a table by the connection it lives on as well as its name.
      *
      * Two consumers of this trait can be pointed at different databases -- a
@@ -461,6 +509,22 @@ trait DatabaseTrait
         // whose tables were created moments ago from this same declaration, so
         // there is nothing for them to be behind.
         if ($key === null || (self::$schemasChecked[$key] ?? false)) {
+            return;
+        }
+
+        // Drawn before the flag is set, so a process that does not draw it
+        // stays eligible: under FPM a worker that skips it on one request can
+        // still find out on a later one, rather than deciding once at startup
+        // never to look.
+        //
+        // `mt_rand()` rather than `random_int()`, matching `DatabaseHandler`:
+        // this decides whether to run housekeeping, not anything an attacker
+        // gains from predicting, and it is on the request path.
+        if ($this->schemaCheckProbability <= 0.0) {
+            return;
+        }
+
+        if (mt_rand(1, PHP_INT_MAX) / PHP_INT_MAX > $this->schemaCheckProbability) {
             return;
         }
 

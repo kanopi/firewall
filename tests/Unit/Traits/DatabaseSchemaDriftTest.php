@@ -61,9 +61,19 @@ class DatabaseSchemaDriftTest extends AbstractTestCase
         }
     }
 
-    private function config(): array
+    /**
+     * The check is drawn for at 1% in production, so these pin it.
+     *
+     * Everything here is about what the check reports and how often it repeats,
+     * none of which is the sampling. `testTheCheckIsSampled...` covers the draw
+     * itself.
+     */
+    private function config(float $probability = 1.0): array
     {
-        return ['connection' => ['driver' => 'pdo_sqlite', 'path' => $this->path]];
+        return [
+            'connection' => ['driver' => 'pdo_sqlite', 'path' => $this->path],
+            'schema_check_probability' => $probability,
+        ];
     }
 
     private function handler(): TestLogHandler
@@ -272,6 +282,69 @@ class DatabaseSchemaDriftTest extends AbstractTestCase
             $this->handler()->hasWarningContaining('behind the schema'),
             'A schema it could not read is not a schema it may call out of date'
         );
+    }
+
+    /**
+     * The check is not run on every construction.
+     *
+     * Under PHP-FPM a static lives for the worker, so `$schemasChecked` alone
+     * bounds this. Where the process is the request -- mod_php, CGI -- it does
+     * not, and an unsampled check would put a 4 ms introspection on every
+     * request: about 12 ms for a deployment declaring four tables (#269).
+     *
+     * Simulated here by clearing the statics between constructions, which is
+     * what a fresh process does.
+     */
+    public function testTheCheckIsSampledRatherThanRunEveryTime(): void
+    {
+        $this->createLegacyRateLimitTable();
+
+        for ($i = 0; $i < 200; $i++) {
+            $this->forgetStatics();
+            new DatabaseRateLimitStorage($this->config(0.0));
+        }
+
+        $this->assertSame(
+            0,
+            $this->countWarnings('behind the schema this release declares'),
+            'At probability 0 the schema is never introspected'
+        );
+    }
+
+    /**
+     * `schema_check_probability: 0` turns it off, leaving it to the script.
+     *
+     * The escape hatch `prune_probability: 0` already provides for pruning:
+     * an operator who gates schema changes on deploy runs
+     * `bin/firewall-migrate --dry-run` there and wants nothing on the request
+     * path at all.
+     */
+    public function testProbabilityZeroDisablesTheCheckButNotTheMigration(): void
+    {
+        $this->createLegacyRateLimitTable();
+
+        $storage = new DatabaseRateLimitStorage($this->config(0.0));
+
+        $this->assertSame(0, $this->countWarnings('behind the schema'));
+        $this->assertCount(1, $storage->pendingSchemaChanges(), 'Asking directly still answers');
+    }
+
+    /**
+     * A malformed probability falls back to the default rather than to zero.
+     *
+     * Reading `schema_check_probability: "sometimes"` as 0.0 would silently
+     * switch off the thing that tells an operator their schema is behind.
+     */
+    public function testAnUnusableProbabilityFallsBackToTheDefault(): void
+    {
+        $normalise = new \ReflectionMethod(DatabaseRateLimitStorage::class, 'normalizeSchemaCheckProbability');
+        $normalise->setAccessible(true);
+
+        $this->assertSame(0.01, $normalise->invoke(null, 'sometimes'));
+        $this->assertSame(0.01, $normalise->invoke(null, null));
+        $this->assertSame(1.0, $normalise->invoke(null, 5), 'Clamped to 1');
+        $this->assertSame(0.0, $normalise->invoke(null, -1), 'Clamped to 0');
+        $this->assertSame(0.25, $normalise->invoke(null, '0.25'), 'A numeric string is honoured');
     }
 
     /**
