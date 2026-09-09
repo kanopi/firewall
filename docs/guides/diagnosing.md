@@ -51,7 +51,8 @@ Two consequences worth knowing:
 - **A table that does not exist yet is created**, because the declared schema lives on the
   class that owns it and there is no way to ask without building it.
 
-Whether a rule can *ever* match is a static question, and belongs to the config linter.
+Whether a rule can *ever* match is a static question, and belongs to
+[`firewall-check --lint`](checking-requests.md#linting-a-config).
 
 ## What it checks
 
