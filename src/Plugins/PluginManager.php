@@ -123,7 +123,10 @@ class PluginManager
         $skippedPlugins = [];
 
         foreach ($plugins as $index => $pluginDef) {
-            $class = $pluginDef['plugin'] ?? '';
+            // Read as a string or not at all: `plugin: 123` reached
+            // class_exists(), which is typed `string` and threw a TypeError
+            // rather than being reported as the misconfiguration it is (#281).
+            $class = is_string($pluginDef['plugin'] ?? null) ? $pluginDef['plugin'] : '';
 
             if ($class === '') {
                 $skippedPlugins[] = ['plugin' => 'index:' . $index, 'reason' => 'missing_plugin_class'];

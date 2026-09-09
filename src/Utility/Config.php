@@ -385,6 +385,86 @@ class Config
         }
 
         // @codeCoverageIgnoreEnd
+
+        self::sweepConfigCache($dir);
+    }
+
+    /**
+     * How long an unread cache entry is kept, in seconds.
+     *
+     * @return int
+     *   Seconds. Thirty days unless `KANOPI_FIREWALL_CACHE_MAX_AGE` says otherwise.
+     */
+    private static function configCacheMaxAge(): int
+    {
+        if (defined('KANOPI_FIREWALL_CACHE_MAX_AGE')) {
+            return max(0, (int) constant('KANOPI_FIREWALL_CACHE_MAX_AGE'));
+        }
+
+        return 30 * 86400;
+    }
+
+    /**
+     * Delete cache entries nothing is going to read again.
+     *
+     * Entries were written and never removed. One is unlinked only when it is
+     * *read* and found stale, so an entry whose key stops matching anything is
+     * never revisited and stays forever (#271).
+     *
+     * A deployment with a stable config path has a handful and does not care.
+     * A deployment using dated release directories has a different path on
+     * every deploy -- `/var/www/releases/20260908/firewall.yml` is not
+     * `.../20260907/...` -- so every deploy orphans the previous entry. A
+     * development machine running this project's own suite reached 2,319.
+     *
+     * ## Swept on write, which is when orphans are made
+     *
+     * A write happens on a miss, and a miss is what a new key produces. So the
+     * sweep runs at exactly the moment a new orphan is created, and never on a
+     * request that hit the cache.
+     *
+     * Cost is against a parse that already had to happen: 9.5 ms to sweep the
+     * 2,319 entries described above, and 0.05-0.19 ms once the directory is the
+     * handful it should be, against the ~2.2 ms parse this same call just paid
+     * for.
+     *
+     * ## Age is time since written, not time since read
+     *
+     * Which means a stable configuration sweeps its own entry eventually and
+     * reparses once. That is deliberate. Keeping "time since read" would mean
+     * touching the file on every cache hit -- measured at 0.0143 ms, which
+     * against a 0.058 ms warm load is a quarter again on every request the
+     * firewall serves, forever. The alternative it buys is one 2.2 ms reparse
+     * per thirty days.
+     *
+     * @param string $dir
+     *   The cache directory.
+     */
+    private static function sweepConfigCache(string $dir): void
+    {
+        $maxAge = self::configCacheMaxAge();
+
+        if ($maxAge <= 0) {
+            return;
+        }
+
+        $cutoff = time() - $maxAge;
+
+        foreach (glob($dir . '/*.php') ?: [] as $entry) {
+            $modified = @filemtime($entry);
+            // A file that vanished between the glob and the stat is another
+            // process sweeping the same directory, which is fine: the outcome
+            // wanted is that it is gone.
+            if ($modified === false) {
+                continue;
+            }
+
+            if ($modified >= $cutoff) {
+                continue;
+            }
+
+            @unlink($entry);
+        }
     }
 
     /**

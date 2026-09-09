@@ -37,6 +37,95 @@ final class FirewallCheckCommandTest extends AbstractTestCase
         parent::tearDown();
     }
 
+    /**
+     * `--lint` reports what is wrong with the rules and takes no request.
+     */
+    public function testLintReportsUnmatchableRules(): void
+    {
+        $config = $this->writeConfig(
+            "global: { mode: block }\n"
+            . "plugins:\n"
+            . "  - plugin: 'Kanopi\\Firewall\\Plugins\\Url'\n"
+            . "    response: block\n    enable: true\n"
+            . "    metadata: { name: broken }\n"
+            . "    config: ['nonsense.thing:x']\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--lint']);
+
+        $this->assertSame(self::EXIT_BLOCKED, $result['code'], 'An unmatchable rule fails the command');
+        $this->assertStringContainsString('cannot match', $result['stderr']);
+    }
+
+    /**
+     * A clean config lints clean, and exits 0.
+     */
+    public function testLintPassesACleanConfig(): void
+    {
+        $config = $this->writeConfig(
+            "global: { mode: block }\n"
+            . "plugins:\n"
+            . "  - plugin: 'Kanopi\\Firewall\\Plugins\\Url'\n"
+            . "    response: block\n    enable: true\n"
+            . "    config: ['path:/wp-admin']\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--lint']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code'], $result['stdout'] . $result['stderr']);
+        $this->assertStringContainsString('inspected', $result['stdout']);
+    }
+
+    /**
+     * `--lint --json` is parseable on stdout.
+     */
+    public function testLintJsonIsParseable(): void
+    {
+        $config = $this->writeConfig(
+            "global: { mode: block }\n"
+            . "plugins:\n"
+            . "  - plugin: 'Kanopi\\Firewall\\Plugins\\Url'\n"
+            . "    response: block\n    enable: true\n"
+            . "    config: ['path:/wp-admin']\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--lint', '--json']);
+        $decoded = json_decode($result['stdout'], true);
+
+        $this->assertIsArray($decoded, 'stdout must be JSON and nothing else: ' . $result['stdout']);
+        $this->assertArrayHasKey('findings', $decoded);
+        $this->assertSame(0, $decoded['summary']['error']);
+    }
+
+    /**
+     * `--explain` does not report a rule as unreached when it just ran.
+     *
+     * The inventory matched the class basename against the name the log
+     * records. #182 made names configurable, so a rule given one never matched
+     * and was listed as "Configured but not reached" directly below a line
+     * saying it MATCHed (#216).
+     */
+    public function testExplainDoesNotReportANamedRuleAsUnreached(): void
+    {
+        $config = $this->writeConfig(
+            "global: { mode: block }\n"
+            . "plugins:\n"
+            . "  - plugin: 'Kanopi\\Firewall\\Plugins\\IpAddress'\n"
+            . "    response: allow\n    enable: true\n"
+            . "    metadata: { name: office-network }\n"
+            . "    config: ['198.51.100.0/24']\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--url=/', '--ip=198.51.100.7', '--explain']);
+
+        $this->assertStringContainsString('MATCH   office-network', $result['stdout']);
+        $this->assertStringNotContainsString(
+            'Configured but not reached',
+            $result['stdout'],
+            'The only rule ran, so nothing is unreached'
+        );
+    }
+
     private function script(): string
     {
         return dirname(__DIR__, 2) . '/bin/firewall-check';

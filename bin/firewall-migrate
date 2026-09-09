@@ -38,10 +38,8 @@ declare(strict_types=1);
  *   3  changes are pending (--dry-run only), so this can gate a deploy
  */
 
-use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
-use Kanopi\Firewall\RateLimitStorage\DatabaseRateLimitStorage;
-use Kanopi\Firewall\Storage\DatabaseStorage;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\DatabaseConsumers;
 
 $autoloaders = [
     __DIR__ . '/../vendor/autoload.php',
@@ -122,77 +120,12 @@ foreach (Config::getLoadErrors() as $error) {
  * Construction also creates a table that does not exist yet, which is the
  * right outcome for a script whose job is making the schema current.
  */
-$consumers = [];
-$failures = [];
-
-$build = static function (string $label, callable $factory) use (&$consumers, &$failures): void {
-    try {
-        $consumers[$label] = $factory();
-    } catch (\Exception $e) {
-        $failures[] = sprintf('%s: %s', $label, $e->getMessage());
-    }
-};
-
-$storage = is_array($config['storage'] ?? null) ? $config['storage'] : [];
-$storageType = is_string($storage['type'] ?? null) ? ltrim($storage['type'], '\\') : '';
-
-if (is_a($storageType, DatabaseStorage::class, true)) {
-    $settings = is_array($storage['config'] ?? null) ? $storage['config'] : [];
-    $build('storage', static fn(): object => new DatabaseStorage($settings));
-}
-
-$plugins = is_array($config['plugins'] ?? null) ? $config['plugins'] : [];
-
-foreach ($plugins as $index => $plugin) {
-    if (!is_array($plugin)) {
-        continue;
-    }
-
-    // Rate limit storage is declared on the plugin, not globally, and a config
-    // may hold several rate limit rules pointed at different tables.
-    $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
-    $rateStorage = is_array($metadata['storage'] ?? null) ? $metadata['storage'] : [];
-    $rateType = is_string($rateStorage['type'] ?? null) ? ltrim($rateStorage['type'], '\\') : '';
-
-    if (!is_a($rateType, DatabaseRateLimitStorage::class, true)) {
-        continue;
-    }
-
-    $settings = is_array($rateStorage['config'] ?? null) ? $rateStorage['config'] : [];
-    $build('rate limit (plugin ' . $index . ')', static fn(): object => new DatabaseRateLimitStorage($settings));
-}
-
-$loggers = is_array($config['logger'] ?? null) ? $config['logger'] : [];
-
-foreach ($loggers as $index => $handler) {
-    if (!is_array($handler)) {
-        continue;
-    }
-
-    $class = is_string($handler['class'] ?? null) ? ltrim($handler['class'], '\\') : '';
-
-    if (!is_a($class, DatabaseHandler::class, true)) {
-        continue;
-    }
-
-    $args = is_array($handler['args'][0] ?? null) ? $handler['args'][0] : [];
-
-    // Writing a log row is not this script's job, and a handler that pruned on
-    // construction would be doing something the operator did not ask for.
-    $args['prune_probability'] = 0;
-
-    $build('logger (handler ' . $index . ')', static function () use ($args): object {
-        $built = new DatabaseHandler($args);
-
-        // The handler connects lazily, on its first write. Nothing here writes,
-        // so the connection has to be asked for.
-        $connect = new \ReflectionMethod($built, 'connect');
-        $connect->setAccessible(true);
-        $connect->invoke($built);
-
-        return $built;
-    });
-}
+$built = DatabaseConsumers::fromConfig($config);
+$consumers = $built['consumers'];
+$failures = array_map(
+    static fn(array $failure): string => sprintf('%s: %s', $failure['label'], $failure['error']),
+    $built['failures']
+);
 
 foreach ($failures as $failure) {
     fwrite(STDERR, sprintf("  ✗ %s\n", $failure));

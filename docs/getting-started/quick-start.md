@@ -1,5 +1,42 @@
 # Quick Start
 
+## Generate a configuration
+
+```bash
+vendor/bin/firewall-init
+```
+
+```
+  Platform?              WORDPRESS / drupal / other: drupal
+  Behind a CDN?          NONE / cloudflare / pantheon / wpengine / fastly: pantheon
+  Storage?               FILE / database / redis: file
+  Start enforcing?       LOG / block:
+
+  Wrote config/firewall.yml
+```
+
+It writes a commented starter that includes the presets for your platform, asserts the
+right proxy posture for your CDN, and **starts in observe mode** — every rule is evaluated
+and every match logged, and nothing is refused. Read the log for a week before switching to
+`block`; turning an unfamiliar rule set straight on is how a site finds its false positives
+in production.
+
+Every answer is also a flag, and with no terminal attached it takes the defaults rather than
+prompting — so it is safe inside a scaffolding script or a container build:
+
+```bash
+vendor/bin/firewall-init --platform=drupal --cdn=pantheon --storage=database --mode=log
+```
+
+Then check it:
+
+```bash
+vendor/bin/firewall-check --config=config/firewall.yml --lint   # are the rules sane?
+vendor/bin/firewall-doctor config/firewall.yml                  # does this environment work?
+```
+
+The rest of this page is what that file contains, and how to wire it in.
+
 ## Basic Implementation
 
 Place the following code in your application's entry point (e.g., `index.php`, `wp-config.php`, or Drupal's `settings.php`):

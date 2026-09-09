@@ -185,8 +185,15 @@ jobs:
             # surprises you, check which files are short before assuming a
             # regression: everything uncovered locally should be Redis.
             #
-            # Only the line figure is compared below. Method coverage is held to
-            # the same bar by review rather than by this gate (#270).
+            # Lines and methods are both compared below. Methods were not, until
+            # #270: a new method whose lines happened to be covered by another
+            # path slipped through, and the first anyone knew was reading a
+            # local per-class table.
+            #
+            # Classes are deliberately not gated. The report counts 84 of 77 and
+            # calls it 109.09% -- anonymous and nested classes inflate the
+            # numerator -- so a floor on it would compare against a number that
+            # does not mean what it says.
             PASSING=100
             # Read, report and compare entirely inside PHP. Nothing parses
             # PHP's stdout in the shell, because on this image every `php`
@@ -202,20 +209,59 @@ jobs:
                 fwrite(STDERR, "Could not read reports/xml/index.xml — did the coverage run produce a report?\n");
                 exit(1);
               }
-              $pct = (float) $xml->project->directory->totals->lines["percent"];
+              $totals = $xml->project->directory->totals;
+              // The denominator is named differently per metric -- lines carry
+              // `executable`, methods carry `count` -- so it is stated rather
+              // than guessed. Reading `count` off `lines` returns nothing, which
+              // silently dropped the one metric this gate already enforced.
+              $metrics = ["lines" => "executable", "methods" => "count"];
+              $measured = [];
+              foreach ($metrics as $metric => $denominator) {
+                $node = $totals->{$metric};
+                if ($node === null) {
+                  fwrite(STDERR, sprintf("The coverage report has no %s total.\n", $metric));
+                  exit(1);
+                }
+                // Nothing to measure reports 0%, which would fail a 100% floor
+                // for no reason: `functions` is 0 of 0 here, and `traits` reports
+                // 0.00% for seven traits because their methods are counted
+                // against the classes using them. Neither is gated.
+                if ((int) $node[$denominator] === 0) {
+                  continue;
+                }
+                $measured[$metric] = (float) $node["percent"];
+              }
+              if ($measured === []) {
+                fwrite(STDERR, "The coverage report contained neither lines nor methods.\n");
+                exit(1);
+              }
+              $summary = [];
+              foreach ($measured as $metric => $pct) {
+                $summary[] = sprintf("%s: %.2f", ucfirst($metric), $pct);
+              }
               $report = sprintf(
-                "# PHPUnit Code Coverage\nPHP Version: %s\nPercent: %.2f\nPassing: %.2f\n\n[Report](https://output.circle-artifacts.com/output/job/%s/artifacts/0/reports/index.html)\n",
+                "# PHPUnit Code Coverage\nPHP Version: %s\n%s\nPassing: %.2f\n\n[Report](https://output.circle-artifacts.com/output/job/%s/artifacts/0/reports/index.html)\n",
                 $argv[2],
-                $pct,
+                implode("\n", $summary),
                 $min,
                 $argv[3]
               );
               echo $report;
-              if ($pct < $min) {
-                printf("Line coverage %.2f%% is below the %.2f%% floor.\n", $pct, $min);
+              // Every figure is printed whether it passed or not. Reporting only
+              // the one that failed, or only on failure, is how a metric drifts
+              // for weeks without anyone seeing it move.
+              $failed = false;
+              foreach ($measured as $metric => $pct) {
+                if ($pct < $min) {
+                  printf("%s coverage %.2f%% is below the %.2f%% floor.\n", ucfirst($metric), $pct, $min);
+                  $failed = true;
+                  continue;
+                }
+                printf("%s coverage %.2f%% meets the %.2f%% floor.\n", ucfirst($metric), $pct, $min);
+              }
+              if ($failed) {
                 exit(1);
               }
-              printf("Line coverage %.2f%% meets the %.2f%% floor.\n", $pct, $min);
             ' "${PASSING}" "<<parameters.php>>" "${CIRCLE_WORKFLOW_JOB_ID}"
       - store_test_results:
           path: reports/junit.xml

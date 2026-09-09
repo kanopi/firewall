@@ -230,7 +230,8 @@ Five things keep that off the request path:
    default). Refusals are what a spoofer generates, and an address that is not Googlebot
    will not become Googlebot. One lookup per attacking address, then nothing.
 4. **Concurrent lookups for one address collapse to one.** The others fail closed rather
-   than queueing behind it.
+   than queueing behind it — unless
+   [`verify_claim_wait_ms`](#waiting-for-the-other-workers-verdict) says to wait.
 5. **A slow lookup trips a breaker** and DNS is skipped entirely for `verify_breaker_cooldown`
    seconds.
 
@@ -239,6 +240,7 @@ Five things keep that off the request path:
 | `verify_ttl` | `3600` | Seconds an acceptance stays good |
 | `verify_negative_ttl` | `86400` | Seconds a refusal stays good |
 | `verify_slow_threshold_ms` | `250` | A lookup slower than this trips the breaker |
+| `verify_claim_wait_ms` | `0` | Wait this long for another worker's verdict instead of refusing — see [below](#waiting-for-the-other-workers-verdict) |
 | `verify_cache` | filesystem | Any PSR-6 pool; falls back to `KANOPI_FIREWALL_CACHE_DIR` |
 
 ### Run a local caching resolver
@@ -283,13 +285,46 @@ For a crawler this is usually survivable: it retries, the cache is warm by then,
 verdict is cached for a day. But it means **a genuine crawler arriving in parallel on a cold
 cache is treated as unverified**, and if a rule below the allow blocks it, it is blocked.
 
-Two things make it a non-issue in practice, and both are worth doing:
+Two things reduce it, and both are worth doing whatever else you set:
 
 - **Warm the cache before it matters.** A single request per crawler address is enough, and
   crawler address ranges are stable.
 - **Keep the allow rule scoped**, as `presets/search-bots.yml` does. An unverified crawler
   then meets the rest of the firewall on public paths only, rather than being blocked
   outright.
+
+### Waiting for the other worker's verdict
+
+`verify_claim_wait_ms` lets a worker that could not claim the lookup **wait a bounded time
+for the holder's answer** instead of refusing at once. Same 25-process probe:
+
+| Resolver | `verify_claim_wait_ms` | Verified | Median request |
+|---|---|---|---|
+| 50 ms | `0` (default) | 13 of 25 | 0.68 ms |
+| 50 ms | `100` | **25 of 25** | 39 ms |
+| 300 ms | `0` (default) | 2 of 25 | 0.82 ms |
+| 300 ms | `100` | 7 of 25 | 104 ms |
+| 300 ms | `400` | **25 of 25** | 286 ms |
+
+**The wait has to exceed your resolver's latency to help fully.** 100 ms fixes a 50 ms
+resolver and only reaches 7 of 25 against a 300 ms one, because the holder has not answered
+yet when the others give up.
+
+**And it is a real trade, not a free win.** The median request goes from under a millisecond
+to roughly the resolver's latency, because workers that used to be refused instantly now
+wait. The *worst* case barely moves — 57 ms to 60 ms, 307 ms to 318 ms — since somebody was
+always paying for the lookup. What changes is that the others pay too, and get an answer for
+it.
+
+```yaml
+metadata:
+  verify: reverse-dns
+  verify_claim_wait_ms: 100    # slightly above your resolver's typical latency
+```
+
+Default `0`, which is what every release before 2.23.0 did. Turn it on when a wrongly
+refused crawler costs more than the added latency — and if that is true, **warming the cache
+removes the situation entirely** rather than mitigating it.
 
 ### Offline switches it off
 

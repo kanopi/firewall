@@ -72,13 +72,13 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
             new Table(
                 $this->config['storage_table'],
                 [
-                    new Column('remote_address', Type::getType('string'), ['length' => 255]),
-                    new Column('plugin', Type::getType('string'), ['length' => 255]),
-                    new Column('event_id', Type::getType('string'), ['length' => 255]),
+                    new Column('remote_address', Type::getType('string'), ['length' => 255, 'default' => '']),
+                    new Column('plugin', Type::getType('string'), ['length' => 255, 'default' => '']),
+                    new Column('event_id', Type::getType('string'), ['length' => 255, 'default' => '']),
                     new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
-                    new Column('request', Type::getType('text')),
+                    new Column('request', Type::getType('text'), ['default' => '']),
                     new Column('expire', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
-                    new Column('metadata', Type::getType('text'))
+                    new Column('metadata', Type::getType('text'), ['default' => ''])
                 ], // Columns.
                 [
                     new Index('remote_address', ['remote_address'], true, true),
@@ -88,7 +88,7 @@ class DatabaseStorage extends AbstractStorageBase implements QueryableStorageInt
                 $this->config['offenses_table'],
                 [
                     new Column('id', Type::getType('integer'), ['autoincrement' => true]),
-                    new Column('remote_address', Type::getType('string'), ['length' => 255]),
+                    new Column('remote_address', Type::getType('string'), ['length' => 255, 'default' => '']),
                     new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
                 ],
                 [

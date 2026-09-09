@@ -241,6 +241,206 @@ class ConfigCacheTest extends AbstractTestCase
     }
 
     /**
+     * A same-second rewrite of the same length is still seen (#283).
+     *
+     * The fingerprint was `mtime:size`, which is not an answer to "did this
+     * change": swap a value for one of the same length inside the same second
+     * and the stamp is identical for different content. An application that
+     * compiles its settings into a configuration file rewrites it on every
+     * save, so this is ordinary rather than exotic -- `drupal/basic_firewall`
+     * hit it changing a status code from 403 to 451.
+     *
+     * It fails quietly, which is what makes it worth a test: the firewall goes
+     * on enforcing the previous configuration and reports itself healthy.
+     */
+    public function testASameSecondRewriteOfTheSameLengthIsNotServedFromCache(): void
+    {
+        $file = $this->write('main.yml', "global:\n  banning_status_code: 403\n");
+
+        $this->assertSame(403, Config::load([$file])['global']['banning_status_code'] ?? null);
+
+        $mtime = filemtime($file);
+        file_put_contents($file, "global:\n  banning_status_code: 451\n");
+
+        // Pinned back to the same second, which is what a compile-and-save does
+        // when it runs twice in quick succession.
+        touch($file, (int) $mtime);
+        clearstatcache(true, $file);
+
+        $this->assertSame(
+            strlen("global:\n  banning_status_code: 403\n"),
+            strlen("global:\n  banning_status_code: 451\n"),
+            'The two files must be the same length or this tests nothing'
+        );
+
+        $this->assertSame(
+            451,
+            Config::load([$file])['global']['banning_status_code'] ?? null,
+            'The rewrite must be seen despite an identical mtime and size'
+        );
+    }
+
+    /**
+     * A rewrite that changes nothing keeps the cache.
+     *
+     * The other half of moving to a content hash, and a gain rather than a fix:
+     * a deploy that rewrites identical files, or an rsync that moves mtimes
+     * without changing content, used to discard the whole cache. Two files with
+     * the same content are the same input.
+     */
+    public function testAnIdenticalRewriteKeepsTheCachedParse(): void
+    {
+        $contents = "global:\n  mode: block\n";
+        $file = $this->write('main.yml', $contents, 10);
+
+        Config::load([$file]);
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        // Same bytes, new mtime — what a deploy does.
+        file_put_contents($file, $contents);
+        touch($file, time());
+        clearstatcache(true, $file);
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        $this->assertSame(
+            $before,
+            count(glob($this->cacheDir() . '/*.php') ?: []),
+            'No new entry: the content did not change, so neither did the key it was stored against'
+        );
+    }
+
+    /**
+     * A file that has gone away invalidates the entry.
+     */
+    public function testADeletedFileInvalidatesTheCache(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+
+        unlink($file);
+        clearstatcache(true, $file);
+
+        $this->assertSame(
+            [],
+            Config::load([$file])['global'] ?? [],
+            'A configuration whose file is gone is not served from cache'
+        );
+    }
+
+    /**
+     * Entries nothing will read again are deleted (#271).
+     *
+     * An entry is unlinked only when it is *read* and found stale, so one whose
+     * key stops matching anything is never revisited. A deployment using dated
+     * release directories gets a new path on every deploy, so every deploy
+     * orphaned the previous entry -- a development machine running this suite
+     * reached 2,319.
+     */
+    public function testEntriesOlderThanTheMaximumAgeAreSwept(): void
+    {
+        $orphans = [];
+
+        for ($i = 0; $i < 5; $i++) {
+            $orphan = $this->cacheDir() . '/orphan-' . $i . '.php';
+            file_put_contents($orphan, '<?php return [];');
+            touch($orphan, time() - (40 * 86400));
+            $orphans[] = $orphan;
+        }
+
+        // A write is what triggers the sweep, and a write is what a new key
+        // produces -- so it runs exactly when an orphan is created.
+        Config::load([$this->write('main.yml', "global:\n  mode: block\n", 10)]);
+
+        foreach ($orphans as $orphan) {
+            $this->assertFileDoesNotExist($orphan);
+        }
+    }
+
+    /**
+     * A recent entry is left alone.
+     *
+     * The sweep must not take the entries that are doing their job — including
+     * the one just written.
+     */
+    public function testRecentEntriesSurviveTheSweep(): void
+    {
+        $recent = $this->cacheDir() . '/recent-' . uniqid() . '.php';
+        file_put_contents($recent, '<?php return [];');
+        touch($recent, time() - 3600);
+
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+        Config::load([$file]);
+
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        $this->assertFileExists($recent, 'An hour-old entry is not an orphan');
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        $this->assertSame(
+            $before,
+            count(glob($this->cacheDir() . '/*.php') ?: []),
+            'The entry just written survives the sweep that follows it'
+        );
+
+        @unlink($recent);
+    }
+
+    /**
+     * Sweeping runs on a write, not on a read.
+     *
+     * A cache hit is the hot path and must not be paying for housekeeping. A
+     * write already implies the parse the cache exists to avoid, so the sweep
+     * sits where the cost is already being paid.
+     */
+    public function testAReadDoesNotSweep(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+        Config::load([$file]);
+
+        // Planted after the entry exists, so the next load is a hit.
+        $orphan = $this->cacheDir() . '/orphan-on-read.php';
+        file_put_contents($orphan, '<?php return [];');
+        touch($orphan, time() - (40 * 86400));
+
+        Config::load([$file]);
+
+        $this->assertFileExists($orphan, 'A cache hit does no housekeeping');
+
+        @unlink($orphan);
+    }
+
+    /**
+     * An entry that cannot be stat-ed is stepped over.
+     *
+     * Two processes sweeping the same directory race, and the loser finds a
+     * file gone between the `glob()` and the `filemtime()`. A dangling symlink
+     * reproduces the same `false` deterministically. Skipping is right either
+     * way: the outcome wanted is that the entry is not there.
+     */
+    public function testAnUnstatableEntryDoesNotStopTheSweep(): void
+    {
+        $dangling = $this->cacheDir() . '/dangling-' . uniqid() . '.php';
+        @symlink($this->cacheDir() . '/does-not-exist-' . uniqid() . '.php', $dangling);
+
+        if (!is_link($dangling)) {
+            $this->markTestSkipped('This filesystem would not make a dangling symlink.');
+        }
+
+        $orphan = $this->cacheDir() . '/orphan-past-dangling.php';
+        file_put_contents($orphan, '<?php return [];');
+        touch($orphan, time() - (40 * 86400));
+
+        Config::load([$this->write('main.yml', "global:\n  mode: block\n", 10)]);
+
+        $this->assertFileDoesNotExist($orphan, 'The sweep carried on past the unstatable entry');
+
+        @unlink($dangling);
+    }
+
+    /**
+     * A configuration holding an object is not cached.    /**
+     * A configuration holding an object is not cached.    /**
+     * A configuration holding an object is not cached.    /**
      * A configuration holding an object is not cached.
      *
      * var_export() cannot represent one -- it emits __set_state(), which most

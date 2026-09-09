@@ -29,6 +29,7 @@ BLOCKED  GET /wp-admin/
 | `--body=STRING` | Request body |
 | `--explain` | Show every plugin that evaluated, plus the ones that never ran |
 | `--json` | Machine-readable output |
+| `--lint` | Report what is wrong with the rules and exit, without evaluating a request — see [Linting a config](#linting-a-config) |
 | `--live-storage` | Use the configured storage instead of a throwaway — see [Safety](#safety) |
 
 ## Exit codes
@@ -73,6 +74,45 @@ Configured but not reached:
 The IP list matched first, so nothing else was consulted. If you were testing whether your URL rules catch `/wp-admin/`, this tells you the test never reached them.
 
 The timings are real and occasionally revealing — `matomo/device-detector` is markedly more expensive on a cold call than the pattern-matching plugins.
+
+## Linting a config
+
+`--lint` asks a different question: not *what happens to this request*, but **what is wrong with these rules**. It takes no `--url`, `--ip` or `--header`, and the answer does not depend on the machine it runs on.
+
+```bash
+vendor/bin/firewall-check --config=firewall.yml --lint
+```
+
+```
+  ! Two rules are named "dupe"
+      A log line naming this rule will not say which one fired.
+  ! Rule "admin-paths" compares exactly against a value containing *
+      "path:/wp-admin/*" — `path:` is an exact match, so this matches the literal
+      text and never a pattern. Did you mean path@starts_with: or path@regex:?
+  ✗ Rule "everyone" allows every request
+      3 block or challenge rules can never be reached, because allow rules are
+      consulted first and this one matches everything.
+
+  1 error, 2 warnings
+```
+
+**Errors exit `1`; warnings do not**, so this gates a config change in CI without a duplicate name failing the build.
+
+| It reports | |
+|---|---|
+| Rules that cannot match | An unknown variable, a malformed rule — what [#173](https://github.com/kanopi/firewall/issues/173) already warns about at startup, answered *before* the deploy |
+| A wildcard in an exact match | `path:/admin/*` reads like a glob and is not one. `variable:value` compares exactly |
+| Rules ordered after an allow-all | `0.0.0.0/0` in an allow rule makes everything after it dead |
+| Two rules with the same name | Nothing breaks, but a log line naming the rule stops being useful |
+| An empty rule list | `config: []` with no `metadata.sources` can never match |
+
+### What it deliberately does not do
+
+It does not decide whether one rule's matches are a subset of another's. *"This block rule is shadowed by that allow rule"* is only answerable by understanding what every rule matches — specific to each plugin, and, done approximately, productive of confident warnings about rules that are fine. The one shadowing case reported is the unambiguous one: an allow rule that matches every address.
+
+It also says nothing about whether the environment works, and **touches nothing while finding out**: no rule is constructed, so no storage backend is built, no table created and no rule source fetched. Linting a production config from a laptop is safe.
+
+Whether the database answers, whether the GeoIP file is there, whether a rule can be *constructed* — that is [`firewall-doctor`](diagnosing.md), which does build every rule, and needs the real environment to answer.
 
 ## Safety
 

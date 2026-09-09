@@ -1,0 +1,155 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Diagnose a live firewall installation.
+ *
+ * Runs against the environment it is in rather than reading the config in the
+ * abstract: it opens the storage file, reaches the database, reads the GeoIP
+ * database's mtime, and builds every rule to find out whether it can be built.
+ * The same configuration diagnoses differently on a laptop and in production,
+ * which is the point (#211).
+ *
+ * Usage:
+ *   bin/firewall-doctor config.yml [more.yml ...] [options]
+ *
+ * Options:
+ *   --json           Machine-readable output on stdout.
+ *   --quiet          Only warnings and errors.
+ *   --help           Show this message.
+ *
+ * Exit codes:
+ *   0  nothing wrong, or warnings only
+ *   1  at least one error — something configured is not happening
+ *   2  the configuration itself could not be read
+ *
+ * A warning does not fail the command, so this can gate a deploy without a
+ * stale GeoIP database blocking one.
+ */
+
+use Kanopi\Firewall\Diagnostics\Diagnosis;
+use Kanopi\Firewall\Diagnostics\Doctor;
+use Kanopi\Firewall\Utility\Config;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(Config::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(2);
+}
+
+$arguments = array_slice($argv, 1);
+$files = [];
+$json = false;
+$quiet = false;
+
+foreach ($arguments as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        fwrite(STDOUT, trim(<<<TEXT
+        Diagnose a live firewall installation.
+
+          bin/firewall-doctor config.yml [more.yml ...] [options]
+
+          --json     Machine-readable output.
+          --quiet    Only warnings and errors.
+
+        Exits 1 when something configured is not happening. A warning does not
+        fail the command.
+        TEXT) . "\n");
+        exit(0);
+    }
+
+    if ($argument === '--json') {
+        $json = true;
+        continue;
+    }
+
+    if ($argument === '--quiet') {
+        $quiet = true;
+        continue;
+    }
+
+    $files[] = $argument;
+}
+
+if ($files === []) {
+    fwrite(STDERR, "No configuration files given. Try --help.\n");
+    exit(2);
+}
+
+foreach ($files as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, sprintf("Configuration file not found: %s\n", $file));
+        exit(2);
+    }
+}
+
+$findings = (new Doctor($files))->run();
+$tally = Doctor::tally($findings);
+
+if ($json) {
+    // stdout stays parseable: nothing else is written there in this mode.
+    fwrite(STDOUT, json_encode([
+        'findings' => array_map(static fn(Diagnosis $d): array => $d->toArray(), $findings),
+        'summary' => $tally,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+
+    exit($tally[Diagnosis::ERROR] > 0 ? 1 : 0);
+}
+
+$marks = [
+    Diagnosis::OK => '  ✓ ',
+    Diagnosis::WARNING => '  ! ',
+    Diagnosis::ERROR => '  ✗ ',
+];
+
+fwrite(STDOUT, "\n");
+
+foreach ($findings as $finding) {
+    if ($quiet && $finding->status === Diagnosis::OK) {
+        continue;
+    }
+
+    // Errors to stderr so a CI log shows them even when stdout is captured.
+    $stream = $finding->status === Diagnosis::ERROR ? STDERR : STDOUT;
+
+    fwrite($stream, $marks[$finding->status] . $finding->title . "\n");
+
+    if ($finding->detail !== null) {
+        fwrite($stream, '      ' . $finding->detail . "\n");
+    }
+
+    if ($finding->reference !== null) {
+        fwrite($stream, '      See docs/' . $finding->reference . "\n");
+    }
+}
+
+$plural = static fn(int $n, string $word): string => sprintf('%d %s%s', $n, $word, $n === 1 ? '' : 's');
+
+fwrite(STDOUT, sprintf(
+    "\n  %s, %s, %s\n",
+    $plural($tally[Diagnosis::ERROR], 'error'),
+    $plural($tally[Diagnosis::WARNING], 'warning'),
+    $plural($tally[Diagnosis::OK], 'check') . ' passed'
+));
+
+exit($tally[Diagnosis::ERROR] > 0 ? 1 : 0);

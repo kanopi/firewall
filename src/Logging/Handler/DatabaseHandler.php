@@ -18,6 +18,7 @@ use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Type;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Traits\DatabaseTrait;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Monolog\Handler\AbstractProcessingHandler;
 use Monolog\Handler\ErrorLogHandler;
 use Monolog\Level;
@@ -62,7 +63,15 @@ use Monolog\Logger;
  */
 class DatabaseHandler extends AbstractProcessingHandler
 {
-    use DatabaseTrait;
+    // Both aliases exist so this class can connect before answering. They reach
+    // for `$this->connection`, and unlike the storage classes -- which connect
+    // in their constructors -- this handler connects lazily on its first write,
+    // so on a status page that has written nothing the property is
+    // uninitialized and the call was a fatal Error (#277).
+    use DatabaseTrait {
+        pendingSchemaChanges as private connectedPendingSchemaChanges;
+        migrateSchema as private connectedMigrateSchema;
+    }
 
     /**
      * Default table name, used when `table` is not configured.
@@ -204,19 +213,19 @@ class DatabaseHandler extends AbstractProcessingHandler
                 [
                     new Column('id', Type::getType('integer'), ['autoincrement' => true, 'unsigned' => true]),
                     new Column('logged_at', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
-                    new Column('level', Type::getType('string'), ['length' => 16]),
+                    new Column('level', Type::getType('string'), ['length' => 16, 'default' => '']),
                     new Column('level_value', Type::getType('integer'), ['unsigned' => true, 'default' => 0]),
                     new Column('channel', Type::getType('string'), ['length' => 64, 'default' => '']),
-                    new Column('message', Type::getType('text')),
+                    new Column('message', Type::getType('text'), ['default' => '']),
                     new Column('request_id', Type::getType('string'), ['length' => 64, 'default' => '']),
                     new Column('client_ip', Type::getType('string'), ['length' => 45, 'default' => '']),
                     new Column('plugin_name', Type::getType('string'), ['length' => 255, 'default' => '']),
                     new Column('plugin_type', Type::getType('string'), ['length' => 255, 'default' => '']),
                     new Column('method', Type::getType('string'), ['length' => 16, 'default' => '']),
-                    new Column('path', Type::getType('text')),
+                    new Column('path', Type::getType('text'), ['default' => '']),
                     new Column('host', Type::getType('string'), ['length' => 255, 'default' => '']),
-                    new Column('user_agent', Type::getType('text')),
-                    new Column('context', Type::getType('text')),
+                    new Column('user_agent', Type::getType('text'), ['default' => '']),
+                    new Column('context', Type::getType('text'), ['default' => '']),
                 ],
                 [
                     new Index('PRIMARY', ['id'], true, true),
@@ -470,6 +479,7 @@ class DatabaseHandler extends AbstractProcessingHandler
 
         if ($connection === null) {
             $this->disabled = true;
+            DegradedBackends::record('firewall log', self::class, 'no `connection` configured');
             // Reported rather than thrown: a log destination that cannot be
             // reached must not take the firewall down with it. But a config
             // that declares this handler and forgets its `connection` looks
@@ -484,9 +494,15 @@ class DatabaseHandler extends AbstractProcessingHandler
 
         try {
             $this->createConnection($connection);
-        } catch (\Throwable) {
+        } catch (\Throwable $throwable) {
             // Already described by `DatabaseTrait`, which redacts the target.
             $this->disabled = true;
+
+            // Also recorded, so `Firewall::getDegradedBackends()` can say the
+            // log table is unreachable. Without it, the only signal is a line
+            // in whichever log still works -- and the whole point of this
+            // handler is that the log is the thing being written here (#277).
+            DegradedBackends::record('firewall log', self::class, $throwable->getMessage());
 
             return false;
         }
@@ -495,6 +511,56 @@ class DatabaseHandler extends AbstractProcessingHandler
     }
 
     /**
+     * The additive schema changes this handler's table is missing.
+     *
+     * Connects first. The storage classes connect in their constructors, so the
+     * trait's version works for them; this handler connects on its first write,
+     * deliberately, so that an unreachable log database does not take the
+     * firewall down at startup. A status page has written nothing, which is
+     * exactly when this is asked -- and reaching for the connection there was a
+     * fatal `Error`, not an `Exception`, so a host catching `\Exception` did not
+     * catch it either (#277).
+     *
+     * **An empty array means the schema is current, or that the database could
+     * not be reached.** The two are not the same fact and this cannot tell them
+     * apart, so it does not try: a database that could not be reached is
+     * recorded, and `Firewall::getDegradedBackends()` reports it. Reporting a
+     * healthy schema for a database nobody can reach is the false clean bill of
+     * health that #260 and #273 both exist to prevent, so the answer lives
+     * where it can be given honestly rather than being guessed at here.
+     *
+     * @return array<int, array{table: string, kind: string, name: string, sql: array<int, string>, safe: bool, reason: string}>
+     *   Missing columns and indexes, or empty.
+     */
+    public function pendingSchemaChanges(): array
+    {
+        if (!$this->connect()) {
+            return [];
+        }
+
+        return $this->connectedPendingSchemaChanges();
+    }
+
+    /**
+     * Add the columns and indexes this handler's table is missing.
+     *
+     * Connects first, for the reason above. A database it cannot reach is
+     * recorded and nothing is applied.
+     *
+     * @return array<int, array{table: string, kind: string, name: string, sql: array<int, string>, safe: bool, reason: string, applied: bool}>
+     *   Every pending change, each marked with whether it ran.
+     */
+    public function migrateSchema(): array
+    {
+        if (!$this->connect()) {
+            return [];
+        }
+
+        return $this->connectedMigrateSchema();
+    }
+
+    /**
+     * Turn a Monolog record into a row for the log table.    /**
      * Turn a Monolog record into a row for the log table.
      *
      * @param LogRecord $logRecord

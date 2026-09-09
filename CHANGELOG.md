@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.23.0](https://github.com/kanopi/firewall/releases/tag/v2.23.0) — 2026-09-09
+
+Tell the operator what is wrong: a doctor command that diagnoses a live installation, a linter for the rules, a generator for the first config — and the five defects that building the first real consumer of 2.22.0's health APIs turned up in them.
+
 ## [2.22.0](https://github.com/kanopi/firewall/releases/tag/v2.22.0) — 2026-09-08
 
 A store that can evict, and the caching that needs one: Redis for the block list, opt-in cross-request GeoIP caching on top of it, and database tables that migrate instead of asking to be dropped.

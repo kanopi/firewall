@@ -72,7 +72,7 @@ class DatabaseRateLimitStorage extends AbstractRateLimitStorage implements Pruna
                 $table,
                 [
                     new Column('id', Type::getType('integer'), ['autoincrement' => true, 'unsigned' => true]),
-                    new Column('rule', Type::getType('string'), ['length' => 255]),
+                    new Column('rule', Type::getType('string'), ['length' => 255, 'default' => '']),
                     new Column('timestamp', Type::getType('integer'), ['unsigned' => true, 'length' => 10, 'default' => 0]),
                 ], // Columns.
                 [
