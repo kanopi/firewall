@@ -485,4 +485,237 @@ class ReverseDnsVerifierTest extends AbstractTestCase
 
         $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
     }
+
+    /**
+     * A verifier that can never claim the lookup, with the sleep stubbed out.
+     *
+     * The state a worker is in when another process is already resolving the
+     * same address. `pause()` is overridden so the wait is exercised without
+     * one — a test that really slept would be measuring `usleep`.
+     *
+     * @param \Psr\Cache\CacheItemPoolInterface|null $cache
+     *   Pool the holder would publish its verdict to.
+     */
+    private function contendedVerifier($cache, int $claimWaitMs, ?callable $onPause = null): ReverseDnsVerifier
+    {
+        return new class ($cache, $claimWaitMs, $onPause) extends ReverseDnsVerifier {
+            public int $pauses = 0;
+
+            public int $reverseCalls = 0;
+
+            public function __construct($cache, int $claimWaitMs, private $onPause)
+            {
+                parent::__construct($cache, 3600, 86400, false, 250.0, 300, $claimWaitMs);
+            }
+
+            protected function claimLookup(string $key): bool
+            {
+                // Somebody else holds it.
+                return false;
+            }
+
+            protected function pause(int $microseconds): void
+            {
+                $this->pauses++;
+
+                if ($this->onPause !== null) {
+                    ($this->onPause)($this->pauses);
+                }
+            }
+
+            protected function reverseLookup(string $ip): string|false
+            {
+                $this->reverseCalls++;
+
+                return 'crawl.googlebot.com';
+            }
+
+            protected function forwardLookup(string $host): array|false
+            {
+                return [['ip' => '66.249.66.1']];
+            }
+        };
+    }
+
+    /**
+     * By default a worker that cannot claim the lookup refuses immediately.
+     *
+     * The behaviour of every release before this one, and still the default:
+     * waiting trades latency for a verdict, and which of those an operator
+     * wants is not ours to assume.
+     */
+    public function testWithoutAWaitAContendedLookupRefusesAtOnce(): void
+    {
+        $cache = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $verifier = $this->contendedVerifier($cache, 0);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame(0, $verifier->pauses, 'It did not wait');
+        $this->assertSame(0, $verifier->reverseCalls, 'And did not resolve behind the holder');
+    }
+
+    /**
+     * With a wait, the holder's verdict is used once it appears.
+     *
+     * Measured with 25 workers on one cold address (#245, #261): against a
+     * 50 ms resolver this takes verified from 13 of 25 to 25 of 25.
+     */
+    public function testAVerdictPublishedDuringTheWaitIsUsed(): void
+    {
+        $cache = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $key = null;
+
+        $verifier = $this->contendedVerifier($cache, 200, function (int $pause) use ($cache, &$key): void {
+            // The holder finishes on the third poll.
+            if ($pause !== 3) {
+                return;
+            }
+
+            foreach (['66.249.66.1'] as $ip) {
+                $key = 'rdns_' . hash('sha256', $ip . '|' . '.googlebot.com');
+            }
+
+            $item = $cache->getItem((string) $key);
+            $item->set(true);
+            $cache->save($item);
+        });
+
+        $this->assertTrue(
+            $verifier->verify('66.249.66.1', ['.googlebot.com']),
+            'The verdict the holder published was used instead of refusing'
+        );
+        $this->assertSame(3, $verifier->pauses, 'It stopped polling as soon as the verdict appeared');
+        $this->assertSame(0, $verifier->reverseCalls, 'And still made no lookup of its own');
+    }
+
+    /**
+     * A refusal published during the wait is used too.
+     *
+     * The point is a verdict rather than a guess, and "not a crawler" is a
+     * verdict.
+     */
+    public function testANegativeVerdictPublishedDuringTheWaitIsUsed(): void
+    {
+        $cache = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+
+        $verifier = $this->contendedVerifier($cache, 200, function (int $pause) use ($cache): void {
+            if ($pause !== 2) {
+                return;
+            }
+
+            $item = $cache->getItem('rdns_' . hash('sha256', '203.0.113.5|.googlebot.com'));
+            $item->set(false);
+            $cache->save($item);
+        });
+
+        $this->assertFalse($verifier->verify('203.0.113.5', ['.googlebot.com']));
+        $this->assertSame(2, $verifier->pauses);
+    }
+
+    /**
+     * If no verdict arrives, it gives up and refuses as it did before.
+     *
+     * The wait is bounded; the fallback is the old behaviour rather than a
+     * hang.
+     */
+    public function testAWaitThatTimesOutFallsBackToRefusing(): void
+    {
+        $cache = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+        $verifier = $this->contendedVerifier($cache, 20);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertGreaterThan(0, $verifier->pauses, 'It did wait');
+        $this->assertSame(0, $verifier->reverseCalls);
+    }
+
+    /**
+     * A pool that rejects the key mid-wait stops waiting.
+     *
+     * The same key was accepted moments earlier by the read at the top of
+     * `verify()`, so a rejection now is the pool changing its mind rather than
+     * a bad key — and waiting longer will not change it.
+     */
+    public function testAPoolThatRejectsTheKeyDuringTheWaitGivesUp(): void
+    {
+        $pool = new class implements \Psr\Cache\CacheItemPoolInterface {
+            public int $calls = 0;
+
+            private \Symfony\Component\Cache\Adapter\ArrayAdapter $inner;
+
+            public function __construct()
+            {
+                $this->inner = new \Symfony\Component\Cache\Adapter\ArrayAdapter();
+            }
+
+            public function getItem($key): \Psr\Cache\CacheItemInterface
+            {
+                $this->calls++;
+
+                // The first call is the read at the top of verify(); the second
+                // is the first poll of the wait.
+                if ($this->calls > 1) {
+                    throw new class ('rejected') extends \InvalidArgumentException implements \Psr\Cache\InvalidArgumentException {
+                    };
+                }
+
+                return $this->inner->getItem($key);
+            }
+
+            public function getItems(array $keys = []): iterable
+            {
+                return $this->inner->getItems($keys);
+            }
+
+            public function hasItem($key): bool
+            {
+                return $this->inner->hasItem($key);
+            }
+
+            public function clear(): bool
+            {
+                return $this->inner->clear();
+            }
+
+            public function deleteItem($key): bool
+            {
+                return $this->inner->deleteItem($key);
+            }
+
+            public function deleteItems(array $keys): bool
+            {
+                return $this->inner->deleteItems($keys);
+            }
+
+            public function save(\Psr\Cache\CacheItemInterface $item): bool
+            {
+                return $this->inner->save($item);
+            }
+
+            public function saveDeferred(\Psr\Cache\CacheItemInterface $item): bool
+            {
+                return $this->inner->saveDeferred($item);
+            }
+
+            public function commit(): bool
+            {
+                return $this->inner->commit();
+            }
+        };
+
+        $verifier = $this->contendedVerifier($pool, 500);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame(1, $verifier->pauses, 'It gave up on the first rejection rather than polling out the budget');
+    }
+
+    /**
+     * With no cache there is nowhere for a verdict to appear, so it does not wait.
+     */
+    public function testWithoutACachePoolItDoesNotWait(): void
+    {
+        $verifier = $this->contendedVerifier(null, 500);
+
+        $this->assertFalse($verifier->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame(0, $verifier->pauses, 'Nothing to poll, so nothing to wait for');
+    }
 }

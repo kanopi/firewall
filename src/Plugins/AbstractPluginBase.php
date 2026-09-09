@@ -112,6 +112,7 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
             $ttl = $this->metadata['verify_ttl'] ?? 3600;
             $negativeTtl = $this->metadata['verify_negative_ttl'] ?? 86400;
             $threshold = $this->metadata['verify_slow_threshold_ms'] ?? 250;
+            $claimWait = $this->metadata['verify_claim_wait_ms'] ?? 0;
 
             $this->reverseDnsVerifier = new ReverseDnsVerifier(
                 $this->identityCachePool(),
@@ -123,7 +124,12 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
                 // exactly that.
                 defined('KANOPI_FIREWALL_SOURCES_OFFLINE')
                     && (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE'),
-                is_numeric($threshold) ? (float) $threshold : 250.0
+                is_numeric($threshold) ? (float) $threshold : 250.0,
+                300,
+                // Off unless asked for. It trades latency for a verdict on a
+                // cold-cache collision, and which of those matters more is the
+                // operator's call rather than ours (#261).
+                is_numeric($claimWait) ? max(0, (int) $claimWait) : 0
             );
         }
 
