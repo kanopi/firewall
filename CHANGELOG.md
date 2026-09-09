@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.23.1](https://github.com/kanopi/firewall/releases/tag/v2.23.1) — 2026-09-09
+
+`firewall-doctor` now says how stale a rule source is, not just that it is stale — one second past its ttl and two days past it were the same line, and only one of them is a fetcher that has been failing since Monday.
+
 ## [2.23.0](https://github.com/kanopi/firewall/releases/tag/v2.23.0) — 2026-09-09
 
 Tell the operator what is wrong: a doctor command that diagnoses a live installation, a linter for the rules, a generator for the first config — and the five defects that building the first real consumer of 2.22.0's health APIs turned up in them.
