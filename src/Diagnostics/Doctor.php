@@ -528,11 +528,26 @@ class Doctor
                 }
 
                 if (!$sourceCache->isFresh($definition, $meta)) {
-                    $findings[] = Diagnosis::warning(
-                        'Rule source cache is stale',
-                        $url . ' — past its ttl of ' . $sourceCache->ttl($definition) . 's.',
-                        'guides/syncing-sources.md'
-                    );
+                    $fetchedAt = $meta['fetched_at'] ?? null;
+
+                    // How stale, not just that it is stale. One second past the
+                    // ttl is a refresh that has not run yet; two days past it is
+                    // a fetcher that has been failing since Monday, and the
+                    // operator does something different about each (#297).
+                    $detail = is_int($fetchedAt)
+                        ? sprintf(
+                            '%s — last fetched %s ago, past its ttl of %ds.',
+                            $url,
+                            $this->describeAge(time() - $fetchedAt),
+                            $sourceCache->ttl($definition)
+                        )
+                        // A cache entry carrying no fetch time is *why* this
+                        // reads as stale, rather than something that happens to
+                        // also be stale, so it is worth saying instead of
+                        // reporting an age of zero.
+                        : sprintf('%s — its cache entry records no fetch time, so it cannot be trusted as current.', $url);
+
+                    $findings[] = Diagnosis::warning('Rule source cache is stale', $detail, 'guides/syncing-sources.md');
 
                     continue;
                 }
@@ -549,6 +564,55 @@ class Doctor
     }
 
     /**
+     * An age a person can read at a glance.
+     *
+     * Seconds are the honest unit and an unreadable one: `137882s` is a number
+     * to be divided rather than a fact to be acted on. The units step up so the
+     * magnitude is obvious at whatever scale the answer lands, which is the
+     * whole point of reporting it.
+     *
+     * Rounded down, so nothing is ever described as older than it is -- but
+     * hours run to two days rather than one before days take over. A cache
+     * fetched 38 hours ago reads as `38 hours`, where rounding to the larger
+     * unit would call it `1 day` and understate it by better than a third. The
+     * one-to-three day range is exactly where an operator decides whether this
+     * is a refresh that has not run or an outage, so it is the range that must
+     * not be blurred.
+     *
+     * @param int $seconds
+     *   Age in seconds.
+     *
+     * @return string
+     *   For example `38 hours`.
+     */
+    private function describeAge(int $seconds): string
+    {
+        $seconds = max(0, $seconds);
+
+        // Threshold and divisor are separate: days do not start until two of
+        // them have passed, but are still counted in 86400s. Folding the two
+        // together made three days report as "one day".
+        $scales = [
+            ['from' => 172800, 'per' => 86400, 'unit' => 'day'],
+            ['from' => 3600, 'per' => 3600, 'unit' => 'hour'],
+            ['from' => 60, 'per' => 60, 'unit' => 'minute'],
+        ];
+
+        foreach ($scales as $scale) {
+            if ($seconds < $scale['from']) {
+                continue;
+            }
+
+            $count = intdiv($seconds, $scale['per']);
+
+            return sprintf('%d %s%s', $count, $scale['unit'], $count === 1 ? '' : 's');
+        }
+
+        return sprintf('%d second%s', $seconds, $seconds === 1 ? '' : 's');
+    }
+
+    /**
+     * Every plugin's metadata block.    /**
      * Every plugin's metadata block.
      *
      * @param array<string, mixed> $config

@@ -561,6 +561,120 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * A stale source says how stale it is (#297).
+     *
+     * "past its ttl of 3600s" reads identically whether the cache is a second
+     * past or two days past, and those are different facts: a refresh that has
+     * not run, against a fetcher that has been failing since Monday. The
+     * command exists to tell an operator whether to act, and this is the number
+     * that decides it.
+     */
+    public function testAStaleSourceReportsItsAge(): void
+    {
+        $list = $this->dir . '/list.txt';
+        file_put_contents($list, "203.0.113.9\n");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 1]]];
+
+        // The first run finds nothing cached and then builds the rules, which
+        // is what fetches. The second sees what the first left behind.
+        $this->diagnose($config);
+        sleep(2);
+
+        $stale = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->title === 'Rule source cache is stale'
+        ));
+
+        $this->assertCount(1, $stale);
+        $this->assertStringContainsString('last fetched', (string) $stale[0]->detail);
+        $this->assertStringContainsString('seconds ago', (string) $stale[0]->detail);
+        $this->assertStringContainsString('past its ttl of 1s', (string) $stale[0]->detail);
+    }
+
+    /**
+     * A cache entry with no fetch time says that, rather than an age of zero.
+     *
+     * `isFresh()` treats a missing or non-integer `fetched_at` as stale, so such
+     * an entry arrives here — and the missing timestamp is *why* it reads as
+     * stale rather than something that happens to also be true of it.
+     */
+    public function testACacheEntryWithNoFetchTimeSaysSo(): void
+    {
+        $list = $this->dir . '/list.txt';
+        file_put_contents($list, "203.0.113.9\n");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 3600]]];
+
+        $this->diagnose($config);
+
+        // Strip the timestamp the fetch wrote, leaving the entry otherwise intact.
+        $cache = sys_get_temp_dir() . '/kanopi-firewall-sources';
+        $stripped = 0;
+
+        foreach (glob($cache . '/*') ?: [] as $entry) {
+            if (!is_file($entry)) {
+                continue;
+            }
+
+            $contents = (string) file_get_contents($entry);
+
+            if (!str_contains($contents, 'fetched_at')) {
+                continue;
+            }
+
+            file_put_contents($entry, str_replace('fetched_at', 'fetched_never', $contents));
+            $stripped++;
+        }
+
+        if ($stripped === 0) {
+            $this->markTestSkipped('The source cache did not store a timestamp to strip.');
+        }
+
+        $stale = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->title === 'Rule source cache is stale'
+        ));
+
+        $this->assertCount(1, $stale);
+        $this->assertStringContainsString('records no fetch time', (string) $stale[0]->detail);
+    }
+
+    /**
+     * The age reads at whatever scale the answer lands on.
+     *
+     * Hours run to two days before days take over, deliberately: 137882
+     * seconds is the case that prompted this, and rounding it to `1 day`
+     * understates 38 hours by better than a third. The one-to-three day range
+     * is where an operator decides between "a refresh has not run" and "this is
+     * an outage", so it is the range that must not be blurred.
+     */
+    public function testTheAgeIsReadableAtEveryScale(): void
+    {
+        $doctor = new Doctor([$this->workingConfig()]);
+        $describe = new \ReflectionMethod(Doctor::class, 'describeAge');
+        $describe->setAccessible(true);
+
+        $this->assertSame('0 seconds', $describe->invoke($doctor, 0));
+        $this->assertSame('1 second', $describe->invoke($doctor, 1));
+        $this->assertSame('59 seconds', $describe->invoke($doctor, 59));
+        $this->assertSame('1 minute', $describe->invoke($doctor, 60));
+        $this->assertSame('59 minutes', $describe->invoke($doctor, 3599));
+        $this->assertSame('1 hour', $describe->invoke($doctor, 3600));
+        $this->assertSame('24 hours', $describe->invoke($doctor, 86400));
+        $this->assertSame('38 hours', $describe->invoke($doctor, 137882));
+        $this->assertSame('47 hours', $describe->invoke($doctor, 172799));
+        $this->assertSame('2 days', $describe->invoke($doctor, 172800));
+        $this->assertSame('3 days', $describe->invoke($doctor, 259200), 'Days count in days, not in two-day units');
+        $this->assertSame('11 days', $describe->invoke($doctor, 999999));
+
+        // A clock that went backwards is not an age in the future.
+        $this->assertSame('0 seconds', $describe->invoke($doctor, -5));
+    }
+
+    /**
      * The tally counts each status.
      */
     public function testTheTallyCountsEachStatus(): void
