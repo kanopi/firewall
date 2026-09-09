@@ -241,6 +241,95 @@ class ConfigCacheTest extends AbstractTestCase
     }
 
     /**
+     * A same-second rewrite of the same length is still seen (#283).
+     *
+     * The fingerprint was `mtime:size`, which is not an answer to "did this
+     * change": swap a value for one of the same length inside the same second
+     * and the stamp is identical for different content. An application that
+     * compiles its settings into a configuration file rewrites it on every
+     * save, so this is ordinary rather than exotic -- `drupal/basic_firewall`
+     * hit it changing a status code from 403 to 451.
+     *
+     * It fails quietly, which is what makes it worth a test: the firewall goes
+     * on enforcing the previous configuration and reports itself healthy.
+     */
+    public function testASameSecondRewriteOfTheSameLengthIsNotServedFromCache(): void
+    {
+        $file = $this->write('main.yml', "global:\n  banning_status_code: 403\n");
+
+        $this->assertSame(403, Config::load([$file])['global']['banning_status_code'] ?? null);
+
+        $mtime = filemtime($file);
+        file_put_contents($file, "global:\n  banning_status_code: 451\n");
+
+        // Pinned back to the same second, which is what a compile-and-save does
+        // when it runs twice in quick succession.
+        touch($file, (int) $mtime);
+        clearstatcache(true, $file);
+
+        $this->assertSame(
+            strlen("global:\n  banning_status_code: 403\n"),
+            strlen("global:\n  banning_status_code: 451\n"),
+            'The two files must be the same length or this tests nothing'
+        );
+
+        $this->assertSame(
+            451,
+            Config::load([$file])['global']['banning_status_code'] ?? null,
+            'The rewrite must be seen despite an identical mtime and size'
+        );
+    }
+
+    /**
+     * A rewrite that changes nothing keeps the cache.
+     *
+     * The other half of moving to a content hash, and a gain rather than a fix:
+     * a deploy that rewrites identical files, or an rsync that moves mtimes
+     * without changing content, used to discard the whole cache. Two files with
+     * the same content are the same input.
+     */
+    public function testAnIdenticalRewriteKeepsTheCachedParse(): void
+    {
+        $contents = "global:\n  mode: block\n";
+        $file = $this->write('main.yml', $contents, 10);
+
+        Config::load([$file]);
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        // Same bytes, new mtime — what a deploy does.
+        file_put_contents($file, $contents);
+        touch($file, time());
+        clearstatcache(true, $file);
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        $this->assertSame(
+            $before,
+            count(glob($this->cacheDir() . '/*.php') ?: []),
+            'No new entry: the content did not change, so neither did the key it was stored against'
+        );
+    }
+
+    /**
+     * A file that has gone away invalidates the entry.
+     */
+    public function testADeletedFileInvalidatesTheCache(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+
+        unlink($file);
+        clearstatcache(true, $file);
+
+        $this->assertSame(
+            [],
+            Config::load([$file])['global'] ?? [],
+            'A configuration whose file is gone is not served from cache'
+        );
+    }
+
+    /**
+     * A configuration holding an object is not cached.    /**
      * A configuration holding an object is not cached.
      *
      * var_export() cannot represent one -- it emits __set_state(), which most
