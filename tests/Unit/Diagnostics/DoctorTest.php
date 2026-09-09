@@ -547,15 +547,17 @@ class DoctorTest extends AbstractTestCase
 
         $findings = $this->diagnose($config);
 
-        // It survived, which is the point: a diagnostic is run because a config
-        // is suspect. The stray scalar makes Firewall::create() throw a
-        // TypeError rather than an Exception (#281), so this also pins the
-        // `\Throwable` catch that keeps the command usable until that is fixed.
+        // It survived, which is the point: a diagnostic is run *because* a
+        // config is suspect, so it is the last thing that should fatal on one.
+        //
+        // Deliberately not asserting how the stray scalar is treated. Before
+        // #281 it made Firewall::create() throw a TypeError and this reported
+        // a firewall that refuses to start; after #281 the entry is skipped
+        // and the valid rules run. Both are correct answers to "did you
+        // survive", and pinning either makes this a test about #281 rather
+        // than about the doctor -- which is exactly how it broke.
         $this->assertContains('Config loads', $this->titles($findings));
-        $this->assertContains(
-            'The firewall refuses to start with this configuration',
-            $this->titles($findings, Diagnosis::ERROR)
-        );
+        $this->assertNotSame([], $this->titles($findings), 'It produced a diagnosis rather than dying');
     }
 
     /**
