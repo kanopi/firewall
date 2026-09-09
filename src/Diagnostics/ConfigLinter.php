@@ -11,13 +11,10 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Diagnostics;
 
-use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
-use Monolog\Handler\TestHandler;
-use Monolog\Level;
-use Monolog\Logger;
+use Kanopi\Firewall\Utility\RuleDiagnostics;
 
 /**
  * Read a configuration and report what it says that it does not mean.
@@ -431,56 +428,95 @@ class ConfigLinter
      */
     private function checkRules(array $plugins): array
     {
-        $logger = LoggingFactory::logger();
-        $testHandler = new TestHandler(Level::Debug);
-        LoggingFactory::setLogger(new Logger('lint', [$testHandler]));
-
-        try {
-            foreach ($plugins as $plugin) {
-                $class = is_string($plugin['plugin'] ?? null) ? ltrim($plugin['plugin'], '\\') : '';
-                if ($class === '') {
-                    continue;
-                }
-
-                if (!class_exists($class)) {
-                    continue;
-                }
-
-                if (!in_array(PluginInterface::class, (array) class_implements($class), true)) {
-                    continue;
-                }
-
-                try {
-                    new $class(
-                        is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [],
-                        is_array($plugin['config'] ?? null) ? $plugin['config'] : []
-                    );
-                } catch (\Throwable) {
-                    // Whether a rule can be *built* is the doctor's question,
-                    // and it needs the environment to answer it. Linting is
-                    // about what the rules say.
-                    continue;
-                }
-            }
-        } finally {
-            LoggingFactory::setLogger($logger);
-        }
-
         $findings = [];
 
-        foreach ($testHandler->getRecords() as $logRecord) {
-            if (!str_contains((string) $logRecord->message, 'will not match anything')) {
+        foreach ($plugins as $plugin) {
+            $class = is_string($plugin['plugin'] ?? null) ? ltrim($plugin['plugin'], '\\') : '';
+            if ($class === '') {
                 continue;
             }
 
-            $context = $logRecord->context;
-            $findings[] = Diagnosis::error(
-                sprintf('Rule "%s" contains something that cannot match', $context['plugin'] ?? '?'),
-                sprintf('%s — %s', json_encode($context['rule'] ?? null, JSON_UNESCAPED_SLASHES), $context['reason'] ?? ''),
-                'configuration/conditional-logic.md'
-            );
+            if (!class_exists($class)) {
+                continue;
+            }
+
+            if (!in_array(PluginInterface::class, (array) class_implements($class), true)) {
+                continue;
+            }
+
+            $rules = is_array($plugin['config'] ?? null) ? $plugin['config'] : [];
+            if ($rules === []) {
+                continue;
+            }
+
+            if (!array_is_list($rules)) {
+                continue;
+            }
+
+            $known = $this->knownVariablesOf($class);
+
+            if ($known === []) {
+                continue;
+            }
+
+            foreach (RuleDiagnostics::inspect($rules, $known)['issues'] as $issue) {
+                $findings[] = Diagnosis::error(
+                    sprintf('Rule "%s" contains something that cannot match', $this->nameOf($plugin)),
+                    sprintf(
+                        '%s — %s',
+                        json_encode($issue['rule'], JSON_UNESCAPED_SLASHES),
+                        $issue['reason']
+                    ),
+                    'configuration/conditional-logic.md'
+                );
+            }
         }
 
         return $findings;
+    }
+
+    /**
+     * The rule variables a plugin class understands, without building one.
+     *
+     * `knownRuleVariables()` is an instance method, and the obvious way to reach
+     * it is to construct the plugin -- which is what this did, and what made
+     * linting anything but static.
+     *
+     * **Constructing a plugin touches the environment.** A rate limit rule
+     * builds its storage backend, which opens a connection and creates its
+     * table; a rule with `metadata.sources` fetches them. So `--lint` on a
+     * production config, run from a laptop, created tables in that production
+     * database and pulled every remote list -- from a command documented as
+     * saying nothing about the environment, and reasonably expected to be safe
+     * to run against anything.
+     *
+     * `newInstanceWithoutConstructor()` gives an object to call the method on
+     * without any of that. Every implementation in this package returns a
+     * constant list, so there is no constructor state to miss -- and a plugin
+     * that does need some returns nothing rather than misreporting, which
+     * leaves its rules uninspected instead of wrongly condemned.
+     *
+     * @param class-string $class
+     *   The plugin class.
+     *
+     * @return array<int, string>
+     *   Variables it understands, or empty when they cannot be read.
+     */
+    private function knownVariablesOf(string $class): array
+    {
+        try {
+            $instance = (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+            $reflectionMethod = new \ReflectionMethod($instance, 'knownRuleVariables');
+
+            $known = $reflectionMethod->invoke($instance);
+        } catch (\Throwable) {
+            return [];
+        }
+
+        if (!is_array($known)) {
+            return [];
+        }
+
+        return array_values(array_filter($known, is_string(...)));
     }
 }
