@@ -110,7 +110,9 @@ vendor/bin/firewall-check --config=firewall.yml --lint
 
 It does not decide whether one rule's matches are a subset of another's. *"This block rule is shadowed by that allow rule"* is only answerable by understanding what every rule matches — specific to each plugin, and, done approximately, productive of confident warnings about rules that are fine. The one shadowing case reported is the unambiguous one: an allow rule that matches every address.
 
-It also says nothing about whether the environment works. Whether the database answers, whether the GeoIP file is there, whether a rule can be *constructed* — that is [`firewall-doctor`](diagnosing.md), and it needs the real environment to answer.
+It also says nothing about whether the environment works, and **touches nothing while finding out**: no rule is constructed, so no storage backend is built, no table created and no rule source fetched. Linting a production config from a laptop is safe.
+
+Whether the database answers, whether the GeoIP file is there, whether a rule can be *constructed* — that is [`firewall-doctor`](diagnosing.md), which does build every rule, and needs the real environment to answer.
 
 ## Safety
 

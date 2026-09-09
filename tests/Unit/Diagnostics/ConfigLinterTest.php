@@ -378,11 +378,160 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
+     * A rule list written as a map is left alone.
+     *
+     * `config:` is a list. Written as a map -- `config: { a: "path:/x" }` --
+     * the rule inspection cannot read it as rules, and guessing at the shape
+     * would produce complaints about a config whose real problem is elsewhere.
+     */
+    public function testARuleListWrittenAsAMapIsSkipped(): void
+    {
+        $config = $this->goodConfig();
+        $config['plugins'][0]['config'] = ['first' => 'nonsense.thing:x'];
+
+        $this->assertSame(
+            [],
+            array_filter(
+                $this->titles($this->lint($config), Diagnosis::ERROR),
+                static fn(string $t): bool => str_contains($t, 'cannot match')
+            ),
+            'A keyed map is not inspected as a rule list'
+        );
+    }
+
+    /**
+     * A class that cannot be instantiated at all is skipped.
+     *
+     * `AbstractPluginBase` passes both earlier checks -- it exists, and it
+     * implements the interface -- and then cannot be reflected into an
+     * instance. Naming a base class in `plugins:` is an ordinary mistake, and
+     * the linter has to survive it rather than fatal on the reflection.
+     */
+    public function testAnAbstractPluginClassIsSkipped(): void
+    {
+        $config = $this->goodConfig();
+        $config['plugins'][] = [
+            'plugin' => \Kanopi\Firewall\Plugins\AbstractPluginBase::class,
+            'response' => 'block',
+            'enable' => true,
+            'config' => ['nonsense.thing:x'],
+        ];
+
+        $findings = $this->lint($config);
+
+        $this->assertNotSame([], $findings, 'It produced a report rather than dying');
+        $this->assertSame(
+            [],
+            array_filter(
+                $this->titles($findings, Diagnosis::ERROR),
+                static fn(string $t): bool => str_contains($t, 'cannot match')
+            ),
+            'Its rules are left uninspected rather than wrongly condemned'
+        );
+    }
+
+    /**
+     * A plugin whose declared variables are not a list is declined.
+     *
+     * `knownRuleVariables()` is reached by reflection, so nothing enforces its
+     * return type at the call site — a plugin outside this package can return
+     * anything. Declining leaves its rules uninspected, which is the safe
+     * direction: the alternative is condemning valid rules on the strength of
+     * a value that was never a variable list.
+     */
+    public function testAPluginWithUnreadableVariablesIsDeclined(): void
+    {
+        $config = $this->goodConfig();
+        $config['plugins'][] = [
+            'plugin' => \Kanopi\Firewall\Tests\Plugins\TestOddVariablesPlugin::class,
+            'response' => 'block',
+            'enable' => true,
+            'config' => ['nonsense.thing:x'],
+        ];
+
+        $this->assertSame(
+            [],
+            array_filter(
+                $this->titles($this->lint($config), Diagnosis::ERROR),
+                static fn(string $t): bool => str_contains($t, 'cannot match')
+            )
+        );
+    }
+
+    /**
+     * Linting touches nothing.
+     *
+     * It read #173's rule inspection by *constructing* each plugin, and
+     * constructing a plugin touches the environment: a rate limit rule builds
+     * its storage backend, which opens a connection and creates its table.
+     *
+     * So `--lint` against a production config, run from a laptop, created
+     * tables in that production database -- from a command documented as
+     * saying nothing about the environment and reasonably expected to be safe
+     * to run against anything.
+     */
+    public function testLintingDoesNotCreateADatabase(): void
+    {
+        $database = sys_get_temp_dir() . '/fw-lint-sideeffect-' . uniqid() . '.sqlite';
+
+        $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\RateLimit',
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['storage' => [
+                    'type' => 'Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage',
+                    'config' => ['connection' => ['driver' => 'pdo_sqlite', 'path' => $database]],
+                ]],
+                'config' => [],
+            ]],
+        ]);
+
+        $this->assertFileDoesNotExist($database, 'Linting must not build storage backends');
+
+        @unlink($database);
+    }
+
+    /**
+     * Nor does it fetch a rule source.
+     *
+     * The same cause: building a plugin loads its `metadata.sources`. A linter
+     * that pulled every remote list somebody had configured would be a poor
+     * thing to run in a loop, or against somebody else's config.
+     */
+    public function testLintingDoesNotFetchSources(): void
+    {
+        $list = sys_get_temp_dir() . '/fw-lint-list-' . uniqid() . '.txt';
+        file_put_contents($list, "203.0.113.9\n");
+
+        $cache = sys_get_temp_dir() . '/kanopi-firewall-sources';
+        $before = is_dir($cache) ? count(glob($cache . '/*') ?: []) : 0;
+
+        $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\IpAddress',
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['sources' => [$list]],
+                'config' => [],
+            ]],
+        ]);
+
+        $after = is_dir($cache) ? count(glob($cache . '/*') ?: []) : 0;
+
+        $this->assertSame($before, $after, 'Linting must not fetch rule sources');
+
+        @unlink($list);
+    }
+
+    /**
      * The linter leaves the application's logger as it found it.
      *
-     * It swaps in a handler of its own to read what rule inspection reports,
-     * and a diagnostic that quietly redirected the host's logging afterwards
-     * would be a poor trade for the information.
+     * It no longer swaps one in -- rule inspection is read without building a
+     * plugin at all -- but the guarantee is worth keeping asserted, because the
+     * cheap way back to constructing them brings the logger swap with it.
      */
     public function testTheLoggerIsRestored(): void
     {
