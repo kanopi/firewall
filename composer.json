@@ -15,6 +15,7 @@
     "license": "MIT",
     "bin": [
         "bin/firewall-check",
+        "bin/firewall-doctor",
         "bin/firewall-log-prune",
         "bin/firewall-migrate",
         "bin/firewall-sources"

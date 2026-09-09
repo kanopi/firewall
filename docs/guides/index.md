@@ -58,6 +58,15 @@ pages describe *how to accomplish something*.
 
     [:octicons-arrow-right-24: Schema migrations](schema-migrations.md)
 
+-   :material-stethoscope:{ .lg .middle } **Diagnosing an Installation**
+
+    ---
+
+    Run against the real environment and find out what is wrong with it: rules
+    that are not running, stores that cannot be reached, a stale GeoIP database.
+
+    [:octicons-arrow-right-24: Diagnosing an installation](diagnosing.md)
+
 -   :material-map-marker-radius-outline:{ .lg .middle } **GeoIP Setup**
 
     ---
