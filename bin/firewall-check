@@ -97,6 +97,7 @@ $options = getopt('h', [
     'body::',
     'explain',
     'json',
+    'lint',
     'live-storage',
     'help',
 ]);
@@ -134,6 +135,8 @@ function usage(): void
       --explain          Show every plugin that evaluated, with result and
                          timing, plus the plugins that never ran
       --json             Machine-readable output
+      --lint             Report what is wrong with the rules and exit, without
+                         evaluating a request. Takes no --url or --ip.
 
     BEHAVIOUR
       --live-storage     Use the configured storage backend instead of a
@@ -218,6 +221,54 @@ foreach ($configs as $config) {
         fwrite(STDERR, "Error: config file not readable: {$config}\n");
         exit(EXIT_USAGE);
     }
+}
+
+// --lint answers a different question and answers it before anything else:
+// what is wrong with these rules, regardless of any request. It takes no --url,
+// --ip or --header, so it is handled here rather than threaded through the
+// evaluation below, and it exits on its own terms.
+if (isset($options['lint'])) {
+    $findings = (new \Kanopi\Firewall\Diagnostics\ConfigLinter($configs))->run();
+    $tally = \Kanopi\Firewall\Diagnostics\Doctor::tally($findings);
+
+    if (isset($options['json'])) {
+        fwrite(STDOUT, json_encode([
+            'findings' => array_map(
+                static fn(\Kanopi\Firewall\Diagnostics\Diagnosis $d): array => $d->toArray(),
+                $findings
+            ),
+            'summary' => $tally,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+
+        exit($tally[\Kanopi\Firewall\Diagnostics\Diagnosis::ERROR] > 0 ? EXIT_BLOCKED : EXIT_ALLOWED);
+    }
+
+    $marks = [
+        \Kanopi\Firewall\Diagnostics\Diagnosis::OK => '  ✓ ',
+        \Kanopi\Firewall\Diagnostics\Diagnosis::WARNING => '  ! ',
+        \Kanopi\Firewall\Diagnostics\Diagnosis::ERROR => '  ✗ ',
+    ];
+
+    fwrite(STDOUT, "\n");
+
+    foreach ($findings as $finding) {
+        $stream = $finding->status === \Kanopi\Firewall\Diagnostics\Diagnosis::ERROR ? STDERR : STDOUT;
+        fwrite($stream, $marks[$finding->status] . $finding->title . "\n");
+
+        if ($finding->detail !== null) {
+            fwrite($stream, '      ' . $finding->detail . "\n");
+        }
+    }
+
+    fwrite(STDOUT, sprintf(
+        "\n  %d error%s, %d warning%s\n",
+        $tally[\Kanopi\Firewall\Diagnostics\Diagnosis::ERROR],
+        $tally[\Kanopi\Firewall\Diagnostics\Diagnosis::ERROR] === 1 ? '' : 's',
+        $tally[\Kanopi\Firewall\Diagnostics\Diagnosis::WARNING],
+        $tally[\Kanopi\Firewall\Diagnostics\Diagnosis::WARNING] === 1 ? '' : 's'
+    ));
+
+    exit($tally[\Kanopi\Firewall\Diagnostics\Diagnosis::ERROR] > 0 ? EXIT_BLOCKED : EXIT_ALLOWED);
 }
 
 $ip = (string) single($options, 'ip', '127.0.0.1');
@@ -403,9 +454,23 @@ try {
             $class = is_string($entry['plugin'] ?? null) ? $entry['plugin'] : '';
 
             if ($class !== '') {
+                // The name the log will call it by, resolved the same way
+                // AbstractPluginBase::getName() resolves it: `metadata.name`
+                // when set, the class otherwise. Without this the inventory
+                // knows a rule only by its class, and a rule that was given a
+                // name -- which #182 added and the docs recommend, so two
+                // IpAddress rules can be told apart -- never matches what ran
+                // and is reported as unreached directly below a line saying it
+                // MATCHed.
+                $declaredName = $entry['metadata']['name'] ?? null;
+                $name = is_string($declaredName) && $declaredName !== ''
+                    ? $declaredName
+                    : substr((string) strrchr('\\' . $class, '\\'), 1);
+
                 $configured[] = [
                     'response' => (string) $response,
                     'class' => $class,
+                    'name' => $name,
                     'weight' => is_numeric($entry['weight'] ?? null) ? (int) $entry['weight'] : 0,
                 ];
             }
@@ -495,18 +560,23 @@ if (isset($options['json'])) {
 
         $skipped = array_values(array_filter(
             $configured,
-            static fn(array $entry): bool => !in_array(
-                $fold(substr((string) strrchr('\\' . $entry['class'], '\\'), 1)),
-                $ran,
-                true,
-            ),
+            static fn(array $entry): bool => !in_array($fold((string) $entry['name']), $ran, true),
         ));
 
         if ($skipped !== []) {
             echo "\nConfigured but not reached:\n";
 
             foreach ($skipped as $entry) {
-                printf("  %-9s %-40s weight %d\n", $entry['response'], $entry['class'], $entry['weight']);
+                // The name first, because that is what the section above calls
+                // it and what a log line will say. The class stays, because a
+                // name is only unique if somebody made it so.
+                printf(
+                    "  %-9s %-30s %-40s weight %d\n",
+                    $entry['response'],
+                    $entry['name'],
+                    $entry['class'],
+                    $entry['weight']
+                );
             }
         }
     }
