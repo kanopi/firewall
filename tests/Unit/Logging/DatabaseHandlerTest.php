@@ -887,14 +887,15 @@ class DatabaseHandlerTest extends AbstractTestCase
 
         $this->assertContains('channel', $applied, 'And a defaulted column is added');
 
-        // Not all of them, and that is #278 rather than a fault here: five of
-        // this table's columns are declared NOT NULL with no default, which
-        // cannot be added to a table that has rows. Asserted rather than
-        // glossed over, so the day #278 is fixed this test says so.
-        $stillPending = array_column($this->createHandler()->pendingSchemaChanges(), 'name');
-
-        $this->assertNotContains('channel', $stillPending);
-        $this->assertContains('context', $stillPending, 'A NOT NULL column with no default is still refused (#278)');
+        // All of them. Until #278 this stopped short: five of this table's
+        // columns were declared NOT NULL with no default and were refused, so
+        // a table missing one could never be brought up to date. They carry
+        // defaults now, and `DeclaredSchemaTest` keeps it that way.
+        $this->assertSame(
+            [],
+            $this->createHandler()->pendingSchemaChanges(),
+            'An out-of-date log table migrates completely'
+        );
     }
 
     /**
