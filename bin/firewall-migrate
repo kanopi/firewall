@@ -181,17 +181,12 @@ foreach ($loggers as $index => $handler) {
     // construction would be doing something the operator did not ask for.
     $args['prune_probability'] = 0;
 
-    $build('logger (handler ' . $index . ')', static function () use ($args): object {
-        $built = new DatabaseHandler($args);
-
-        // The handler connects lazily, on its first write. Nothing here writes,
-        // so the connection has to be asked for.
-        $connect = new \ReflectionMethod($built, 'connect');
-        $connect->setAccessible(true);
-        $connect->invoke($built);
-
-        return $built;
-    });
+    // No reflection here any more. This used to reach the handler's private
+    // connect() before asking, because the handler connects lazily and the
+    // schema methods reached for a connection that did not exist yet. That
+    // workaround was the reason nobody noticed those methods fatal for every
+    // caller who was not this script (#277); the handler connects itself now.
+    $build('logger (handler ' . $index . ')', static fn(): object => new DatabaseHandler($args));
 }
 
 foreach ($failures as $failure) {

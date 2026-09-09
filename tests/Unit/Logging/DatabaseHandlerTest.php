@@ -9,6 +9,7 @@ use Doctrine\DBAL\DriverManager;
 use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Monolog\Level;
 use Monolog\LogRecord;
 use Monolog\Logger;
@@ -819,6 +820,130 @@ class DatabaseHandlerTest extends AbstractTestCase
      * @param array<string, mixed> $config
      *   Configuration overrides.
      */
+    /**
+     * The schema methods work on a handler that has written nothing.
+     *
+     * The state a status page finds it in. Unlike the storage classes, which
+     * connect in their constructors, this handler connects on its first write
+     * -- so `$this->connection` was uninitialized and asking was a fatal
+     * `Error`. Not an `Exception`: a host catching `\Exception`, which is what
+     * this library tells integrators to do, did not catch it either (#277).
+     */
+    public function testSchemaCanBeAskedBeforeAnythingIsWritten(): void
+    {
+        $handler = $this->createHandler();
+
+        $this->assertSame([], $handler->pendingSchemaChanges(), 'A table it just created is not behind');
+        $this->assertSame([], $handler->migrateSchema());
+    }
+
+    /**
+     * Asking creates the table, the same way writing does.
+     *
+     * The connection is what creates it, so a handler asked about its schema
+     * before it has ever logged ends up with a table -- which is the right
+     * outcome for the question "is my schema current".
+     */
+    public function testAskingAboutTheSchemaConnectsAndCreatesTheTable(): void
+    {
+        $this->assertFileDoesNotExist($this->databasePath);
+
+        $this->createHandler()->pendingSchemaChanges();
+
+        $this->assertSame(
+            'firewall_log',
+            $this->connection()->fetchOne(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'firewall_log'"
+            ),
+            'Connecting created the table'
+        );
+    }
+
+    /**
+     * A table behind the declared schema is reported.
+     */
+    public function testATableBehindTheSchemaIsReported(): void
+    {
+        // The log table as an earlier release left it: no `channel` column.
+        $connection = \Doctrine\DBAL\DriverManager::getConnection([
+            'driver' => 'pdo_sqlite',
+            'path' => $this->databasePath,
+        ]);
+        $connection->executeStatement(
+            'CREATE TABLE firewall_log (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, '
+            . 'logged_at INTEGER DEFAULT 0 NOT NULL, level VARCHAR(16) NOT NULL, '
+            . 'level_value INTEGER DEFAULT 0 NOT NULL, message CLOB NOT NULL)'
+        );
+
+        $pending = $this->createHandler()->pendingSchemaChanges();
+        $names = array_column($pending, 'name');
+
+        $this->assertContains('channel', $names, 'The missing column is found');
+
+        $applied = array_column(array_filter(
+            $this->createHandler()->migrateSchema(),
+            static fn(array $r): bool => $r['applied']
+        ), 'name');
+
+        $this->assertContains('channel', $applied, 'And a defaulted column is added');
+
+        // Not all of them, and that is #278 rather than a fault here: five of
+        // this table's columns are declared NOT NULL with no default, which
+        // cannot be added to a table that has rows. Asserted rather than
+        // glossed over, so the day #278 is fixed this test says so.
+        $stillPending = array_column($this->createHandler()->pendingSchemaChanges(), 'name');
+
+        $this->assertNotContains('channel', $stillPending);
+        $this->assertContains('context', $stillPending, 'A NOT NULL column with no default is still refused (#278)');
+    }
+
+    /**
+     * A database it cannot reach answers empty, and says so where it counts.
+     *
+     * Empty here means "current, or unreachable" -- two facts this cannot tell
+     * apart. Rather than guess, the unreachable one is recorded where a status
+     * report reads it. Reporting a healthy schema for a database nobody can
+     * reach is the false clean bill of health #260 and #273 exist to prevent.
+     */
+    public function testAnUnreachableDatabaseIsRecordedRatherThanReportedHealthy(): void
+    {
+        DegradedBackends::reset();
+
+        $handler = new DatabaseHandler([
+            'table' => 'firewall_log',
+            'connection' => ['driver' => 'pdo_sqlite', 'path' => '/nonexistent/dir/firewall.sqlite'],
+        ]);
+
+        $this->assertSame([], $handler->pendingSchemaChanges());
+
+        $degraded = DegradedBackends::all();
+        $this->assertCount(1, $degraded);
+        $this->assertSame('firewall log', $degraded[0]['component']);
+        $this->assertSame(DatabaseHandler::class, $degraded[0]['backend']);
+
+        DegradedBackends::reset();
+    }
+
+    /**
+     * A handler with no `connection` at all is recorded too.
+     *
+     * It looks complete in a config file and can write nowhere.
+     */
+    public function testAHandlerWithNoConnectionIsRecorded(): void
+    {
+        DegradedBackends::reset();
+
+        $handler = new DatabaseHandler(['table' => 'firewall_log']);
+
+        $this->assertSame([], $handler->migrateSchema());
+        $this->assertSame(
+            [['component' => 'firewall log', 'backend' => DatabaseHandler::class, 'error' => 'no `connection` configured']],
+            DegradedBackends::all()
+        );
+
+        DegradedBackends::reset();
+    }
+
     private function createHandler(array $config = []): DatabaseHandler
     {
         return new DatabaseHandler($config + [
