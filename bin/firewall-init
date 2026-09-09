@@ -1,0 +1,221 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Write a starting configuration (#210).
+ *
+ * The quick start began with a blank YAML and a hand-written IP list, while
+ * `presets/` already held curated rule sets. This turns "read the docs and
+ * assemble something" into answering four questions, and puts a new install on
+ * the shipped presets rather than a hand-rolled list -- which is both safer and
+ * something we can improve for everyone later.
+ *
+ * Answer the questions, or pass them as flags. Flags exist so this can run in a
+ * scaffolding script with no terminal attached; a prompt that blocks a
+ * container build is worse than no generator.
+ *
+ * Usage:
+ *   bin/firewall-init [options]
+ *
+ * Options:
+ *   --platform=NAME  wordpress | drupal | other
+ *   --cdn=NAME       none | cloudflare | pantheon | wpengine | fastly
+ *   --storage=NAME   file | database | redis
+ *   --mode=NAME      log (observe, recommended) | block (enforce)
+ *   --output=PATH    Where to write. Default config/firewall.yml
+ *   --print          Write to stdout and create nothing
+ *   --force          Overwrite an existing file
+ *   --help
+ *
+ * Exit codes:
+ *   0  written
+ *   1  refused to overwrite, or could not write
+ *   2  usage error
+ */
+
+use Kanopi\Firewall\Utility\StarterConfig;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(StarterConfig::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(2);
+}
+
+$options = getopt('h', [
+    'platform::',
+    'cdn::',
+    'storage::',
+    'mode::',
+    'output::',
+    'print',
+    'force',
+    'help',
+]);
+
+if ($options === false) {
+    fwrite(STDERR, "Could not read the options given.\n");
+    exit(2);
+}
+
+if (isset($options['help']) || isset($options['h'])) {
+    fwrite(STDOUT, trim(<<<TEXT
+    Write a starting firewall configuration.
+
+      bin/firewall-init [options]
+
+      --platform=NAME  wordpress | drupal | other
+      --cdn=NAME       none | cloudflare | pantheon | wpengine | fastly
+      --storage=NAME   file | database | redis
+      --mode=NAME      log (observe first, recommended) | block (enforce now)
+      --output=PATH    Where to write. Default config/firewall.yml
+      --print          Write to stdout and create nothing
+      --force          Overwrite an existing file
+
+    Anything not given is asked for, unless there is no terminal to ask on --
+    then the default is used, so this is safe in a scaffolding script.
+    TEXT) . "\n");
+    exit(0);
+}
+
+$choices = StarterConfig::choices();
+
+// A terminal to ask on. Without one -- a container build, a CI step, a pipe --
+// the defaults stand rather than the process blocking on a prompt nobody sees.
+$interactive = stream_isatty(STDIN);
+
+/**
+ * Resolve one choice from a flag, a prompt, or the default.
+ *
+ * @param array<string, mixed> $options
+ *   Parsed options.
+ * @param array<int, string> $accepted
+ *   Values this choice accepts.
+ */
+function choose(array $options, string $name, array $accepted, string $default, string $question, bool $interactive): string
+{
+    $given = $options[$name] ?? null;
+
+    if (is_string($given) && $given !== '') {
+        if (!in_array($given, $accepted, true)) {
+            fwrite(STDERR, sprintf(
+                "Error: --%s must be one of: %s (given: %s)\n",
+                $name,
+                implode(', ', $accepted),
+                $given
+            ));
+
+            exit(2);
+        }
+
+        return $given;
+    }
+
+    if (!$interactive) {
+        return $default;
+    }
+
+    $labels = array_map(
+        static fn(string $value): string => $value === $default ? strtoupper($value) : $value,
+        $accepted
+    );
+
+    while (true) {
+        fwrite(STDOUT, sprintf("  %-22s %s: ", $question, implode(' / ', $labels)));
+        $answer = fgets(STDIN);
+
+        if ($answer === false) {
+            // stdin closed mid-question. Taking the default is friendlier than
+            // exiting non-zero on somebody's Ctrl-D.
+            fwrite(STDOUT, "\n");
+
+            return $default;
+        }
+
+        $answer = strtolower(trim($answer));
+
+        if ($answer === '') {
+            return $default;
+        }
+
+        if (in_array($answer, $accepted, true)) {
+            return $answer;
+        }
+
+        fwrite(STDOUT, sprintf("    Not one of: %s\n", implode(', ', $accepted)));
+    }
+}
+
+if ($interactive) {
+    fwrite(STDOUT, "\nA starting configuration. Press enter to take the CAPITALISED default.\n\n");
+}
+
+$platform = choose($options, 'platform', $choices['platform'], 'other', 'Platform?', $interactive);
+$cdn = choose($options, 'cdn', $choices['cdn'], 'none', 'Behind a CDN?', $interactive);
+$storage = choose($options, 'storage', $choices['storage'], 'file', 'Storage?', $interactive);
+$mode = choose($options, 'mode', $choices['mode'], 'log', 'Start enforcing?', $interactive);
+
+$yaml = StarterConfig::render($platform, $cdn, $storage, $mode);
+
+if (isset($options['print'])) {
+    fwrite(STDOUT, $yaml);
+    exit(0);
+}
+
+$output = $options['output'] ?? null;
+$output = is_string($output) && $output !== '' ? $output : 'config/firewall.yml';
+
+if (is_file($output) && !isset($options['force'])) {
+    fwrite(STDERR, sprintf(
+        "Error: %s already exists. Pass --force to overwrite it, or --output=PATH to write elsewhere.\n",
+        $output
+    ));
+
+    exit(1);
+}
+
+$directory = dirname($output);
+
+if (!is_dir($directory) && !@mkdir($directory, 0755, true) && !is_dir($directory)) {
+    fwrite(STDERR, sprintf("Error: could not create %s\n", $directory));
+    exit(1);
+}
+
+if (@file_put_contents($output, $yaml) === false) {
+    fwrite(STDERR, sprintf("Error: could not write %s\n", $output));
+    exit(1);
+}
+
+fwrite(STDOUT, sprintf("\n  Wrote %s\n", $output));
+fwrite(STDOUT, "\n  Next:\n");
+fwrite(STDOUT, sprintf("    vendor/bin/firewall-check --config=%s --lint\n", $output));
+fwrite(STDOUT, sprintf("    vendor/bin/firewall-doctor %s\n", $output));
+fwrite(STDOUT, sprintf(
+    "    vendor/bin/firewall-check --config=%s --url=/wp-admin/ --explain\n",
+    $output
+));
+
+if ($mode === 'log') {
+    fwrite(STDOUT, "\n  It is observing, not enforcing. Read the log for a week, then set `mode: block`.\n");
+}
+
+exit(0);
