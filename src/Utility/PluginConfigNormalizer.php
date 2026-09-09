@@ -117,8 +117,14 @@ final class PluginConfigNormalizer
      * Unknown response values default to 'block' so a typo never silently
      * promotes a plugin to 'allow' or 'challenge'.
      *
-     * @param array<int, array<string, mixed>> $plugins
-     *   The plugins array to partition.
+     * @param array<int, mixed> $plugins
+     *   The `plugins:` list, exactly as it came out of the configuration --
+     *   which is to say, not necessarily a list of maps. It was annotated as
+     *   `array<int, array<string, mixed>>` and that annotation was the problem:
+     *   it described the config an operator meant to write rather than the one
+     *   they can write, so nothing checked, and a stray scalar reached a
+     *   comparator typed `array` and left as a TypeError (#281). Entries that
+     *   are not maps are skipped below.
      *
      * @return array{allow: array<int, array<string, mixed>>, block: array<int, array<string, mixed>>, challenge: array<int, array<string, mixed>>}
      *   Partitioned plugins: 'allow', 'block', and 'challenge', each sorted by weight.
@@ -130,6 +136,21 @@ final class PluginConfigNormalizer
         $challengePlugins = [];
 
         foreach ($plugins as $plugin) {
+            // A stray scalar where a map belongs. `plugins:` is hand-edited
+            // YAML and the ways to produce one are ordinary -- a rule written
+            // as a bare string, a commented-out block leaving an orphan list
+            // item. `$plugin['enable'] ?? true` swallows it silently, so the
+            // entry reached the weight comparator below, which is typed `array`
+            // and threw a TypeError: an `\Error`, which a host catching
+            // `\Exception` never sees (#281).
+            //
+            // Skipped, matching how every other malformed-plugin case behaves
+            // here -- `PluginManager` skips a class that does not exist and
+            // records why, rather than refusing to start.
+            if (!is_array($plugin)) {
+                continue;
+            }
+
             // Skip disabled plugins
             if (!($plugin['enable'] ?? true)) {
                 continue;
