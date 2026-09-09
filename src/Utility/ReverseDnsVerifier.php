@@ -53,6 +53,10 @@ class ReverseDnsVerifier
      *   A lookup slower than this trips the breaker.
      * @param int $breakerCooldown
      *   How long to skip DNS entirely after a slow lookup, in seconds.
+     * @param int $claimWaitMs
+     *   How long a worker that could not claim the lookup will wait for the
+     *   holder's verdict before giving up. `0` refuses immediately, which is
+     *   what every release before 2.23.0 did.
      */
     public function __construct(
         protected ?CacheItemPoolInterface $cache = null,
@@ -60,7 +64,8 @@ class ReverseDnsVerifier
         protected int $negativeTtl = 86400,
         protected bool $offline = false,
         protected float $slowThresholdMs = 250.0,
-        protected int $breakerCooldown = 300
+        protected int $breakerCooldown = 300,
+        protected int $claimWaitMs = 0
     ) {
     }
 
@@ -113,10 +118,32 @@ class ReverseDnsVerifier
         }
 
         if (!$this->claimLookup($key)) {
-            // Another worker is already resolving this address. Waiting would
-            // put this request behind a lookup it does not need to make; the
-            // verdict will be cached by the time the client comes back.
+            // Another worker is already resolving this address.
+            //
+            // Refusing immediately is cheap and wrong often enough to matter.
+            // Measured with 25 workers on one uncached address (#245): against a
+            // 50 ms resolver 14 of 25 were verified, and against a 300 ms one,
+            // 2 of 25. This guards an *allow* rule, so "not verified" means the
+            // rule does not match -- a genuine crawler arriving in parallel on a
+            // cold cache falls through, and is blocked if a rule below the allow
+            // matches it.
+            //
+            // So a caller may wait a bounded time for the holder's verdict
+            // instead (#261). Off by default: it trades latency for a verdict,
+            // and which of those an operator wants is not ours to assume.
+            $waited = $this->waitForVerdict($key);
+
+            if ($waited !== null) {
+                $this->getLogger()->debug('Used a verdict another process was resolving', [
+                    'ip' => $ip,
+                    'verified' => $waited,
+                ]);
+
+                return $waited;
+            }
+
             $this->getLogger()->debug('Another process is verifying this address', ['ip' => $ip]);
+
             return false;
         }
 
@@ -228,6 +255,76 @@ class ReverseDnsVerifier
     }
 
     /**
+     * Wait briefly for the worker holding the claim to publish its verdict.
+     *
+     * The alternative to refusing a request because somebody else is already
+     * asking the question it needs answered.
+     *
+     * Polls rather than blocks, because the claim is a cache entry rather than
+     * a lock -- there is nothing to wait on, only somewhere to look. Every
+     * interval costs one cache read, which for the filesystem pool is 0.009 ms.
+     *
+     * Bounded by `verify_claim_wait_ms`, and 0 means "do not", which is what
+     * every release before 2.23.0 did. The trade is explicit either way: up to
+     * that many milliseconds of latency on a cold-cache collision, against a
+     * verdict rather than a refusal.
+     *
+     * @param string $key
+     *   The cache key the holder will write to.
+     *
+     * @return bool|null
+     *   The verdict, or NULL if none appeared in time -- which the caller
+     *   treats exactly as it treated a failed claim before this existed.
+     */
+    protected function waitForVerdict(string $key): ?bool
+    {
+        if ($this->claimWaitMs <= 0 || !$this->cache instanceof CacheItemPoolInterface) {
+            return null;
+        }
+
+        $deadline = microtime(true) + ($this->claimWaitMs / 1000);
+
+        // Short enough that a fast resolver is not waited out for no reason,
+        // long enough that a 100 ms budget is twenty reads rather than
+        // thousands.
+        $interval = 5000;
+
+        while (microtime(true) < $deadline) {
+            $this->pause($interval);
+
+            try {
+                $item = $this->cache->getItem($key);
+            } catch (\Psr\Cache\InvalidArgumentException) {
+                // The same key the caller already built and read with. If it is
+                // rejected now, waiting longer will not change that.
+                return null;
+            }
+
+            if ($item->isHit()) {
+                return (bool) $item->get();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Sleep, as a seam.
+     *
+     * Overridden in tests so a wait can be exercised without one.
+     *
+     * @param int $microseconds
+     *   How long to sleep.
+     *
+     * @codeCoverageIgnore
+     */
+    protected function pause(int $microseconds): void
+    {
+        usleep($microseconds);
+    }
+
+    /**
+     * Release the claim.    /**
      * Release the claim.
      *
      * @param string $key

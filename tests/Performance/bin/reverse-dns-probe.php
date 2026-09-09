@@ -40,6 +40,11 @@ use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 $workers = (int) ($argv[1] ?? 25);
 $latencyMs = (float) ($argv[2] ?? 0);
 
+// How long a worker that cannot claim the lookup waits for the holder's verdict
+// (#261). 0 is the behaviour every release before 2.23.0 had, and is what the
+// third column of #245's table measured.
+$claimWaitMs = (int) (getenv('FW_RDNS_CLAIM_WAIT_MS') ?: 0);
+
 // A child inherits the parent's workspace through the environment. Deriving it
 // from getmypid() would give every process a private cache, and the probe would
 // report a collapse that never happened.
@@ -63,7 +68,7 @@ if (!$isChild) {
 /**
  * One worker: verify a single cold address and report whether it resolved.
  */
-$child = static function (string $cacheDir, string $tally, float $latencyMs, string $barrier): void {
+$child = static function (string $cacheDir, string $tally, float $latencyMs, string $barrier, int $claimWaitMs): void {
     // Wait for the parent's signal. Without this the probe measures PHP
     // startup, not contention: interpreter boot is tens of milliseconds, so the
     // first worker finishes and caches its verdict before the last one exists,
@@ -78,13 +83,14 @@ $child = static function (string $cacheDir, string $tally, float $latencyMs, str
 
     $pool = new FilesystemAdapter('rdns_probe', 3600, $cacheDir);
 
-    $verifier = new class ($pool, $tally, $latencyMs) extends ReverseDnsVerifier {
+    $verifier = new class ($pool, $tally, $latencyMs, $claimWaitMs) extends ReverseDnsVerifier {
         public function __construct(
             $pool,
             private string $tally,
-            private float $latencyMs
+            private float $latencyMs,
+            int $claimWaitMs
         ) {
-            parent::__construct($pool, 3600, 86400, false, 250.0, 300);
+            parent::__construct($pool, 3600, 86400, false, 250.0, 300, $claimWaitMs);
         }
 
         protected function reverseLookup(string $ip): string|false
@@ -114,7 +120,7 @@ $child = static function (string $cacheDir, string $tally, float $latencyMs, str
 };
 
 if ($isChild) {
-    $child($cacheDir, $tally, $latencyMs, $barrier);
+    $child($cacheDir, $tally, $latencyMs, $barrier, $claimWaitMs);
 
     return;
 }
@@ -139,12 +145,21 @@ for ($i = 0; $i < $workers; $i++) {
 
     // Every child shares the parent's workspace, which is what makes them
     // contend rather than each getting a private cache.
+    //
+    // Both variables are passed explicitly because an $env array *replaces* the
+    // child's environment rather than adding to it -- so anything not listed
+    // here is simply absent in the child, silently. That cost an entire round
+    // of measurement: the claim wait read as 0 in every worker and the probe
+    // reported the feature doing nothing.
     $processes[$i] = proc_open(
         $command,
         $descriptor,
         $pipes[$i],
         null,
-        ['FW_RDNS_PROBE_WORKSPACE' => $workspace]
+        [
+            'FW_RDNS_PROBE_WORKSPACE' => $workspace,
+            'FW_RDNS_CLAIM_WAIT_MS' => (string) $claimWaitMs,
+        ]
     );
 }
 
