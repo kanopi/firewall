@@ -378,6 +378,87 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
+     * A rule list written as a map is left alone.
+     *
+     * `config:` is a list. Written as a map -- `config: { a: "path:/x" }` --
+     * the rule inspection cannot read it as rules, and guessing at the shape
+     * would produce complaints about a config whose real problem is elsewhere.
+     */
+    public function testARuleListWrittenAsAMapIsSkipped(): void
+    {
+        $config = $this->goodConfig();
+        $config['plugins'][0]['config'] = ['first' => 'nonsense.thing:x'];
+
+        $this->assertSame(
+            [],
+            array_filter(
+                $this->titles($this->lint($config), Diagnosis::ERROR),
+                static fn(string $t): bool => str_contains($t, 'cannot match')
+            ),
+            'A keyed map is not inspected as a rule list'
+        );
+    }
+
+    /**
+     * A class that cannot be instantiated at all is skipped.
+     *
+     * `AbstractPluginBase` passes both earlier checks -- it exists, and it
+     * implements the interface -- and then cannot be reflected into an
+     * instance. Naming a base class in `plugins:` is an ordinary mistake, and
+     * the linter has to survive it rather than fatal on the reflection.
+     */
+    public function testAnAbstractPluginClassIsSkipped(): void
+    {
+        $config = $this->goodConfig();
+        $config['plugins'][] = [
+            'plugin' => \Kanopi\Firewall\Plugins\AbstractPluginBase::class,
+            'response' => 'block',
+            'enable' => true,
+            'config' => ['nonsense.thing:x'],
+        ];
+
+        $findings = $this->lint($config);
+
+        $this->assertNotSame([], $findings, 'It produced a report rather than dying');
+        $this->assertSame(
+            [],
+            array_filter(
+                $this->titles($findings, Diagnosis::ERROR),
+                static fn(string $t): bool => str_contains($t, 'cannot match')
+            ),
+            'Its rules are left uninspected rather than wrongly condemned'
+        );
+    }
+
+    /**
+     * A plugin whose declared variables are not a list is declined.
+     *
+     * `knownRuleVariables()` is reached by reflection, so nothing enforces its
+     * return type at the call site — a plugin outside this package can return
+     * anything. Declining leaves its rules uninspected, which is the safe
+     * direction: the alternative is condemning valid rules on the strength of
+     * a value that was never a variable list.
+     */
+    public function testAPluginWithUnreadableVariablesIsDeclined(): void
+    {
+        $config = $this->goodConfig();
+        $config['plugins'][] = [
+            'plugin' => \Kanopi\Firewall\Tests\Plugins\TestOddVariablesPlugin::class,
+            'response' => 'block',
+            'enable' => true,
+            'config' => ['nonsense.thing:x'],
+        ];
+
+        $this->assertSame(
+            [],
+            array_filter(
+                $this->titles($this->lint($config), Diagnosis::ERROR),
+                static fn(string $t): bool => str_contains($t, 'cannot match')
+            )
+        );
+    }
+
+    /**
      * Linting touches nothing.
      *
      * It read #173's rule inspection by *constructing* each plugin, and
