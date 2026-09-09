@@ -60,7 +60,7 @@ Whether a rule can *ever* match is a static question, and belongs to
 |---|---|
 | **Config** | Every file loaded; anything that degraded on the way |
 | **Trusted proxies** | Whether the client IP can be trusted — see below |
-| **Rule sources** | Fetched, and still inside their `ttl` |
+| **Rule sources** | Fetched, and still inside their `ttl` — a stale one reports **how long** since it was last fetched |
 | **Rules** | Every configured rule constructed, via [`getFailedRules()`](error-handling.md#checking-that-every-rule-is-running) |
 | **Backends** | Anything running without its store, via [`getDegradedBackends()`](error-handling.md#checking-that-a-backend-can-reach-its-server) |
 | **Schema** | Tables behind what this release declares, via [`pendingSchemaChanges()`](schema-migrations.md) |
