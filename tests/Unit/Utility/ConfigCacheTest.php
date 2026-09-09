@@ -329,6 +329,117 @@ class ConfigCacheTest extends AbstractTestCase
     }
 
     /**
+     * Entries nothing will read again are deleted (#271).
+     *
+     * An entry is unlinked only when it is *read* and found stale, so one whose
+     * key stops matching anything is never revisited. A deployment using dated
+     * release directories gets a new path on every deploy, so every deploy
+     * orphaned the previous entry -- a development machine running this suite
+     * reached 2,319.
+     */
+    public function testEntriesOlderThanTheMaximumAgeAreSwept(): void
+    {
+        $orphans = [];
+
+        for ($i = 0; $i < 5; $i++) {
+            $orphan = $this->cacheDir() . '/orphan-' . $i . '.php';
+            file_put_contents($orphan, '<?php return [];');
+            touch($orphan, time() - (40 * 86400));
+            $orphans[] = $orphan;
+        }
+
+        // A write is what triggers the sweep, and a write is what a new key
+        // produces -- so it runs exactly when an orphan is created.
+        Config::load([$this->write('main.yml', "global:\n  mode: block\n", 10)]);
+
+        foreach ($orphans as $orphan) {
+            $this->assertFileDoesNotExist($orphan);
+        }
+    }
+
+    /**
+     * A recent entry is left alone.
+     *
+     * The sweep must not take the entries that are doing their job — including
+     * the one just written.
+     */
+    public function testRecentEntriesSurviveTheSweep(): void
+    {
+        $recent = $this->cacheDir() . '/recent-' . uniqid() . '.php';
+        file_put_contents($recent, '<?php return [];');
+        touch($recent, time() - 3600);
+
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+        Config::load([$file]);
+
+        $before = count(glob($this->cacheDir() . '/*.php') ?: []);
+
+        $this->assertFileExists($recent, 'An hour-old entry is not an orphan');
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        $this->assertSame(
+            $before,
+            count(glob($this->cacheDir() . '/*.php') ?: []),
+            'The entry just written survives the sweep that follows it'
+        );
+
+        @unlink($recent);
+    }
+
+    /**
+     * Sweeping runs on a write, not on a read.
+     *
+     * A cache hit is the hot path and must not be paying for housekeeping. A
+     * write already implies the parse the cache exists to avoid, so the sweep
+     * sits where the cost is already being paid.
+     */
+    public function testAReadDoesNotSweep(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+        Config::load([$file]);
+
+        // Planted after the entry exists, so the next load is a hit.
+        $orphan = $this->cacheDir() . '/orphan-on-read.php';
+        file_put_contents($orphan, '<?php return [];');
+        touch($orphan, time() - (40 * 86400));
+
+        Config::load([$file]);
+
+        $this->assertFileExists($orphan, 'A cache hit does no housekeeping');
+
+        @unlink($orphan);
+    }
+
+    /**
+     * An entry that cannot be stat-ed is stepped over.
+     *
+     * Two processes sweeping the same directory race, and the loser finds a
+     * file gone between the `glob()` and the `filemtime()`. A dangling symlink
+     * reproduces the same `false` deterministically. Skipping is right either
+     * way: the outcome wanted is that the entry is not there.
+     */
+    public function testAnUnstatableEntryDoesNotStopTheSweep(): void
+    {
+        $dangling = $this->cacheDir() . '/dangling-' . uniqid() . '.php';
+        @symlink($this->cacheDir() . '/does-not-exist-' . uniqid() . '.php', $dangling);
+
+        if (!is_link($dangling)) {
+            $this->markTestSkipped('This filesystem would not make a dangling symlink.');
+        }
+
+        $orphan = $this->cacheDir() . '/orphan-past-dangling.php';
+        file_put_contents($orphan, '<?php return [];');
+        touch($orphan, time() - (40 * 86400));
+
+        Config::load([$this->write('main.yml', "global:\n  mode: block\n", 10)]);
+
+        $this->assertFileDoesNotExist($orphan, 'The sweep carried on past the unstatable entry');
+
+        @unlink($dangling);
+    }
+
+    /**
+     * A configuration holding an object is not cached.    /**
+     * A configuration holding an object is not cached.    /**
      * A configuration holding an object is not cached.    /**
      * A configuration holding an object is not cached.
      *

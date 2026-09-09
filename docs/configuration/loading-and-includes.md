@@ -49,6 +49,51 @@ define('KANOPI_FIREWALL_CACHE_MAX_STALE', 86400);            // Default: unbound
 \Kanopi\Firewall\Firewall::create([__DIR__ . '/config.yml'])->evaluate();
 ```
 
+## The compiled configuration cache
+
+Parsing and merging the configuration costs about **2.2 ms** on the shipped presets, and it
+produces the same answer on every request. So the merged result is cached as PHP, keyed on
+the files it was built from, and a hit costs about **0.058 ms**.
+
+Nothing needs configuring. It lives in `KANOPI_FIREWALL_CACHE_DIR/compiled` when that
+constant is defined, and in a `kanopi-firewall-config` directory inside the system temp
+directory otherwise.
+
+### What invalidates an entry
+
+Each file is fingerprinted by a **hash of its content**. An entry is discarded when any file
+it was built from changes, is deleted, or becomes unreadable.
+
+Content rather than modification time, because a rewrite inside the same second that keeps
+the byte count identical is invisible to an mtime — and an application that compiles its
+settings into a YAML file does exactly that. The consequence was a firewall enforcing the
+previous configuration while reporting itself perfectly healthy. It also means a deploy that
+rewrites identical files *keeps* the cache rather than discarding it.
+
+Two things are never cached: a configuration containing an object, which cannot be written
+as PHP source without `serialize()` — deliberately not used anywhere this library writes and
+reads back — and a load that reported an error or a warning, which would otherwise freeze a
+degraded result in place.
+
+### Old entries are removed
+
+An entry is keyed on the paths it was built from, so a deployment using **dated release
+directories** produces a new key on every deploy and orphans the previous entry. Nothing
+read those orphans again, and until 2.23.0 nothing deleted them either.
+
+Entries older than **30 days** are now swept whenever a new one is written — which is
+exactly when an orphan is created, and never on a request that hit the cache.
+
+```php
+define('KANOPI_FIREWALL_CACHE_MAX_AGE', 7 * 86400);  // Default: 30 days. 0 disables sweeping.
+```
+
+The age is time since the entry was **written**, not since it was last read. So a
+configuration that never changes has its entry swept eventually and reparsed once — which is
+deliberate: tracking "time since read" means touching the file on every cache hit, measured
+at 0.0143 ms against a 0.058 ms warm load. A quarter again on every request the firewall
+serves, to avoid one 2.2 ms reparse a month.
+
 ### When the fetch fails
 
 A remote include that cannot be fetched **falls back to its cached copy, even after the
