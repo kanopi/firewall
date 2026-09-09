@@ -33,7 +33,10 @@ class StorageFactory
     public static function create(array $config = []): StorageInterface
     {
         $requestedType = $config['type'] ?? null;
-        $storageConfig = $config['config'] ?? [];
+        // `config:` written as a scalar reached a constructor typed `array`
+        // and left as a TypeError (#281). An empty config is the same thing the
+        // key being absent already means, and every backend handles that.
+        $storageConfig = is_array($config['config'] ?? null) ? $config['config'] : [];
         $type = $requestedType;
 
         // If the provided storage is not valid default to InMemoryStorage.

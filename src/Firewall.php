@@ -213,10 +213,16 @@ final class Firewall
         // Normalize configuration to the new plugins: array format.
         $config = PluginConfigNormalizer::normalize($config);
 
-        self::warnOnDuplicatePluginNames($config['plugins'] ?? []);
+        // Coerced before anything reads it. `plugins:` is a YAML list an
+        // operator hand-edits, so `plugins: nope` is an ordinary mistake -- and
+        // it used to reach a method typed `array` and leave as a TypeError,
+        // which a host catching `\Exception` does not catch (#281).
+        $declaredPlugins = is_array($config['plugins'] ?? null) ? $config['plugins'] : [];
+
+        self::warnOnDuplicatePluginNames($declaredPlugins);
 
         // Partition plugins by response type and sort by weight.
-        $partitioned = PluginConfigNormalizer::partitionAndSort($config['plugins'] ?? []);
+        $partitioned = PluginConfigNormalizer::partitionAndSort($declaredPlugins);
 
         LoggingFactory::logger()->debug('Starting Firewall', [
             'logger_config_keys' => array_keys($config['logger']),
@@ -426,10 +432,13 @@ final class Firewall
         $seen = [];
 
         foreach ($plugins as $plugin) {
-            // No `is_array()` guard: `??` already yields NULL for every entry
-            // shape that has no such offset, and the `is_string()` test below
-            // rejects it. An entry that is not an array at all does not reach
-            // here in practice -- `partitionAndSort()` refuses it first.
+            // No `is_array()` guard, and a non-map entry does reach here --
+            // this runs before `partitionAndSort()`, which is where such an
+            // entry is dropped. It is safe for a different reason: `??` is
+            // null-safe over a missing offset on any type, including a string
+            // or an int, and the `is_string()` test below then rejects the
+            // NULL. Named explicitly because the previous note here claimed
+            // the ordering was the other way round, which it never was (#281).
             $name = $plugin['metadata']['name'] ?? null;
 
             if (!is_string($name)) {
