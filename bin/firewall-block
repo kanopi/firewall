@@ -1,0 +1,353 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * See who is blocked, and lift a block (#291).
+ *
+ * `QueryableStorageInterface` has been able to answer this since 2.19.0 and the
+ * only documented way to reach it was to write a PHP script -- which is a poor
+ * thing to be doing while somebody is on the phone about a customer who cannot
+ * check out.
+ *
+ * Unlike `bin/firewall-check`, which swaps in a throwaway store so that
+ * checking a request cannot ban anyone, this reads and writes the *real* one.
+ * That is the whole point of it, and it is why the backend is named in the
+ * output.
+ *
+ * Usage:
+ *   bin/firewall-block config.yml [more.yml ...] [action] [options]
+ *
+ * Actions (one, defaulting to --list):
+ *   --list             Every block currently in force
+ *   --find=PATTERN     Blocks matching an address or CIDR range
+ *   --show=ADDRESS     One address, with when it offended
+ *   --lift=PATTERN     Remove blocks matching. Repeatable
+ *
+ * Options:
+ *   --dry-run          With --lift, report what would go without removing it
+ *   --json             Machine-readable output
+ *   --help
+ *
+ * Exit codes:
+ *   0  the question was answered, whatever the answer
+ *   1  the storage backend cannot answer it
+ *   2  the configuration could not be read, or the arguments made no sense
+ */
+
+use Kanopi\Firewall\Utility\BlockList;
+use Kanopi\Firewall\Utility\Config;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(BlockList::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(2);
+}
+
+// Keep stdout clean for --json, the same reason bin/firewall-check does.
+ini_set('display_errors', 'stderr');
+
+$arguments = array_slice($argv, 1);
+$files = [];
+$lifts = [];
+$find = null;
+$show = null;
+$list = false;
+$dryRun = false;
+$json = false;
+
+foreach ($arguments as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        fwrite(STDOUT, trim(<<<TEXT
+        See who is blocked, and lift a block.
+
+          bin/firewall-block config.yml [more.yml ...] [action] [options]
+
+          --list             Every block currently in force (the default)
+          --find=PATTERN     Blocks matching an address or CIDR range
+          --show=ADDRESS     One address, with when it offended
+          --lift=PATTERN     Remove blocks matching. Repeatable
+          --dry-run          With --lift, report what would go without removing it
+          --json             Machine-readable output
+
+        This reads and writes the real block list, not a throwaway.
+        TEXT) . "\n");
+        exit(0);
+    }
+
+    if ($argument === '--list') {
+        $list = true;
+        continue;
+    }
+
+    if ($argument === '--dry-run') {
+        $dryRun = true;
+        continue;
+    }
+
+    if ($argument === '--json') {
+        $json = true;
+        continue;
+    }
+
+    if (str_starts_with($argument, '--find=')) {
+        $find = substr($argument, 7);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--show=')) {
+        $show = substr($argument, 7);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--lift=')) {
+        $lifts[] = substr($argument, 7);
+        continue;
+    }
+
+    if (str_starts_with($argument, '-')) {
+        fwrite(STDERR, sprintf("Unknown option: %s. Try --help.\n", $argument));
+        exit(2);
+    }
+
+    $files[] = $argument;
+}
+
+if ($files === []) {
+    fwrite(STDERR, "No configuration files given. Try --help.\n");
+    exit(2);
+}
+
+foreach ($files as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, sprintf("Configuration file not found: %s\n", $file));
+        exit(2);
+    }
+}
+
+// One action at a time. Combining --lift with --find reads as "lift what this
+// finds", which is not what it would do, and guessing on the operator's behalf
+// is the wrong instinct for a command that deletes things.
+$chosen = array_filter([$list, $find !== null, $show !== null, $lifts !== []]);
+
+if (count($chosen) > 1) {
+    fwrite(STDERR, "Choose one of --list, --find, --show or --lift. Try --help.\n");
+    exit(2);
+}
+
+if ($dryRun && $lifts === []) {
+    fwrite(STDERR, "--dry-run only means something with --lift.\n");
+    exit(2);
+}
+
+Config::clearLoadErrors();
+$blockList = new BlockList($files);
+
+try {
+    $backend = $blockList->backend();
+} catch (Throwable $throwable) {
+    fwrite(STDERR, sprintf("Could not build the configured storage: %s\n", $throwable->getMessage()));
+    exit(2);
+}
+
+foreach (Config::getLoadErrors() as $error) {
+    fwrite(STDERR, sprintf("Could not load %s: %s\n", $error['file'], $error['message']));
+}
+
+if (!$backend['queryable']) {
+    fwrite(STDERR, sprintf(
+        "%s cannot enumerate its own keys, so it cannot answer this.\n"
+        . "Enumeration is a capability rather than a requirement — see docs/configuration/storage.md.\n",
+        $backend['class']
+    ));
+
+    exit(1);
+}
+
+/**
+ * Describe a record for a human.
+ *
+ * @param array<string, mixed> $record
+ *   A stored block.
+ */
+function describeRecord(string $address, array $record): string
+{
+    $expire = $record['expire'] ?? 0;
+    $expires = is_numeric($expire) && (int) $expire > 0
+        ? sprintf('expires %s', date('Y-m-d H:i:s', (int) $expire))
+        : 'no expiry';
+
+    $offenses = is_numeric($record['offenses'] ?? null) ? (int) $record['offenses'] : 0;
+
+    return sprintf(
+        '  %-42s %-32s %d offense%s',
+        $address,
+        $expires,
+        $offenses,
+        $offenses === 1 ? '' : 's'
+    );
+}
+
+// A store that dies with the process answers every question truthfully and
+// uselessly: nothing is blocked, because nothing was ever written here. Saying
+// so is the difference between "your customer is not blocked" and "I looked in
+// the wrong place".
+$warning = $backend['durable']
+    ? null
+    : sprintf(
+        '%s does not outlive the process, so nothing written by your site is visible here.',
+        $backend['class']
+    );
+
+if ($lifts !== []) {
+    $matched = [];
+
+    foreach ($lifts as $pattern) {
+        foreach ($blockList->find($pattern) as $address => $record) {
+            $matched[$address] = $record;
+        }
+    }
+
+    // Counted before, because deleteMatching() also removes records that have
+    // already lapsed — find() hides those, so the two numbers legitimately
+    // differ and reporting only one of them invites the wrong conclusion.
+    $removed = $dryRun ? 0 : $blockList->lift($lifts);
+
+    if ($json) {
+        fwrite(STDOUT, json_encode([
+            'action' => $dryRun ? 'dry-run' : 'lift',
+            'patterns' => $lifts,
+            'in_force' => array_keys($matched),
+            'removed' => $removed,
+            'backend' => $backend,
+            'warning' => $warning,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+
+        exit(0);
+    }
+
+    if ($warning !== null) {
+        fwrite(STDERR, '  ! ' . $warning . "\n");
+    }
+
+    foreach ($matched as $address => $record) {
+        fwrite(STDOUT, describeRecord((string) $address, $record) . "\n");
+    }
+
+    if ($dryRun) {
+        fwrite(STDOUT, sprintf(
+            "\n  %d block%s in force would be lifted. Nothing was removed.\n",
+            count($matched),
+            count($matched) === 1 ? '' : 's'
+        ));
+
+        exit(0);
+    }
+
+    fwrite(STDOUT, sprintf("\n  %d record%s removed.\n", $removed, $removed === 1 ? '' : 's'));
+
+    if ($removed > count($matched)) {
+        // Not a discrepancy worth hiding: it means expired rows were cleared
+        // too, which is the documented behaviour and usually welcome.
+        fwrite(STDOUT, sprintf(
+            "  %d of those had already expired and were not in force.\n",
+            $removed - count($matched)
+        ));
+    }
+
+    exit(0);
+}
+
+if ($show !== null) {
+    $records = $blockList->find($show);
+    $offenses = $blockList->offenses($show);
+
+    if ($json) {
+        fwrite(STDOUT, json_encode([
+            'address' => $show,
+            'blocked' => $records !== [],
+            'records' => $records,
+            'offenses' => $offenses,
+            'backend' => $backend,
+            'warning' => $warning,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+
+        exit(0);
+    }
+
+    if ($warning !== null) {
+        fwrite(STDERR, '  ! ' . $warning . "\n");
+    }
+
+    if ($records === []) {
+        fwrite(STDOUT, sprintf("\n  %s is not blocked.\n", $show));
+    }
+
+    foreach ($records as $address => $record) {
+        fwrite(STDOUT, "\n" . describeRecord((string) $address, $record) . "\n");
+    }
+
+    if ($offenses !== []) {
+        fwrite(STDOUT, sprintf("\n  Offended %d time%s, most recent first:\n", count($offenses), count($offenses) === 1 ? '' : 's'));
+
+        foreach ($offenses as $at) {
+            fwrite(STDOUT, sprintf("    %s\n", date('Y-m-d H:i:s', $at)));
+        }
+    }
+
+    exit(0);
+}
+
+$records = $find !== null ? $blockList->find($find) : $blockList->all();
+
+if ($json) {
+    fwrite(STDOUT, json_encode([
+        'action' => $find !== null ? 'find' : 'list',
+        'pattern' => $find,
+        'count' => count($records),
+        'records' => $records,
+        'backend' => $backend,
+        'warning' => $warning,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+
+    exit(0);
+}
+
+if ($warning !== null) {
+    fwrite(STDERR, '  ! ' . $warning . "\n");
+}
+
+fwrite(STDOUT, "\n");
+
+foreach ($records as $address => $record) {
+    fwrite(STDOUT, describeRecord((string) $address, $record) . "\n");
+}
+
+fwrite(STDOUT, sprintf(
+    "\n  %d block%s in force%s (%s)\n",
+    count($records),
+    count($records) === 1 ? '' : 's',
+    $find !== null ? ' matching ' . $find : '',
+    $backend['class']
+));
+
+exit(0);
