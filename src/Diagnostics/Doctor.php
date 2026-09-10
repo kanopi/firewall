@@ -284,6 +284,41 @@ class Doctor
     }
 
     /**
+     * How long a rule source may go unrefreshed before it is an error.
+     *
+     * 2.23.1 made the report say *how* stale a source is rather than only that it is
+     * (#297) and deliberately stopped there: turning a warning into an error changes an
+     * exit code, and a patch release should not fail a deploy that passed yesterday.
+     * A minor one opting into a stricter gate is exactly the right place for it.
+     *
+     * A week, by default. The bound is absolute rather than a multiple of the ttl,
+     * because a multiple gets the short ttls wrong in the dangerous direction: ten times
+     * a 60-second ttl is ten minutes, and a ten-minute-old rule list is not an incident.
+     * A week is not an incident either -- it is the point past which "the cron has not
+     * run yet" has stopped being a plausible explanation.
+     *
+     * `0` disables the escalation, and the error names the setting, so a deployment that
+     * genuinely refreshes on a longer cycle is one line away from a green gate rather
+     * than pinned to an old release.
+     *
+     * @param array<string, mixed> $global
+     *   The `global:` block.
+     *
+     * @return int
+     *   Seconds, or 0 when the escalation is off.
+     */
+    private function staleSourceErrorAfter(array $global): int
+    {
+        $configured = $global['stale_source_error_after'] ?? null;
+
+        if (!is_numeric($configured)) {
+            return 604800;
+        }
+
+        return max(0, (int) $configured);
+    }
+
+    /**
      * Whether this is running from a terminal.
      *
      * A seam, and the only one here. The trusted-proxy check answers
@@ -542,6 +577,7 @@ class Doctor
         $sourceManager = new SourceManager();
         $fresh = 0;
         $findings = [];
+        $errorAfter = $this->staleSourceErrorAfter(is_array($config['global'] ?? null) ? $config['global'] : []);
 
         foreach ($this->pluginMetadata($config) as $metadata) {
             $sources = is_array($metadata['sources'] ?? null) ? $metadata['sources'] : [];
@@ -583,22 +619,47 @@ class Doctor
                 if (!$sourceCache->isFresh($definition, $meta)) {
                     $fetchedAt = $meta['fetched_at'] ?? null;
 
-                    // How stale, not just that it is stale. One second past the
-                    // ttl is a refresh that has not run yet; two days past it is
-                    // a fetcher that has been failing since Monday, and the
-                    // operator does something different about each (#297).
-                    $detail = is_int($fetchedAt)
-                        ? sprintf(
-                            '%s — last fetched %s ago, past its ttl of %ds.',
-                            $url,
-                            $this->describeAge(time() - $fetchedAt),
-                            $sourceCache->ttl($definition)
-                        )
+                    if (!is_int($fetchedAt)) {
                         // A cache entry carrying no fetch time is *why* this
                         // reads as stale, rather than something that happens to
                         // also be stale, so it is worth saying instead of
-                        // reporting an age of zero.
-                        : sprintf('%s — its cache entry records no fetch time, so it cannot be trusted as current.', $url);
+                        // reporting an age of zero -- and it cannot be aged, so
+                        // the escalation below has nothing to measure.
+                        $findings[] = Diagnosis::warning(
+                            'Rule source cache is stale',
+                            sprintf('%s — its cache entry records no fetch time, so it cannot be trusted as current.', $url),
+                            'guides/syncing-sources.md'
+                        );
+
+                        continue;
+                    }
+
+                    // How stale, not just that it is stale. One second past the
+                    // ttl is a refresh that has not run yet; a week past it is a
+                    // fetcher that has been failing since last Monday, and the
+                    // operator does something different about each (#297).
+                    $age = time() - $fetchedAt;
+                    $detail = sprintf(
+                        '%s — last fetched %s ago, past its ttl of %ds.',
+                        $url,
+                        $this->describeAge($age),
+                        $sourceCache->ttl($definition)
+                    );
+
+                    if ($errorAfter > 0 && $age >= $errorAfter) {
+                        $findings[] = Diagnosis::error(
+                            'Rule source has not refreshed in a long time',
+                            $detail . sprintf(
+                                ' Past %s, this is a sync that has stopped working rather than one that has not run yet:'
+                                . ' the rule is still matching, on a list nobody has updated since. Raise or disable'
+                                . ' global.stale_source_error_after to stop this failing a deploy.',
+                                $this->describeAge($errorAfter)
+                            ),
+                            'guides/syncing-sources.md'
+                        );
+
+                        continue;
+                    }
 
                     $findings[] = Diagnosis::warning('Rule source cache is stale', $detail, 'guides/syncing-sources.md');
 

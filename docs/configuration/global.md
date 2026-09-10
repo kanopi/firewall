@@ -12,6 +12,7 @@ global:
   require_trusted_proxies: false
   require_config: false
   # panic_file: /var/run/firewall/panic   # no default — see Panic Switch below
+  stale_source_error_after: 604800
   blocking_escalation:
     - window: 300
       offense: 0
@@ -250,6 +251,29 @@ Anywhere the web user can read and an operator can write. Two things to weigh:
 - **`panic_file` is unset by default, on purpose.** There is no built-in path to guess at,
   because a well-known default would be the first thing worth trying against every site
   running this library.
+
+## Stale Rule Sources
+
+`stale_source_error_after` is how long a [rule source](sources.md) may go unrefreshed before
+[`firewall-doctor`](../guides/diagnosing.md#when-a-stale-rule-source-becomes-an-error)
+reports it as an **error** rather than a warning — which is the difference between a green
+deploy and a red one.
+
+A week by default. One second past a source's `ttl` is a refresh that has not run yet; a week
+past it is a sync that has stopped working, and the rule is still matching on a list nobody
+has updated since.
+
+```yaml
+global:
+  stale_source_error_after: 2592000   # 30 days, for a longer refresh cycle
+  # stale_source_error_after: 0       # never escalate; warn only
+```
+
+The bound is absolute rather than a multiple of each source's `ttl`, because a multiple gets
+the short ones wrong in the dangerous direction: ten times a 60-second `ttl` is ten minutes.
+
+Only affects the diagnostic. Nothing about how a source is fetched, cached or applied at
+request time changes.
 
 ## Status Code
 

@@ -36,6 +36,41 @@ vendor/bin/firewall-doctor firewall.yml
 **A warning does not fail the command.** A stale GeoIP database should not block a deploy;
 a rule that is not running should.
 
+### When a stale rule source becomes an error
+
+One second past its `ttl` is a refresh that has not run yet. A week past it is a sync that
+has stopped working — and the rule is still matching, on a list nobody has updated since.
+Those need different reactions, so they get different statuses:
+
+```
+  ! Rule source cache is stale
+      https://example.org/tor.txt — last fetched 2 hours ago, past its ttl of 3600s.
+
+  ✗ Rule source has not refreshed in a long time
+      https://example.org/tor.txt — last fetched 9 days ago, past its ttl of 3600s.
+      Past 7 days, this is a sync that has stopped working rather than one that has not
+      run yet: the rule is still matching, on a list nobody has updated since. Raise or
+      disable global.stale_source_error_after to stop this failing a deploy.
+```
+
+The bound is a week by default, and absolute rather than a multiple of the `ttl` — ten
+times a 60-second `ttl` is ten minutes, and a ten-minute-old rule list is not an incident.
+
+```yaml
+global:
+  stale_source_error_after: 2592000   # 30 days
+  # stale_source_error_after: 0       # never escalate; warn as 2.23.1 did
+```
+
+A cache entry that records no fetch time stays a warning however low the bound is set.
+There is nothing to measure, and escalating it would assert an age nobody knows.
+
+!!! note "New in 2.24.0"
+
+    2.23.1 made the report say *how* stale a source is and deliberately stopped there:
+    changing an exit code on a patch release fails a deploy that passed the day before.
+    Set `stale_source_error_after: 0` to keep the old behaviour.
+
 ## It is not a config linter
 
 It runs against the environment, not against the file: it opens the storage path, reaches
@@ -60,7 +95,7 @@ Whether a rule can *ever* match is a static question, and belongs to
 |---|---|
 | **Config** | Every file loaded; anything that degraded on the way |
 | **Trusted proxies** | Whether the client IP can be trusted — see below |
-| **Rule sources** | Fetched, and still inside their `ttl` — a stale one reports **how long** since it was last fetched |
+| **Rule sources** | Fetched, and still inside their `ttl` — a stale one reports **how long** since it was last fetched, and becomes an *error* past a week |
 | **Rules** | Every configured rule constructed, via [`getFailedRules()`](error-handling.md#checking-that-every-rule-is-running) |
 | **Backends** | Anything running without its store, via [`getDegradedBackends()`](error-handling.md#checking-that-a-backend-can-reach-its-server) |
 | **Schema** | Tables behind what this release declares, via [`pendingSchemaChanges()`](schema-migrations.md) |
