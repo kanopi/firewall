@@ -781,8 +781,9 @@ class DoctorTest extends AbstractTestCase
      * and the rule is still matching -- on a list nobody has updated since.
      * Only the second one should fail a deploy.
      *
-     * 2.23.1 shipped the age and deliberately not this: changing an exit code
-     * on a patch release fails a deploy that passed yesterday.
+     * Off unless asked for, which is the first case here: defaulting it on
+     * would fail a deploy that passed yesterday, over a source that was already
+     * stale yesterday.
      *
      * @param mixed $errorAfter
      *   What `global.stale_source_error_after` held.
@@ -824,17 +825,18 @@ class DoctorTest extends AbstractTestCase
     public static function escalationThresholds(): array
     {
         return [
-            // Two seconds stale against a week's grace: nowhere near.
-            'the default week' => ['unset', Diagnosis::WARNING],
+            // The default. Whether an old rule list should stop a deploy is a
+            // question about somebody's refresh cycle, and the library is in no
+            // position to guess it.
+            'unset, so off' => ['unset', Diagnosis::WARNING],
             'a threshold already passed' => [1, Diagnosis::ERROR],
             'a threshold not yet reached' => [86400, Diagnosis::WARNING],
-            // The escape hatch, for a deployment that genuinely refreshes on a
-            // longer cycle than this can guess at.
-            'disabled' => [0, Diagnosis::WARNING],
+            'turned off deliberately' => [0, Diagnosis::WARNING],
             // Clamped rather than treated as "escalate immediately", which is
             // the dangerous reading of a negative number.
             'a negative threshold is off, not instant' => [-1, Diagnosis::WARNING],
-            // A typo falls back to the default rather than to no gate at all.
+            // Falls back to off -- and is reported, which is the other half of
+            // this and has its own test below.
             'not a number' => ['soon', Diagnosis::WARNING],
         ];
     }
@@ -868,6 +870,55 @@ class DoctorTest extends AbstractTestCase
         $this->assertStringContainsString('past its ttl of 1s', (string) $errors[0]->detail);
         $this->assertStringContainsString('global.stale_source_error_after', (string) $errors[0]->detail);
         $this->assertSame('guides/syncing-sources.md', $errors[0]->reference);
+    }
+
+    /**
+     * A value that is set and unusable is reported, not quietly read as off.
+     *
+     * `stale_source_error_after: "30 days"` is the shape of the mistake, and
+     * YAML hands it over as a string without complaint. Falling back to off in
+     * silence would be the worst of both: the operator asked for a gate,
+     * believes they have one, and does not.
+     */
+    public function testAnUnusableThresholdIsReported(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['stale_source_error_after'] = '30 days';
+
+        $warnings = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        ));
+
+        $this->assertCount(1, $warnings);
+        $this->assertSame(Diagnosis::WARNING, $warnings[0]->status);
+        $this->assertStringContainsString("'30 days'", (string) $warnings[0]->detail);
+        $this->assertStringContainsString('no source will be escalated', (string) $warnings[0]->detail);
+    }
+
+    /**
+     * A deliberate 0 is not a mistake, and is not reported as one.
+     */
+    public function testTurningItOffDeliberatelyIsSilent(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['stale_source_error_after'] = 0;
+
+        $this->assertSame([], array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        )));
+    }
+
+    /**
+     * Leaving it unset is the default, and says nothing at all.
+     */
+    public function testLeavingItUnsetIsSilent(): void
+    {
+        $this->assertSame([], array_values(array_filter(
+            $this->diagnose($this->workingConfig()),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        )));
     }
 
     /**

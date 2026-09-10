@@ -286,33 +286,39 @@ class Doctor
     /**
      * How long a rule source may go unrefreshed before it is an error.
      *
-     * 2.23.1 made the report say *how* stale a source is rather than only that it is
-     * (#297) and deliberately stopped there: turning a warning into an error changes an
-     * exit code, and a patch release should not fail a deploy that passed yesterday.
-     * A minor one opting into a stricter gate is exactly the right place for it.
+     * **Off unless asked for.** 2.23.1 made the report say *how* stale a source is
+     * rather than only that it is (#297) and stopped there, because turning a warning
+     * into an error changes an exit code. Defaulting this on would do exactly that on
+     * upgrade: a deploy that passed yesterday fails today, over a source that was
+     * already stale yesterday and that nothing has done anything about. Whether an old
+     * rule list should stop a deploy is the operator's call about their own refresh
+     * cycle, and a library is in no position to guess it.
      *
-     * A week, by default. The bound is absolute rather than a multiple of the ttl,
-     * because a multiple gets the short ttls wrong in the dangerous direction: ten times
-     * a 60-second ttl is ten minutes, and a ten-minute-old rule list is not an incident.
-     * A week is not an incident either -- it is the point past which "the cron has not
-     * run yet" has stopped being a plausible explanation.
+     * So it is opt-in, and the useful thing this can do is make it one line:
      *
-     * `0` disables the escalation, and the error names the setting, so a deployment that
-     * genuinely refreshes on a longer cycle is one line away from a green gate rather
-     * than pinned to an old release.
+     * ```yaml
+     * global:
+     *   stale_source_error_after: 604800   # a week
+     * ```
+     *
+     * The bound is absolute rather than a multiple of each source's ttl, because a
+     * multiple gets the short ones wrong in the dangerous direction: ten times a
+     * 60-second ttl is ten minutes, and a ten-minute-old rule list is not an incident.
      *
      * @param array<string, mixed> $global
      *   The `global:` block.
      *
      * @return int
-     *   Seconds, or 0 when the escalation is off.
+     *   Seconds, or 0 when the escalation is off -- which is the default, and also
+     *   what an unusable value falls back to. `checkSources()` reports that value
+     *   rather than letting it pass as a deliberate 0.
      */
     private function staleSourceErrorAfter(array $global): int
     {
         $configured = $global['stale_source_error_after'] ?? null;
 
         if (!is_numeric($configured)) {
-            return 604800;
+            return 0;
         }
 
         return max(0, (int) $configured);
@@ -577,7 +583,23 @@ class Doctor
         $sourceManager = new SourceManager();
         $fresh = 0;
         $findings = [];
-        $errorAfter = $this->staleSourceErrorAfter(is_array($config['global'] ?? null) ? $config['global'] : []);
+        $global = is_array($config['global'] ?? null) ? $config['global'] : [];
+        $errorAfter = $this->staleSourceErrorAfter($global);
+
+        // Set, and not a number. Silently falling back to "off" would be the
+        // worst of both: the operator asked for a gate, believes they have one,
+        // and does not. `stale_source_error_after: "30 days"` is the shape of
+        // it, and YAML will happily hand that over as a string.
+        if (array_key_exists('stale_source_error_after', $global) && !is_numeric($global['stale_source_error_after'])) {
+            $findings[] = Diagnosis::warning(
+                'global.stale_source_error_after is not a number of seconds',
+                sprintf(
+                    'Read as %s, so no source will be escalated to an error. Give it seconds, or 0 to turn it off deliberately.',
+                    var_export($global['stale_source_error_after'], true)
+                ),
+                'configuration/global.md#stale-rule-sources'
+            );
+        }
 
         foreach ($this->pluginMetadata($config) as $metadata) {
             $sources = is_array($metadata['sources'] ?? null) ? $metadata['sources'] : [];
@@ -650,9 +672,10 @@ class Doctor
                         $findings[] = Diagnosis::error(
                             'Rule source has not refreshed in a long time',
                             $detail . sprintf(
-                                ' Past %s, this is a sync that has stopped working rather than one that has not run yet:'
-                                . ' the rule is still matching, on a list nobody has updated since. Raise or disable'
-                                . ' global.stale_source_error_after to stop this failing a deploy.',
+                                ' Past the %s you set as global.stale_source_error_after, this is a sync that has'
+                                . ' stopped working rather than one that has not run yet: the rule is still matching,'
+                                . ' on a list nobody has updated since. Raise that value, or set it to 0, to stop this'
+                                . ' failing a deploy.',
                                 $this->describeAge($errorAfter)
                             ),
                             'guides/syncing-sources.md'

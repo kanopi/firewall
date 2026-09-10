@@ -12,7 +12,7 @@ global:
   require_trusted_proxies: false
   require_config: false
   # panic_file: /var/run/firewall/panic   # no default — see Panic Switch below
-  stale_source_error_after: 604800
+  # stale_source_error_after: 604800      # off by default — see Stale Rule Sources
   blocking_escalation:
     - window: 300
       offense: 0
@@ -255,22 +255,32 @@ Anywhere the web user can read and an operator can write. Two things to weigh:
 ## Stale Rule Sources
 
 `stale_source_error_after` is how long a [rule source](sources.md) may go unrefreshed before
-[`firewall-doctor`](../guides/diagnosing.md#when-a-stale-rule-source-becomes-an-error)
+[`firewall-doctor`](../guides/diagnosing.md#making-a-stale-rule-source-fail-the-deploy)
 reports it as an **error** rather than a warning — which is the difference between a green
 deploy and a red one.
 
-A week by default. One second past a source's `ttl` is a refresh that has not run yet; a week
-past it is a sync that has stopped working, and the rule is still matching on a list nobody
-has updated since.
+**Off unless you set it.** One second past a source's `ttl` is a refresh that has not run
+yet; a fortnight past it is a sync that has stopped working, and the rule is still matching
+on a list nobody has updated since. Where the line between those falls is a question about
+your own refresh cycle, so nothing is assumed:
 
 ```yaml
 global:
-  stale_source_error_after: 2592000   # 30 days, for a longer refresh cycle
-  # stale_source_error_after: 0       # never escalate; warn only
+  stale_source_error_after: 604800    # a week — a reasonable starting point
 ```
 
+| Value | |
+|---|---|
+| unset, or `0` | Never escalate. A stale source is a warning, as it has always been |
+| seconds | Past that age, a stale source becomes an error and `firewall-doctor` exits `1` |
+
 The bound is absolute rather than a multiple of each source's `ttl`, because a multiple gets
-the short ones wrong in the dangerous direction: ten times a 60-second `ttl` is ten minutes.
+the short ones wrong in the dangerous direction: ten times a 60-second `ttl` is ten minutes,
+and a ten-minute-old rule list is not an incident.
+
+A value that is set and is not a number — `"30 days"`, which YAML hands over as a string
+without complaint — turns the escalation off and is reported as a warning of its own. Asking
+for a gate, believing you have one, and not having one is the outcome worth avoiding.
 
 Only affects the diagnostic. Nothing about how a source is fetched, cached or applied at
 request time changes.

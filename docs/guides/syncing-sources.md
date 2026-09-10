@@ -75,15 +75,16 @@ declaration and let the command's non-zero exit be your signal rather than your 
 being attempted — a cron that was removed, a credential that expired months ago. The rule
 keeps matching either way, on a list nobody has updated since.
 
-[`firewall-doctor`](diagnosing.md#when-a-stale-rule-source-becomes-an-error) is the check
-for that: past a week unrefreshed, a stale source is an error rather than a warning, so the
-same `set -e` deploy step catches it.
+[`firewall-doctor`](diagnosing.md#making-a-stale-rule-source-fail-the-deploy) is the check
+for that, once you tell it how long is too long. Past that age a stale source is an error
+rather than a warning, so the same `set -e` deploy step catches it:
 
 ```yaml
 global:
-  stale_source_error_after: 2592000   # 30 days, if yours refreshes on a longer cycle
-  # stale_source_error_after: 0       # never escalate
+  stale_source_error_after: 604800    # a week — a reasonable starting point
 ```
+
+Off unless set, because how long is too long depends on how often yours refreshes.
 
 ## Checking without fetching
 
