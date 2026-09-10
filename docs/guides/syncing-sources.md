@@ -69,6 +69,23 @@ narrows what is permitted and locks out the very automation that is running the 
 For sources you would rather degrade than block on, set `on_error: fail_open` in the
 declaration and let the command's non-zero exit be your signal rather than your gate.
 
+### And on a sync that has quietly stopped
+
+`firewall-sources` fails when a *fetch* fails. It says nothing about a fetch that stopped
+being attempted — a cron that was removed, a credential that expired months ago. The rule
+keeps matching either way, on a list nobody has updated since.
+
+[`firewall-doctor`](diagnosing.md#making-a-stale-rule-source-fail-the-deploy) is the check
+for that, once you tell it how long is too long. Past that age a stale source is an error
+rather than a warning, so the same `set -e` deploy step catches it:
+
+```yaml
+global:
+  stale_source_error_after: 604800    # a week — a reasonable starting point
+```
+
+Off unless set, because how long is too long depends on how often yours refreshes.
+
 ## Checking without fetching
 
 `--dry-run` reports the state of each cache and touches no network:

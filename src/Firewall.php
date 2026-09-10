@@ -27,9 +27,17 @@ use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
+use Kanopi\Firewall\Event\ChallengeFailed;
+use Kanopi\Firewall\Event\ChallengeSolved;
+use Kanopi\Firewall\Event\DecisionEvent;
+use Kanopi\Firewall\Event\RequestAllowed;
+use Kanopi\Firewall\Event\RequestBlocked;
+use Kanopi\Firewall\Event\RequestChallenged;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DegradedBackends;
+use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -44,6 +52,18 @@ final class Firewall
      * Firewall Mode.
      */
     private FirewallMode $firewallMode;
+
+    /**
+     * What the panic file asked for, and whether it got it.
+     *
+     * @var array{active: bool, mode: FirewallMode|null, path: string|null, problem: string|null}
+     */
+    private array $panicSwitch;
+
+    /**
+     * The mode the configuration asked for, before any panic file overrode it.
+     */
+    private FirewallMode $configuredMode;
 
     /**
      * Create a new Firewall Object.
@@ -73,6 +93,11 @@ final class Firewall
      *   alongside $challengeProvider, which is the registry's default —
      *   holding it separately keeps the single-provider paths reading
      *   exactly as they did.
+     * @param EventDispatcherInterface|null $eventDispatcher
+     *   Any PSR-14 dispatcher. The firewall announces its decisions to it and
+     *   ignores whatever comes back; see `DecisionEvent` for why that is not
+     *   an oversight (#218). NULL disables the whole mechanism at the cost of
+     *   a null check.
      */
     protected function __construct(
         private StorageInterface $storage,
@@ -83,9 +108,44 @@ final class Firewall
         private ?ChallengeProviderInterface $challengeProvider = null,
         private ?TokenManager $tokenManager = null,
         private array $challengeConfig = [],
-        private ?ChallengeProviderRegistry $challengeProviderRegistry = null
+        private ?ChallengeProviderRegistry $challengeProviderRegistry = null,
+        private ?EventDispatcherInterface $eventDispatcher = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
+        $this->configuredMode = $this->firewallMode;
+
+        // Read here, so it lands before the mode is used and before the debug
+        // line below reports it. One stat per Firewall instance -- which is one
+        // per request under PHP-FPM and mod_php, and that is the whole point:
+        // the switch takes effect on the next request, with no deploy and no
+        // pool reload (#207).
+        $this->panicSwitch = PanicSwitch::read($config['panic_file'] ?? null);
+
+        if ($this->panicSwitch['active'] && $this->panicSwitch['mode'] instanceof FirewallMode) {
+            $this->firewallMode = $this->panicSwitch['mode'];
+
+            // Warning, on every request, and that is deliberate. The realistic
+            // failure of a panic switch is not somebody flipping it -- it is
+            // somebody flipping it during an incident and nobody noticing it is
+            // still on three weeks later. There is no state anywhere else that
+            // says so, so this line is the whole safety mechanism.
+            $this->getLogger()->warning('Firewall panic switch is ACTIVE', [
+                'panic_file' => $this->panicSwitch['path'],
+                'configured_mode' => $this->configuredMode->value,
+                'effective_mode' => $this->firewallMode->value,
+                'remove_to_restore' => $this->panicSwitch['path'],
+            ]);
+        } elseif ($this->panicSwitch['problem'] !== null) {
+            // Error, not warning. A panic file that exists and does nothing
+            // means somebody reached for the switch and it did not take -- and
+            // they are not watching the logs to find that out, they are
+            // watching the site. Failing safe is right; failing quietly is not.
+            $this->getLogger()->error('Firewall panic file is present but was not applied', [
+                'panic_file' => $this->panicSwitch['path'],
+                'problem' => $this->panicSwitch['problem'],
+                'effective_mode' => $this->firewallMode->value,
+            ]);
+        }
 
         // count(), not count(getPlugins()). The latter is
         // iterator_to_array(getIterator()), which constructs every plugin -- and
@@ -101,6 +161,7 @@ final class Firewall
             'challenge_plugins_count' => $challengePluginManager->count(),
             'config_keys' => array_keys($config), // Log keys instead of full config to avoid sensitive data
             'mode' => $this->firewallMode->value,
+            'panic_switch' => $this->panicSwitch['active'],
             'challenge_enabled' => $challengeProvider instanceof \Kanopi\Firewall\Challenge\ChallengeProviderInterface,
         ]);
         $this->storage->expire();
@@ -130,6 +191,11 @@ final class Firewall
      *   Each can be a YAML file path (string), a config array, or null.
      * @param array<string, mixed> $overrides
      *   Override values of the configs.
+     * @param EventDispatcherInterface|null $eventDispatcher
+     *   Any PSR-14 dispatcher, to be told what the firewall decided about each
+     *   request (#218). A parameter rather than a config key because a
+     *   dispatcher is an object the host already has and YAML cannot name one.
+     *   Optional and trailing, so every existing call keeps working.
      *
      * @return self
      *   A new instance of the class initialized with the merged config.
@@ -147,8 +213,11 @@ final class Firewall
      *   its backing file, or — as `StorageConnectionException` — when a
      *   database-backed storage cannot reach its database.
      */
-    public static function create(array $configs = [], array $overrides = []): self
-    {
+    public static function create(
+        array $configs = [],
+        array $overrides = [],
+        ?EventDispatcherInterface $eventDispatcher = null
+    ): self {
         // Load default config first. Clear first, read after: `Config::load()`
         // never throws, so the only evidence that a config file was missing,
         // unreadable, or malformed is the list it leaves behind.
@@ -247,7 +316,8 @@ final class Firewall
             $challengeProvider,
             $tokenManager,
             $challengeConfig,
-            $providerRegistry
+            $providerRegistry,
+            $eventDispatcher
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -738,6 +808,94 @@ final class Firewall
     }
 
     /**
+     * Tell the host what was decided, and never let that be why a request fails.
+     *
+     * Three things are going on in six lines, and each one is deliberate:
+     *
+     * 1. **No dispatcher, no cost.** The null check is the entire overhead for
+     *    the hosts that register nothing, which is most of them. The event
+     *    object is built by the caller, so this is not the place that decides
+     *    whether it was worth building -- see the call sites, which construct
+     *    inside the branch that already knows a decision was made.
+     * 2. **The exception is swallowed.** A listener is host code doing host
+     *    things: a StatsD socket, a queue, an HTTP call to a notifier. All of
+     *    those fail, and none of them are a reason to stop blocking an
+     *    attacker or to 500 a legitimate visitor. The verdict is already
+     *    decided by the time this runs; a listener cannot change it, so a
+     *    listener must not be able to break it either. This is the same
+     *    fail-open reasoning as a rule whose constructor throws (#247).
+     * 3. **It is logged at `error`.** Swallowing quietly would make a listener
+     *    that has never once run look identical to one that works.
+     *
+     * @param DecisionEvent $decisionEvent
+     *   The decision to announce.
+     */
+    private function announce(DecisionEvent $decisionEvent): void
+    {
+        if (!$this->eventDispatcher instanceof EventDispatcherInterface) {
+            return;
+        }
+
+        try {
+            $this->eventDispatcher->dispatch($decisionEvent);
+        } catch (\Throwable $throwable) {
+            $this->getLogger()->error('A decision listener threw, and was ignored', [
+                'event' => $decisionEvent::class,
+                'listener_error' => $throwable->getMessage(),
+                'listener_error_type' => $throwable::class,
+            ]);
+        }
+    }
+
+    /**
+     * The mode the firewall is actually running in.
+     *
+     * Not necessarily the one in the configuration: a panic file can override
+     * it (#207). `getConfiguredMode()` is the other half of that comparison.
+     *
+     * @return FirewallMode
+     *   The mode every decision below is made in.
+     */
+    public function getMode(): FirewallMode
+    {
+        return $this->firewallMode;
+    }
+
+    /**
+     * The mode the configuration asked for.
+     *
+     * Equal to `getMode()` unless a panic file is active.
+     *
+     * @return FirewallMode
+     *   The configured mode.
+     */
+    public function getConfiguredMode(): FirewallMode
+    {
+        return $this->configuredMode;
+    }
+
+    /**
+     * Whether a panic file is changing the mode, and what it said.
+     *
+     * A status page has no other way to tell: the effective mode alone cannot
+     * distinguish "somebody set log in YAML" from "somebody is holding the
+     * switch down". The difference matters, because only one of them is
+     * supposed to be temporary.
+     *
+     * `problem` is set when a panic file exists and was not applied -- empty,
+     * unreadable, or naming something that is not a mode. That is the fail-safe
+     * working, and it is still worth reporting: somebody reached for the switch
+     * and it did not take.
+     *
+     * @return array{active: bool, mode: FirewallMode|null, path: string|null, problem: string|null}
+     *   As `PanicSwitch::read()` returned it at construction.
+     */
+    public function getPanicSwitch(): array
+    {
+        return $this->panicSwitch;
+    }
+
+    /**
      * The three rule buckets, ordered the way `evaluate()` consults them.
      *
      * So a report reads in the order the firewall would have applied the rules.
@@ -863,6 +1021,7 @@ final class Firewall
                 'plugin_name' => $plugin->getName(),
                 'plugin_type' => $plugin::class,
             ]));
+            $this->announce(new RequestAllowed($request, $plugin));
             return true;
         }
 
@@ -896,6 +1055,7 @@ final class Firewall
                     'plugin_name' => $plugin->getName(),
                     'plugin_type' => $plugin::class,
                 ]));
+                $this->announce(new RequestChallenged($request, $plugin, $providerName, false));
                 return true;
             } else {
                 $this->sendChallengeResponse($request, $plugin);
@@ -909,14 +1069,22 @@ final class Firewall
                     'plugin_name' => $plugin->getName(),
                     'plugin_type' => $plugin::class,
                 ]));
+                $this->announce(new RequestBlocked($request, $plugin, $plugin->getStatusCode($request), false));
                 return true;
             }
 
             $this->block($request, $plugin);
+
+            // Before sendBlockingResponse(), which throws in `exception` mode
+            // and calls exit() in every other one. Announcing afterwards would
+            // announce nothing at all.
+            $this->announce(new RequestBlocked($request, $plugin, $plugin->getStatusCode($request)));
             $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
         }
 
         $this->getLogger()->debug('Request allowed', $this->getContext($request));
+
+        $this->announce(new RequestAllowed($request));
 
         return true;
     }
@@ -1012,6 +1180,8 @@ final class Firewall
                 'reason' => $reason,
             ]));
 
+            $this->announce(new ChallengeFailed($request, $providerName, $reason));
+
             if ($this->firewallMode === FirewallMode::Exception) {
                 throw new ChallengeRequiredException('Invalid challenge solution');
             }
@@ -1048,6 +1218,8 @@ final class Firewall
             'provider_name' => $providerName,
             'ttl' => $ttl,
         ]));
+
+        $this->announce(new ChallengeSolved($request, $providerName, $ttl));
 
         if ($this->firewallMode === FirewallMode::Exception) {
             throw new ChallengeSolvedException($token, $redirect);
@@ -1253,6 +1425,10 @@ final class Firewall
             'ttl' => $ttl,
         ]));
 
+        // Before the throw and before the interstitial is written, for the same
+        // reason as the block path: neither returns here.
+        $this->announce(new RequestChallenged($request, $plugin, $providerName));
+
         if ($this->firewallMode === FirewallMode::Exception) {
             throw new ChallengeRequiredException(sprintf(
                 'Challenge required by plugin: %s',
@@ -1439,6 +1615,10 @@ final class Firewall
             return;
         }
 
+        // Read once. The `log` branch reports the status the client would have
+        // received, and reading it separately there would let the two drift.
+        $repeatOffenderStatus = intval($this->config['repeat_offender_status'] ?? 0);
+
         if (array_key_exists('event_id', $data)) {
             $request->attributes->set('x-request-id', $data['event_id']);
         }
@@ -1447,11 +1627,13 @@ final class Firewall
             $this->getLogger()->warning('Request would be blocked by storage blocklist (log mode)', $this->getContext($request, [
                 'mode' => 'log',
             ]));
+            $this->announce(new RequestBlocked($request, null, $repeatOffenderStatus, false));
             return;
         }
 
         $this->repeatOffender($request);
-        $this->sendBlockingResponse($request, intval($this->config['repeat_offender_status'] ?? 0));
+        $this->announce(new RequestBlocked($request, null, $repeatOffenderStatus));
+        $this->sendBlockingResponse($request, $repeatOffenderStatus);
     }
 
     /**

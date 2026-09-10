@@ -1,0 +1,593 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Add and remove rules without hand-editing YAML (#290).
+ *
+ * Everything else the package ships is read-only or write-once: `firewall-init`
+ * writes a config once, `firewall-check --lint` and `firewall-doctor` read one.
+ * Changing a config afterwards meant opening the file.
+ *
+ * This does not open that file. It owns one of its own and includes it, for a
+ * measured reason -- see `ManagedRules` -- and the consequence is on screen
+ * rather than in a footnote: rules it wrote can be added, removed, enabled and
+ * disabled; rules you wrote can only be listed, and asking it to change one is
+ * refused by name.
+ *
+ * Usage:
+ *   bin/firewall-rule ACTION config.yml [more.yml ...] [options]
+ *
+ * Actions:
+ *   init                 Create the managed file, and say how to include it
+ *   list                 Every rule the firewall will evaluate, and where it came from
+ *   add                  Append a rule to the managed file
+ *   remove NAME          Delete a managed rule
+ *   disable NAME         Keep a managed rule, stop evaluating it
+ *   enable NAME          Evaluate it again
+ *
+ * Options for `add`:
+ *   --plugin=NAME        ip | url | agent | asn | geo, or a class name. Default ip
+ *   --response=NAME      block | allow | challenge. Default block
+ *   --rule=VALUE         A `config:` entry. Repeatable. Required
+ *   --ip=VALUE           Shorthand for --plugin=ip --rule=VALUE. Repeatable
+ *   --path=VALUE         Shorthand for --plugin=url --rule=path:VALUE. Repeatable
+ *   --name=NAME          What the log will call it. Default is generated
+ *   --weight=N           Evaluation order, lower first. Default 0
+ *
+ * Options:
+ *   --managed=PATH       The file this owns. Default firewall-managed.yml beside
+ *                        the first config given
+ *   --dry-run            Report what would change and write nothing
+ *   --json               Machine-readable output
+ *   --help
+ *
+ * Exit codes:
+ *   0  done, or the listing printed
+ *   1  refused: no such managed rule, a name already taken, a rule this does
+ *      not own, or the file could not be written
+ *   2  the configuration could not be read, or the arguments made no sense
+ */
+
+use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\ManagedRules;
+use Kanopi\Firewall\Utility\PluginConfigNormalizer;
+
+const EXIT_OK = 0;
+const EXIT_REFUSED = 1;
+const EXIT_USAGE = 2;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(ManagedRules::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(EXIT_USAGE);
+}
+
+// Keep stdout clean for --json, the same reason bin/firewall-check does.
+ini_set('display_errors', 'stderr');
+
+const HELP = <<<TEXT
+Add and remove firewall rules without hand-editing YAML.
+
+  bin/firewall-rule ACTION config.yml [more.yml ...] [options]
+
+Actions:
+  init                 Create the managed file, and say how to include it
+  list                 Every rule the firewall will evaluate, and where it came from
+  add                  Append a rule to the managed file
+  remove NAME          Delete a managed rule
+  disable NAME         Keep a managed rule, stop evaluating it
+  enable NAME          Evaluate it again
+
+For `add`:
+  --plugin=NAME        ip | url | agent | asn | geo, or a class name. Default ip
+  --response=NAME      block | allow | challenge. Default block
+  --rule=VALUE         A `config:` entry. Repeatable. Required
+  --ip=VALUE           Shorthand for --plugin=ip --rule=VALUE. Repeatable
+  --path=VALUE         Shorthand for --plugin=url --rule=path:VALUE. Repeatable
+  --name=NAME          What the log will call it. Default is generated
+  --weight=N           Evaluation order, lower first. Default 0
+
+  --managed=PATH       The file this owns. Default firewall-managed.yml beside
+                       the first config given
+  --dry-run            Report what would change and write nothing
+  --json               Machine-readable output
+
+This writes only its own file. Rules you wrote by hand are listed and never
+changed -- rewriting them would destroy their comments, which is why there are
+two files.
+TEXT;
+
+$arguments = array_slice($argv, 1);
+
+if ($arguments === [] || in_array($arguments[0], ['--help', '-h', 'help'], true)) {
+    fwrite(STDOUT, HELP . "\n");
+    exit(EXIT_OK);
+}
+
+$action = array_shift($arguments);
+
+if (!in_array($action, ['init', 'list', 'add', 'remove', 'disable', 'enable'], true)) {
+    fwrite(STDERR, sprintf("Unknown action: %s. Try --help.\n", $action));
+    exit(EXIT_USAGE);
+}
+
+$files = [];
+$rules = [];
+$target = null;
+$plugin = null;
+$response = 'block';
+$name = null;
+$weight = 0;
+$managedPath = null;
+$dryRun = false;
+$json = false;
+
+foreach ($arguments as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        fwrite(STDOUT, HELP . "\n");
+        exit(EXIT_OK);
+    }
+
+    if ($argument === '--dry-run') {
+        $dryRun = true;
+        continue;
+    }
+
+    if ($argument === '--json') {
+        $json = true;
+        continue;
+    }
+
+    if (str_starts_with($argument, '--rule=')) {
+        $rules[] = substr($argument, 7);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--ip=')) {
+        $plugin ??= 'ip';
+        $rules[] = substr($argument, 5);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--path=')) {
+        $plugin ??= 'url';
+        // `path:` and not `path@starts_with:`, because the shorthand should
+        // mean the least surprising thing. Anything else is --rule=, which
+        // takes the plugin's full syntax.
+        $rules[] = 'path:' . substr($argument, 7);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--plugin=')) {
+        $plugin = substr($argument, 9);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--response=')) {
+        $response = substr($argument, 11);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--name=')) {
+        $name = substr($argument, 7);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--weight=')) {
+        $weight = (int) substr($argument, 9);
+        continue;
+    }
+
+    if (str_starts_with($argument, '--managed=')) {
+        $managedPath = substr($argument, 10);
+        continue;
+    }
+
+    if (str_starts_with($argument, '-')) {
+        fwrite(STDERR, sprintf("Unknown option: %s. Try --help.\n", $argument));
+        exit(EXIT_USAGE);
+    }
+
+    // A bare word is the rule name for the actions that take one, and a config
+    // file for everything else. Ordering matters: `remove office prod.yml`
+    // reads the way it is written.
+    if ($target === null && in_array($action, ['remove', 'disable', 'enable'], true)) {
+        $target = $argument;
+        continue;
+    }
+
+    $files[] = $argument;
+}
+
+
+foreach ($files as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, sprintf("Configuration file not found: %s\n", $file));
+        exit(EXIT_USAGE);
+    }
+}
+
+// `remove prod.yml` is the shape of the mistake: the first bare word is taken
+// as the rule name, so the config is consumed and the command would otherwise
+// report "no managed rule is named prod.yml" -- true, and no help at all.
+if ($files === [] && $target !== null && is_file($target)) {
+    fwrite(STDERR, sprintf(
+        "`%s` takes a rule name before the configuration file:\n  firewall-rule %s NAME %s\n",
+        $action,
+        $action,
+        $target
+    ));
+    exit(EXIT_USAGE);
+}
+
+if ($files === []) {
+    fwrite(STDERR, "Name at least one configuration file. Try --help.\n");
+    exit(EXIT_USAGE);
+}
+
+// Beside the first config given, which is where an include written as a bare
+// relative path will look for it.
+$managedPath ??= dirname($files[0]) . '/firewall-managed.yml';
+
+$managed = ManagedRules::read($managedPath);
+
+if ($managed['problem'] !== null) {
+    fwrite(STDERR, sprintf("%s %s\n", $managedPath, $managed['problem']));
+    exit(EXIT_REFUSED);
+}
+
+$before = $managed['rules'];
+
+/**
+ * Load the merged configuration, and say so when it did not load.
+ *
+ * `Config::load()` collects failures instead of raising them and returns
+ * whatever it managed -- which for a dangling `configs:` include is an empty
+ * array. Reported as "no rules are configured", that reads as a working
+ * firewall with nothing in it, which is the most misleading thing this command
+ * could say.
+ *
+ * @param array<int, string> $files
+ *   The configuration files named on the command line.
+ *
+ * @return array<string, mixed>
+ *   The merged, normalized configuration.
+ */
+$loadConfig = static function (array $files): array {
+    Config::clearLoadErrors();
+    $merged = PluginConfigNormalizer::normalize(Config::load($files));
+    $errors = Config::getLoadErrors();
+
+    if ($errors !== []) {
+        fwrite(STDERR, "That configuration did not load cleanly:\n");
+
+        foreach ($errors as $error) {
+            fwrite(STDERR, sprintf("  %s\n", $error['message'] ?? 'unknown error'));
+        }
+
+        fwrite(STDERR, "\nA `configs:` include naming a file that does not exist yet\n"
+            . "empties the whole document -- it is a load failure, not a skipped line.\n"
+            . "`firewall-rule init` writes the managed file first, which is the order\n"
+            . "that avoids this.\n");
+    }
+
+    return $merged;
+};
+
+/**
+ * Report and exit.
+ *
+ * @param array<string, mixed> $result
+ *   The machine-readable result.
+ * @param array<int, string> $lines
+ *   What to print when --json was not asked for.
+ */
+$finish = static function (array $result, array $lines, int $code) use ($json): never {
+    if ($json) {
+        echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), "\n";
+    } else {
+        foreach ($lines as $line) {
+            echo $line, "\n";
+        }
+    }
+
+    exit($code);
+};
+
+// -----------------------------------------------------------------------
+// init
+// -----------------------------------------------------------------------
+
+if ($action === 'init') {
+    $existed = is_file($managedPath);
+
+    if (!$existed && !$dryRun && !ManagedRules::write($managedPath, [])) {
+        fwrite(STDERR, sprintf("Could not write %s\n", $managedPath));
+        exit(EXIT_REFUSED);
+    }
+
+    // The ordering is the reason this action exists. A `configs:` entry naming
+    // a file that is not there yet does not degrade -- `Config::load()`
+    // records the failure and returns an empty document, so every rule in the
+    // config stops being configured. File first, include second.
+    $finish(
+        [
+            'action' => 'init',
+            'managed_file' => $managedPath,
+            'created' => !$existed,
+            'dry_run' => $dryRun,
+        ],
+        [
+            $existed
+                ? sprintf('%s already exists', $managedPath)
+                : sprintf('%s %s', $dryRun ? 'Would create' : 'Created', $managedPath),
+            '',
+            'Include it from your configuration, now that the file exists:',
+            '',
+            '  configs:',
+            sprintf('    - "%s"', basename($managedPath)),
+            '',
+            'Naming it before it exists empties the whole document -- a missing include is',
+            'a load failure, not a skipped line.',
+        ],
+        EXIT_OK
+    );
+}
+
+// -----------------------------------------------------------------------
+// list
+// -----------------------------------------------------------------------
+
+if ($action === 'list') {
+    try {
+        $merged = $loadConfig($files);
+    } catch (Throwable $throwable) {
+        fwrite(STDERR, sprintf("Could not read that configuration.\n  %s\n", $throwable->getMessage()));
+        exit(EXIT_USAGE);
+    }
+
+    $inventory = ManagedRules::inventory(
+        is_array($merged['plugins'] ?? null) ? $merged['plugins'] : [],
+        $before
+    );
+
+    $lines = [];
+
+    if ($inventory === []) {
+        $lines[] = 'No rules are configured.';
+    }
+
+    foreach ($inventory as $row) {
+        $lines[] = sprintf(
+            '%-9s %-7s %-5s %-6d %s%s',
+            $row['managed'] ? 'managed' : 'yours',
+            $row['response'],
+            $row['enabled'] ? 'on' : 'off',
+            $row['weight'],
+            $row['name'],
+            $row['managed'] ? '' : '   (declared in your own configuration)'
+        );
+    }
+
+    if ($inventory !== []) {
+        $lines[] = '';
+        $lines[] = sprintf(
+            '%d rule%s. `managed` ones live in %s and can be changed from here.',
+            count($inventory),
+            count($inventory) === 1 ? '' : 's',
+            $managedPath
+        );
+    }
+
+    $finish(['managed_file' => $managedPath, 'rules' => $inventory], $lines, EXIT_OK);
+}
+
+// -----------------------------------------------------------------------
+// add
+// -----------------------------------------------------------------------
+
+if ($action === 'add') {
+    if ($rules === []) {
+        fwrite(STDERR, "`add` needs at least one --rule=, --ip= or --path=. Try --help.\n");
+        exit(EXIT_USAGE);
+    }
+
+    if (!in_array($response, ManagedRules::RESPONSES, true)) {
+        fwrite(STDERR, sprintf(
+            "Unknown --response=%s. Use one of: %s\n",
+            $response,
+            implode(', ', ManagedRules::RESPONSES)
+        ));
+        exit(EXIT_USAGE);
+    }
+
+    $class = ManagedRules::resolvePlugin($plugin ?? 'ip');
+
+    if ($class === null) {
+        fwrite(STDERR, sprintf(
+            "Unknown --plugin=%s. Use one of: %s, or a class name.\n",
+            $plugin,
+            implode(', ', array_keys(ManagedRules::ALIASES))
+        ));
+        exit(EXIT_USAGE);
+    }
+
+    // A generated name is still a name, because an unnamed rule is one the log
+    // cannot tell from every other rule of the same class (#182) -- and one
+    // this command could never find again to remove.
+    $name ??= sprintf('%s-%s', strtolower(substr((string) strrchr('\\' . $class, '\\'), 1)), substr(bin2hex(random_bytes(3)), 0, 6));
+
+    $added = ManagedRules::add($before, ManagedRules::rule($class, $response, $rules, $name, $weight));
+
+    if ($added['problem'] !== null) {
+        fwrite(STDERR, sprintf("Refused: %s.\n", $added['problem']));
+        exit(EXIT_REFUSED);
+    }
+
+    if (!$dryRun && !ManagedRules::write($managedPath, $added['rules'])) {
+        fwrite(STDERR, sprintf("Could not write %s\n", $managedPath));
+        exit(EXIT_REFUSED);
+    }
+
+    $lines = [
+        sprintf('%s %s %s (%s)', $dryRun ? 'Would add' : 'Added', $response, $name, $class),
+        sprintf('  %s', implode(', ', $rules)),
+        sprintf('  %s %s', $dryRun ? 'in' : 'written to', $managedPath),
+    ];
+
+    // Writing the file is not the same as the firewall reading it. Everything
+    // below is the difference between "the command worked" and "the rule is in
+    // force", and it is checked rather than assumed: a missing `configs:`
+    // entry, a typo in the path, a file written beside the wrong config -- all
+    // of them look exactly like success from here.
+    if (!$dryRun) {
+        $reachable = false;
+
+        try {
+            $reloaded = PluginConfigNormalizer::normalize(Config::load($files));
+            Config::clearLoadErrors();
+
+            foreach (is_array($reloaded['plugins'] ?? null) ? $reloaded['plugins'] : [] as $candidate) {
+                if (is_array($candidate) && ManagedRules::nameOf($candidate) === $name) {
+                    $reachable = true;
+                    break;
+                }
+            }
+        } catch (Throwable) {
+            $reachable = false;
+        }
+
+        if (!$reachable) {
+            $lines[] = '';
+            $lines[] = 'The rule was written but the firewall will not see it: nothing in your';
+            $lines[] = 'configuration includes that file. Add it -- the file exists now, which is';
+            $lines[] = 'the order that matters, since naming a missing include empties the whole';
+            $lines[] = 'document rather than skipping a line:';
+            $lines[] = '';
+            $lines[] = '  configs:';
+            $lines[] = sprintf('    - "%s"', basename($managedPath));
+        }
+
+        $finish(
+            [
+                'action' => 'add',
+                'name' => $name,
+                'plugin' => $class,
+                'response' => $response,
+                'config' => $rules,
+                'managed_file' => $managedPath,
+                'in_force' => $reachable,
+            ],
+            $lines,
+            $reachable ? EXIT_OK : EXIT_REFUSED
+        );
+    }
+
+    $finish(
+        [
+            'action' => 'add',
+            'dry_run' => true,
+            'name' => $name,
+            'plugin' => $class,
+            'response' => $response,
+            'config' => $rules,
+            'managed_file' => $managedPath,
+        ],
+        $lines,
+        EXIT_OK
+    );
+}
+
+// -----------------------------------------------------------------------
+// remove / disable / enable
+// -----------------------------------------------------------------------
+
+$changed = match ($action) {
+    'remove' => ManagedRules::remove($before, (string) $target),
+    'disable' => ManagedRules::setEnabled($before, (string) $target, false),
+    default => ManagedRules::setEnabled($before, (string) $target, true),
+};
+
+if ($changed['problem'] !== null) {
+    // "No managed rule of that name" is true and, on its own, unhelpful: by far
+    // the likeliest reason is that the rule exists and the operator wrote it.
+    // Leading with the pedantic answer would send them looking for a command
+    // that does not exist, so the config is consulted before anything is said.
+    $yours = false;
+
+    try {
+        Config::clearLoadErrors();
+        $merged = PluginConfigNormalizer::normalize(Config::load($files));
+
+        foreach (is_array($merged['plugins'] ?? null) ? $merged['plugins'] : [] as $candidate) {
+            if (is_array($candidate) && ManagedRules::nameOf($candidate) === $target) {
+                $yours = true;
+                break;
+            }
+        }
+    } catch (Throwable) {
+        // The refusal below stands regardless; this was only ever context.
+    }
+
+    if ($yours) {
+        fwrite(STDERR, sprintf(
+            "Refused: \"%s\" is one of your own rules, not one this command wrote.\n\n"
+            . "Rewriting your configuration would destroy its comments, which is the whole\n"
+            . "reason there are two files. Edit it where it is declared, or set\n"
+            . "`enable: false` on that entry. Only rules in %s\n"
+            . "can be changed from here.\n",
+            $target,
+            $managedPath
+        ));
+    } else {
+        fwrite(STDERR, sprintf("Refused: %s.\n", $changed['problem']));
+    }
+
+    exit(EXIT_REFUSED);
+}
+
+if (!$dryRun && !ManagedRules::write($managedPath, $changed['rules'])) {
+    fwrite(STDERR, sprintf("Could not write %s\n", $managedPath));
+    exit(EXIT_REFUSED);
+}
+
+$verb = match ($action) {
+    'remove' => $dryRun ? 'Would remove' : 'Removed',
+    'disable' => $dryRun ? 'Would disable' : 'Disabled',
+    default => $dryRun ? 'Would enable' : 'Enabled',
+};
+
+$finish(
+    [
+        'action' => $action,
+        'name' => $target,
+        'dry_run' => $dryRun,
+        'managed_file' => $managedPath,
+        'remaining' => count($changed['rules']),
+    ],
+    [
+        sprintf('%s %s', $verb, $target),
+        sprintf('  %s %s', $dryRun ? 'in' : 'written to', $managedPath),
+    ],
+    EXIT_OK
+);

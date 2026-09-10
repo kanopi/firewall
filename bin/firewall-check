@@ -41,6 +41,8 @@ use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Storage\InMemoryStorage;
+use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Monolog\Handler\TestHandler;
 use Monolog\Level;
@@ -311,7 +313,25 @@ $overrides = [
     // Without this, evaluate() short-circuits in CLI and reports everything as
     // allowed.
     '[global][mode]' => 'exception',
+
+    // And without this, a panic file would win the argument -- it overrides
+    // `global.mode` by design (#207), which is exactly the override above, so
+    // an active switch would land this script back in the "everything is
+    // allowed" hole the mode override exists to avoid.
+    //
+    // Suppressed for the evaluation, reported separately below. The question
+    // this tool answers is "which rule matches this request", and that answer
+    // does not change when the switch is on; what changes is what the firewall
+    // then does about it, and saying both is more useful than either.
+    '[global][panic_file]' => '',
 ];
+
+// Read before the overrides above hide it. Config::load() does not throw --
+// it collects failures rather than raising them -- so a broken config still
+// reaches the firewall build below, which reports it properly.
+$panic = PanicSwitch::read(
+    Config::load(array_merge([__DIR__ . '/../config/config.yml'], $configs))['global']['panic_file'] ?? null
+);
 
 $liveStorage = isset($options['live-storage']);
 
@@ -443,7 +463,7 @@ $configured = [];
 
 try {
     $merged = PluginConfigNormalizer::normalize(
-        \Kanopi\Firewall\Utility\Config::load(
+        Config::load(
             array_merge([__DIR__ . '/../config/config.yml'], $configs),
             $overrides,
         )
@@ -498,6 +518,20 @@ $result = [
     'storage' => $liveStorage ? 'configured backend' : 'throwaway (in-memory)',
 ];
 
+if ($panic['active'] && $panic['mode'] !== null) {
+    $result['panic_switch'] = [
+        'active' => true,
+        'path' => $panic['path'],
+        'mode' => $panic['mode']->value,
+    ];
+} elseif ($panic['problem'] !== null) {
+    $result['panic_switch'] = [
+        'active' => false,
+        'path' => $panic['path'],
+        'problem' => $panic['problem'],
+    ];
+}
+
 if (isset($options['explain'])) {
     $result['evaluated'] = $evaluated;
     $result['configured'] = $configured;
@@ -528,6 +562,18 @@ if (isset($options['json'])) {
     }
 
     printf("  storage           %s\n", $result['storage']);
+
+    // On stdout with the rest of the verdict, not stderr: this changes how to
+    // read the line above it, so it has to travel with it.
+    if (isset($result['panic_switch']['mode'])) {
+        printf(
+            "  panic switch      ACTIVE — %s is forcing mode %s, so the site is not behaving as this verdict says\n",
+            $panic['path'],
+            $result['panic_switch']['mode'],
+        );
+    } elseif (isset($result['panic_switch']['problem'])) {
+        printf("  panic switch      IGNORED — %s %s\n", $panic['path'], $panic['problem']);
+    }
 
     if (isset($options['explain'])) {
         echo "\nPlugins evaluated, in order:\n";

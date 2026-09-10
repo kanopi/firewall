@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.24.0](https://github.com/kanopi/firewall/releases/tag/v2.24.0) — 2026-09-10
+
+Let the operator act: lift a block, change a rule, turn the firewall down mid-incident and react to a decision in your own code — four things the library could already do internally and gave nobody a way to reach.
+
 ## [2.23.1](https://github.com/kanopi/firewall/releases/tag/v2.23.1) — 2026-09-09
 
 `firewall-doctor` now says how stale a rule source is, not just that it is stale — one second past its ttl and two days past it were the same line, and only one of them is a fetcher that has been failing since Monday.

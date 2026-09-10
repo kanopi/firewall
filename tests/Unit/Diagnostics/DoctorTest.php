@@ -8,6 +8,7 @@ use Kanopi\Firewall\Diagnostics\Diagnosis;
 use Kanopi\Firewall\Diagnostics\Doctor;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\DegradedBackends;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -97,6 +98,136 @@ class DoctorTest extends AbstractTestCase
         $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
         $this->assertContains('Config loads', $this->titles($findings));
         $this->assertContains('Every configured rule is running', $this->titles($findings));
+    }
+
+    /**
+     * With no `panic_file` set, the doctor says the lever exists rather than
+     * saying nothing -- the point of a panic switch is being reachable at 2am
+     * by somebody who did not set it up.
+     */
+    public function testNoPanicFileConfiguredIsReportedAsOk(): void
+    {
+        $findings = $this->diagnose($this->workingConfig());
+
+        $this->assertContains('No panic switch configured', $this->titles($findings));
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+    }
+
+    /**
+     * Configured and absent is the healthy steady state.
+     */
+    public function testAConfiguredButAbsentPanicFileIsReportedAsOff(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['panic_file'] = $this->dir . '/panic';
+
+        $this->assertContains('Panic switch is off', $this->titles($this->diagnose($config)));
+    }
+
+    /**
+     * An active switch is a warning naming both modes.
+     *
+     * The failure this exists for is a switch left on for three weeks, so the
+     * line has to be readable by somebody who does not already know it was
+     * thrown: what it is running as, what it should be, and how to undo it.
+     */
+    public function testAnActivePanicSwitchIsAWarningNamingBothModes(): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'log');
+
+        $config = $this->workingConfig();
+        $config['global']['panic_file'] = $panic;
+
+        $findings = $this->diagnose($config);
+        $warnings = $this->titles($findings, Diagnosis::WARNING);
+
+        $this->assertContains('Panic switch is ACTIVE — running in log, not block', $warnings);
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+
+        $detail = '';
+
+        foreach ($findings as $finding) {
+            if (str_contains($finding->title, 'Panic switch is ACTIVE')) {
+                $detail = (string) $finding->detail;
+            }
+        }
+
+        $this->assertStringContainsString('Delete ' . $panic, $detail);
+    }
+
+    /**
+     * The configured mode is read back for the comparison, so a deployment
+     * sitting in `log` that panics into `block` reports that way round.
+     */
+    public function testTheWarningComparesAgainstTheConfiguredMode(): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'block');
+
+        $config = $this->workingConfig();
+        $config['global']['mode'] = 'log';
+        $config['global']['panic_file'] = $panic;
+
+        $this->assertContains(
+            'Panic switch is ACTIVE — running in block, not log',
+            $this->titles($this->diagnose($config), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * A `mode` that is not a mode falls back to `block` for the comparison,
+     * the same way the firewall itself resolves it -- reporting the typo is
+     * the linter's job, not this one's, and getting this wrong would print a
+     * comparison line that contradicts the mode the site is really in.
+     *
+     * @param mixed $mode
+     *   What `global.mode` held.
+     */
+    #[DataProvider('unresolvableModes')]
+    public function testAnUnparseableConfiguredModeIsReportedAsBlock(mixed $mode): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'log');
+
+        $config = $this->workingConfig();
+        $config['global']['mode'] = $mode;
+        $config['global']['panic_file'] = $panic;
+
+        $this->assertContains(
+            'Panic switch is ACTIVE — running in log, not block',
+            $this->titles($this->diagnose($config), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * @return array<string, array{mixed}>
+     */
+    public static function unresolvableModes(): array
+    {
+        return [
+            'a typo' => ['lgo'],
+            'not a string at all' => [['not', 'a', 'mode']],
+            'unset' => [null],
+        ];
+    }
+
+    /**
+     * A panic file that exists and does nothing is an error. Somebody reached
+     * for the switch; the fail-safe worked, and they still need told.
+     */
+    public function testAnInertPanicFileIsAnError(): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'lockdown');
+
+        $config = $this->workingConfig();
+        $config['global']['panic_file'] = $panic;
+
+        $this->assertContains(
+            'Panic file is present but is not being applied',
+            $this->titles($this->diagnose($config), Diagnosis::ERROR)
+        );
     }
 
     /**
@@ -640,6 +771,202 @@ class DoctorTest extends AbstractTestCase
 
         $this->assertCount(1, $stale);
         $this->assertStringContainsString('records no fetch time', (string) $stale[0]->detail);
+    }
+
+    /**
+     * A source stale enough for long enough stops being a warning (#297).
+     *
+     * The distinction is the whole point. One second past the ttl is a refresh
+     * that has not run yet. A week past it is a sync that has stopped working,
+     * and the rule is still matching -- on a list nobody has updated since.
+     * Only the second one should fail a deploy.
+     *
+     * Off unless asked for, which is the first case here: defaulting it on
+     * would fail a deploy that passed yesterday, over a source that was already
+     * stale yesterday.
+     *
+     * @param mixed $errorAfter
+     *   What `global.stale_source_error_after` held.
+     * @param string $expected
+     *   The status the finding must carry.
+     */
+    #[DataProvider('escalationThresholds')]
+    public function testASufficientlyStaleSourceEscalatesToAnError(mixed $errorAfter, string $expected): void
+    {
+        $list = $this->dir . '/escalate-' . md5(serialize($errorAfter)) . '.txt';
+        file_put_contents($list, "203.0.113.9
+");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 1]]];
+
+        if ($errorAfter !== 'unset') {
+            $config['global']['stale_source_error_after'] = $errorAfter;
+        }
+
+        // The first run finds nothing cached and then builds the rules, which
+        // is what fetches. The second sees what the first left behind.
+        $this->diagnose($config);
+        sleep(2);
+
+        $findings = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'Rule source')
+                && !str_contains($d->title, 'cached and fresh')
+        ));
+
+        $this->assertCount(1, $findings);
+        $this->assertSame($expected, $findings[0]->status);
+    }
+
+    /**
+     * @return array<string, array{mixed, string}>
+     */
+    public static function escalationThresholds(): array
+    {
+        return [
+            // The default. Whether an old rule list should stop a deploy is a
+            // question about somebody's refresh cycle, and the library is in no
+            // position to guess it.
+            'unset, so off' => ['unset', Diagnosis::WARNING],
+            'a threshold already passed' => [1, Diagnosis::ERROR],
+            'a threshold not yet reached' => [86400, Diagnosis::WARNING],
+            'turned off deliberately' => [0, Diagnosis::WARNING],
+            // Clamped rather than treated as "escalate immediately", which is
+            // the dangerous reading of a negative number.
+            'a negative threshold is off, not instant' => [-1, Diagnosis::WARNING],
+            // Falls back to off -- and is reported, which is the other half of
+            // this and has its own test below.
+            'not a number' => ['soon', Diagnosis::WARNING],
+        ];
+    }
+
+    /**
+     * The error says what to do about it, including how to stop it failing the
+     * deploy -- an exit code an operator cannot change is one they work around
+     * by removing the check.
+     */
+    public function testTheEscalatedErrorNamesTheSettingThatRelaxesIt(): void
+    {
+        $list = $this->dir . '/escalate-message.txt';
+        file_put_contents($list, "203.0.113.9
+");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 1]]];
+        $config['global']['stale_source_error_after'] = 1;
+
+        $this->diagnose($config);
+        sleep(2);
+
+        $errors = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->status === Diagnosis::ERROR
+        ));
+
+        $this->assertCount(1, $errors);
+        $this->assertSame('Rule source has not refreshed in a long time', $errors[0]->title);
+        $this->assertStringContainsString('last fetched', (string) $errors[0]->detail);
+        $this->assertStringContainsString('past its ttl of 1s', (string) $errors[0]->detail);
+        $this->assertStringContainsString('global.stale_source_error_after', (string) $errors[0]->detail);
+        $this->assertSame('guides/syncing-sources.md', $errors[0]->reference);
+    }
+
+    /**
+     * A value that is set and unusable is reported, not quietly read as off.
+     *
+     * `stale_source_error_after: "30 days"` is the shape of the mistake, and
+     * YAML hands it over as a string without complaint. Falling back to off in
+     * silence would be the worst of both: the operator asked for a gate,
+     * believes they have one, and does not.
+     */
+    public function testAnUnusableThresholdIsReported(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['stale_source_error_after'] = '30 days';
+
+        $warnings = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        ));
+
+        $this->assertCount(1, $warnings);
+        $this->assertSame(Diagnosis::WARNING, $warnings[0]->status);
+        $this->assertStringContainsString("'30 days'", (string) $warnings[0]->detail);
+        $this->assertStringContainsString('no source will be escalated', (string) $warnings[0]->detail);
+    }
+
+    /**
+     * A deliberate 0 is not a mistake, and is not reported as one.
+     */
+    public function testTurningItOffDeliberatelyIsSilent(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['stale_source_error_after'] = 0;
+
+        $this->assertSame([], array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        )));
+    }
+
+    /**
+     * Leaving it unset is the default, and says nothing at all.
+     */
+    public function testLeavingItUnsetIsSilent(): void
+    {
+        $this->assertSame([], array_values(array_filter(
+            $this->diagnose($this->workingConfig()),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        )));
+    }
+
+    /**
+     * An entry with no fetch time stays a warning however low the threshold is
+     * set. There is nothing to measure, so escalating it would be asserting an
+     * age nobody knows.
+     */
+    public function testAnUnagedEntryIsNeverEscalated(): void
+    {
+        $list = $this->dir . '/unaged.txt';
+        file_put_contents($list, "203.0.113.9
+");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 3600]]];
+        $config['global']['stale_source_error_after'] = 1;
+
+        $this->diagnose($config);
+
+        $cache = sys_get_temp_dir() . '/kanopi-firewall-sources';
+        $stripped = 0;
+
+        foreach (glob($cache . '/*') ?: [] as $entry) {
+            if (!is_file($entry)) {
+                continue;
+            }
+
+            $contents = (string) file_get_contents($entry);
+
+            if (!str_contains($contents, 'fetched_at')) {
+                continue;
+            }
+
+            file_put_contents($entry, str_replace('fetched_at', 'fetched_never', $contents));
+            $stripped++;
+        }
+
+        if ($stripped === 0) {
+            $this->markTestSkipped('The source cache did not store a timestamp to strip.');
+        }
+
+        $findings = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->title === 'Rule source cache is stale'
+        ));
+
+        $this->assertCount(1, $findings);
+        $this->assertSame(Diagnosis::WARNING, $findings[0]->status);
     }
 
     /**

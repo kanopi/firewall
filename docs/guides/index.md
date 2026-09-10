@@ -67,6 +67,25 @@ pages describe *how to accomplish something*.
 
     [:octicons-arrow-right-24: Diagnosing an installation](diagnosing.md)
 
+-   :material-playlist-edit:{ .lg .middle } **Managing Rules**
+
+    ---
+
+    Add, remove and disable rules from the command line, without opening a YAML
+    file and without losing the comments in it.
+
+    [:octicons-arrow-right-24: Managing rules](managing-rules.md)
+
+-   :material-broadcast:{ .lg .middle } **Reacting to Decisions**
+
+    ---
+
+    Have the firewall tell your application what it decided about each request,
+    over PSR-14 — for metrics, notifications or an audit trail, without parsing
+    logs.
+
+    [:octicons-arrow-right-24: Reacting to decisions](decision-events.md)
+
 -   :material-map-marker-radius-outline:{ .lg .middle } **GeoIP Setup**
 
     ---
