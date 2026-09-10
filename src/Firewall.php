@@ -29,6 +29,7 @@ use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DegradedBackends;
+use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -44,6 +45,18 @@ final class Firewall
      * Firewall Mode.
      */
     private FirewallMode $firewallMode;
+
+    /**
+     * What the panic file asked for, and whether it got it.
+     *
+     * @var array{active: bool, mode: FirewallMode|null, path: string|null, problem: string|null}
+     */
+    private array $panicSwitch;
+
+    /**
+     * The mode the configuration asked for, before any panic file overrode it.
+     */
+    private FirewallMode $configuredMode;
 
     /**
      * Create a new Firewall Object.
@@ -86,6 +99,40 @@ final class Firewall
         private ?ChallengeProviderRegistry $challengeProviderRegistry = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
+        $this->configuredMode = $this->firewallMode;
+
+        // Read here, so it lands before the mode is used and before the debug
+        // line below reports it. One stat per Firewall instance -- which is one
+        // per request under PHP-FPM and mod_php, and that is the whole point:
+        // the switch takes effect on the next request, with no deploy and no
+        // pool reload (#207).
+        $this->panicSwitch = PanicSwitch::read($config['panic_file'] ?? null);
+
+        if ($this->panicSwitch['active'] && $this->panicSwitch['mode'] instanceof FirewallMode) {
+            $this->firewallMode = $this->panicSwitch['mode'];
+
+            // Warning, on every request, and that is deliberate. The realistic
+            // failure of a panic switch is not somebody flipping it -- it is
+            // somebody flipping it during an incident and nobody noticing it is
+            // still on three weeks later. There is no state anywhere else that
+            // says so, so this line is the whole safety mechanism.
+            $this->getLogger()->warning('Firewall panic switch is ACTIVE', [
+                'panic_file' => $this->panicSwitch['path'],
+                'configured_mode' => $this->configuredMode->value,
+                'effective_mode' => $this->firewallMode->value,
+                'remove_to_restore' => $this->panicSwitch['path'],
+            ]);
+        } elseif ($this->panicSwitch['problem'] !== null) {
+            // Error, not warning. A panic file that exists and does nothing
+            // means somebody reached for the switch and it did not take -- and
+            // they are not watching the logs to find that out, they are
+            // watching the site. Failing safe is right; failing quietly is not.
+            $this->getLogger()->error('Firewall panic file is present but was not applied', [
+                'panic_file' => $this->panicSwitch['path'],
+                'problem' => $this->panicSwitch['problem'],
+                'effective_mode' => $this->firewallMode->value,
+            ]);
+        }
 
         // count(), not count(getPlugins()). The latter is
         // iterator_to_array(getIterator()), which constructs every plugin -- and
@@ -101,6 +148,7 @@ final class Firewall
             'challenge_plugins_count' => $challengePluginManager->count(),
             'config_keys' => array_keys($config), // Log keys instead of full config to avoid sensitive data
             'mode' => $this->firewallMode->value,
+            'panic_switch' => $this->panicSwitch['active'],
             'challenge_enabled' => $challengeProvider instanceof \Kanopi\Firewall\Challenge\ChallengeProviderInterface,
         ]);
         $this->storage->expire();
@@ -735,6 +783,54 @@ final class Firewall
         }
 
         return $failed;
+    }
+
+    /**
+     * The mode the firewall is actually running in.
+     *
+     * Not necessarily the one in the configuration: a panic file can override
+     * it (#207). `getConfiguredMode()` is the other half of that comparison.
+     *
+     * @return FirewallMode
+     *   The mode every decision below is made in.
+     */
+    public function getMode(): FirewallMode
+    {
+        return $this->firewallMode;
+    }
+
+    /**
+     * The mode the configuration asked for.
+     *
+     * Equal to `getMode()` unless a panic file is active.
+     *
+     * @return FirewallMode
+     *   The configured mode.
+     */
+    public function getConfiguredMode(): FirewallMode
+    {
+        return $this->configuredMode;
+    }
+
+    /**
+     * Whether a panic file is changing the mode, and what it said.
+     *
+     * A status page has no other way to tell: the effective mode alone cannot
+     * distinguish "somebody set log in YAML" from "somebody is holding the
+     * switch down". The difference matters, because only one of them is
+     * supposed to be temporary.
+     *
+     * `problem` is set when a panic file exists and was not applied -- empty,
+     * unreadable, or naming something that is not a mode. That is the fail-safe
+     * working, and it is still worth reporting: somebody reached for the switch
+     * and it did not take.
+     *
+     * @return array{active: bool, mode: FirewallMode|null, path: string|null, problem: string|null}
+     *   As `PanicSwitch::read()` returned it at construction.
+     */
+    public function getPanicSwitch(): array
+    {
+        return $this->panicSwitch;
     }
 
     /**

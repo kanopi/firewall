@@ -200,6 +200,124 @@ final class FirewallCheckCommandTest extends AbstractTestCase
     }
 
     // -----------------------------------------------------------------------
+    // The panic switch (#207)
+    // -----------------------------------------------------------------------
+
+    /**
+     * The regression this pair exists to prevent.
+     *
+     * The script forces `mode: exception` because `evaluate()` short-circuits
+     * in CLI otherwise. A panic file overrides `global.mode` by design, so
+     * without suppression an active switch would put the mode back to
+     * something that short-circuits and the tool would report every request as
+     * allowed -- the exact failure the mode override exists to avoid, arriving
+     * by a different door.
+     */
+    public function testAnActivePanicSwitchDoesNotBreakTheVerdict(): void
+    {
+        $panic = sys_get_temp_dir() . '/fw-check-panic-' . uniqid('', true);
+        file_put_contents($panic, 'disabled');
+        $this->tempFiles[] = $panic;
+
+        $config = $this->writeConfig(
+            "global:\n  mode: block\n  panic_file: '{$panic}'\n"
+            . "storage:\n  type: 'Kanopi\\Firewall\\Storage\\InMemoryStorage'\n"
+            . "plugins:\n"
+            . "  - plugin: \"Kanopi\\\\Firewall\\\\Plugins\\\\IpAddress\"\n"
+            . "    response: block\n    enable: true\n"
+            . "    config:\n      - 203.0.113.0/24\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--ip=203.0.113.5', '--url=/']);
+
+        $this->assertSame(self::EXIT_BLOCKED, $result['code'], $result['stdout'] . $result['stderr']);
+        $this->assertStringContainsString('BLOCKED', $result['stdout']);
+    }
+
+    /**
+     * And having suppressed it, the tool says so -- because the verdict above
+     * is now describing a rule rather than the live site.
+     */
+    public function testAnActivePanicSwitchIsReportedAlongsideTheVerdict(): void
+    {
+        $panic = sys_get_temp_dir() . '/fw-check-panic-' . uniqid('', true);
+        file_put_contents($panic, 'disabled');
+        $this->tempFiles[] = $panic;
+
+        $config = $this->writeConfig(
+            "global:\n  mode: block\n  panic_file: '{$panic}'\n"
+            . "storage:\n  type: 'Kanopi\\Firewall\\Storage\\InMemoryStorage'\n"
+            . "plugins:\n"
+            . "  - plugin: \"Kanopi\\\\Firewall\\\\Plugins\\\\IpAddress\"\n"
+            . "    response: block\n    enable: true\n"
+            . "    config:\n      - 203.0.113.0/24\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--ip=203.0.113.5', '--url=/']);
+
+        $this->assertStringContainsString('panic switch      ACTIVE', $result['stdout']);
+        $this->assertStringContainsString($panic, $result['stdout']);
+
+        $json = $this->runCheck(['--config=' . $config, '--ip=203.0.113.5', '--url=/', '--json']);
+        $decoded = json_decode($json['stdout'], true);
+
+        $this->assertIsArray($decoded);
+        $this->assertSame(
+            ['active' => true, 'path' => $panic, 'mode' => 'disabled'],
+            $decoded['panic_switch'],
+        );
+    }
+
+    /**
+     * A panic file that is not doing anything is reported too, in both output
+     * formats, since the operator who created it believes it is.
+     */
+    public function testAnInertPanicFileIsReported(): void
+    {
+        $panic = sys_get_temp_dir() . '/fw-check-panic-' . uniqid('', true);
+        file_put_contents($panic, 'lockdown');
+        $this->tempFiles[] = $panic;
+
+        $config = $this->writeConfig(
+            "global:\n  mode: block\n  panic_file: '{$panic}'\n"
+            . "storage:\n  type: 'Kanopi\\Firewall\\Storage\\InMemoryStorage'\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--ip=1.1.1.1', '--url=/']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code'], $result['stdout'] . $result['stderr']);
+        $this->assertStringContainsString('panic switch      IGNORED', $result['stdout']);
+        $this->assertStringContainsString($panic, $result['stdout']);
+
+        $json = $this->runCheck(['--config=' . $config, '--ip=1.1.1.1', '--url=/', '--json']);
+        $decoded = json_decode($json['stdout'], true);
+
+        $this->assertIsArray($decoded);
+        $this->assertFalse($decoded['panic_switch']['active']);
+        $this->assertStringContainsString('not a mode', $decoded['panic_switch']['problem']);
+    }
+
+    /**
+     * With no panic file the key is absent rather than present-and-false, so
+     * `--json` consumers can test for it directly.
+     */
+    public function testNoPanicSwitchMeansNoPanicKey(): void
+    {
+        $result = $this->runCheck([
+            '--config=' . $this->standardConfig(),
+            '--ip=1.1.1.1',
+            '--url=/',
+            '--json',
+        ]);
+
+        $decoded = json_decode($result['stdout'], true);
+
+        $this->assertIsArray($decoded);
+        $this->assertArrayNotHasKey('panic_switch', $decoded);
+        $this->assertStringNotContainsString('panic switch', $result['stdout']);
+    }
+
+    // -----------------------------------------------------------------------
     // Verdicts and exit codes
     // -----------------------------------------------------------------------
 

@@ -12,10 +12,12 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Diagnostics;
 
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\FirewallMode;
 use Kanopi\Firewall\Source\SourceCache;
 use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DatabaseConsumers;
+use Kanopi\Firewall\Utility\PanicSwitch;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -68,6 +70,8 @@ class Doctor
         $global = is_array($config['global'] ?? null) ? $config['global'] : [];
 
         $findings[] = $this->checkTrustedProxies($global);
+
+        $findings[] = $this->checkPanicSwitch($global);
 
         // Before `checkRules()`, and that ordering is load-bearing. Building a
         // rule is what fetches its sources, so asking afterwards would report
@@ -228,6 +232,55 @@ class Doctor
             . 'every IP-based rule can be bypassed with a forged X-Forwarded-For header.',
             'configuration/global.md#trusted-proxies'
         );
+    }
+
+    /**
+     * Whether somebody is holding the panic switch down.
+     *
+     * The switch is a file, so it leaves no trace in the configuration and no
+     * trace in a deploy log. Three weeks after an incident the only evidence
+     * that the firewall is still in `log` is a warning in a log nobody is
+     * reading and this line (#207).
+     *
+     * @param array<string, mixed> $global
+     *   The `global:` block.
+     *
+     * @return Diagnosis
+     *   The finding.
+     */
+    private function checkPanicSwitch(array $global): Diagnosis
+    {
+        $panic = PanicSwitch::read($global['panic_file'] ?? null);
+
+        if ($panic['problem'] !== null) {
+            return Diagnosis::error(
+                'Panic file is present but is not being applied',
+                sprintf('%s %s. The firewall is running in its configured mode.', $panic['path'], $panic['problem']),
+                'configuration/global.md#panic-switch'
+            );
+        }
+
+        if ($panic['active'] && $panic['mode'] instanceof FirewallMode) {
+            $configured = FirewallMode::tryFrom(is_string($global['mode'] ?? null) ? $global['mode'] : 'block')
+                ?? FirewallMode::Block;
+
+            // Warning rather than error: somebody meant to do this. It is loud
+            // because the thing that goes wrong is forgetting, not flipping.
+            return Diagnosis::warning(
+                sprintf('Panic switch is ACTIVE — running in %s, not %s', $panic['mode']->value, $configured->value),
+                sprintf('Delete %s to restore the configured mode. Takes effect on the next request.', $panic['path']),
+                'configuration/global.md#panic-switch'
+            );
+        }
+
+        if ($panic['path'] === null) {
+            return Diagnosis::ok(
+                'No panic switch configured',
+                'Set global.panic_file to be able to change the mode during an incident without a deploy.'
+            );
+        }
+
+        return Diagnosis::ok('Panic switch is off', $panic['path'] . ' does not exist');
     }
 
     /**
