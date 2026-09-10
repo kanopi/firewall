@@ -869,7 +869,7 @@ class DoctorTest extends AbstractTestCase
         $this->assertStringContainsString('last fetched', (string) $errors[0]->detail);
         $this->assertStringContainsString('past its ttl of 1s', (string) $errors[0]->detail);
         $this->assertStringContainsString('global.stale_source_error_after', (string) $errors[0]->detail);
-        $this->assertSame('guides/syncing-sources.md', $errors[0]->reference);
+        $this->assertSame('how-to/syncing-sources.md', $errors[0]->reference);
     }
 
     /**

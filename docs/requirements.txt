@@ -11,6 +11,10 @@
 # `pymdown-extensions~=10.2`, and 11.x installs over that without complaint
 # only to fail at render time.
 #
+# mkdocs-redirects keeps every pre-2.25.0 URL working after the Diataxis
+# restructure moved fourteen pages. The published release notes and the README
+# link into the old paths and cannot be edited after the fact.
+#
 # ghp-import arrives as an mkdocs dependency, but the docs deploy job calls it
 # directly, so it is listed and pinned here rather than left to whatever mkdocs
 # happens to resolve.
@@ -19,6 +23,7 @@ mkdocs==1.6.1
 mkdocs-material==9.7.7
 mkdocs-glightbox==0.5.2
 mkdocs-minify-plugin==0.8.0
+mkdocs-redirects==1.2.2
 pymdown-extensions==11.0.1
 Pygments==2.20.0
 ghp-import==2.1.0

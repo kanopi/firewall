@@ -1,19 +1,31 @@
-# Guides
+# How-to Guides
 
-Task-oriented walkthroughs. The [Configuration](../configuration/index.md) and
-[Plugins](../plugins/index.md) sections describe *what every key does*; these
-pages describe *how to accomplish something*.
+You know what you want; these are the steps. Each page starts from a goal and ends with it
+done.
+
+If you are still deciding *what* you want, start with
+[Getting Started](../getting-started/index.md). If you want to know what a setting does,
+that is [Configuration](../configuration/index.md) and [Plugins](../plugins/index.md).
 
 <div class="grid cards" markdown>
 
--   :material-alert-octagon-outline:{ .lg .middle } **Error Handling**
+-   :material-connection:{ .lg .middle } **Integrate With Your Platform**
 
     ---
 
-    Every exception the library throws, which mode throws it, and how to decide
-    between failing open and failing closed.
+    Wire the firewall into Drupal, WordPress, Laravel or a plain front
+    controller, in the right place in the bootstrap.
 
-    [:octicons-arrow-right-24: Error handling](error-handling.md)
+    [:octicons-arrow-right-24: Platform integration](platform-integration.md)
+
+-   :material-magnify-scan:{ .lg .middle } **Check a Request**
+
+    ---
+
+    Ask whether a given request would be blocked, and by which rule, from a
+    terminal — without banning the address you are asking about.
+
+    [:octicons-arrow-right-24: Checking a request](checking-requests.md)
 
 -   :material-puzzle-plus-outline:{ .lg .middle } **Custom Plugins**
 
@@ -94,23 +106,5 @@ pages describe *how to accomplish something*.
     GeoLocation and ASN plugins need.
 
     [:octicons-arrow-right-24: GeoIP setup](geoip-setup.md)
-
--   :material-docker:{ .lg .middle } **Local Example Environment**
-
-    ---
-
-    The Docker sandbox in `example/` — spoofing client IPs, testing rules, and
-    troubleshooting.
-
-    [:octicons-arrow-right-24: Example environment](example-environment.md)
-
--   :material-play-box-outline:{ .lg .middle } **Demo Application**
-
-    ---
-
-    A runnable demo showing the challenge interstitial and repeat-offender
-    escalation end to end.
-
-    [:octicons-arrow-right-24: Demo application](demo.md)
 
 </div>

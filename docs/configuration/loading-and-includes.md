@@ -36,7 +36,7 @@ configs:
 
     So a remote file that re-declares one of your rules to extend its address list does not
     extend it. It gives you a second rule alongside the first, which the
-    [linter warns about](../guides/diagnosing.md) as a duplicate name — and if instead the
+    [linter warns about](../how-to/diagnosing.md) as a duplicate name — and if instead the
     include lands on the same key by another route, your list is overwritten rather than
     added to, quietly.
 
@@ -49,7 +49,7 @@ configs:
     error and returns nothing, so *every* rule in the configuration stops being configured.
 
     That matters most when adding an include for a file you are about to create. Write the
-    file first — [`firewall-rule init`](../guides/managing-rules.md) does exactly that, in
+    file first — [`firewall-rule init`](../how-to/managing-rules.md) does exactly that, in
     that order — and add the `configs:` line afterwards.
 
     `global.require_config: true` turns the failure into a startup exception instead, which

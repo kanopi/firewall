@@ -622,7 +622,7 @@ Cache directory: /var/cache/firewall/sources
 
 It exits `0` when everything loaded, `1` when any source failed, and `2` when the
 configuration itself could not be read — so a deploy step can fail on a bad list. See
-[Syncing Rule Sources](../guides/syncing-sources.md) for cron and deploy recipes.
+[Syncing Rule Sources](../how-to/syncing-sources.md) for cron and deploy recipes.
 
 The same upstream declared on several plugin entries is fetched once per run, not once
 per plugin.
@@ -809,7 +809,7 @@ They sit at different levels for exactly that reason.
 
 **A sync job needs the credentials too.** `bin/firewall-sources` is a separate process
 from your application, so a token in your web server's environment is not automatically
-present in cron. See [Syncing Rule Sources](../guides/syncing-sources.md#credentials).
+present in cron. See [Syncing Rule Sources](../how-to/syncing-sources.md#credentials).
 
 **Declare `format` when the extension lies.** Inference reads the extension and falls back
 to `txt`. An endpoint like `https://example.org/v1/ranges` serving JSON needs

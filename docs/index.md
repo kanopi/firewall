@@ -103,12 +103,12 @@ challenge bucket but never suppresses a block. See
 | I want to… | Read |
 |---|---|
 | Get something running locally in five minutes | [Test Drive](getting-started/test-drive.md) |
-| Drop this into Drupal, WordPress, Symfony, or Laravel | [Platform Integration](getting-started/platform-integration.md) |
+| Drop this into Drupal, WordPress, Symfony, or Laravel | [Platform Integration](how-to/platform-integration.md) |
 | Understand every configuration key | [Configuration Overview](configuration/index.md) |
 | Stop bots without hard-blocking humans | [Challenge Responses](plugins/challenges.md) |
 | Use a ready-made rule set | [Available Presets](presets/available.md) |
-| Catch exceptions instead of letting the library `exit()` | [Error Handling](guides/error-handling.md) |
-| Write my own plugin or storage backend | [Custom Plugins](guides/custom-plugins.md) · [Custom Storage](guides/custom-storage.md) |
+| Catch exceptions instead of letting the library `exit()` | [Error Handling](reference/error-handling.md) |
+| Write my own plugin or storage backend | [Custom Plugins](how-to/custom-plugins.md) · [Custom Storage](how-to/custom-storage.md) |
 | Migrate an old `bypass:` / `block:` config | [Legacy Config Format](reference/legacy-format.md) |
 | Contribute code or docs | [Contributing](contributing/index.md) |
 

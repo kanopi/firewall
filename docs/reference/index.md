@@ -3,7 +3,21 @@
 Lookup material — dense, tabular, and meant to be scanned rather than read
 start to finish.
 
+Most of the reference is not on this page. Every configuration key lives in
+[Configuration](../configuration/index.md), and every rule type in
+[Plugins](../plugins/index.md); together those are two thirds of the documentation. What
+follows is the reference that belongs to neither.
+
 <div class="grid cards" markdown>
+
+-   :material-alert-octagon-outline:{ .lg .middle } **Exceptions & Error Handling**
+
+    ---
+
+    Every exception the library throws, which mode throws it, and how to decide
+    between failing open and failing closed.
+
+    [:octicons-arrow-right-24: Exceptions](error-handling.md)
 
 -   :material-speedometer:{ .lg .middle } **Rate Limiting Reference**
 
@@ -34,12 +48,12 @@ touch directly:
 |---|---|
 | `Kanopi\Firewall\Firewall` | Entry point. `Firewall::create(...)->evaluate()`. |
 | `Kanopi\Firewall\FirewallMode` | Backed enum for `global.mode` — `Block`, `Log`, `Exception`, `Disabled`. |
-| `Kanopi\Firewall\Plugins\PluginInterface` | Contract for request evaluators. See [Custom Plugins](../guides/custom-plugins.md). |
-| `Kanopi\Firewall\Storage\StorageInterface` | Contract for block persistence. See [Custom Storage](../guides/custom-storage.md). |
+| `Kanopi\Firewall\Plugins\PluginInterface` | Contract for request evaluators. See [Custom Plugins](../how-to/custom-plugins.md). |
+| `Kanopi\Firewall\Storage\StorageInterface` | Contract for block persistence. See [Custom Storage](../how-to/custom-storage.md). |
 | `Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface` | Contract for rate-limit counters. |
 | `Kanopi\Firewall\Challenge\ChallengeProviderInterface` | Contract for interstitial providers. See [Challenge Responses](../plugins/challenges.md). |
 | `Kanopi\Firewall\Challenge\SingleUseSolutionInterface` | Opt-in marker making a solved challenge redeemable once. |
-| `Kanopi\Firewall\Exception\FirewallException` | Base class for everything the library throws. See [Error Handling](../guides/error-handling.md). |
+| `Kanopi\Firewall\Exception\FirewallException` | Base class for everything the library throws. See [Error Handling](error-handling.md). |
 | `Kanopi\Firewall\Exception\StorageConnectionException` | A storage backend could not reach its backing service; a `StorageException`. See [Storage](../configuration/storage.md). |
 | `Kanopi\Firewall\Utility\Config` | Config loading, merging, and `getLoadErrors()`. |
 | `Kanopi\Firewall\Utility\TokenSubstitute` | `%env(...)%` resolution and the filesystem-processor opt-in. |

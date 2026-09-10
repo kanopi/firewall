@@ -19,7 +19,7 @@ contribution guide — is in [`docs/`](docs/), and published at
 | [Configuration](docs/configuration/index.md) | Every YAML key, with defaults |
 | [Plugins](docs/plugins/index.md) | The ten built-in request evaluators |
 | [Presets](docs/presets/available.md) | Ready-made rule sets you can include in one line |
-| [Guides](docs/guides/index.md) | Error handling, custom plugins, custom storage, GeoIP setup |
+| [How-to Guides](docs/how-to/index.md) | Platform integration, custom plugins, custom storage, GeoIP setup |
 | [Reference](docs/reference/index.md) | Rate-limit rules and the legacy config format |
 | [Contributing](docs/contributing/index.md) | Development setup, tests, and the PR checklist |
 
