@@ -6,6 +6,7 @@ namespace Kanopi\Firewall\Tests\Firewall;
 
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -24,20 +25,28 @@ class ProviderlessSubmissionFirewall extends EvaluatingFirewall
     /**
      * @param array<string, mixed> $config
      *   Firewall config.
+     * @param EventDispatcherInterface|null $eventDispatcher
+     *   Carried only to keep the signature compatible with the parent's.
      */
     public static function make(
         StorageInterface $storage,
         PluginManager $blockingPluginManager,
         PluginManager $bypassPluginManager,
         PluginManager $challengePluginManager,
-        array $config = []
+        array $config = [],
+        ?EventDispatcherInterface $eventDispatcher = null
     ): self {
         return new self(
             $storage,
             $blockingPluginManager,
             $bypassPluginManager,
             $challengePluginManager,
-            $config
+            $config,
+            null,
+            null,
+            [],
+            null,
+            $eventDispatcher
         );
     }
 

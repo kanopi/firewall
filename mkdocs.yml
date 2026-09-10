@@ -213,6 +213,7 @@ nav:
       - Syncing Rule Sources: guides/syncing-sources.md
       - Schema Migrations: guides/schema-migrations.md
       - Diagnosing an Installation: guides/diagnosing.md
+      - Reacting to Decisions: guides/decision-events.md
       - Custom Plugins: guides/custom-plugins.md
       - Custom Storage: guides/custom-storage.md
       - Advanced Examples: guides/advanced-examples.md
