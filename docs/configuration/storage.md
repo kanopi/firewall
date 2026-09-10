@@ -187,6 +187,27 @@ storage:
 
 `StorageInterface` gives you keyed access — `get()`, `set()`, `delete()` for an address you already know. That covers the firewall's own hot path, but it leaves two operational questions unanswered: *who is currently blocked?*, and *how do I lift a block that should not have been applied?*
 
+!!! tip "From the command line"
+
+    Both questions have a command, and reaching for PHP is no longer the first step:
+
+    ```bash
+    vendor/bin/firewall-block firewall.yml --list
+    vendor/bin/firewall-block firewall.yml --find=203.0.113.0/24
+    vendor/bin/firewall-block firewall.yml --show=203.0.113.5      # with offence history
+    vendor/bin/firewall-block firewall.yml --lift=203.0.113.5 --dry-run
+    vendor/bin/firewall-block firewall.yml --lift=203.0.113.5
+    ```
+
+    It reads and writes the **real** block list, unlike `firewall-check`, which swaps in a
+    throwaway so that checking a request cannot ban anyone. The backend is named in the
+    output for that reason, and a store that cannot outlive the process says so — otherwise
+    "nothing blocked" reads as *your customer is fine* when it means *I looked somewhere
+    that has never held anything*.
+
+    `--dry-run` exists because lifting is not reversible: the record goes and the offence
+    history with it.
+
 Storages that can answer those implement `Kanopi\Firewall\Storage\QueryableStorageInterface`, which adds two methods:
 
 | Method | Purpose |
