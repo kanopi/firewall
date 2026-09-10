@@ -20,6 +20,7 @@
         "bin/firewall-init",
         "bin/firewall-log-prune",
         "bin/firewall-migrate",
+        "bin/firewall-rule",
         "bin/firewall-sources"
     ],
     "autoload": {

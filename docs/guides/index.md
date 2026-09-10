@@ -67,6 +67,15 @@ pages describe *how to accomplish something*.
 
     [:octicons-arrow-right-24: Diagnosing an installation](diagnosing.md)
 
+-   :material-playlist-edit:{ .lg .middle } **Managing Rules**
+
+    ---
+
+    Add, remove and disable rules from the command line, without opening a YAML
+    file and without losing the comments in it.
+
+    [:octicons-arrow-right-24: Managing rules](managing-rules.md)
+
 -   :material-map-marker-radius-outline:{ .lg .middle } **GeoIP Setup**
 
     ---

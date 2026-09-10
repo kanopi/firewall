@@ -30,11 +30,30 @@ configs:
 ```
 
 !!! note "`configs:` is for configuration documents, not rule lists"
-    Because lists are replaced rather than appended, a remote *rule list* included this
-    way overwrites your local one instead of adding to it — and does so quietly. Pulling
-    a list of addresses, user agents, or paths is what
-    [Rule Sources](sources.md) are for: they append, declare their own format, and carry
-    their own TTL and failure policy. Keep `configs:` for whole configuration documents.
+    An included document's top-level `plugins:` list **appends** to yours — the two rules
+    both run, each keeping its own `config:`. Every *other* list is **replaced wholesale**,
+    including the `config:` inside a rule and anything under `storage:`.
+
+    So a remote file that re-declares one of your rules to extend its address list does not
+    extend it. It gives you a second rule alongside the first, which the
+    [linter warns about](../guides/diagnosing.md) as a duplicate name — and if instead the
+    include lands on the same key by another route, your list is overwritten rather than
+    added to, quietly.
+
+    Pulling a list of addresses, user agents, or paths is what [Rule Sources](sources.md)
+    are for: they append into one rule, declare their own format, and carry their own TTL
+    and failure policy. Keep `configs:` for whole configuration documents.
+
+!!! warning "A `configs:` entry naming a file that does not exist empties the document"
+    A missing include is a load failure, not a skipped line: `Config::load()` records the
+    error and returns nothing, so *every* rule in the configuration stops being configured.
+
+    That matters most when adding an include for a file you are about to create. Write the
+    file first — [`firewall-rule init`](../guides/managing-rules.md) does exactly that, in
+    that order — and add the `configs:` line afterwards.
+
+    `global.require_config: true` turns the failure into a startup exception instead, which
+    is the loud version of the same thing and generally what you want in production.
 
 Remote files are cached locally to improve performance and reduce external dependencies. You can control caching behavior using PHP constants:
 
