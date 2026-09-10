@@ -76,6 +76,16 @@ pages describe *how to accomplish something*.
 
     [:octicons-arrow-right-24: Managing rules](managing-rules.md)
 
+-   :material-broadcast:{ .lg .middle } **Reacting to Decisions**
+
+    ---
+
+    Have the firewall tell your application what it decided about each request,
+    over PSR-14 — for metrics, notifications or an audit trail, without parsing
+    logs.
+
+    [:octicons-arrow-right-24: Reacting to decisions](decision-events.md)
+
 -   :material-map-marker-radius-outline:{ .lg .middle } **GeoIP Setup**
 
     ---

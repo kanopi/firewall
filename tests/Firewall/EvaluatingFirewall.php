@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Firewall;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Psr\EventDispatcher\EventDispatcherInterface;
 
 /**
  * A Firewall that evaluates instead of short-circuiting on CLI.
@@ -27,20 +28,29 @@ class EvaluatingFirewall extends Firewall
     /**
      * @param array<string, mixed> $config
      *   Firewall config, e.g. `['mode' => 'log']`.
+     * @param EventDispatcherInterface|null $eventDispatcher
+     *   A PSR-14 dispatcher to announce decisions to (#218). Trailing and
+     *   optional, so the mode tests that predate it are untouched.
      */
     public static function make(
         StorageInterface $storage,
         PluginManager $blockingPluginManager,
         PluginManager $bypassPluginManager,
         PluginManager $challengePluginManager,
-        array $config = []
+        array $config = [],
+        ?EventDispatcherInterface $eventDispatcher = null
     ): self {
         return new self(
             $storage,
             $blockingPluginManager,
             $bypassPluginManager,
             $challengePluginManager,
-            $config
+            $config,
+            null,
+            null,
+            [],
+            null,
+            $eventDispatcher
         );
     }
 

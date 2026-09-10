@@ -41,6 +41,7 @@
         "kanopi/crs-engine": "^1.0",
         "matomo/device-detector": "^6.4",
         "monolog/monolog": "^3.9",
+        "psr/event-dispatcher": "^1.0",
         "symfony/cache": "~6.4 || ~7.3 || ~8.1",
         "symfony/http-foundation": "~6.4 || ~7.3 || ~8.1",
         "symfony/property-access": "~6.4 || ~7.3 || ~8.1",
@@ -58,6 +59,7 @@
         "symfony/var-dumper": "~6.4 || ~7.3 || ~8.1"
     },
     "suggest": {
+        "symfony/event-dispatcher": "A PSR-14 dispatcher, if you want to be told what the firewall decided about each request. Any PSR-14 implementation works — Kanopi\\Firewall\\Firewall::create() takes the interface, not this package — and the events are read-only, so nothing you register can change a verdict.",
         "ext-redis": "Required by Kanopi\\Firewall\\Storage\\RedisStorage and Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage, for a shared block list and distributed rate limiting across more than one server. Every other backend works without it."
     },
     "scripts": {
