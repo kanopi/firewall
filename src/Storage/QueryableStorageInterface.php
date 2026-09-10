@@ -22,7 +22,7 @@ namespace Kanopi\Firewall\Storage;
  *
  * WHY THIS IS A SEPARATE INTERFACE RATHER THAN PART OF StorageInterface:
  *
- * Not every backend can enumerate its own keys. `docs/guides/custom-storage.md`
+ * Not every backend can enumerate its own keys. `docs/how-to/custom-storage.md`
  * uses Memcached as its worked example, and Memcached cannot reliably list
  * keys at all. Folding these methods into `StorageInterface` would oblige
  * every implementor — including that documented example — to supply something

@@ -24,12 +24,12 @@ class DiagnosisTest extends AbstractTestCase
         $this->assertSame('3 rules configured', $ok->detail);
         $this->assertNull($ok->reference, 'A passing check has nothing to read about');
 
-        $warning = Diagnosis::warning('GeoIP database is 94 days old', 'path', 'guides/geoip-setup.md');
+        $warning = Diagnosis::warning('GeoIP database is 94 days old', 'path', 'how-to/geoip-setup.md');
 
         $this->assertSame(Diagnosis::WARNING, $warning->status);
-        $this->assertSame('guides/geoip-setup.md', $warning->reference);
+        $this->assertSame('how-to/geoip-setup.md', $warning->reference);
 
-        $error = Diagnosis::error('Rule is not running', 'Connection refused', 'guides/error-handling.md');
+        $error = Diagnosis::error('Rule is not running', 'Connection refused', 'reference/error-handling.md');
 
         $this->assertSame(Diagnosis::ERROR, $error->status);
         $this->assertSame('Connection refused', $error->detail);

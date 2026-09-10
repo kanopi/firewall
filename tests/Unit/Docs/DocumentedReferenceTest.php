@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
  *
  * ```
  *   ✗ GeoIP database not found
- *       See docs/guides/geoip-setup.md
+ *       See docs/how-to/geoip-setup.md
  * ```
  *
  * That pointer is a `Diagnosis::$reference` string. It is not a link, `mkdocs build
@@ -221,10 +221,14 @@ class DocumentedReferenceTest extends TestCase
             'The reference scrape found almost nothing, which means the scrape is broken rather than the docs being clean.'
         );
 
-        $this->assertArrayHasKey(
-            'guides/geoip-setup.md',
-            $references,
-            'A known reference is missing from the scrape.'
+        // Asserted against the file the references live in rather than a
+        // specific path, because the paths are exactly what moves -- pinning
+        // one here means this canary fails during every restructure for the
+        // wrong reason, which is how a canary gets deleted.
+        $this->assertContains(
+            'src/Diagnostics/Doctor.php',
+            array_column($references, 1),
+            'The scrape found no references in Doctor.php, which is where most of them live.'
         );
     }
 }

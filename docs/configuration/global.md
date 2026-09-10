@@ -112,12 +112,12 @@ The `mode` setting controls how the firewall responds when a request is matched 
 |------|--------------------|--------------------|---------------------|
 | `block` | Yes | Yes | Yes (sends HTTP response and exits) |
 | `log` | Yes | No | No (logs a warning and allows the request) |
-| `exception` | Yes | Yes | No (throws — see [Error Handling & Exceptions](../guides/error-handling.md)) |
+| `exception` | Yes | Yes | No (throws — see [Error Handling & Exceptions](../reference/error-handling.md)) |
 | `disabled` | No | No | No (skips all evaluation) |
 
 - **`block`** — Default production behavior. Blocked requests receive an HTTP error response and the script exits.
 - **`log`** — Useful for dry-run/audit deployments. Plugins are evaluated normally, but blocks are only logged (at `warning` level) without stopping the request or recording offenses in storage. This includes clients already on the durable storage blocklist: the hit is logged, the ban is neither enforced nor extended, and the request continues.
-- **`exception`** — Throws instead of calling `exit()`, allowing host frameworks (Laravel, Symfony, etc.) to catch and render their own responses. A block throws `FirewallBlockedException`, which carries the status code (via `getStatusCode()`) and banning message. The challenge flow throws `ChallengeRequiredException` or `ChallengeSolvedException` instead — see [Error Handling & Exceptions](../guides/error-handling.md) for all of them and what to do with each.
+- **`exception`** — Throws instead of calling `exit()`, allowing host frameworks (Laravel, Symfony, etc.) to catch and render their own responses. A block throws `FirewallBlockedException`, which carries the status code (via `getStatusCode()`) and banning message. The challenge flow throws `ChallengeRequiredException` or `ChallengeSolvedException` instead — see [Error Handling & Exceptions](../reference/error-handling.md) for all of them and what to do with each.
 - **`disabled`** — Bypasses the firewall entirely. No plugins are evaluated and the request is immediately allowed. Useful for maintenance or feature-flag toggling.
 
 ### Observing one rule while the rest enforce
@@ -163,7 +163,7 @@ count what it *would* have blocked and who it would have caught, then remove the
 
 Available on any plugin extending `AbstractPluginBase`, which is every built-in one. A
 custom plugin implementing `PluginInterface` directly can opt in by also implementing
-`ObserveModeInterface` — see [Custom Plugins](../guides/custom-plugins.md).
+`ObserveModeInterface` — see [Custom Plugins](../how-to/custom-plugins.md).
 
 ## Panic Switch
 
@@ -255,7 +255,7 @@ Anywhere the web user can read and an operator can write. Two things to weigh:
 ## Stale Rule Sources
 
 `stale_source_error_after` is how long a [rule source](sources.md) may go unrefreshed before
-[`firewall-doctor`](../guides/diagnosing.md#making-a-stale-rule-source-fail-the-deploy)
+[`firewall-doctor`](../how-to/diagnosing.md#making-a-stale-rule-source-fail-the-deploy)
 reports it as an **error** rather than a warning — which is the difference between a green
 deploy and a red one.
 

@@ -169,7 +169,7 @@ Four providers ship with the firewall — set `challenge.provider` to a short na
     default) or the invisible, score-based v3. Verified server-side against
     Google's siteverify API.
 
-The math and ALTCHA screenshots come from the [demo application](../guides/demo.md), which serves each provider on its own route.
+The math and ALTCHA screenshots come from the [demo application](../getting-started/demo.md), which serves each provider on its own route.
 
 Which to pick is mostly a question of what you are willing to depend on:
 

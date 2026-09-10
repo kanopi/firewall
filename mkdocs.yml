@@ -87,6 +87,26 @@ extra:
       name: Kanopi Studios
 
 plugins:
+  # Every page moved by the Diatasis restructure keeps its old URL working.
+  # The published release notes for v2.19.0-v2.24.0 link into these paths, as
+  # does the README, and neither is something we can go back and edit.
+  - redirects:
+      redirect_maps:
+        'guides/index.md': 'how-to/index.md'
+        'guides/checking-requests.md': 'how-to/checking-requests.md'
+        'guides/diagnosing.md': 'how-to/diagnosing.md'
+        'guides/managing-rules.md': 'how-to/managing-rules.md'
+        'guides/syncing-sources.md': 'how-to/syncing-sources.md'
+        'guides/schema-migrations.md': 'how-to/schema-migrations.md'
+        'guides/geoip-setup.md': 'how-to/geoip-setup.md'
+        'guides/decision-events.md': 'how-to/decision-events.md'
+        'guides/custom-plugins.md': 'how-to/custom-plugins.md'
+        'guides/custom-storage.md': 'how-to/custom-storage.md'
+        'guides/advanced-examples.md': 'how-to/advanced-examples.md'
+        'guides/demo.md': 'getting-started/demo.md'
+        'guides/example-environment.md': 'getting-started/example-environment.md'
+        'guides/error-handling.md': 'reference/error-handling.md'
+        'getting-started/platform-integration.md': 'how-to/platform-integration.md'
   - search:
       separator: '[\s​\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
   # Click-to-zoom on screenshots. Skipped for images tagged `.off-glb`.
@@ -172,11 +192,31 @@ validation:
 
 nav:
   - Home: index.md
+
+  # Tutorials — learning by doing. Read start to finish, at least once.
   - Getting Started:
       - getting-started/index.md
       - Quick Start: getting-started/quick-start.md
       - Test Drive: getting-started/test-drive.md
-      - Platform Integration: getting-started/platform-integration.md
+      - Demo Application: getting-started/demo.md
+      - Local Example Environment: getting-started/example-environment.md
+
+  # How-to — you know what you want; these are the steps.
+  - How-to Guides:
+      - how-to/index.md
+      - Integrate With Your Platform: how-to/platform-integration.md
+      - Check a Request: how-to/checking-requests.md
+      - Diagnose an Installation: how-to/diagnosing.md
+      - Manage Rules: how-to/managing-rules.md
+      - Sync Rule Sources: how-to/syncing-sources.md
+      - Migrate the Schema: how-to/schema-migrations.md
+      - Set Up GeoIP: how-to/geoip-setup.md
+      - React to Decisions: how-to/decision-events.md
+      - Write a Custom Plugin: how-to/custom-plugins.md
+      - Write a Custom Storage Backend: how-to/custom-storage.md
+      - Build a Layered Configuration: how-to/advanced-examples.md
+
+  # Reference — looked up, not read. Configuration and Plugins are the bulk of it.
   - Configuration:
       - configuration/index.md
       - Loading & Includes: configuration/loading-and-includes.md
@@ -206,24 +246,10 @@ nav:
       - Tuning & False Positives: presets/tuning.md
       - Testing Presets: presets/testing.md
       - Custom Presets: presets/custom.md
-  - Guides:
-      - guides/index.md
-      - Error Handling: guides/error-handling.md
-      - Checking a Request: guides/checking-requests.md
-      - Syncing Rule Sources: guides/syncing-sources.md
-      - Schema Migrations: guides/schema-migrations.md
-      - Diagnosing an Installation: guides/diagnosing.md
-      - Managing Rules: guides/managing-rules.md
-      - Reacting to Decisions: guides/decision-events.md
-      - Custom Plugins: guides/custom-plugins.md
-      - Custom Storage: guides/custom-storage.md
-      - Advanced Examples: guides/advanced-examples.md
-      - GeoIP Setup: guides/geoip-setup.md
-      - Local Example Environment: guides/example-environment.md
-      - Demo Application: guides/demo.md
   - Reference:
       - reference/index.md
-      - Rate Limiting Reference: reference/rate-limiting.md
+      - Exceptions & Error Handling: reference/error-handling.md
+      - Rate Limiting: reference/rate-limiting.md
       - Legacy Config Format: reference/legacy-format.md
   - Contributing:
       - contributing/index.md

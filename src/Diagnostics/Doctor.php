@@ -373,7 +373,7 @@ class Doctor
             return [Diagnosis::error(
                 'The firewall refuses to start with this configuration',
                 $throwable->getMessage(),
-                'guides/error-handling.md'
+                'reference/error-handling.md'
             )];
         }
 
@@ -383,7 +383,7 @@ class Doctor
             $findings[] = Diagnosis::error(
                 sprintf('Rule %s is not running', $rule['plugin']),
                 sprintf('Configured as a %s rule. Its constructor said: %s', $rule['bucket'], $rule['error']),
-                'guides/error-handling.md#checking-that-every-rule-is-running'
+                'reference/error-handling.md#checking-that-every-rule-is-running'
             );
         }
 
@@ -391,7 +391,7 @@ class Doctor
             $findings[] = Diagnosis::error(
                 sprintf('The %s is running without its store', $backend['component']),
                 sprintf('%s could not be reached: %s', $backend['backend'], $backend['error']),
-                'guides/error-handling.md#checking-that-a-backend-can-reach-its-server'
+                'reference/error-handling.md#checking-that-a-backend-can-reach-its-server'
             );
         }
 
@@ -420,7 +420,7 @@ class Doctor
             $findings[] = Diagnosis::error(
                 'Database for ' . $failure['label'] . ' could not be reached',
                 $failure['error'],
-                'guides/schema-migrations.md'
+                'how-to/schema-migrations.md'
             );
         }
 
@@ -444,7 +444,7 @@ class Doctor
                         $pending
                     ))
                 ),
-                'guides/schema-migrations.md'
+                'how-to/schema-migrations.md'
             );
         }
 
@@ -541,7 +541,7 @@ class Doctor
                 $findings[] = Diagnosis::error(
                     'GeoIP database not found',
                     $database . ' — every rule reading location or ASN will not match.',
-                    'guides/geoip-setup.md'
+                    'how-to/geoip-setup.md'
                 );
 
                 continue;
@@ -556,7 +556,7 @@ class Doctor
                 ? Diagnosis::warning(
                     sprintf('GeoIP database is %d days old', $days),
                     $database . ' — addresses reassigned since then resolve to the wrong place.',
-                    'guides/geoip-setup.md'
+                    'how-to/geoip-setup.md'
                 )
                 : Diagnosis::ok(sprintf('GeoIP database is %d days old', $days), $database);
         }
@@ -632,7 +632,7 @@ class Doctor
                     $findings[] = Diagnosis::warning(
                         'Rule source has never been fetched',
                         $url . ' — run bin/firewall-sources, or the first request that needs it fetches it inline.',
-                        'guides/syncing-sources.md'
+                        'how-to/syncing-sources.md'
                     );
 
                     continue;
@@ -650,7 +650,7 @@ class Doctor
                         $findings[] = Diagnosis::warning(
                             'Rule source cache is stale',
                             sprintf('%s — its cache entry records no fetch time, so it cannot be trusted as current.', $url),
-                            'guides/syncing-sources.md'
+                            'how-to/syncing-sources.md'
                         );
 
                         continue;
@@ -678,13 +678,13 @@ class Doctor
                                 . ' failing a deploy.',
                                 $this->describeAge($errorAfter)
                             ),
-                            'guides/syncing-sources.md'
+                            'how-to/syncing-sources.md'
                         );
 
                         continue;
                     }
 
-                    $findings[] = Diagnosis::warning('Rule source cache is stale', $detail, 'guides/syncing-sources.md');
+                    $findings[] = Diagnosis::warning('Rule source cache is stale', $detail, 'how-to/syncing-sources.md');
 
                     continue;
                 }

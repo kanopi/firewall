@@ -17,7 +17,7 @@ bash bin/update_geoip.sh YOUR_MAXMIND_LICENSE_KEY /var/lib/geoip
 - The script currently downloads from a public mirror of the GeoLite2 databases, so the license key argument is validated as non-empty but not actually used for the download. Keep passing one — the direct-from-MaxMind path is retained in the script and the argument will be needed again when it is re-enabled.
 - MaxMind refreshes GeoLite2 twice weekly. Run this on a schedule (cron, or a build step) rather than once at install; stale geolocation data quietly produces wrong verdicts.
 
-For manual downloads, MaxMind web-service configuration, and Docker volume mounting, see [example/README.md](../guides/geoip-setup.md).
+For manual downloads, MaxMind web-service configuration, and Docker volume mounting, see [example/README.md](../how-to/geoip-setup.md).
 
 ## Configuration Example
 

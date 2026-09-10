@@ -159,7 +159,7 @@ is unreachable carries on enforcing every rule that does not depend on it.
 That is a deliberate trade and worth understanding: it fails *open* for the block list
 specifically. `Firewall::getDegradedBackends()` reports it, so a status page can say so
 without scraping for `Failed to initialize Redis storage` — see
-[Checking that a backend can reach its server](../guides/error-handling.md#checking-that-a-backend-can-reach-its-server).
+[Checking that a backend can reach its server](../reference/error-handling.md#checking-that-a-backend-can-reach-its-server).
 
 #### Connections are given a bounded timeout
 
@@ -241,7 +241,7 @@ if ($storage instanceof QueryableStorageInterface) {
 
 ### Why a separate interface
 
-Not every backend can enumerate its own keys — Memcached, the worked example in [Custom Storage Backends](../guides/custom-storage.md), cannot list keys at all. Folding these methods into `StorageInterface` would oblige every implementation to supply something it may be unable to implement honestly, and would break existing custom storages on upgrade. Enumeration is a capability, so it is modelled as one, and callers check with `instanceof` before using it.
+Not every backend can enumerate its own keys — Memcached, the worked example in [Custom Storage Backends](../how-to/custom-storage.md), cannot list keys at all. Folding these methods into `StorageInterface` would oblige every implementation to supply something it may be unable to implement honestly, and would break existing custom storages on upgrade. Enumeration is a capability, so it is modelled as one, and callers check with `instanceof` before using it.
 
 ### Behaviour worth knowing
 
