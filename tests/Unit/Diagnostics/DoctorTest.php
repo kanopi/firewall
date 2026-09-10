@@ -8,6 +8,7 @@ use Kanopi\Firewall\Diagnostics\Diagnosis;
 use Kanopi\Firewall\Diagnostics\Doctor;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\DegradedBackends;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -97,6 +98,136 @@ class DoctorTest extends AbstractTestCase
         $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
         $this->assertContains('Config loads', $this->titles($findings));
         $this->assertContains('Every configured rule is running', $this->titles($findings));
+    }
+
+    /**
+     * With no `panic_file` set, the doctor says the lever exists rather than
+     * saying nothing -- the point of a panic switch is being reachable at 2am
+     * by somebody who did not set it up.
+     */
+    public function testNoPanicFileConfiguredIsReportedAsOk(): void
+    {
+        $findings = $this->diagnose($this->workingConfig());
+
+        $this->assertContains('No panic switch configured', $this->titles($findings));
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+    }
+
+    /**
+     * Configured and absent is the healthy steady state.
+     */
+    public function testAConfiguredButAbsentPanicFileIsReportedAsOff(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['panic_file'] = $this->dir . '/panic';
+
+        $this->assertContains('Panic switch is off', $this->titles($this->diagnose($config)));
+    }
+
+    /**
+     * An active switch is a warning naming both modes.
+     *
+     * The failure this exists for is a switch left on for three weeks, so the
+     * line has to be readable by somebody who does not already know it was
+     * thrown: what it is running as, what it should be, and how to undo it.
+     */
+    public function testAnActivePanicSwitchIsAWarningNamingBothModes(): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'log');
+
+        $config = $this->workingConfig();
+        $config['global']['panic_file'] = $panic;
+
+        $findings = $this->diagnose($config);
+        $warnings = $this->titles($findings, Diagnosis::WARNING);
+
+        $this->assertContains('Panic switch is ACTIVE — running in log, not block', $warnings);
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+
+        $detail = '';
+
+        foreach ($findings as $finding) {
+            if (str_contains($finding->title, 'Panic switch is ACTIVE')) {
+                $detail = (string) $finding->detail;
+            }
+        }
+
+        $this->assertStringContainsString('Delete ' . $panic, $detail);
+    }
+
+    /**
+     * The configured mode is read back for the comparison, so a deployment
+     * sitting in `log` that panics into `block` reports that way round.
+     */
+    public function testTheWarningComparesAgainstTheConfiguredMode(): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'block');
+
+        $config = $this->workingConfig();
+        $config['global']['mode'] = 'log';
+        $config['global']['panic_file'] = $panic;
+
+        $this->assertContains(
+            'Panic switch is ACTIVE — running in block, not log',
+            $this->titles($this->diagnose($config), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * A `mode` that is not a mode falls back to `block` for the comparison,
+     * the same way the firewall itself resolves it -- reporting the typo is
+     * the linter's job, not this one's, and getting this wrong would print a
+     * comparison line that contradicts the mode the site is really in.
+     *
+     * @param mixed $mode
+     *   What `global.mode` held.
+     */
+    #[DataProvider('unresolvableModes')]
+    public function testAnUnparseableConfiguredModeIsReportedAsBlock(mixed $mode): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'log');
+
+        $config = $this->workingConfig();
+        $config['global']['mode'] = $mode;
+        $config['global']['panic_file'] = $panic;
+
+        $this->assertContains(
+            'Panic switch is ACTIVE — running in log, not block',
+            $this->titles($this->diagnose($config), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * @return array<string, array{mixed}>
+     */
+    public static function unresolvableModes(): array
+    {
+        return [
+            'a typo' => ['lgo'],
+            'not a string at all' => [['not', 'a', 'mode']],
+            'unset' => [null],
+        ];
+    }
+
+    /**
+     * A panic file that exists and does nothing is an error. Somebody reached
+     * for the switch; the fail-safe worked, and they still need told.
+     */
+    public function testAnInertPanicFileIsAnError(): void
+    {
+        $panic = $this->dir . '/panic';
+        file_put_contents($panic, 'lockdown');
+
+        $config = $this->workingConfig();
+        $config['global']['panic_file'] = $panic;
+
+        $this->assertContains(
+            'Panic file is present but is not being applied',
+            $this->titles($this->diagnose($config), Diagnosis::ERROR)
+        );
     }
 
     /**

@@ -11,6 +11,7 @@ global:
   behind_proxy: false
   require_trusted_proxies: false
   require_config: false
+  # panic_file: /var/run/firewall/panic   # no default — see Panic Switch below
   blocking_escalation:
     - window: 300
       offense: 0
@@ -162,6 +163,93 @@ count what it *would* have blocked and who it would have caught, then remove the
 Available on any plugin extending `AbstractPluginBase`, which is every built-in one. A
 custom plugin implementing `PluginInterface` directly can opt in by also implementing
 `ObserveModeInterface` — see [Custom Plugins](../guides/custom-plugins.md).
+
+## Panic Switch
+
+`global.mode` lives in YAML, so changing it is a commit, a review and a release — during
+exactly the window where all three are most expensive. `global.panic_file` names a file
+that, when it exists, overrides the mode for the next request onward:
+
+```yaml
+global:
+  mode: block
+  panic_file: /var/run/firewall/panic
+```
+
+```console
+$ echo log > /var/run/firewall/panic     # stop enforcing, keep recording
+$ rm /var/run/firewall/panic             # back to the configured mode
+```
+
+There is no restart, no deploy and no cache to clear. The file is read once per `Firewall`
+instance — one stat per request under PHP-FPM and mod_php — and takes effect immediately.
+
+### Why not an environment variable
+
+An environment variable already works, and needs nothing from this feature:
+
+```yaml
+global:
+  mode: "%env(default:block:FIREWALL_MODE)%"
+```
+
+Use it if it suits you. What it cannot do is *change* without restarting the process that
+reads it: under PHP-FPM that is a pool reload, and in a container it is usually a new
+container. A file can be created by anyone with a shell on the box, which is the part of
+"without a deploy" that matters at 2am.
+
+### The file has to name a mode, and it fails safe if it does not
+
+The file's contents are a mode name — `block`, `log`, `exception` or `disabled`, the same
+four [`mode`](#mode) takes. Leading and trailing whitespace and case are ignored, so
+`echo LOG >` works.
+
+A file that exists but names nothing recognisable **changes nothing**. That is deliberate,
+and it is the opposite of the obvious design. "Any panic file means turn the firewall off"
+would mean a leftover file from last month's incident, or a stray deploy artefact, silently
+disables the firewall — and nothing about a firewall that is quietly not running announces
+itself. So an empty, unreadable or unrecognised file leaves the configured mode alone and
+is reported at `error` level, because somebody reached for the switch and it did not take.
+
+It overrides in both directions. `echo block > panic` on a deployment configured for `log`
+is a legitimate use, and needs no extra machinery.
+
+### The log line is the safety mechanism
+
+The realistic failure is not somebody flipping the switch. It is somebody flipping it
+during an incident and nobody noticing it is still on three weeks later. Nothing else
+records that it happened — that is the whole point of a file — so while it is active every
+affected request logs at `warning`:
+
+```
+firewall.WARNING: Firewall panic switch is ACTIVE
+  {"panic_file":"/var/run/firewall/panic","configured_mode":"block","effective_mode":"log", …}
+```
+
+`bin/firewall-doctor` reports it as a warning, and `bin/firewall-check` prints it alongside
+the verdict — the check suppresses the switch while evaluating, so it still tells you which
+rule matches, and then says out loud that the live site is not behaving that way.
+
+Code can ask directly:
+
+```php
+$firewall = Firewall::create($configs);
+
+$firewall->getMode();            // FirewallMode::Log — what is actually happening
+$firewall->getConfiguredMode();  // FirewallMode::Block — what the YAML says
+$firewall->getPanicSwitch();     // ['active' => true, 'mode' => …, 'path' => …, 'problem' => null]
+```
+
+### Where to put the file
+
+Anywhere the web user can read and an operator can write. Two things to weigh:
+
+- **Not inside the document root, and not inside the deployed application tree.** A file
+  that turns the firewall off is worth exactly as much as write access to its path. Keep it
+  somewhere a deploy will not recreate it and a file-upload bug cannot reach it.
+- **`panic_file` is unset by default, on purpose.** There is no built-in path to guess at,
+  because a well-known default would be the first thing worth trying against every site
+  running this library.
 
 ## Status Code
 
