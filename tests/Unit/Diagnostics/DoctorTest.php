@@ -774,6 +774,202 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * A source stale enough for long enough stops being a warning (#297).
+     *
+     * The distinction is the whole point. One second past the ttl is a refresh
+     * that has not run yet. A week past it is a sync that has stopped working,
+     * and the rule is still matching -- on a list nobody has updated since.
+     * Only the second one should fail a deploy.
+     *
+     * Off unless asked for, which is the first case here: defaulting it on
+     * would fail a deploy that passed yesterday, over a source that was already
+     * stale yesterday.
+     *
+     * @param mixed $errorAfter
+     *   What `global.stale_source_error_after` held.
+     * @param string $expected
+     *   The status the finding must carry.
+     */
+    #[DataProvider('escalationThresholds')]
+    public function testASufficientlyStaleSourceEscalatesToAnError(mixed $errorAfter, string $expected): void
+    {
+        $list = $this->dir . '/escalate-' . md5(serialize($errorAfter)) . '.txt';
+        file_put_contents($list, "203.0.113.9
+");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 1]]];
+
+        if ($errorAfter !== 'unset') {
+            $config['global']['stale_source_error_after'] = $errorAfter;
+        }
+
+        // The first run finds nothing cached and then builds the rules, which
+        // is what fetches. The second sees what the first left behind.
+        $this->diagnose($config);
+        sleep(2);
+
+        $findings = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'Rule source')
+                && !str_contains($d->title, 'cached and fresh')
+        ));
+
+        $this->assertCount(1, $findings);
+        $this->assertSame($expected, $findings[0]->status);
+    }
+
+    /**
+     * @return array<string, array{mixed, string}>
+     */
+    public static function escalationThresholds(): array
+    {
+        return [
+            // The default. Whether an old rule list should stop a deploy is a
+            // question about somebody's refresh cycle, and the library is in no
+            // position to guess it.
+            'unset, so off' => ['unset', Diagnosis::WARNING],
+            'a threshold already passed' => [1, Diagnosis::ERROR],
+            'a threshold not yet reached' => [86400, Diagnosis::WARNING],
+            'turned off deliberately' => [0, Diagnosis::WARNING],
+            // Clamped rather than treated as "escalate immediately", which is
+            // the dangerous reading of a negative number.
+            'a negative threshold is off, not instant' => [-1, Diagnosis::WARNING],
+            // Falls back to off -- and is reported, which is the other half of
+            // this and has its own test below.
+            'not a number' => ['soon', Diagnosis::WARNING],
+        ];
+    }
+
+    /**
+     * The error says what to do about it, including how to stop it failing the
+     * deploy -- an exit code an operator cannot change is one they work around
+     * by removing the check.
+     */
+    public function testTheEscalatedErrorNamesTheSettingThatRelaxesIt(): void
+    {
+        $list = $this->dir . '/escalate-message.txt';
+        file_put_contents($list, "203.0.113.9
+");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 1]]];
+        $config['global']['stale_source_error_after'] = 1;
+
+        $this->diagnose($config);
+        sleep(2);
+
+        $errors = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->status === Diagnosis::ERROR
+        ));
+
+        $this->assertCount(1, $errors);
+        $this->assertSame('Rule source has not refreshed in a long time', $errors[0]->title);
+        $this->assertStringContainsString('last fetched', (string) $errors[0]->detail);
+        $this->assertStringContainsString('past its ttl of 1s', (string) $errors[0]->detail);
+        $this->assertStringContainsString('global.stale_source_error_after', (string) $errors[0]->detail);
+        $this->assertSame('guides/syncing-sources.md', $errors[0]->reference);
+    }
+
+    /**
+     * A value that is set and unusable is reported, not quietly read as off.
+     *
+     * `stale_source_error_after: "30 days"` is the shape of the mistake, and
+     * YAML hands it over as a string without complaint. Falling back to off in
+     * silence would be the worst of both: the operator asked for a gate,
+     * believes they have one, and does not.
+     */
+    public function testAnUnusableThresholdIsReported(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['stale_source_error_after'] = '30 days';
+
+        $warnings = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        ));
+
+        $this->assertCount(1, $warnings);
+        $this->assertSame(Diagnosis::WARNING, $warnings[0]->status);
+        $this->assertStringContainsString("'30 days'", (string) $warnings[0]->detail);
+        $this->assertStringContainsString('no source will be escalated', (string) $warnings[0]->detail);
+    }
+
+    /**
+     * A deliberate 0 is not a mistake, and is not reported as one.
+     */
+    public function testTurningItOffDeliberatelyIsSilent(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['stale_source_error_after'] = 0;
+
+        $this->assertSame([], array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        )));
+    }
+
+    /**
+     * Leaving it unset is the default, and says nothing at all.
+     */
+    public function testLeavingItUnsetIsSilent(): void
+    {
+        $this->assertSame([], array_values(array_filter(
+            $this->diagnose($this->workingConfig()),
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'stale_source_error_after')
+        )));
+    }
+
+    /**
+     * An entry with no fetch time stays a warning however low the threshold is
+     * set. There is nothing to measure, so escalating it would be asserting an
+     * age nobody knows.
+     */
+    public function testAnUnagedEntryIsNeverEscalated(): void
+    {
+        $list = $this->dir . '/unaged.txt';
+        file_put_contents($list, "203.0.113.9
+");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [['upstream' => $list, 'ttl' => 3600]]];
+        $config['global']['stale_source_error_after'] = 1;
+
+        $this->diagnose($config);
+
+        $cache = sys_get_temp_dir() . '/kanopi-firewall-sources';
+        $stripped = 0;
+
+        foreach (glob($cache . '/*') ?: [] as $entry) {
+            if (!is_file($entry)) {
+                continue;
+            }
+
+            $contents = (string) file_get_contents($entry);
+
+            if (!str_contains($contents, 'fetched_at')) {
+                continue;
+            }
+
+            file_put_contents($entry, str_replace('fetched_at', 'fetched_never', $contents));
+            $stripped++;
+        }
+
+        if ($stripped === 0) {
+            $this->markTestSkipped('The source cache did not store a timestamp to strip.');
+        }
+
+        $findings = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->title === 'Rule source cache is stale'
+        ));
+
+        $this->assertCount(1, $findings);
+        $this->assertSame(Diagnosis::WARNING, $findings[0]->status);
+    }
+
+    /**
      * The age reads at whatever scale the answer lands on.
      *
      * Hours run to two days before days take over, deliberately: 137882
