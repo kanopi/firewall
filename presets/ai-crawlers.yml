@@ -1,5 +1,8 @@
 # AI Training Crawler Blocking
 #
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# changed about what this blocks, separately from the library version.
+#
 # Blocks the crawlers that collect pages to build training corpora. Blocking
 # these costs no referral traffic, which is what makes them the safer half of
 # the AI-crawler question.

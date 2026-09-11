@@ -1,5 +1,8 @@
 # Search Engine Crawler Allow
 #
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# changed about what this blocks, separately from the library version.
+#
 # Lets the crawlers you want indexing you past the rules that would otherwise
 # catch them. Runs at weight -200, ahead of every block and challenge entry.
 #
