@@ -254,6 +254,7 @@ nav:
   - Reference:
       - reference/index.md
       - Configuration Keys: reference/configuration-keys.md
+      - Glossary: reference/glossary.md
       - Evaluation Order: reference/evaluation-order.md
       - Exceptions & Error Handling: reference/error-handling.md
       - Rate Limiting: reference/rate-limiting.md
