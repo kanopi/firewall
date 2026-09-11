@@ -1,0 +1,244 @@
+# Recipes
+
+Keyed on what you are trying to do, not on which feature does it. Each one is a working
+configuration and a link to the reference behind it.
+
+| I want to… | |
+|---|---|
+| [Block a country](#block-a-country) | GeoLocation |
+| [Stop a login flood](#stop-a-login-flood) | Rate Limit |
+| [Let Googlebot in safely](#let-googlebot-in-safely) | User Agent + reverse-DNS verification |
+| [Rate limit an API by key](#rate-limit-an-api-by-key) | Not configurable yet — see below |
+| [Run in observe mode for a week](#run-in-observe-mode-for-a-week) | Mode |
+| [Find out why a request was blocked](#find-out-why-a-request-was-blocked) | `firewall-check` |
+| [Put the site behind a challenge during an incident](#put-the-site-behind-a-challenge-during-an-incident) | Challenge |
+
+---
+
+## Block a country
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\GeoLocation"
+    response: block
+    enable: true
+    metadata:
+      name: blocked-countries
+      reader:
+        type: reader
+        db: /usr/local/share/GeoIP/GeoLite2-Country.mmdb
+    config:
+      - "country:CN"
+      - "country:RU"
+```
+
+Needs a MaxMind database on disk — [Set Up GeoIP](geoip-setup.md). Without one the rule
+cannot match, and `firewall-doctor` reports it rather than failing silently.
+
+!!! tip "Allowlist your own people first"
+
+    Country blocks catch staff travelling and VPN users. Put an allow rule with a negative
+    weight above it; the [allow bucket runs first](../reference/evaluation-order.md)
+    regardless of weights.
+
+[GeoLocation](../plugins/geolocation.md)
+
+---
+
+## Stop a login flood
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    enable: true
+    metadata:
+      name: login-flood
+      default_rate: 60
+      default_sample: 60
+      limit_unlisted_paths: false
+      storage:
+        type: "Kanopi\\Firewall\\RateLimitStorage\\FileRateLimitStorage"
+        config:
+          file: "{config_dir}/rate-limits.data"
+    config:
+      - path: /user/login
+        rate: 5
+        sample: 300        # five attempts per five minutes, per IP
+```
+
+!!! warning "`limit_unlisted_paths: false` is doing real work here"
+
+    Without it, adding one rule for `/user/login` also imposes a **site-wide** cap at
+    `default_rate` on every other URL, and every request performs a read-modify-write on the
+    counter store.
+
+[Rate Limit](../plugins/rate-limit.md)
+
+---
+
+## Let Googlebot in safely
+
+The naive version — allow anything whose user agent says `Googlebot` — is an open door,
+because the user agent is a string the client chooses. Make the rule prove it:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\UserAgent"
+    response: allow
+    weight: -200
+    enable: true
+    metadata:
+      name: verified-search-crawlers
+      verify: reverse-dns
+      verify_suffixes:
+        - .googlebot.com
+        - .google.com
+        - .search.msn.com
+        - .applebot.apple.com
+    config:
+      - "bot:true"
+```
+
+The match has to survive a reverse lookup of the client IP, a suffix check, and a forward
+lookup back to the same address. A client claiming to be Googlebot from a residential ISP
+fails at the first step.
+
+!!! danger "A mistyped `verify` does not verify"
+
+    `verify: reverse_dns` is not `verify: reverse-dns`, and `verify` with no
+    `verify_suffixes` accepts any domain. Either mistake leaves you with the open door you
+    were trying to close. `firewall-check --lint` reports it.
+
+[User Agent](../plugins/user-agent.md)
+
+---
+
+## Rate limit an API by key
+
+**Not from configuration, today.** The rate limit key is built from the client IP and the
+matched path:
+
+```php
+sprintf('rate:%s:%s', $request->getClientIp(), $rule['path'])
+```
+
+So every client behind one NAT or one corporate proxy shares a bucket, and an API key gets
+no bucket of its own. [#200](https://github.com/kanopi/firewall/issues/200) is the
+configuration-level fix and is not yet scheduled.
+
+Until then, `buildRateKey()` is `protected` — one method on a subclass:
+
+```php
+final class ApiKeyRateLimit extends \Kanopi\Firewall\Plugins\RateLimit
+{
+    protected function buildRateKey(\Symfony\Component\HttpFoundation\Request $request, array $rule): string
+    {
+        $key = $request->headers->get('X-Api-Key');
+
+        // Fall back to the IP rather than to one shared bucket: an unkeyed
+        // caller must not be able to exhaust every keyed caller's allowance.
+        return sprintf('rate:%s:%s', $key ?? (string) $request->getClientIp(), $rule['path']);
+    }
+}
+```
+
+Point a rule at it with `plugin: "App\\Firewall\\ApiKeyRateLimit"`.
+
+[Write a Custom Plugin](custom-plugins.md)
+
+---
+
+## Run in observe mode for a week
+
+Everything evaluates, nothing is enforced, every decision is logged:
+
+```yaml
+global:
+  mode: log
+```
+
+This is the right way to introduce an unfamiliar rule set. Turning one straight on is how a
+site finds its false positives in production, and the usual recovery is to remove the
+firewall rather than tune it.
+
+**To observe one rule while the rest keep enforcing**, which is almost always what you
+actually want:
+
+```yaml
+metadata:
+  name: crs-paranoia-2
+  mode: log        # match, report it, carry on
+```
+
+Count what it *would* have blocked:
+
+```console
+$ grep 'enforced":false' /var/log/firewall/firewall.log | wc -l
+```
+
+[Mode](../configuration/global.md#mode) · [Evaluation Order](../reference/evaluation-order.md#what-the-modes-change)
+
+---
+
+## Find out why a request was blocked
+
+```console
+$ firewall-check --config=firewall.yml --ip=203.0.113.9 --url=/checkout --explain
+```
+
+Names the rule, shows every rule evaluated in order, and lists the ones configured but never
+reached. It runs against a throwaway store, so asking about an address cannot ban it.
+
+[Check a Request](checking-requests.md) · [Troubleshooting](troubleshooting.md)
+
+---
+
+## Put the site behind a challenge during an incident
+
+Everyone proves they are human; your own people do not:
+
+```yaml
+challenge:
+  provider: math
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'
+  path: /_firewall/challenge
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: allow
+    weight: -200
+    enable: true
+    metadata: { name: office }
+    config: ['198.51.100.0/24']
+
+  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
+    response: challenge
+    weight: 500
+    enable: true
+    metadata: { name: incident-challenge-everyone }
+    config: ['0.0.0.0/0', '::/0']
+```
+
+```
+CHALLENGED  GET /      client 203.0.113.9    challenged by incident-challenge-everyone
+ALLOWED     GET /      client 198.51.100.7   allowed by    office
+```
+
+**Add and remove it without editing YAML**, which is the point during an incident:
+
+```console
+$ firewall-rule add firewall.yml --ip=0.0.0.0/0 --ip=::/0 \
+    --response=challenge --weight=500 --name=incident-challenge
+$ firewall-rule remove incident-challenge firewall.yml
+```
+
+!!! warning "Challenging is not blocking, and that is deliberate"
+
+    A challenge costs an attacker CPU and a real visitor a few seconds. If you want to serve
+    nobody at all, that is a `block` rule with the same `0.0.0.0/0` config — but every
+    refused visitor is then written to the durable block list with escalation applied, and
+    stays banned after you remove the rule.
+    [#304](https://github.com/kanopi/firewall/issues/304) is the proper fix for that.
+
+[Add a Challenge](add-a-challenge.md) · [Manage Rules](managing-rules.md)

@@ -204,6 +204,7 @@ nav:
   # How-to — you know what you want; these are the steps.
   - How-to Guides:
       - how-to/index.md
+      - Recipes: how-to/recipes.md
       - Integrate With Your Platform: how-to/platform-integration.md
       - Add a Challenge: how-to/add-a-challenge.md
       - Add a Rule Source: how-to/add-a-rule-source.md
