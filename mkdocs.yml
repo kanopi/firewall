@@ -223,6 +223,7 @@ nav:
       - Demo Application: guides/demo.md
   - Reference:
       - reference/index.md
+      - Glossary: reference/glossary.md
       - Rate Limiting Reference: reference/rate-limiting.md
       - Legacy Config Format: reference/legacy-format.md
   - Contributing:

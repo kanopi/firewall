@@ -23,6 +23,15 @@ start to finish.
 
     [:octicons-arrow-right-24: Legacy config format](legacy-format.md)
 
+-   :material-book-alphabet:{ .lg .middle } **Glossary**
+
+    ---
+
+    Every term used across these docs — anomaly score, preset, pass token, weight —
+    in one alphabetical page, each with a link to where it is explained properly.
+
+    [:octicons-arrow-right-24: Glossary](glossary.md)
+
 </div>
 
 ## Class reference
