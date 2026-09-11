@@ -2,6 +2,16 @@
 
 Plugins are the core components that evaluate incoming requests. They are configured as an ordered list under the top-level `plugins:` key. Each entry declares one plugin instance and its `response` mode — either `allow` (let the request through), `block` (reject the request), or `challenge` (require the visitor to solve an interstitial before continuing).
 
+!!! info "What runs in what order"
+
+    Buckets are consulted **allow → challenge → block**, in that fixed order, and `weight`
+    sorts rules only *within* a bucket. An allow rule with the worst weight in the file
+    still beats a block rule with the best.
+
+    That surprises people often enough to be worth a picture:
+    [Evaluation Order](../reference/evaluation-order.md).
+
+
 ## Common Plugin Configuration
 
 All plugin entries share the same shape:
