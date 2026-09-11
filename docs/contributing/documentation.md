@@ -77,6 +77,39 @@ the reference or how-to page it belongs to — the way "Listeners cannot change 
 sits inside *React to Decisions*. A separate `explanation/` tree would mean every "why"
 lives one click away from the "what", which is how nobody reads it.
 
+## Versioned publishing
+
+The site is published per release with [`mike`](https://github.com/jimporter/mike), so a 2.x
+operator keeps reading 2.x documentation after 3.0 ships rather than silently being shown
+documentation for a version they are not running.
+
+| | |
+|---|---|
+| `kanopi.github.io/firewall/` | Redirects to `latest/` |
+| `…/latest/` | Whatever shipped most recently |
+| `…/2.25/` | That minor, frozen |
+
+**Versions are `MAJOR.MINOR`.** A patch release republishes over its own minor — `v2.25.1`
+updates `2.25` — because a patch cannot change behaviour, so it does not deserve a
+directory of its own. Old minors stay published forever; they are small, and keeping them is
+the entire point.
+
+Nothing about this is manual. The `docs deploy` job runs on a `v*.*.*` tag, derives the
+version from it, moves the `latest` alias and rewrites the root redirect.
+
+!!! warning "Deploying does not remove what it does not own"
+
+    `mike` publishes *into* per-version directories and never deletes anything else on
+    `gh-pages`. A file left at the root from before versioning would keep serving its old
+    content at its old URL forever — which is worse than a 404, because it looks right.
+
+    The deploy job refuses to publish when it finds unversioned content at the root, and
+    prints the one-line fix.
+
+To preview the selector locally you need more than one version, so it is rarely worth it —
+`mkdocs serve` renders the current branch without version machinery, and that is what to use
+while writing.
+
 ## Where things live
 
 ```text

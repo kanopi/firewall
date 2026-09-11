@@ -15,15 +15,19 @@
 # restructure moved fourteen pages. The published release notes and the README
 # link into the old paths and cannot be edited after the fact.
 #
-# ghp-import arrives as an mkdocs dependency, but the docs deploy job calls it
-# directly, so it is listed and pinned here rather than left to whatever mkdocs
-# happens to resolve.
+# mike publishes each release into its own subdirectory of gh-pages and
+# maintains the version selector. It supersedes the direct ghp-import call the
+# deploy job used to make -- see .circleci/config.yml for why that changed.
+#
+# ghp-import arrives as an mkdocs dependency and as a mike dependency. Pinned
+# here because the deploy job's behaviour depends on it either way.
 
 mkdocs==1.6.1
 mkdocs-material==9.7.7
 mkdocs-glightbox==0.5.2
 mkdocs-minify-plugin==0.8.0
 mkdocs-redirects==1.2.2
+mike==2.1.3
 pymdown-extensions==11.0.1
 Pygments==2.20.0
 ghp-import==2.1.0
