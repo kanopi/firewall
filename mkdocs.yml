@@ -209,6 +209,7 @@ nav:
       - Add a Rule Source: how-to/add-a-rule-source.md
       - Send Logs Somewhere: how-to/send-logs-somewhere.md
       - Check a Request: how-to/checking-requests.md
+      - Troubleshooting: how-to/troubleshooting.md
       - Diagnose an Installation: how-to/diagnosing.md
       - Manage Rules: how-to/managing-rules.md
       - Sync Rule Sources: how-to/syncing-sources.md
