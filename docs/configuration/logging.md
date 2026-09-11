@@ -14,6 +14,12 @@ That applies to the handlers that take a file path: `StreamHandler` and `Rotatin
 
 > **Heads up:** several Monolog handlers require additional PHP extensions or third-party packages. Slack/IFTTT/Pushover/Telegram need `ext-curl`; `SendGridHandler` and `SymfonyMailerHandler` may require `composer require` of the relevant transport package. See the [Monolog handler docs](https://seldaek.github.io/monolog/doc/02-handlers-formatters-processors.html) for each handler's prerequisites.
 
+!!! tip "Just need the logs somewhere?"
+
+    This page is the reference — every handler, every option, and what each one costs. If
+    you are wiring up a destination for the first time,
+    [Send Logs Somewhere](../how-to/send-logs-somewhere.md) is the short version.
+
 ## File logging
 
 Write every event to a flat file:

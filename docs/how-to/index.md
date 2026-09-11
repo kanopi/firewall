@@ -18,6 +18,33 @@ that is [Configuration](../configuration/index.md) and [Plugins](../plugins/inde
 
     [:octicons-arrow-right-24: Platform integration](platform-integration.md)
 
+-   :material-shield-account-outline:{ .lg .middle } **Add a Challenge**
+
+    ---
+
+    Make suspicious traffic prove it is human instead of refusing it outright —
+    configured, pointed at a rule, and checked before it enforces.
+
+    [:octicons-arrow-right-24: Add a challenge](add-a-challenge.md)
+
+-   :material-format-list-bulleted-type:{ .lg .middle } **Add a Rule Source**
+
+    ---
+
+    Point a rule at a list that lives somewhere else — a file, a URL, a feed
+    someone else publishes — in whatever shape it already has.
+
+    [:octicons-arrow-right-24: Add a rule source](add-a-rule-source.md)
+
+-   :material-text-box-outline:{ .lg .middle } **Send Logs Somewhere**
+
+    ---
+
+    A file, a rotating file, a queryable table, or a Slack channel that only
+    speaks up when something is actually broken.
+
+    [:octicons-arrow-right-24: Send logs somewhere](send-logs-somewhere.md)
+
 -   :material-magnify-scan:{ .lg .middle } **Check a Request**
 
     ---
