@@ -2,11 +2,6 @@
 
 What is supported, for how long, and what can change under you on an upgrade.
 
-!!! warning "Proposed — not yet ratified"
-
-    The **durations** in the 2.x section below are a proposal, not a commitment the project
-    has made. Everything else on this page describes what the project already does.
-
 ## Versioning
 
 [Semantic Versioning](https://semver.org/).
@@ -47,13 +42,7 @@ include your copy. [Custom Presets](../presets/custom.md) covers that.
 
 ## The 2.x line, once 3.0 ships
 
-!!! warning "Proposed durations"
-
-    The commitments below are a **proposal for review**, not a policy the project has
-    adopted. They are written as statements so they can be ratified or corrected rather than
-    drafted from nothing.
-
-| | Proposed |
+| | |
 |---|---|
 | Security fixes | **12 months** from the 3.0.0 release |
 | Bug fixes | **6 months** from the 3.0.0 release |
@@ -71,7 +60,9 @@ stated end is a much smaller ask than an unsupported one with none.
 
 ## Reporting a security issue
 
-There is no `SECURITY.md` and no published disclosure address yet, which is a gap worth
-closing for a security component — a reporter's only current option is a public issue, which
-is the wrong place for an unfixed vulnerability. Until then, reach the maintainers through
-[Discussions](https://github.com/kanopi/firewall/discussions).
+There is no `SECURITY.md` and no private disclosure route yet, which is
+[being fixed](https://github.com/kanopi/firewall/issues/320). Until it is, please **do not
+open a public issue** for an unfixed vulnerability — reach the maintainers through
+[Discussions](https://github.com/kanopi/firewall/discussions) instead.
+
+Once that lands, 2.x receives security fixes for the window stated above.
