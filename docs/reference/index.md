@@ -10,6 +10,15 @@ follows is the reference that belongs to neither.
 
 <div class="grid cards" markdown>
 
+-   :material-book-alphabet:{ .lg .middle } **Glossary**
+
+    ---
+
+    Every term this documentation uses in a specific way — bucket, offense,
+    pass token, sample, upstream — defined once and linked.
+
+    [:octicons-arrow-right-24: Glossary](glossary.md)
+
 -   :material-alert-octagon-outline:{ .lg .middle } **Exceptions & Error Handling**
 
     ---
