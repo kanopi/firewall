@@ -16,6 +16,21 @@ malicious requests.
 | [Custom Presets](../docs/presets/custom.md) | Writing your own reusable rule sets |
 | [Rate Limiting Reference](../docs/reference/rate-limiting.md) | Every rule in `rate-limiting.yml`, with the reasoning behind each limit |
 
+## Versions
+
+Each rule set carries `# Preset-Version: N` in its header, and
+[`CHANGELOG.md`](CHANGELOG.md) records what changed about **what it blocks** at each version.
+
+That is deliberately separate from the library's own changelog. Presets ship inside the
+package, so `composer update` can change what gets blocked on a production site with no
+change to your configuration — and that is not a library change, so it would not show up
+there.
+
+```console
+$ grep Preset-Version vendor/kanopi/firewall/presets/drupal.yml
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+```
+
 ## Files in this directory
 
 | File | Purpose |

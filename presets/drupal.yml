@@ -1,5 +1,8 @@
 # Drupal Hardening Configuration
 #
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# changed about what this blocks, separately from the library version.
+#
 # Blocks what a Drupal install exposes but a visitor never needs: the version
 # it is running, the routes that install and update it, the build artefacts a
 # misconfigured docroot leaks, and PHP under the files directory.

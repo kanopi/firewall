@@ -1,5 +1,8 @@
 # AI Training Crawler Challenge
 #
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# changed about what this blocks, separately from the library version.
+#
 # The same list as ai-crawlers.yml, served an interstitial instead of a refusal.
 # Useful when you want friction rather than a hard no — a crawler that cannot
 # solve the challenge goes away, and anything that can was probably a browser.
