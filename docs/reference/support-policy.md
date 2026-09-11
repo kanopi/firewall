@@ -60,9 +60,10 @@ stated end is a much smaller ask than an unsupported one with none.
 
 ## Reporting a security issue
 
-There is no `SECURITY.md` and no private disclosure route yet, which is
-[being fixed](https://github.com/kanopi/firewall/issues/320). Until it is, please **do not
-open a public issue** for an unfixed vulnerability — reach the maintainers through
-[Discussions](https://github.com/kanopi/firewall/discussions) instead.
+**Please do not open a public issue.** Report it privately through GitHub's
+[advisory form](https://github.com/kanopi/firewall/security/advisories/new), which is visible
+only to you and the maintainers.
 
-Once that lands, 2.x receives security fixes for the window stated above.
+[SECURITY.md](https://github.com/kanopi/firewall/blob/2.x/SECURITY.md) covers what to
+include, what response times to expect, and what counts as a vulnerability as opposed to a
+false negative.
