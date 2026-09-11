@@ -7,7 +7,19 @@ If you are still deciding *what* you want, start with
 [Getting Started](../getting-started/index.md). If you want to know what a setting does,
 that is [Configuration](../configuration/index.md) and [Plugins](../plugins/index.md).
 
+Start with the **[Recipes](recipes.md)** if you know what you want but not which feature
+does it — "block a country", "stop a login flood", "let Googlebot in safely".
+
 <div class="grid cards" markdown>
+
+-   :material-chef-hat:{ .lg .middle } **Recipes**
+
+    ---
+
+    Keyed on intent rather than on feature. Each one is a working configuration
+    and a link to the reference behind it.
+
+    [:octicons-arrow-right-24: Recipes](recipes.md)
 
 -   :material-connection:{ .lg .middle } **Integrate With Your Platform**
 
