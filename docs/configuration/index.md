@@ -2,6 +2,16 @@
 
 The firewall configuration consists of five main sections:
 
+!!! info "What runs in what order"
+
+    Buckets are consulted **allow → challenge → block**, in that fixed order, and `weight`
+    sorts rules only *within* a bucket. An allow rule with the worst weight in the file
+    still beats a block rule with the best.
+
+    That surprises people often enough to be worth a picture:
+    [Evaluation Order](../reference/evaluation-order.md).
+
+
 | Section     | Purpose                                                                    | Required |
 |-------------|----------------------------------------------------------------------------|----------|
 | `global`    | Defines global configuration settings                                      | No       |
