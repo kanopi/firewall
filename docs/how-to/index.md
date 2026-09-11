@@ -45,6 +45,16 @@ that is [Configuration](../configuration/index.md) and [Plugins](../plugins/inde
 
     [:octicons-arrow-right-24: Send logs somewhere](send-logs-somewhere.md)
 
+-   :material-lifebuoy:{ .lg .middle } **Troubleshooting**
+
+    ---
+
+    Organised by the sentence you would actually type — "my allow rule isn't
+    working", "I locked myself out", "the challenge loops forever" — with the
+    one command that confirms each.
+
+    [:octicons-arrow-right-24: Troubleshooting](troubleshooting.md)
+
 -   :material-magnify-scan:{ .lg .middle } **Check a Request**
 
     ---
