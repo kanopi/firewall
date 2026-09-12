@@ -22,7 +22,8 @@ flowchart TD
     BUCKET1 -->|no match| LIST{"on the<br/>block list?"}
 
     LIST -->|yes| BLOCKED2(["blocked — offense recorded"])
-    LIST -->|no| BUCKET2["challenge bucket<br/>(sorted by weight)"]
+    LIST -->|no| REC["record bucket<br/>(writes, does not refuse)"]
+    REC --> BUCKET2["challenge bucket<br/>(sorted by weight)"]
 
     BUCKET2 -->|"match, holds a pass token<br/>for that provider"| BUCKET3
     BUCKET2 -->|"match, no token"| CHALLENGE(["interstitial served"])
@@ -41,9 +42,10 @@ flowchart TD
 | 3 | **Challenge submission** | A POST to `challenge.path` is intercepted *before any bucket*, so an unrelated rule can never trap a visitor in a challenge loop. The block list is still enforced first — a client that already earned a ban does not get to solve its way out. |
 | 4 | **Allow bucket** | First bucket. A match ends evaluation. |
 | 5 | **Durable block list** | Storage-backed repeat-offender state, from earlier requests. |
-| 6 | **Challenge bucket** | A valid pass token *for that rule's provider* skips it. |
-| 7 | **Block bucket** | A match records an offense and refuses the request. |
-| 8 | **Allowed** | Nothing objected. |
+| 6 | **Record bucket** | `response: record` writes the client to the block list and lets this request through. |
+| 7 | **Challenge bucket** | A valid pass token *for that rule's provider* skips it. |
+| 8 | **Block bucket** | A match refuses the request, and records it unless `metadata.record: false`. |
+| 9 | **Allowed** | Nothing objected. |
 
 ## The three things people get wrong
 
@@ -83,6 +85,33 @@ an allow rule is for — but it means an allow rule is not a safe place for a br
 Solving a challenge attests "I am human". It does not attest "I am allowed everywhere", so
 block rules still run afterwards. A token is also only worth the provider it was earned
 against — a `math` token does not satisfy a `turnstile` rule.
+
+## Refusing and recording are separate
+
+A block does two things: it refuses *this* request, and it writes the client to the durable
+block list so later ones are refused too. Those were one action until 2.26.0, and each half
+is wanted without the other.
+
+| | Refuses this request | Writes to the block list |
+|---|---|---|
+| `response: block` | ✅ | ✅ |
+| `response: block` + `metadata.record: false` | ✅ | — |
+| `response: record` | — | ✅ |
+| `metadata.mode: log` | — | — |
+
+**`response: record`** serves the request normally and blocks the *next* one. That is what a
+honeypot needs: refusing the fetch tells a scanner exactly which URL is wired, which is the
+one thing a honeypot must not do. It runs after the block list and before the terminal
+buckets, so an allow rule still wins and a client already blocked is refused rather than
+re-recorded.
+
+**`metadata.record: false`** refuses and leaves nothing behind. A deliberate, temporary
+refusal of everybody is not evidence that anybody misbehaved — recording them means lifting
+it leaves a block list full of customers, each on an escalating ban.
+
+Both log at `warning`. A recorded client saw an ordinary response and left an ordinary line
+in the access log, so that log entry is the only evidence the rule fired — and the next
+request being refused makes no sense without it.
 
 ## What the modes change
 

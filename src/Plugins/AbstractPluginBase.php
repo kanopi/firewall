@@ -189,6 +189,30 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
      * Reads `metadata.mode`. Absent -- which is every existing configuration -- means
      * enforce, so nothing changes for a rule that declares nothing.
      */
+    /**
+     * Whether a block by this rule is written to the durable block list.
+     *
+     * `metadata.record: false` refuses the request and records nothing, which is what a
+     * deliberate temporary refusal of everybody needs: a lockdown that records every
+     * visitor leaves a block list full of customers once it is lifted, each on an
+     * escalating ban nobody asked for (#203, #304).
+     *
+     * Defaults to TRUE, and only an explicit boolean turns it off -- `record: "false"` is a
+     * string and does not, the same way every other boolean in this configuration behaves.
+     *
+     * @return bool
+     *   TRUE when a block by this rule is recorded.
+     */
+    public function recordsOffenses(): bool
+    {
+        $configured = $this->metadata['record'] ?? null;
+
+        return !is_bool($configured) || $configured;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
     public function isObserveMode(): bool
     {
         $mode = $this->metadata['mode'] ?? null;

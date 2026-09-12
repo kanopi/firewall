@@ -22,6 +22,7 @@ use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Plugins\AbstractPluginBase;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
@@ -33,6 +34,7 @@ use Kanopi\Firewall\Event\DecisionEvent;
 use Kanopi\Firewall\Event\RequestAllowed;
 use Kanopi\Firewall\Event\RequestBlocked;
 use Kanopi\Firewall\Event\RequestChallenged;
+use Kanopi\Firewall\Event\RequestRecorded;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\PanicSwitch;
@@ -98,6 +100,9 @@ final class Firewall
      *   ignores whatever comes back; see `DecisionEvent` for why that is not
      *   an oversight (#218). NULL disables the whole mechanism at the cost of
      *   a null check.
+     * @param PluginManager|null $recordPluginManager
+     *   Rules with `response: record`, which write a client to the block list
+     *   and let the request through (#203). NULL when none are configured.
      */
     protected function __construct(
         private StorageInterface $storage,
@@ -109,7 +114,8 @@ final class Firewall
         private ?TokenManager $tokenManager = null,
         private array $challengeConfig = [],
         private ?ChallengeProviderRegistry $challengeProviderRegistry = null,
-        private ?EventDispatcherInterface $eventDispatcher = null
+        private ?EventDispatcherInterface $eventDispatcher = null,
+        private ?PluginManager $recordPluginManager = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -317,7 +323,8 @@ final class Firewall
             $tokenManager,
             $challengeConfig,
             $providerRegistry,
-            $eventDispatcher
+            $eventDispatcher,
+            PluginManager::createFromPluginsArray($partitioned['record'])
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -896,6 +903,81 @@ final class Firewall
     }
 
     /**
+     * Write a client to the block list without refusing this request.
+     *
+     * The other half of separating refusing from recording. `block()` does both; this does
+     * only the second, so the request carries on and the client is refused the *next* time
+     * the durable block list is consulted (#203).
+     *
+     * Shares `block()`'s expiration and escalation handling deliberately: a honeypot hit
+     * that expired on a different schedule from an ordinary block would be a second set of
+     * rules to reason about for no gain.
+     *
+     * @param Request $request
+     *   The request that matched.
+     * @param PluginInterface $plugin
+     *   The rule that matched it.
+     *
+     * @return bool
+     *   TRUE when the client was written to the block list.
+     */
+    protected function record(Request $request, PluginInterface $plugin): bool
+    {
+        $key = $this->storage->getKey($request);
+
+        $success = $this->storage->set(
+            $key,
+            $this->storage->getStorageData($request, $plugin),
+            $this->determineExpirationTime($request, $plugin->getExpirationTime($request))
+        );
+
+        // Warning, not info. Nothing about this request looks different to the
+        // visitor or to the access log, so this line is the only evidence the
+        // rule fired -- and the next request from that client being refused
+        // makes no sense without it.
+        $this->getLogger()->warning('Client recorded without being refused', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'key' => $key,
+            'recorded' => $success,
+            'enforced' => false,
+        ]));
+
+        $this->announce(new RequestRecorded($request, $plugin, $success));
+
+        return $success;
+    }
+
+    /**
+     * Whether a rule writes what it refuses to the durable block list.
+     *
+     * `metadata.record: false` refuses without recording. Defaults to TRUE, so every rule
+     * written before 2.26.0 behaves exactly as it did.
+     *
+     * Read from metadata rather than being a new `response:` value on purpose. An
+     * unrecognised `response` falls into the **block** bucket by design -- so that a typo
+     * cannot promote a rule to `allow` -- which means a hypothetical `response: refuse`
+     * read by an older release would block *and* record, the behaviour being opted out of.
+     * An unknown metadata key is simply ignored, so the same config on an older release
+     * blocks and records: still not what was asked for, but the direction that was already
+     * the default rather than a surprise.
+     *
+     * @param PluginInterface $plugin
+     *   The rule.
+     *
+     * @return bool
+     *   TRUE when a block by this rule is written to storage.
+     */
+    protected function recordsOffenses(PluginInterface $plugin): bool
+    {
+        if (!$plugin instanceof AbstractPluginBase) {
+            return true;
+        }
+
+        return $plugin->recordsOffenses();
+    }
+
+    /**
      * The three rule buckets, ordered the way `evaluate()` consults them.
      *
      * So a report reads in the order the firewall would have applied the rules.
@@ -1026,6 +1108,19 @@ final class Firewall
         }
 
         $this->enforceStorageBlocklist($request);
+
+        // Record rules run here, and this request keeps going.
+        //
+        // After the block list, so a client already blocked is refused rather
+        // than re-recorded; before the terminal buckets, so the write happens
+        // even when something below ends the request. This is what a honeypot
+        // needs (#202): the rule that catches a scanner on /wp-admin.bak wants
+        // it on the block list for *next* time, not to refuse the fetch it is
+        // already serving -- refusing tells the scanner exactly which URL is
+        // wired, which is the one thing a honeypot must not do.
+        if (($plugin = $this->recordPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->record($request, $plugin);
+        }
 
         // A held pass token short-circuits the challenge bucket. Block
         // plugins still run — the token only attests "I am human", not
@@ -1902,6 +1997,21 @@ final class Firewall
             'plugin_type' => $plugin::class,
             'status_code' => $plugin->getStatusCode($request),
         ]));
+
+        // Refusing and recording are separate decisions (#203). A rule can
+        // refuse without writing anything, which is what a deliberate,
+        // temporary refusal of everybody needs: a lockdown that records every
+        // visitor leaves a block list full of customers once it is lifted, each
+        // on an escalating ban nobody asked for (#304).
+        if (!$this->recordsOffenses($plugin)) {
+            $this->getLogger()->info('Request blocked without recording', $this->getContext($request, [
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'recorded' => false,
+            ]));
+
+            return true;
+        }
 
         $expirationTime = $this->determineExpirationTime(
             $request,

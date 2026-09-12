@@ -86,7 +86,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | Key | Type | Default | |
 |---|---|---|---|
 | `plugin` | class | *required* | The rule class |
-| `response` | string | `block` | `allow`, `block`, `challenge` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
+| `response` | string | `block` | `allow`, `block`, `challenge`, `record` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
 | `weight` | int | `0` | Order **within** its bucket; lower runs first |
 | `enable` | bool | `true` | |
 | `metadata` | map | `[]` | How the rule behaves. Below |
@@ -100,6 +100,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `mode` | string | *enforce* | `log` observes this one rule without enforcing it | [Observe mode](../configuration/global.md#observing-one-rule-while-the-rest-enforce) |
 | `status_code` | int | `banning_status_code` | Per-rule override | [Status Code](../configuration/global.md#status-code) |
 | `default_expiration_time` | int | `3600` | Ban length, or pass-token TTL on a challenge rule | [Global](../configuration/global.md) |
+| `record` | bool | `true` | `false` refuses without writing to the block list | [Evaluation Order](evaluation-order.md#refusing-and-recording-are-separate) |
 | `sources` | list | `[]` | Pull this rule's entries from elsewhere | [Rule Sources](../configuration/sources.md) |
 | `challenge_provider` | string | `challenge.provider` | Per-rule provider override | [Per-plugin providers](../plugins/challenges.md#per-plugin-providers) |
 | `config` | list | — | Legacy alias for the entry's `config:` | [Legacy format](legacy-format.md) |
