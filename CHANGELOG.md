@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.25.0](https://github.com/kanopi/firewall/releases/tag/v2.25.0) — 2026-09-11
+
+Ready 2.x to be an old version: documentation sorted into a shape worth freezing and then frozen with a version selector, presets carrying their own version and enforcement changelog, and a written support policy — so that when 3.0 ships, a 2.x operator is not reading 3.x documentation or taking preset changes they never asked for.
+
 ## [2.24.0](https://github.com/kanopi/firewall/releases/tag/v2.24.0) — 2026-09-10
 
 Let the operator act: lift a block, change a rule, turn the firewall down mid-incident and react to a decision in your own code — four things the library could already do internally and gave nobody a way to reach.
