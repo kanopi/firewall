@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.26.0](https://github.com/kanopi/firewall/releases/tag/v2.26.0) — 2026-09-12
+
+More than block or allow: refusing and recording come apart, so a honeypot can record without refusing and a lockdown can refuse without recording — plus `redirect` and `mark` response actions, and a fix for a silent permanent lockout in `mode: exception` with per-rule challenge providers.
+
 ## [2.25.0](https://github.com/kanopi/firewall/releases/tag/v2.25.0) — 2026-09-11
 
 Ready 2.x to be an old version: documentation sorted into a shape worth freezing and then frozen with a version selector, presets carrying their own version and enforcement changelog, and a written support policy — so that when 3.0 ships, a 2.x operator is not reading 3.x documentation or taking preset changes they never asked for.
