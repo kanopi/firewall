@@ -418,6 +418,8 @@ try {
 
 $plugin = null;
 $pluginRole = null;
+$recorded = null;
+$marks = [];
 $lastMatched = null;
 $evaluated = [];
 
@@ -449,6 +451,18 @@ foreach ($handler->getRecords() as $record) {
         && is_string($context['plugin'])
     ) {
         $lastMatched = $context['plugin'];
+    }
+
+    // Non-terminal outcomes throw nothing, so the verdict cannot come from an
+    // exception. They are still what happened to the request, and a checker that
+    // reported "allowed" for a honeypot hit would be describing the response and
+    // hiding the consequence (#202).
+    if (str_contains($record->message, 'Client recorded without being refused')) {
+        $recorded = is_string($context['plugin_name'] ?? null) ? $context['plugin_name'] : true;
+    }
+
+    if (str_contains($record->message, 'Request marked') && isset($context['mark']) && is_string($context['mark'])) {
+        $marks[] = $context['mark'];
     }
 
     if (isset($context['evaluated_plugins']) && is_array($context['evaluated_plugins'])) {
@@ -517,9 +531,18 @@ try {
 
 $evaluatedNames = array_column($evaluated, 'plugin');
 
+// Recorded outranks allowed as a description: the request was served, and the
+// client is on the block list from here on. Anything terminal outranks both.
+if ($verdict === 'allowed' && $recorded !== null) {
+    $verdict = 'recorded';
+    $plugin = is_string($recorded) ? $recorded : $plugin;
+    $pluginRole = 'recorded by';
+}
+
 $result = [
     'verdict' => $verdict,
     'plugin' => $plugin,
+    'marks' => array_values(array_unique($marks)),
     'status' => $status,
     'reason' => $reason,
     'request' => [
@@ -561,7 +584,12 @@ if (isset($options['explain'])) {
 if (isset($options['json'])) {
     echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), "\n";
 } else {
-    $label = ['allowed' => 'ALLOWED', 'blocked' => 'BLOCKED', 'challenged' => 'CHALLENGED'][$verdict];
+    $label = [
+        'allowed' => 'ALLOWED',
+        'blocked' => 'BLOCKED',
+        'challenged' => 'CHALLENGED',
+        'recorded' => 'RECORDED',
+    ][$verdict];
 
     printf("%s  %s %s\n", $label, $request->getMethod(), $url);
     printf("  client            %s\n", $ip);
@@ -579,6 +607,14 @@ if (isset($options['json'])) {
     }
 
     printf("  storage           %s\n", $result['storage']);
+
+    if ($verdict === 'recorded') {
+        echo "  effect            served now, refused from the next request onward\n";
+    }
+
+    if ($marks !== []) {
+        printf("  marked            %s\n", implode(', ', array_unique($marks)));
+    }
 
     if (isset($result['lockdown'])) {
         printf(

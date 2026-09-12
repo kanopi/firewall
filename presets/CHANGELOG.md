@@ -40,6 +40,7 @@ before this point is in the git log, and pretending otherwise would be inventing
 | `ai-crawlers.yml` | Blocks AI training and dataset crawlers |
 | `drupal-admin.yml` | Blocks Drupal `/admin` and authentication routes |
 | `drupal.yml` | Drupal hardening: version disclosure, installer routes, build artefacts |
+| `honeypot.yml` | Paths no legitimate client fetches; anything that does earns a durable block from its next request (added 2.26.0) |
 | `malicious-requests.yml` | Vulnerability scoring for SQLi, XSS, RCE, traversal, scanners |
 | `malicious-urls.yml` | URL-pattern blocks for known-bad paths |
 | `rate-limiting.yml` | Per-path rate limits across auth, API, admin, forms, static assets |

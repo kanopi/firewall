@@ -1,5 +1,21 @@
 # Available Presets
 
+## Honeypot
+
+`honeypot.yml` — paths no legitimate client has any reason to fetch: private keys,
+credentials, repository metadata, database dumps left in a docroot. A client that requests
+one is written to the block list and refused **from its next request onward**, while the
+request that sprang the trap is served normally so the scanner learns nothing.
+
+Read the preset's header before enabling it. A false positive here is a ban, not a refused
+request — allowlist your own security scanners first, and keep these paths out of your
+sitemap.
+
+It deliberately excludes every path the other shipped presets already block (`/.git/`,
+`/.env`, `/wp-config*`). A honeypot on a path something else refuses is not a honeypot.
+
+[Catch a scanner with a honeypot](../how-to/recipes.md#catch-a-scanner-with-a-honeypot)
+
 ## `malicious-requests.yml` (Recommended)
 
 **Advanced vulnerability scoring system** that detects and blocks malicious requests based on multiple risk factors. This is the most comprehensive preset and provides protection against:

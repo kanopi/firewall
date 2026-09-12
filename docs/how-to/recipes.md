@@ -7,6 +7,7 @@ configuration and a link to the reference behind it.
 |---|---|
 | [Block a country](#block-a-country) | GeoLocation |
 | [Stop a login flood](#stop-a-login-flood) | Rate Limit |
+| [Catch a scanner with a honeypot](#catch-a-scanner-with-a-honeypot) | `response: record` |
 | [Let Googlebot in safely](#let-googlebot-in-safely) | User Agent + reverse-DNS verification |
 | [Rate limit an API by key](#rate-limit-an-api-by-key) | Not configurable yet — see below |
 | [Run in observe mode for a week](#run-in-observe-mode-for-a-week) | Mode |
@@ -74,6 +75,58 @@ plugins:
     counter store.
 
 [Rate Limit](../plugins/rate-limit.md)
+
+---
+
+## Catch a scanner with a honeypot
+
+A path no legitimate client has any reason to fetch. Anything that asks for one is written
+to the block list and refused **from its next request onward** — the request that springs
+the trap is served normally, so the scanner learns nothing about what it found.
+
+```yaml
+configs:
+  - "{presets_dir}/honeypot.yml"
+```
+
+Or your own:
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: record
+    enable: true
+    metadata:
+      name: honeypot
+      default_expiration_time: 86400
+    config:
+      - "path:/.ssh/id_rsa"
+      - "path:/backup.sql"
+```
+
+Verify each path does what you think before relying on it:
+
+```console
+$ firewall-check --config=firewall.yml --ip=203.0.113.9 --url=/.ssh/id_rsa --explain
+RECORDED  GET /.ssh/id_rsa
+  recorded by       honeypot
+  effect            served now, refused from the next request onward
+```
+
+**`RECORDED`, not `BLOCKED`.** If it says `BLOCKED`, another rule matched that path first and
+the stealth is gone — the scanner is told exactly which URL is wired. The shipped preset
+deliberately avoids every path the other presets block, which is why it does not include
+`/.git/`, `/.env` or `/wp-config*`.
+
+!!! danger "A false positive here is a ban, not a refusal"
+
+    Pick paths that are *never* part of a working site — credentials, keys, repositories,
+    database dumps. And allowlist your own scanners first: a security audit you commissioned
+    will walk into this and be banned mid-run.
+
+    Keep them out of your sitemap.
+
+[Evaluation Order](../reference/evaluation-order.md#refusing-and-recording-are-separate)
 
 ---
 
