@@ -219,7 +219,7 @@ class DoctorTest extends AbstractTestCase
     public function testAnInertPanicFileIsAnError(): void
     {
         $panic = $this->dir . '/panic';
-        file_put_contents($panic, 'lockdown');
+        file_put_contents($panic, 'banhammer');
 
         $config = $this->workingConfig();
         $config['global']['panic_file'] = $panic;
@@ -228,6 +228,68 @@ class DoctorTest extends AbstractTestCase
             'Panic file is present but is not being applied',
             $this->titles($this->diagnose($config), Diagnosis::ERROR)
         );
+    }
+
+    /**
+     * Lockdown with nobody on the allowlist would refuse everybody, including
+     * whoever flipped it — which is a poor thing to discover during an
+     * incident (#304).
+     *
+     * @param array<string, mixed> $global
+     *   The `global:` block under test.
+     * @param string $status
+     *   The status the finding must carry.
+     * @param string $fragment
+     *   Part of the title.
+     */
+    #[DataProvider('lockdownConfigurations')]
+    public function testLockdownIsReported(array $global, string $status, string $fragment): void
+    {
+        $config = $this->workingConfig();
+        $config['global'] = $global + $config['global'];
+
+        $matching = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains(strtolower($d->title), 'lockdown')
+        ));
+
+        $this->assertCount(1, $matching);
+        $this->assertSame($status, $matching[0]->status);
+        $this->assertStringContainsString($fragment, $matching[0]->title);
+    }
+
+    /**
+     * @return array<string, array{array<string, mixed>, string, string}>
+     */
+    public static function lockdownConfigurations(): array
+    {
+        return [
+            // A trap set for later: not on, and would serve nobody if it were.
+            'unset' => [[], Diagnosis::WARNING, 'would allow nobody'],
+            'empty list' => [['lockdown_allow' => []], Diagnosis::WARNING, 'would allow nobody'],
+            'only junk' => [['lockdown_allow' => ['', 7, null]], Diagnosis::WARNING, 'would allow nobody'],
+            // The site is already down.
+            'active and empty' => [
+                ['mode' => 'lockdown', 'lockdown_allow' => []],
+                Diagnosis::ERROR,
+                'active and allows nobody',
+            ],
+            'active with a list' => [
+                ['mode' => 'lockdown', 'lockdown_allow' => ['198.51.100.0/24']],
+                Diagnosis::WARNING,
+                'ACTIVE',
+            ],
+            'configured, not active' => [
+                ['lockdown_allow' => ['198.51.100.0/24', '203.0.113.0/24']],
+                Diagnosis::OK,
+                'allowlist has 2 entries',
+            ],
+            'one entry reads as singular' => [
+                ['lockdown_allow' => ['198.51.100.0/24']],
+                Diagnosis::OK,
+                'has 1 entry',
+            ],
+        ];
     }
 
     /**

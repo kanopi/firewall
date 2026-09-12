@@ -171,7 +171,7 @@ class PanicSwitchIntegrationTest extends AbstractTestCase
             // `touch panic` -- the most natural thing to try, and the one that
             // must not disable anything.
             'empty' => [''],
-            'not a mode' => ['lockdown'],
+            'not a mode' => ['banhammer'],
         ];
     }
 

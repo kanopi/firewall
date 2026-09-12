@@ -72,6 +72,7 @@ class Doctor
         $findings[] = $this->checkTrustedProxies($global);
 
         $findings[] = $this->checkPanicSwitch($global);
+        $findings[] = $this->checkLockdown($global);
 
         // Before `checkRules()`, and that ordering is load-bearing. Building a
         // rule is what fetches its sources, so asking afterwards would report
@@ -231,6 +232,56 @@ class Doctor
             'Correct if nothing sits in front of this application. If a CDN or load balancer does, '
             . 'every IP-based rule can be bypassed with a forged X-Forwarded-For header.',
             'configuration/global.md#trusted-proxies'
+        );
+    }
+
+    /**
+     * Whether a lockdown would serve anybody at all.
+     *
+     * `lockdown` is deny-by-default, so an empty `global.lockdown_allow` serves nobody --
+     * including whoever flips it. That is the correct reading of the mode and a poor thing
+     * to discover by trying it during an incident, which is precisely when it gets reached
+     * for (#304).
+     *
+     * Reported even when the mode is not currently `lockdown`, because the point is to find
+     * out *before* relying on it.
+     *
+     * @param array<string, mixed> $global
+     *   The `global:` block.
+     *
+     * @return Diagnosis
+     *   The finding.
+     */
+    private function checkLockdown(array $global): Diagnosis
+    {
+        $allowed = $global['lockdown_allow'] ?? null;
+        $entries = is_array($allowed)
+            ? array_values(array_filter($allowed, static fn(mixed $v): bool => is_string($v) && trim($v) !== ''))
+            : [];
+        $inLockdown = ($global['mode'] ?? null) === 'lockdown';
+
+        if ($entries === []) {
+            $detail = 'global.lockdown_allow lists nobody, so lockdown would refuse every visitor '
+                . 'including you. Add the addresses that must still reach the site.';
+
+            // An error when it is already on, because the site is down; a
+            // warning when it is not, because it is a trap set for later.
+            return $inLockdown
+                ? Diagnosis::error('Lockdown is active and allows nobody', $detail, 'configuration/global.md#lockdown')
+                : Diagnosis::warning('Lockdown would allow nobody', $detail, 'configuration/global.md#lockdown');
+        }
+
+        if ($inLockdown) {
+            return Diagnosis::warning(
+                sprintf('Lockdown is ACTIVE — only %d address range%s is served', count($entries), count($entries) === 1 ? '' : 's'),
+                'Everyone else receives a 503. Change global.mode to restore normal service.',
+                'configuration/global.md#lockdown'
+            );
+        }
+
+        return Diagnosis::ok(
+            sprintf('Lockdown allowlist has %d entr%s', count($entries), count($entries) === 1 ? 'y' : 'ies'),
+            'Not currently in lockdown.'
         );
     }
 
