@@ -75,6 +75,11 @@ extra_css:
   - assets/stylesheets/extra.css
 
 extra:
+  # The version selector in the header. `mike` writes versions.json alongside the
+  # built site; without this the file is published and nothing reads it.
+  version:
+    provider: mike
+    alias: true
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/kanopi/firewall

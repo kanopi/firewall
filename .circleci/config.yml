@@ -392,10 +392,6 @@ jobs:
       - store_artifacts:
           path: site
           destination: docs
-      - persist_to_workspace:
-          root: .
-          paths:
-            - site
 
   # Publish the reviewed build to the gh-pages branch, which GitHub Pages
   # serves at https://kanopi.github.io/firewall/. Deploys exactly the site/
@@ -406,17 +402,22 @@ jobs:
   # published site therefore describes the last release, not the current tip of
   # 2.x.
   #
-  # Calls ghp-import directly rather than going through `mkdocs gh-deploy`.
-  # gh-deploy always builds first — it has no flag to skip that — so it would
-  # discard the reviewed artifact and rebuild from source in this job. ghp-import
-  # is the tool gh-deploy wraps, invoked with the same arguments it passes
-  # (including --no-jekyll, without which Pages' Jekyll pass drops files whose
-  # names begin with an underscore).
+  # Publishes with `mike`, which keeps one subdirectory per release on gh-pages
+  # and maintains the version selector (#198). Before 2.25.0 this called
+  # ghp-import directly to push a single unversioned site.
   #
-  # ghp-import commits the directory to the gh-pages branch and pushes. That
-  # branch holds rendered HTML only, no source, and is created on the first
-  # successful deploy — there is nothing to set up beforehand beyond pointing
-  # Pages at it.
+  # That change gives up a property the old job had, deliberately: ghp-import
+  # deployed the exact artifact the `docs` job had already built and reviewed,
+  # whereas `mike deploy` builds again. mike has no way to publish a prebuilt
+  # directory. The rebuild is safe here because this job checks out the *tag*
+  # and the toolchain is pinned in docs/requirements.txt, so it builds the same
+  # bytes — and `docs` still gates the tag with `--strict` before this runs.
+  #
+  # Versions are MAJOR.MINOR. A patch release republishes over its own minor
+  # rather than adding a directory nobody asked for; `v2.25.1` updates `2.25`.
+  # `latest` follows whatever shipped most recently, and the root redirects to
+  # it. Old minors stay published forever — they are small, and a 2.x operator
+  # reading 3.x documentation is the thing this exists to prevent.
   docs-deploy:
     docker:
       - image: cimg/python:3.12
@@ -426,8 +427,6 @@ jobs:
     resource_class: small
     steps:
       - checkout
-      - attach_workspace:
-          at: .
       - restore_cache:
           keys:
             - docs-pip-{{ checksum "docs/requirements.txt" }}
@@ -436,7 +435,35 @@ jobs:
           name: Install docs toolchain
           command: pip install --user -r docs/requirements.txt
       - run:
-          name: Publish to gh-pages
+          name: Refuse to publish over an unversioned site
+          command: |
+            git fetch origin gh-pages:gh-pages --depth=1 2>/dev/null || {
+              echo "No gh-pages branch yet — mike will create it."
+              exit 0
+            }
+            # Everything mike owns at the root. Anything else is left over from
+            # the pre-2.25.0 unversioned deploys, and mike will not remove it:
+            # it would keep serving the *old* documentation at its old URLs
+            # forever, which is worse than a 404 because it looks correct.
+            stale=$(git ls-tree --name-only gh-pages \
+              | grep -vE '^([0-9]+\.[0-9]+|latest|index\.html|versions\.json|\.nojekyll|404\.html)$' \
+              || true)
+            if [[ -n "${stale}" ]]; then
+              echo "gh-pages still holds unversioned content at its root:"
+              echo "${stale}" | sed 's/^/  /'
+              echo
+              echo "mike publishes into per-version directories and will not remove these,"
+              echo "so they would keep serving pre-2.25.0 documentation at their old URLs."
+              echo
+              echo "Reset the branch once, then re-run this job:"
+              echo "  git push origin --delete gh-pages"
+              echo
+              echo "gh-pages holds rendered HTML only — nothing is lost, and this job"
+              echo "rebuilds it."
+              exit 1
+            fi
+      - run:
+          name: Publish this release with mike
           command: |
             TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
             if [[ -z "${TOKEN}" ]]; then
@@ -451,24 +478,24 @@ jobs:
             # so a git failure cannot echo the token back into the build log.
             git remote set-url origin \
               "https://x-access-token:${TOKEN}@github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
-            # Deploying an empty or missing site/ would replace the live docs
-            # with nothing, so fail loudly instead.
-            if [[ ! -f site/index.html ]]; then
-              echo "site/index.html is missing — the docs-build workspace did not attach."
-              echo "Nothing was deployed; gh-pages still holds the previous release."
+            # v2.25.1 -> 2.25. The tag filter below guarantees the shape.
+            version="$(echo "${CIRCLE_TAG}" | sed -E 's/^v([0-9]+\.[0-9]+)\..*$/\1/')"
+            if [[ -z "${version}" || "${version}" == "${CIRCLE_TAG}" ]]; then
+              echo "Could not derive a MAJOR.MINOR version from tag '${CIRCLE_TAG}'."
               exit 1
             fi
-            # `[ci skip]` keeps the gh-pages commit from triggering a build of
-            # its own. The tag goes in the message so gh-pages history reads as
-            # a list of releases rather than of SHAs.
-            ghp-import \
-              --no-jekyll \
+            echo "Publishing ${CIRCLE_TAG} as ${version}, aliased latest."
+            # --update-aliases moves `latest` off whatever held it before.
+            # `[ci skip]` keeps the gh-pages commit from triggering a build.
+            mike deploy \
               --push \
-              --force \
+              --update-aliases \
               --branch gh-pages \
-              --remote origin \
-              --message "docs: deploy ${CIRCLE_TAG:-${CIRCLE_SHA1:0:7}} [ci skip]" \
-              site
+              --message "docs: deploy ${CIRCLE_TAG} as ${version} [ci skip]" \
+              "${version}" latest
+            # Writes the root index.html that redirects to the default. Without
+            # it, the site root is a directory listing or a 404.
+            mike set-default --push --branch gh-pages latest
 
 workflows:
   test:
