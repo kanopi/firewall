@@ -33,7 +33,7 @@ Nothing here explains anything; that is deliberate.
 
 | Key | Type | Default | | |
 |---|---|---|---|---|
-| `mode` | string | `block` | `block`, `log`, `exception`, `disabled` | [Mode](../configuration/global.md#mode) |
+| `mode` | string | `block` | `block`, `log`, `exception`, `disabled`, `lockdown` | [Mode](../configuration/global.md#mode) |
 | `panic_file` | string | *unset* | A file that overrides `mode` when it exists | [Panic Switch](../configuration/global.md#panic-switch) |
 | `banning_status_code` | int | `400` | Status sent when a rule blocks | [Status Code](../configuration/global.md#status-code) |
 | `banning_message` | string | built-in | Body template; `{{request.id}}` is substituted | [Banning Message](../configuration/global.md#banning-message) |
@@ -43,6 +43,11 @@ Nothing here explains anything; that is deliberate.
 | `behind_proxy` | bool | *unset* | Assert whether a proxy sits in front | [Trusted Proxies](../configuration/global.md#trusted-proxies) |
 | `require_trusted_proxies` | bool | `false` | Refuse to start without `setTrustedProxies()` | [Trusted Proxies](../configuration/global.md#trusted-proxies) |
 | `require_config` | bool | `false` | Refuse to start if any config input failed to load | [Loading](../configuration/loading-and-includes.md) |
+| `lockdown` | bool | `false` | Refuse everyone but `lockdown_allow` | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_allow` | list | *(empty)* | Addresses and CIDRs still served. Empty serves nobody | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_status` | int | `503` | | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_retry_after` | int | `300` | Seconds in `Retry-After`; `0` omits it | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_message` | string | built-in | Supports `{{request.id}}` | [Lockdown](../configuration/global.md#lockdown) |
 | `stale_source_error_after` | int | `0` *(off)* | Seconds before an unrefreshed source is an error | [Stale Rule Sources](../configuration/global.md#stale-rule-sources) |
 
 ## `storage:`

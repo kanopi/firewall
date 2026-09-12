@@ -324,7 +324,20 @@ $overrides = [
     // does not change when the switch is on; what changes is what the firewall
     // then does about it, and saying both is more useful than either.
     '[global][panic_file]' => '',
+
+    // Same reasoning for lockdown: it refuses before any bucket is consulted,
+    // so leaving it on would make this report "refused" for every request and
+    // tell you nothing about which rule would match (#304). Suppressed here,
+    // reported below.
 ];
+
+$lockdown = ($loadedGlobal = Config::load(array_merge([__DIR__ . '/../config/config.yml'], $configs))['global'] ?? [])
+    && ($loadedGlobal['mode'] ?? null) === 'lockdown'
+    ? array_values(array_filter(
+        is_array($loadedGlobal['lockdown_allow'] ?? null) ? $loadedGlobal['lockdown_allow'] : [],
+        static fn($v): bool => is_string($v) && trim($v) !== ''
+    ))
+    : null;
 
 // Read before the overrides above hide it. Config::load() does not throw --
 // it collects failures rather than raising them -- so a broken config still
@@ -518,6 +531,10 @@ $result = [
     'storage' => $liveStorage ? 'configured backend' : 'throwaway (in-memory)',
 ];
 
+if ($lockdown !== null) {
+    $result['lockdown'] = ['active' => true, 'allowed' => $lockdown];
+}
+
 if ($panic['active'] && $panic['mode'] !== null) {
     $result['panic_switch'] = [
         'active' => true,
@@ -562,6 +579,14 @@ if (isset($options['json'])) {
     }
 
     printf("  storage           %s\n", $result['storage']);
+
+    if (isset($result['lockdown'])) {
+        printf(
+            "  lockdown          ACTIVE — only %s %s served; this verdict describes the rules, not what the site is doing\n",
+            $lockdown === [] ? 'nobody' : implode(', ', $lockdown),
+            $lockdown === [] ? 'is' : 'are'
+        );
+    }
 
     // On stdout with the rest of the verdict, not stderr: this changes how to
     // read the line above it, so it has to travel with it.

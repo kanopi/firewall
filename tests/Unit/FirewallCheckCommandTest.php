@@ -275,7 +275,7 @@ final class FirewallCheckCommandTest extends AbstractTestCase
     public function testAnInertPanicFileIsReported(): void
     {
         $panic = sys_get_temp_dir() . '/fw-check-panic-' . uniqid('', true);
-        file_put_contents($panic, 'lockdown');
+        file_put_contents($panic, 'banhammer');
         $this->tempFiles[] = $panic;
 
         $config = $this->writeConfig(

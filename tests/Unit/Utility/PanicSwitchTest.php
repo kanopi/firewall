@@ -187,11 +187,11 @@ class PanicSwitchTest extends AbstractTestCase
      */
     public function testAnUnrecognisedModeChangesNothingAndListsTheRealOnes(): void
     {
-        $result = PanicSwitch::read($this->write('lockdown'));
+        $result = PanicSwitch::read($this->write('banhammer'));
 
         $this->assertFalse($result['active']);
         $this->assertNull($result['mode']);
-        $this->assertStringContainsString('names "lockdown", which is not a mode', (string) $result['problem']);
+        $this->assertStringContainsString('names "banhammer", which is not a mode', (string) $result['problem']);
 
         foreach (FirewallMode::cases() as $mode) {
             $this->assertStringContainsString($mode->value, (string) $result['problem']);

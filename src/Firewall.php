@@ -19,6 +19,7 @@ use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\FirewallLockdownException;
 use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Logging\LoggingFactory;
@@ -50,6 +51,7 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final class Firewall
 {
+    use \Kanopi\Firewall\Traits\AddressMatchTrait;
     use LoggingTrait;
     use RequestFieldTrait;
 
@@ -57,6 +59,20 @@ final class Firewall
      * Firewall Mode.
      */
     private FirewallMode $firewallMode;
+
+    /**
+     * Whether the site is refusing everyone but `global.lockdown_allow`.
+     *
+     * Deliberately *not* a `FirewallMode`. Modes are the delivery axis -- exit, throw, log,
+     * nothing -- and lockdown is a policy axis: who gets served. Conflating them would mean
+     * a host running `mode: exception` had to give that up to enter lockdown, so the library
+     * would start calling `exit()` on a framework mid-incident, which is the worst possible
+     * moment to discover it (#304).
+     *
+     * `mode: lockdown` and a panic file saying `lockdown` still work; they are shorthand for
+     * "lock down, and deliver refusals the way `block` does".
+     */
+    private bool $lockdown = false;
 
     /**
      * What the panic file asked for, and whether it got it.
@@ -136,10 +152,29 @@ final class Firewall
         // per request under PHP-FPM and mod_php, and that is the whole point:
         // the switch takes effect on the next request, with no deploy and no
         // pool reload (#207).
+        // `lockdown` as a mode is shorthand: it means lockdown, delivered the
+        // way `block` delivers. A host that needs `exception` delivery sets
+        // `global.lockdown: true` and keeps its mode.
+        if ($this->firewallMode === FirewallMode::Lockdown) {
+            $this->lockdown = true;
+            $this->firewallMode = FirewallMode::Block;
+            $this->configuredMode = FirewallMode::Block;
+        }
+
+        if (($config['lockdown'] ?? false) === true) {
+            $this->lockdown = true;
+        }
+
         $this->panicSwitch = PanicSwitch::read($config['panic_file'] ?? null);
 
         if ($this->panicSwitch['active'] && $this->panicSwitch['mode'] instanceof FirewallMode) {
             $this->firewallMode = $this->panicSwitch['mode'];
+
+            // Same shorthand, reached from a file instead of the config.
+            if ($this->firewallMode === FirewallMode::Lockdown) {
+                $this->lockdown = true;
+                $this->firewallMode = FirewallMode::Block;
+            }
 
             // Warning, on every request, and that is deliberate. The realistic
             // failure of a panic switch is not somebody flipping it -- it is
@@ -895,6 +930,17 @@ final class Firewall
     }
 
     /**
+     * Whether the site is in lockdown.
+     *
+     * @return bool
+     *   TRUE when everyone but `global.lockdown_allow` is being refused.
+     */
+    public function isLockedDown(): bool
+    {
+        return $this->lockdown;
+    }
+
+    /**
      * Whether a panic file is changing the mode, and what it said.
      *
      * A status page has no other way to tell: the effective mode alone cannot
@@ -913,6 +959,116 @@ final class Firewall
     public function getPanicSwitch(): array
     {
         return $this->panicSwitch;
+    }
+
+    /**
+     * Whether this client is on the lockdown allowlist.
+     *
+     * `global.lockdown_allow` only. Deliberately not the allow bucket -- see the call site.
+     *
+     * An unset or empty list serves nobody, which is what "deny by default" means and is the
+     * honest reading of a mode called lockdown. `firewall-doctor` reports the empty case
+     * before you are relying on it, because the alternative is finding out by locking
+     * yourself out.
+     *
+     * @param Request $request
+     *   The request.
+     *
+     * @return bool
+     *   TRUE when the client may carry on.
+     */
+    protected function passesLockdown(Request $request): bool
+    {
+        $allowed = $this->config['lockdown_allow'] ?? [];
+
+        if (!is_array($allowed) || $allowed === []) {
+            return false;
+        }
+
+        $address = (string) $request->getClientIp();
+
+        if ($address === '') {
+            return false;
+        }
+
+        foreach ($allowed as $pattern) {
+            if (is_string($pattern) && $pattern !== '' && $this->addressMatches($address, $pattern)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Refuse a visitor because the site is in lockdown.
+     *
+     * **Records nothing, ever.** That is the whole reason this is a mode rather than two
+     * ordinary rules: a catch-all block rule achieves the same refusal and writes every
+     * legitimate visitor to the durable block list with escalation applied, so lifting the
+     * lockdown leaves a block list full of customers (#304).
+     *
+     * 503 with `Retry-After`, not the banning status. A lockdown is temporary and
+     * deliberate, which is what a 503 means -- and a CDN in front of the site will honour it
+     * rather than caching a refusal it takes to be permanent.
+     *
+     * @param Request $request
+     *   The request being refused.
+     *
+     * @throws FirewallLockdownException
+     *   In `mode: exception`. Extends `FirewallBlockedException`, so a host
+     *   that already catches that keeps working.
+     */
+    protected function sendLockdownResponse(Request $request): void
+    {
+        $status = is_int($this->config['lockdown_status'] ?? null) ? $this->config['lockdown_status'] : 503;
+        $retryAfter = is_int($this->config['lockdown_retry_after'] ?? null)
+            ? max(0, $this->config['lockdown_retry_after'])
+            : 300;
+
+        $message = $this->interpolateTemplate(
+            is_string($this->config['lockdown_message'] ?? null)
+                ? $this->config['lockdown_message']
+                : 'This site is temporarily closed to visitors. Please try again shortly.',
+            $request
+        );
+
+        // Warning, on every refused request. A lockdown is the loudest thing a
+        // firewall can do and the easiest to forget, exactly like the panic
+        // switch it is usually reached through (#207).
+        $this->getLogger()->warning('Request refused: site is in lockdown', $this->getContext($request, [
+            'status_code' => $status,
+            'retry_after' => $retryAfter,
+            'recorded' => false,
+        ]));
+
+        if ($this->firewallMode === FirewallMode::Log) {
+            $this->announce(new RequestBlocked($request, null, $status, false));
+
+            return;
+        }
+
+        $this->announce(new RequestBlocked($request, null, $status));
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new FirewallLockdownException($message, $status, $retryAfter);
+        }
+
+        // @codeCoverageIgnoreStart
+        http_response_code($status);
+
+        if (!headers_sent()) {
+            header('Content-Type: text/plain; charset=utf-8');
+            header('X-Content-Type-Options: nosniff');
+            header('Cache-Control: no-store');
+
+            if ($retryAfter > 0) {
+                header('Retry-After: ' . $retryAfter);
+            }
+        }
+
+        exit($message);
+        // @codeCoverageIgnoreEnd
     }
 
     /**
@@ -1246,6 +1402,26 @@ final class Firewall
             $this->enforceStorageBlocklist($request);
             $this->handleChallengeSubmission($request);
             return true;
+        }
+
+        // Lockdown sits here, and every part of that placement was a decision
+        // the issue asked for (#304).
+        //
+        // *After* the challenge submission above, so a visitor already holding
+        // an unsolved challenge can still solve it rather than being bricked
+        // along with everybody else.
+        //
+        // *Before* the allow bucket, so entry is granted only by
+        // `global.lockdown_allow` and not by any allow rule that happens to
+        // exist. An allow rule written months ago to whitelist a payment
+        // webhook is not a considered answer to "who should reach this site
+        // while it is under attack".
+        //
+        // A client that *is* on the lockdown allowlist carries on through
+        // everything below, block list included -- so lockdown adds a refusal,
+        // it never removes one.
+        if ($this->lockdown && !$this->passesLockdown($request)) {
+            $this->sendLockdownResponse($request);
         }
 
         if (($plugin = $this->bypassPluginManager->evaluate($request)) !== false) {
