@@ -1183,7 +1183,28 @@ final class Firewall
             $this->announce(new ChallengeFailed($request, $providerName, $reason));
 
             if ($this->firewallMode === FirewallMode::Exception) {
-                throw new ChallengeRequiredException('Invalid challenge solution');
+                // Carries a usable context too. A refused submission needs a
+                // *fresh* challenge rather than a retry -- the payload in the
+                // page is spent -- so a host that wants to re-serve one can,
+                // and every value here is read the same way the accepting path
+                // reads it rather than invented for the occasion (#311).
+                $rejectedTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
+                $rejectedRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
+
+                throw new ChallengeRequiredException(
+                    'Invalid challenge solution',
+                    null,
+                    $challengeProvider,
+                    $providerName,
+                    [
+                        'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
+                        'redirect_to' => $this->sanitizeRedirect($rejectedRedirect === '' ? '/' : $rejectedRedirect),
+                        'ttl' => (string) ($rejectedTtl === '' ? 3600 : max(0, (int) $rejectedTtl)),
+                        'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
+                        'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
+                        'provider_token' => $this->signProviderName($providerName),
+                    ]
+                );
             }
 
             // @codeCoverageIgnoreStart
@@ -1429,22 +1450,35 @@ final class Firewall
         // reason as the block path: neither returns here.
         $this->announce(new RequestChallenged($request, $plugin, $providerName));
 
-        if ($this->firewallMode === FirewallMode::Exception) {
-            throw new ChallengeRequiredException(sprintf(
-                'Challenge required by plugin: %s',
-                $plugin->getName()
-            ));
-        }
-
-        // @codeCoverageIgnoreStart
-        $body = $challengeProvider->renderInterstitial($request, [
+        // Built once, above the mode branch, and handed to both paths.
+        //
+        // It used to be assembled inside the branch that writes the response,
+        // which left `mode: exception` with no way to reach it -- and
+        // `provider_token` is not reproducible from outside this class, because
+        // the prefix it signs is a private constant and the signer is protected
+        // on a final class. A host rendering without it locks the visitor out
+        // permanently and silently (#311).
+        $renderContext = [
             'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
             'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
             'ttl' => (string) $ttl,
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
             'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
             'provider_token' => $this->signProviderName($providerName),
-        ]);
+        ];
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new ChallengeRequiredException(
+                sprintf('Challenge required by plugin: %s', $plugin->getName()),
+                null,
+                $challengeProvider,
+                $providerName,
+                $renderContext
+            );
+        }
+
+        // @codeCoverageIgnoreStart
+        $body = $challengeProvider->renderInterstitial($request, $renderContext);
 
         http_response_code(200);
         if (!headers_sent()) {
