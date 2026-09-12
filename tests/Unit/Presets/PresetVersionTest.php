@@ -32,6 +32,7 @@ class PresetVersionTest extends TestCase
         'ai-crawlers.yml',
         'drupal-admin.yml',
         'drupal.yml',
+        'honeypot.yml',
         'malicious-requests.yml',
         'malicious-urls.yml',
         'rate-limiting.yml',

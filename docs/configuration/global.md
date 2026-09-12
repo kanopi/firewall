@@ -252,6 +252,71 @@ Anywhere the web user can read and an operator can write. Two things to weigh:
   because a well-known default would be the first thing worth trying against every site
   running this library.
 
+## Lockdown
+
+Refuse everyone but an explicit allowlist. The thing you want when a site is actively being
+hammered and you would rather serve nobody than serve the attacker.
+
+```yaml
+global:
+  mode: exception          # unchanged — lockdown does not replace it
+  lockdown: true
+  lockdown_allow:
+    - 198.51.100.0/24      # the office
+    - 2001:db8::/32
+```
+
+| Key | Default | |
+|---|---|---|
+| `lockdown` | `false` | Turns it on |
+| `lockdown_allow` | *(empty)* | Addresses and CIDRs still served. **Empty serves nobody** |
+| `lockdown_status` | `503` | |
+| `lockdown_retry_after` | `300` | Seconds in `Retry-After`; `0` omits the header |
+| `lockdown_message` | built-in | Supports `{{request.id}}` |
+
+### It is a flag, not a mode
+
+`mode` decides *how* a refusal is delivered — exit, throw, log, nothing. Lockdown decides
+*who* is refused. They are separate axes, so a host running `mode: exception` can enter
+lockdown without the library suddenly calling `exit()` on its framework mid-incident.
+
+`mode: lockdown` still works and is shorthand for "lock down, and refuse the way `block`
+does" — including from a [panic file](#panic-switch):
+
+```console
+$ echo lockdown > /var/run/firewall/panic
+```
+
+Use the flag if your mode matters to you; use the shorthand at 2am.
+
+### It records nobody
+
+This is the reason lockdown exists as a feature rather than as two ordinary rules. A
+catch-all block rule achieves the same refusal, and writes **every legitimate visitor** to
+the durable block list with `blocking_escalation` applied — so lifting it leaves a block list
+full of customers, each on a lengthening ban, and recovery means lifting them one by one.
+
+A deliberate, temporary refusal of everybody is not evidence that any of them misbehaved.
+Lockdown refuses and records nothing.
+
+### What still applies
+
+Lockdown adds a refusal; it never removes one.
+
+- **A challenge submission still reaches the firewall**, so a visitor already holding an
+  unsolved challenge can finish it rather than being bricked along with everyone else.
+- **An allow *rule* does not grant entry.** Only `lockdown_allow` does. An allow rule written
+  months ago to whitelist a payment webhook is not a considered answer to "who should reach
+  this site while it is under attack".
+- **Everything below still runs** for an allowlisted client — the durable block list, and
+  every rule. Being on the list is not a bypass.
+
+!!! warning "An empty allowlist locks you out too"
+
+    `lockdown_allow` with nothing in it refuses every visitor, which is what deny-by-default
+    means. `firewall-doctor` reports an empty list as a warning before you rely on it, and as
+    an error once lockdown is on.
+
 ## Stale Rule Sources
 
 `stale_source_error_after` is how long a [rule source](sources.md) may go unrefreshed before

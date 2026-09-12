@@ -183,17 +183,34 @@ try {
     return $response;
 } catch (ChallengeRequiredException $e) {
     // No valid token, or a wrong answer. Serve the interstitial again.
-    return new Response($provider->renderInterstitial($request, [
-        'submit_url' => '/_firewall/challenge',
-        'redirect_to' => $request->getRequestUri(),
-        'ttl' => '3600',
-        'cookie_name' => 'fw_challenge_pass',
-        'header_name' => 'X-Firewall-Challenge',
-    ]), 200);
+    // The exception carries the provider and the full render context, so
+    // this cannot be assembled wrongly — see the warning below.
+    return new Response($e->renderInterstitial($request), 200, [
+        'Content-Type' => 'text/html; charset=utf-8',
+        'Cache-Control' => 'no-store',
+    ]);
 } catch (FirewallBlockedException $e) {
     return new Response($e->getMessage(), $e->getStatusCode());
 }
 ```
+
+!!! danger "Do not assemble the render context by hand"
+
+    Until 2.26.0 this example built that array itself, and it was wrong in a way nothing
+    reported: it omitted `provider_token`, the signed claim naming the provider that was
+    actually put in front of the visitor.
+
+    With a rule that names its own provider via `metadata.challenge_provider`, omitting it
+    means the submission is verified by the *default* provider and the pass token is scoped
+    to that — so the rule refuses the token and serves the same interstitial forever. Nothing
+    throws, and nothing logs above `notice` ([#311](https://github.com/kanopi/firewall/issues/311)).
+
+    There was also no way to produce that value from host code: the prefix it signs is a
+    private constant and the signer is protected on a `final` class. `renderInterstitial()`
+    on the exception exists so the question does not arise.
+
+    `getProvider()`, `getProviderName()` and `getRenderContext()` are available if you need
+    to render differently — pass that context through unchanged.
 
 `ChallengeRequiredException` deliberately does not distinguish "you need to solve a challenge" from "your answer was wrong" — telling a bot which of the two happened is free information. If your UX needs to show a retry message, key it off the request being a POST to `challenge.path`.
 

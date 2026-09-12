@@ -126,14 +126,17 @@ final class PluginConfigNormalizer
      *   comparator typed `array` and left as a TypeError (#281). Entries that
      *   are not maps are skipped below.
      *
-     * @return array{allow: array<int, array<string, mixed>>, block: array<int, array<string, mixed>>, challenge: array<int, array<string, mixed>>}
-     *   Partitioned plugins: 'allow', 'block', and 'challenge', each sorted by weight.
+     * @return array{allow: array<int, array<string, mixed>>, block: array<int, array<string, mixed>>, challenge: array<int, array<string, mixed>>, record: array<int, array<string, mixed>>, redirect: array<int, array<string, mixed>>, mark: array<int, array<string, mixed>>}
+     *   Partitioned plugins: 'allow', 'block', 'challenge', 'record', 'redirect' and 'mark', each sorted by weight.
      */
     public static function partitionAndSort(array $plugins): array
     {
         $allowPlugins = [];
         $blockPlugins = [];
         $challengePlugins = [];
+        $recordPlugins = [];
+        $redirectPlugins = [];
+        $markPlugins = [];
 
         foreach ($plugins as $plugin) {
             // A stray scalar where a map belongs. `plugins:` is hand-edited
@@ -163,6 +166,15 @@ final class PluginConfigNormalizer
                 case 'challenge':
                     $challengePlugins[] = $plugin;
                     break;
+                case 'record':
+                    $recordPlugins[] = $plugin;
+                    break;
+                case 'redirect':
+                    $redirectPlugins[] = $plugin;
+                    break;
+                case 'mark':
+                    $markPlugins[] = $plugin;
+                    break;
                 default:
                     $blockPlugins[] = $plugin;
             }
@@ -172,11 +184,17 @@ final class PluginConfigNormalizer
         usort($allowPlugins, $byWeight);
         usort($blockPlugins, $byWeight);
         usort($challengePlugins, $byWeight);
+        usort($recordPlugins, $byWeight);
+        usort($redirectPlugins, $byWeight);
+        usort($markPlugins, $byWeight);
 
         return [
             'allow' => $allowPlugins,
             'block' => $blockPlugins,
             'challenge' => $challengePlugins,
+            'record' => $recordPlugins,
+            'redirect' => $redirectPlugins,
+            'mark' => $markPlugins,
         ];
     }
 }

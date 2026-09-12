@@ -189,6 +189,119 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
      * Reads `metadata.mode`. Absent -- which is every existing configuration -- means
      * enforce, so nothing changes for a rule that declares nothing.
      */
+    /**
+     * The attribute name a `response: mark` rule annotates the request with.
+     *
+     * Defaults to the rule's own name, so `metadata.name: suspicious-agent` becomes
+     * `firewall.mark.suspicious-agent` without anything else being configured. A rule that
+     * wants several rules to raise one shared signal names it explicitly.
+     *
+     * @return string
+     *   The attribute suffix.
+     */
+    public function getMarkName(): string
+    {
+        $configured = $this->metadata['mark_as'] ?? null;
+
+        if (is_string($configured) && trim($configured) !== '') {
+            return trim($configured);
+        }
+
+        return $this->getName();
+    }
+
+    /**
+     * An optional header to set on the request alongside the attribute.
+     *
+     * For a host that reads headers rather than HttpFoundation attributes. Empty by
+     * default: a firewall that silently adds headers to every marked request is a firewall
+     * that surprises whatever reads them next.
+     *
+     * @return string
+     *   The header name, or an empty string.
+     */
+    public function getMarkHeader(): string
+    {
+        $header = $this->metadata['mark_header'] ?? null;
+
+        return is_string($header) ? trim($header) : '';
+    }
+
+    /**
+     * Whether the rule explicitly opted *in* to recording.
+     *
+     * Separate from `recordsOffenses()`, which answers the opposite question with the
+     * opposite default. A block records unless told not to; a redirect records only when
+     * told to. Both are "what would surprise an operator least", and they differ because
+     * one is a ban and the other is a signpost.
+     *
+     * @return bool
+     *   TRUE only when `metadata.record` is the boolean TRUE.
+     */
+    public function recordsExplicitly(): bool
+    {
+        return ($this->metadata['record'] ?? null) === true;
+    }
+
+    /**
+     * Where a `response: redirect` rule sends the visitor.
+     *
+     * Read from the rule's own configuration and never from the request, which is what
+     * keeps it from becoming an open redirect. A rule with no destination cannot act; the
+     * firewall treats that as a misconfiguration rather than guessing at one.
+     *
+     * @return string
+     *   The destination, or an empty string when none is configured.
+     */
+    public function getRedirectLocation(): string
+    {
+        $location = $this->metadata['redirect_to'] ?? null;
+
+        return is_string($location) ? trim($location) : '';
+    }
+
+    /**
+     * Which redirect status to send.
+     *
+     * 302 by default: a rule's verdict can change with the next configuration edit, and a
+     * 301 is cached by browsers and intermediaries more or less forever. Somebody caught by
+     * a rule that is later tuned should not keep being sent to the notice page long after
+     * the rule stopped matching.
+     *
+     * @return int
+     *   301, 302, 307 or 308. Anything else falls back to 302.
+     */
+    public function getRedirectStatus(): int
+    {
+        $status = $this->metadata['redirect_status'] ?? null;
+
+        return in_array($status, [301, 302, 307, 308], true) ? $status : 302;
+    }
+
+    /**
+     * Whether a block by this rule is written to the durable block list.
+     *
+     * `metadata.record: false` refuses the request and records nothing, which is what a
+     * deliberate temporary refusal of everybody needs: a lockdown that records every
+     * visitor leaves a block list full of customers once it is lifted, each on an
+     * escalating ban nobody asked for (#203, #304).
+     *
+     * Defaults to TRUE, and only an explicit boolean turns it off -- `record: "false"` is a
+     * string and does not, the same way every other boolean in this configuration behaves.
+     *
+     * @return bool
+     *   TRUE when a block by this rule is recorded.
+     */
+    public function recordsOffenses(): bool
+    {
+        $configured = $this->metadata['record'] ?? null;
+
+        return !is_bool($configured) || $configured;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
     public function isObserveMode(): bool
     {
         $mode = $this->metadata['mode'] ?? null;

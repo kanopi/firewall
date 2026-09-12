@@ -1,0 +1,81 @@
+# Honeypot Paths
+#
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# changed about what this blocks, separately from the library version.
+#
+# Paths no legitimate client has any reason to fetch. Anything that asks for one
+# earns a durable block — applied from its *next* request, not this one.
+#
+# `response: record` is doing that: the request that springs the trap is served
+# normally, so a scanner learns nothing about which URL is wired, and the client
+# is refused from then on. A `block` here would tell the scanner exactly what it
+# found (#202).
+#
+# WHY THESE PATHS
+#
+# Every entry is a credential, a key, a repository, or a database dump. There is
+# no configuration of WordPress, Drupal or Laravel in which a browser, a crawler
+# or a monitoring tool fetches one. That matters more here than anywhere else in
+# this package: a false positive is not a refused request, it is a client banned
+# for a day.
+#
+# Deliberately NOT included: anything another shipped preset already blocks.
+# `drupal.yml` blocks `/.git/`, and `malicious-urls.yml` matches `/.env` and
+# `/wp-config`. A honeypot on a path something else blocks is not a honeypot —
+# the visitor is refused, and the stealth that makes this worth having is gone.
+#
+# BEFORE YOU ENABLE IT
+#
+#   1. Allowlist your own scanners. A security audit you commissioned will walk
+#      straight into this and be banned mid-run.
+#   2. Check nothing on your site links these. `firewall-check --explain` on each
+#      path should report RECORDED, not BLOCKED.
+#   3. Keep them out of your sitemap.
+#
+# USAGE:
+#   configs:
+#     - "{presets_dir}/honeypot.yml"
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: record
+    weight: -50
+    enable: true
+    metadata:
+      name: honeypot
+      # A day. Long enough to cost a scanner its run, short enough that a
+      # mistake on your side expires without an intervention.
+      default_expiration_time: 86400
+    config:
+      # Private keys and credentials.
+      - "path:/.ssh/id_rsa"
+      - "path:/.ssh/id_dsa"
+      - "path:/.ssh/authorized_keys"
+      - "path:/id_rsa"
+      - "path:/.aws/credentials"
+      - "path:/.netrc"
+      - "path:/.npmrc"
+      - "path:/.pgpass"
+
+      # Version control other than git, which drupal.yml already blocks.
+      - "path:/.svn/entries"
+      - "path:/.hg/store"
+      - "path:/.bzr/README"
+
+      # Database dumps and archives left in a docroot.
+      - "path:/backup.sql"
+      - "path:/backup.zip"
+      - "path:/backup.tar.gz"
+      - "path:/database.sql"
+      - "path:/db.sql"
+      - "path:/db_backup.sql"
+      - "path:/dump.sql"
+      - "path:/site.tar.gz"
+      - "path:/www.zip"
+
+      # Framework and server internals that should never be reachable.
+      - "path:/storage/logs/laravel.log"
+      - "path:/server-status"
+      - "path:/server-info"
+      - "path:/.DS_Store"
+      - "path:/.bash_history"

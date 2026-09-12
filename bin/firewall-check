@@ -324,7 +324,20 @@ $overrides = [
     // does not change when the switch is on; what changes is what the firewall
     // then does about it, and saying both is more useful than either.
     '[global][panic_file]' => '',
+
+    // Same reasoning for lockdown: it refuses before any bucket is consulted,
+    // so leaving it on would make this report "refused" for every request and
+    // tell you nothing about which rule would match (#304). Suppressed here,
+    // reported below.
 ];
+
+$lockdown = ($loadedGlobal = Config::load(array_merge([__DIR__ . '/../config/config.yml'], $configs))['global'] ?? [])
+    && ($loadedGlobal['mode'] ?? null) === 'lockdown'
+    ? array_values(array_filter(
+        is_array($loadedGlobal['lockdown_allow'] ?? null) ? $loadedGlobal['lockdown_allow'] : [],
+        static fn($v): bool => is_string($v) && trim($v) !== ''
+    ))
+    : null;
 
 // Read before the overrides above hide it. Config::load() does not throw --
 // it collects failures rather than raising them -- so a broken config still
@@ -405,6 +418,8 @@ try {
 
 $plugin = null;
 $pluginRole = null;
+$recorded = null;
+$marks = [];
 $lastMatched = null;
 $evaluated = [];
 
@@ -436,6 +451,18 @@ foreach ($handler->getRecords() as $record) {
         && is_string($context['plugin'])
     ) {
         $lastMatched = $context['plugin'];
+    }
+
+    // Non-terminal outcomes throw nothing, so the verdict cannot come from an
+    // exception. They are still what happened to the request, and a checker that
+    // reported "allowed" for a honeypot hit would be describing the response and
+    // hiding the consequence (#202).
+    if (str_contains($record->message, 'Client recorded without being refused')) {
+        $recorded = is_string($context['plugin_name'] ?? null) ? $context['plugin_name'] : true;
+    }
+
+    if (str_contains($record->message, 'Request marked') && isset($context['mark']) && is_string($context['mark'])) {
+        $marks[] = $context['mark'];
     }
 
     if (isset($context['evaluated_plugins']) && is_array($context['evaluated_plugins'])) {
@@ -504,9 +531,18 @@ try {
 
 $evaluatedNames = array_column($evaluated, 'plugin');
 
+// Recorded outranks allowed as a description: the request was served, and the
+// client is on the block list from here on. Anything terminal outranks both.
+if ($verdict === 'allowed' && $recorded !== null) {
+    $verdict = 'recorded';
+    $plugin = is_string($recorded) ? $recorded : $plugin;
+    $pluginRole = 'recorded by';
+}
+
 $result = [
     'verdict' => $verdict,
     'plugin' => $plugin,
+    'marks' => array_values(array_unique($marks)),
     'status' => $status,
     'reason' => $reason,
     'request' => [
@@ -517,6 +553,10 @@ $result = [
     ],
     'storage' => $liveStorage ? 'configured backend' : 'throwaway (in-memory)',
 ];
+
+if ($lockdown !== null) {
+    $result['lockdown'] = ['active' => true, 'allowed' => $lockdown];
+}
 
 if ($panic['active'] && $panic['mode'] !== null) {
     $result['panic_switch'] = [
@@ -544,7 +584,12 @@ if (isset($options['explain'])) {
 if (isset($options['json'])) {
     echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), "\n";
 } else {
-    $label = ['allowed' => 'ALLOWED', 'blocked' => 'BLOCKED', 'challenged' => 'CHALLENGED'][$verdict];
+    $label = [
+        'allowed' => 'ALLOWED',
+        'blocked' => 'BLOCKED',
+        'challenged' => 'CHALLENGED',
+        'recorded' => 'RECORDED',
+    ][$verdict];
 
     printf("%s  %s %s\n", $label, $request->getMethod(), $url);
     printf("  client            %s\n", $ip);
@@ -562,6 +607,22 @@ if (isset($options['json'])) {
     }
 
     printf("  storage           %s\n", $result['storage']);
+
+    if ($verdict === 'recorded') {
+        echo "  effect            served now, refused from the next request onward\n";
+    }
+
+    if ($marks !== []) {
+        printf("  marked            %s\n", implode(', ', array_unique($marks)));
+    }
+
+    if (isset($result['lockdown'])) {
+        printf(
+            "  lockdown          ACTIVE — only %s %s served; this verdict describes the rules, not what the site is doing\n",
+            $lockdown === [] ? 'nobody' : implode(', ', $lockdown),
+            $lockdown === [] ? 'is' : 'are'
+        );
+    }
 
     // On stdout with the rest of the verdict, not stderr: this changes how to
     // read the line above it, so it has to travel with it.

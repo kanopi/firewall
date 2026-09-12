@@ -20,4 +20,15 @@ enum FirewallMode: string
     case Log = 'log';
     case Exception = 'exception';
     case Disabled = 'disabled';
+
+    /**
+     * Deny by default: nobody is served but an explicit allowlist.
+     *
+     * The thing you want when a site is actively being hammered and you would rather serve
+     * nobody than serve the attacker. Unlike every other mode this refuses **without
+     * recording** — a deliberate, temporary refusal of everybody is not evidence that any of
+     * them misbehaved, and recording them would leave a block list full of customers on
+     * escalating bans the moment it is lifted (#304).
+     */
+    case Lockdown = 'lockdown';
 }

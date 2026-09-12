@@ -33,7 +33,7 @@ Nothing here explains anything; that is deliberate.
 
 | Key | Type | Default | | |
 |---|---|---|---|---|
-| `mode` | string | `block` | `block`, `log`, `exception`, `disabled` | [Mode](../configuration/global.md#mode) |
+| `mode` | string | `block` | `block`, `log`, `exception`, `disabled`, `lockdown` | [Mode](../configuration/global.md#mode) |
 | `panic_file` | string | *unset* | A file that overrides `mode` when it exists | [Panic Switch](../configuration/global.md#panic-switch) |
 | `banning_status_code` | int | `400` | Status sent when a rule blocks | [Status Code](../configuration/global.md#status-code) |
 | `banning_message` | string | built-in | Body template; `{{request.id}}` is substituted | [Banning Message](../configuration/global.md#banning-message) |
@@ -43,6 +43,11 @@ Nothing here explains anything; that is deliberate.
 | `behind_proxy` | bool | *unset* | Assert whether a proxy sits in front | [Trusted Proxies](../configuration/global.md#trusted-proxies) |
 | `require_trusted_proxies` | bool | `false` | Refuse to start without `setTrustedProxies()` | [Trusted Proxies](../configuration/global.md#trusted-proxies) |
 | `require_config` | bool | `false` | Refuse to start if any config input failed to load | [Loading](../configuration/loading-and-includes.md) |
+| `lockdown` | bool | `false` | Refuse everyone but `lockdown_allow` | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_allow` | list | *(empty)* | Addresses and CIDRs still served. Empty serves nobody | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_status` | int | `503` | | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_retry_after` | int | `300` | Seconds in `Retry-After`; `0` omits it | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_message` | string | built-in | Supports `{{request.id}}` | [Lockdown](../configuration/global.md#lockdown) |
 | `stale_source_error_after` | int | `0` *(off)* | Seconds before an unrefreshed source is an error | [Stale Rule Sources](../configuration/global.md#stale-rule-sources) |
 
 ## `storage:`
@@ -86,7 +91,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | Key | Type | Default | |
 |---|---|---|---|
 | `plugin` | class | *required* | The rule class |
-| `response` | string | `block` | `allow`, `block`, `challenge` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
+| `response` | string | `block` | `allow`, `block`, `challenge`, `record`, `redirect`, `mark` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
 | `weight` | int | `0` | Order **within** its bucket; lower runs first |
 | `enable` | bool | `true` | |
 | `metadata` | map | `[]` | How the rule behaves. Below |
@@ -100,6 +105,11 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `mode` | string | *enforce* | `log` observes this one rule without enforcing it | [Observe mode](../configuration/global.md#observing-one-rule-while-the-rest-enforce) |
 | `status_code` | int | `banning_status_code` | Per-rule override | [Status Code](../configuration/global.md#status-code) |
 | `default_expiration_time` | int | `3600` | Ban length, or pass-token TTL on a challenge rule | [Global](../configuration/global.md) |
+| `record` | bool | `true` | `false` refuses without writing to the block list. On a `redirect` rule the default is `false` and `true` opts in | [Evaluation Order](evaluation-order.md#refusing-and-recording-are-separate) |
+| `mark_as` | string | the rule's name | The signal `response: mark` raises, so several rules can raise one |
+| `mark_header` | string | — | Also set this header on the request when marking |
+| `redirect_to` | string | — | Required by `response: redirect`. Never built from the request, so it cannot become an open redirect |
+| `redirect_status` | int | `302` | `301`, `302`, `307` or `308` |
 | `sources` | list | `[]` | Pull this rule's entries from elsewhere | [Rule Sources](../configuration/sources.md) |
 | `challenge_provider` | string | `challenge.provider` | Per-rule provider override | [Per-plugin providers](../plugins/challenges.md#per-plugin-providers) |
 | `config` | list | — | Legacy alias for the entry's `config:` | [Legacy format](legacy-format.md) |

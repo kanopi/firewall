@@ -39,6 +39,7 @@ $ grep Preset-Version vendor/kanopi/firewall/presets/drupal.yml
 | `malicious-urls.yml` | URL-pattern blocks for known-bad paths. |
 | `rate-limiting.yml` | Per-path rate limits across auth, API, admin, forms, and static assets. |
 | `wordpress.yml` | WordPress-specific hardening. |
+| `honeypot.yml` | Paths no legitimate client has any reason to fetch — a client that does is recorded and refused from its next request. Read the header before enabling. |
 | `drupal.yml` | Drupal hardening: version disclosure, installer routes, build artefacts, PHP under the files directory. Safe for any Drupal site. |
 | `drupal-admin.yml` | Blocks Drupal's `/admin` and authentication routes. Locks people out by design — pair it with an allow rule. |
 | `search-bots.yml` | Allows search engine crawlers past your block rules — scoped to public content, not the admin surface. |

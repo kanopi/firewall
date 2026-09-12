@@ -19,9 +19,12 @@ use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\FirewallLockdownException;
+use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Plugins\AbstractPluginBase;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Storage\StorageFactory;
@@ -33,6 +36,9 @@ use Kanopi\Firewall\Event\DecisionEvent;
 use Kanopi\Firewall\Event\RequestAllowed;
 use Kanopi\Firewall\Event\RequestBlocked;
 use Kanopi\Firewall\Event\RequestChallenged;
+use Kanopi\Firewall\Event\RequestMarked;
+use Kanopi\Firewall\Event\RequestRecorded;
+use Kanopi\Firewall\Event\RequestRedirected;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\PanicSwitch;
@@ -45,6 +51,7 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final class Firewall
 {
+    use \Kanopi\Firewall\Traits\AddressMatchTrait;
     use LoggingTrait;
     use RequestFieldTrait;
 
@@ -52,6 +59,20 @@ final class Firewall
      * Firewall Mode.
      */
     private FirewallMode $firewallMode;
+
+    /**
+     * Whether the site is refusing everyone but `global.lockdown_allow`.
+     *
+     * Deliberately *not* a `FirewallMode`. Modes are the delivery axis -- exit, throw, log,
+     * nothing -- and lockdown is a policy axis: who gets served. Conflating them would mean
+     * a host running `mode: exception` had to give that up to enter lockdown, so the library
+     * would start calling `exit()` on a framework mid-incident, which is the worst possible
+     * moment to discover it (#304).
+     *
+     * `mode: lockdown` and a panic file saying `lockdown` still work; they are shorthand for
+     * "lock down, and deliver refusals the way `block` does".
+     */
+    private bool $lockdown = false;
 
     /**
      * What the panic file asked for, and whether it got it.
@@ -98,6 +119,15 @@ final class Firewall
      *   ignores whatever comes back; see `DecisionEvent` for why that is not
      *   an oversight (#218). NULL disables the whole mechanism at the cost of
      *   a null check.
+     * @param PluginManager|null $recordPluginManager
+     *   Rules with `response: record`, which write a client to the block list
+     *   and let the request through (#203). NULL when none are configured.
+     * @param PluginManager|null $redirectPluginManager
+     *   Rules with `response: redirect`, which send the visitor somewhere
+     *   instead of refusing them (#203).
+     * @param PluginManager|null $markPluginManager
+     *   Rules with `response: mark`, which annotate the request and leave the
+     *   decision to the application (#203).
      */
     protected function __construct(
         private StorageInterface $storage,
@@ -109,7 +139,10 @@ final class Firewall
         private ?TokenManager $tokenManager = null,
         private array $challengeConfig = [],
         private ?ChallengeProviderRegistry $challengeProviderRegistry = null,
-        private ?EventDispatcherInterface $eventDispatcher = null
+        private ?EventDispatcherInterface $eventDispatcher = null,
+        private ?PluginManager $recordPluginManager = null,
+        private ?PluginManager $redirectPluginManager = null,
+        private ?PluginManager $markPluginManager = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -119,10 +152,29 @@ final class Firewall
         // per request under PHP-FPM and mod_php, and that is the whole point:
         // the switch takes effect on the next request, with no deploy and no
         // pool reload (#207).
+        // `lockdown` as a mode is shorthand: it means lockdown, delivered the
+        // way `block` delivers. A host that needs `exception` delivery sets
+        // `global.lockdown: true` and keeps its mode.
+        if ($this->firewallMode === FirewallMode::Lockdown) {
+            $this->lockdown = true;
+            $this->firewallMode = FirewallMode::Block;
+            $this->configuredMode = FirewallMode::Block;
+        }
+
+        if (($config['lockdown'] ?? false) === true) {
+            $this->lockdown = true;
+        }
+
         $this->panicSwitch = PanicSwitch::read($config['panic_file'] ?? null);
 
         if ($this->panicSwitch['active'] && $this->panicSwitch['mode'] instanceof FirewallMode) {
             $this->firewallMode = $this->panicSwitch['mode'];
+
+            // Same shorthand, reached from a file instead of the config.
+            if ($this->firewallMode === FirewallMode::Lockdown) {
+                $this->lockdown = true;
+                $this->firewallMode = FirewallMode::Block;
+            }
 
             // Warning, on every request, and that is deliberate. The realistic
             // failure of a panic switch is not somebody flipping it -- it is
@@ -317,7 +369,10 @@ final class Firewall
             $tokenManager,
             $challengeConfig,
             $providerRegistry,
-            $eventDispatcher
+            $eventDispatcher,
+            PluginManager::createFromPluginsArray($partitioned['record']),
+            PluginManager::createFromPluginsArray($partitioned['redirect']),
+            PluginManager::createFromPluginsArray($partitioned['mark'])
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -875,6 +930,17 @@ final class Firewall
     }
 
     /**
+     * Whether the site is in lockdown.
+     *
+     * @return bool
+     *   TRUE when everyone but `global.lockdown_allow` is being refused.
+     */
+    public function isLockedDown(): bool
+    {
+        return $this->lockdown;
+    }
+
+    /**
      * Whether a panic file is changing the mode, and what it said.
      *
      * A status page has no other way to tell: the effective mode alone cannot
@@ -893,6 +959,328 @@ final class Firewall
     public function getPanicSwitch(): array
     {
         return $this->panicSwitch;
+    }
+
+    /**
+     * Whether this client is on the lockdown allowlist.
+     *
+     * `global.lockdown_allow` only. Deliberately not the allow bucket -- see the call site.
+     *
+     * An unset or empty list serves nobody, which is what "deny by default" means and is the
+     * honest reading of a mode called lockdown. `firewall-doctor` reports the empty case
+     * before you are relying on it, because the alternative is finding out by locking
+     * yourself out.
+     *
+     * @param Request $request
+     *   The request.
+     *
+     * @return bool
+     *   TRUE when the client may carry on.
+     */
+    protected function passesLockdown(Request $request): bool
+    {
+        $allowed = $this->config['lockdown_allow'] ?? [];
+
+        if (!is_array($allowed) || $allowed === []) {
+            return false;
+        }
+
+        $address = (string) $request->getClientIp();
+
+        if ($address === '') {
+            return false;
+        }
+
+        foreach ($allowed as $pattern) {
+            if (is_string($pattern) && $pattern !== '' && $this->addressMatches($address, $pattern)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Refuse a visitor because the site is in lockdown.
+     *
+     * **Records nothing, ever.** That is the whole reason this is a mode rather than two
+     * ordinary rules: a catch-all block rule achieves the same refusal and writes every
+     * legitimate visitor to the durable block list with escalation applied, so lifting the
+     * lockdown leaves a block list full of customers (#304).
+     *
+     * 503 with `Retry-After`, not the banning status. A lockdown is temporary and
+     * deliberate, which is what a 503 means -- and a CDN in front of the site will honour it
+     * rather than caching a refusal it takes to be permanent.
+     *
+     * @param Request $request
+     *   The request being refused.
+     *
+     * @throws FirewallLockdownException
+     *   In `mode: exception`. Extends `FirewallBlockedException`, so a host
+     *   that already catches that keeps working.
+     */
+    protected function sendLockdownResponse(Request $request): void
+    {
+        $status = is_int($this->config['lockdown_status'] ?? null) ? $this->config['lockdown_status'] : 503;
+        $retryAfter = is_int($this->config['lockdown_retry_after'] ?? null)
+            ? max(0, $this->config['lockdown_retry_after'])
+            : 300;
+
+        $message = $this->interpolateTemplate(
+            is_string($this->config['lockdown_message'] ?? null)
+                ? $this->config['lockdown_message']
+                : 'This site is temporarily closed to visitors. Please try again shortly.',
+            $request
+        );
+
+        // Warning, on every refused request. A lockdown is the loudest thing a
+        // firewall can do and the easiest to forget, exactly like the panic
+        // switch it is usually reached through (#207).
+        $this->getLogger()->warning('Request refused: site is in lockdown', $this->getContext($request, [
+            'status_code' => $status,
+            'retry_after' => $retryAfter,
+            'recorded' => false,
+        ]));
+
+        if ($this->firewallMode === FirewallMode::Log) {
+            $this->announce(new RequestBlocked($request, null, $status, false));
+
+            return;
+        }
+
+        $this->announce(new RequestBlocked($request, null, $status));
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new FirewallLockdownException($message, $status, $retryAfter);
+        }
+
+        // @codeCoverageIgnoreStart
+        http_response_code($status);
+
+        if (!headers_sent()) {
+            header('Content-Type: text/plain; charset=utf-8');
+            header('X-Content-Type-Options: nosniff');
+            header('Cache-Control: no-store');
+
+            if ($retryAfter > 0) {
+                header('Retry-After: ' . $retryAfter);
+            }
+        }
+
+        exit($message);
+        // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Annotate the request and let the application decide.
+     *
+     * The firewall stops being only a gate here. A comment form can show a CAPTCHA to
+     * requests that were marked rather than to everybody, and the call stays with the code
+     * that knows what the request was trying to do.
+     *
+     * Sets `firewall.mark.<name>` on the request, and `firewall.marks` accumulating every
+     * mark raised, so an application can ask either question without knowing which rules
+     * exist.
+     *
+     * **The attribute only reaches code holding this same `Request`.** A Symfony or Laravel
+     * integration passes its own and sees it; a `settings.php` bootstrap that later builds
+     * a fresh request object does not. `RequestMarked` is the channel that always arrives,
+     * which is why it carries the mark's name rather than only where it was written.
+     *
+     * @param Request $request
+     *   The request to annotate.
+     * @param PluginInterface $plugin
+     *   The rule that matched.
+     */
+    protected function mark(Request $request, PluginInterface $plugin): void
+    {
+        $name = $plugin instanceof AbstractPluginBase ? $plugin->getMarkName() : $plugin->getName();
+        $attribute = 'firewall.mark.' . $name;
+
+        $request->attributes->set($attribute, true);
+
+        // A list as well as a flag. Asking "was this marked at all" should not
+        // require knowing every rule name in the configuration.
+        $marks = $request->attributes->get('firewall.marks', []);
+        $marks = is_array($marks) ? $marks : [];
+
+        if (!in_array($name, $marks, true)) {
+            $marks[] = $name;
+        }
+
+        $request->attributes->set('firewall.marks', $marks);
+
+        $header = $plugin instanceof AbstractPluginBase ? $plugin->getMarkHeader() : '';
+
+        if ($header !== '') {
+            $request->headers->set($header, $name);
+        }
+
+        // Info, not warning. A mark is not a complaint -- it is a note for the
+        // application, and a rule marking most of a site's traffic is a
+        // reasonable configuration rather than something to shout about.
+        $this->getLogger()->info('Request marked', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'mark' => $name,
+            'attribute' => $attribute,
+            'enforced' => false,
+        ]));
+
+        $this->announce(new RequestMarked($request, $plugin, $name, $attribute));
+    }
+
+    /**
+     * Send the visitor somewhere instead of refusing them.
+     *
+     * Terminal, like a block: nothing after this runs. Unlike a block it records nothing by
+     * default -- a redirect is not a ban, and a client sent to a notice page who came back
+     * to find themselves blocked instead would have no way to understand why. A rule can
+     * opt in with `metadata.record: true`.
+     *
+     * @param Request $request
+     *   The request being redirected.
+     * @param PluginInterface $plugin
+     *   The rule that matched.
+     *
+     * @throws FirewallRedirectException
+     *   In `mode: exception`, so the host can write its own response.
+     * @throws ConfigurationException
+     *   When the rule names no destination, which it cannot act on.
+     */
+    protected function sendRedirectResponse(Request $request, PluginInterface $plugin): void
+    {
+        $location = $plugin instanceof AbstractPluginBase ? $plugin->getRedirectLocation() : '';
+        $status = $plugin instanceof AbstractPluginBase ? $plugin->getRedirectStatus() : 302;
+
+        if ($location === '') {
+            // Loud rather than approximate. Falling through to the block bucket
+            // would refuse a visitor the operator meant to send somewhere, and
+            // serving a redirect to nowhere is worse than either.
+            throw new ConfigurationException(sprintf(
+                'Rule "%s" uses response: redirect but names no metadata.redirect_to, so there is '
+                . 'nowhere to send the visitor.',
+                $plugin->getName()
+            ));
+        }
+
+        if ($this->firewallMode === FirewallMode::Log) {
+            $this->getLogger()->warning('Request would be redirected (log mode)', $this->getContext($request, [
+                'mode' => 'log',
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'location' => $location,
+            ]));
+
+            $this->announce(new RequestRedirected($request, $plugin, $location, $status, false));
+
+            return;
+        }
+
+        // Opt-in, not opt-out: see AbstractPluginBase::recordsExplicitly().
+        if ($plugin instanceof AbstractPluginBase && $plugin->recordsExplicitly()) {
+            $this->record($request, $plugin);
+        }
+
+        $this->getLogger()->notice('Sending redirect response', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'location' => $location,
+            'status_code' => $status,
+        ]));
+
+        // Before the throw and before the header is written; neither returns.
+        $this->announce(new RequestRedirected($request, $plugin, $location, $status));
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new FirewallRedirectException($location, $status);
+        }
+
+        // @codeCoverageIgnoreStart
+        http_response_code($status);
+
+        if (!headers_sent()) {
+            header('Location: ' . $location, true, $status);
+            header('Cache-Control: no-store');
+        }
+
+        exit;
+        // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * Write a client to the block list without refusing this request.
+     *
+     * The other half of separating refusing from recording. `block()` does both; this does
+     * only the second, so the request carries on and the client is refused the *next* time
+     * the durable block list is consulted (#203).
+     *
+     * Shares `block()`'s expiration and escalation handling deliberately: a honeypot hit
+     * that expired on a different schedule from an ordinary block would be a second set of
+     * rules to reason about for no gain.
+     *
+     * @param Request $request
+     *   The request that matched.
+     * @param PluginInterface $plugin
+     *   The rule that matched it.
+     *
+     * @return bool
+     *   TRUE when the client was written to the block list.
+     */
+    protected function record(Request $request, PluginInterface $plugin): bool
+    {
+        $key = $this->storage->getKey($request);
+
+        $success = $this->storage->set(
+            $key,
+            $this->storage->getStorageData($request, $plugin),
+            $this->determineExpirationTime($request, $plugin->getExpirationTime($request))
+        );
+
+        // Warning, not info. Nothing about this request looks different to the
+        // visitor or to the access log, so this line is the only evidence the
+        // rule fired -- and the next request from that client being refused
+        // makes no sense without it.
+        $this->getLogger()->warning('Client recorded without being refused', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'key' => $key,
+            'recorded' => $success,
+            'enforced' => false,
+        ]));
+
+        $this->announce(new RequestRecorded($request, $plugin, $success));
+
+        return $success;
+    }
+
+    /**
+     * Whether a rule writes what it refuses to the durable block list.
+     *
+     * `metadata.record: false` refuses without recording. Defaults to TRUE, so every rule
+     * written before 2.26.0 behaves exactly as it did.
+     *
+     * Read from metadata rather than being a new `response:` value on purpose. An
+     * unrecognised `response` falls into the **block** bucket by design -- so that a typo
+     * cannot promote a rule to `allow` -- which means a hypothetical `response: refuse`
+     * read by an older release would block *and* record, the behaviour being opted out of.
+     * An unknown metadata key is simply ignored, so the same config on an older release
+     * blocks and records: still not what was asked for, but the direction that was already
+     * the default rather than a surprise.
+     *
+     * @param PluginInterface $plugin
+     *   The rule.
+     *
+     * @return bool
+     *   TRUE when a block by this rule is written to storage.
+     */
+    protected function recordsOffenses(PluginInterface $plugin): bool
+    {
+        if (!$plugin instanceof AbstractPluginBase) {
+            return true;
+        }
+
+        return $plugin->recordsOffenses();
     }
 
     /**
@@ -1016,6 +1404,26 @@ final class Firewall
             return true;
         }
 
+        // Lockdown sits here, and every part of that placement was a decision
+        // the issue asked for (#304).
+        //
+        // *After* the challenge submission above, so a visitor already holding
+        // an unsolved challenge can still solve it rather than being bricked
+        // along with everybody else.
+        //
+        // *Before* the allow bucket, so entry is granted only by
+        // `global.lockdown_allow` and not by any allow rule that happens to
+        // exist. An allow rule written months ago to whitelist a payment
+        // webhook is not a considered answer to "who should reach this site
+        // while it is under attack".
+        //
+        // A client that *is* on the lockdown allowlist carries on through
+        // everything below, block list included -- so lockdown adds a refusal,
+        // it never removes one.
+        if ($this->lockdown && !$this->passesLockdown($request)) {
+            $this->sendLockdownResponse($request);
+        }
+
         if (($plugin = $this->bypassPluginManager->evaluate($request)) !== false) {
             $this->getLogger()->info('Request bypassed', $this->getContext($request, [
                 'plugin_name' => $plugin->getName(),
@@ -1026,6 +1434,28 @@ final class Firewall
         }
 
         $this->enforceStorageBlocklist($request);
+
+        // Marking happens before recording, and both before anything terminal.
+        // A rule that only raises a signal has to run even on a request that is
+        // about to be refused: the application may still want to know why, and
+        // a mark that only appeared on requests nobody refused would be a
+        // signal you could not correlate with anything.
+        if (($plugin = $this->markPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->mark($request, $plugin);
+        }
+
+        // Record rules run here, and this request keeps going.
+        //
+        // After the block list, so a client already blocked is refused rather
+        // than re-recorded; before the terminal buckets, so the write happens
+        // even when something below ends the request. This is what a honeypot
+        // needs (#202): the rule that catches a scanner on /wp-admin.bak wants
+        // it on the block list for *next* time, not to refuse the fetch it is
+        // already serving -- refusing tells the scanner exactly which URL is
+        // wired, which is the one thing a honeypot must not do.
+        if (($plugin = $this->recordPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->record($request, $plugin);
+        }
 
         // A held pass token short-circuits the challenge bucket. Block
         // plugins still run — the token only attests "I am human", not
@@ -1060,6 +1490,14 @@ final class Firewall
             } else {
                 $this->sendChallengeResponse($request, $plugin);
             }
+        }
+
+        // Between challenge and block, and the ordering is the point: the
+        // terminal buckets run gentlest first. A redirect leaves the visitor
+        // somewhere to go, so a rule offering that beats one that would simply
+        // refuse them.
+        if (($plugin = $this->redirectPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->sendRedirectResponse($request, $plugin);
         }
 
         if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {
@@ -1183,7 +1621,28 @@ final class Firewall
             $this->announce(new ChallengeFailed($request, $providerName, $reason));
 
             if ($this->firewallMode === FirewallMode::Exception) {
-                throw new ChallengeRequiredException('Invalid challenge solution');
+                // Carries a usable context too. A refused submission needs a
+                // *fresh* challenge rather than a retry -- the payload in the
+                // page is spent -- so a host that wants to re-serve one can,
+                // and every value here is read the same way the accepting path
+                // reads it rather than invented for the occasion (#311).
+                $rejectedTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
+                $rejectedRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
+
+                throw new ChallengeRequiredException(
+                    'Invalid challenge solution',
+                    null,
+                    $challengeProvider,
+                    $providerName,
+                    [
+                        'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
+                        'redirect_to' => $this->sanitizeRedirect($rejectedRedirect === '' ? '/' : $rejectedRedirect),
+                        'ttl' => (string) ($rejectedTtl === '' ? 3600 : max(0, (int) $rejectedTtl)),
+                        'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
+                        'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
+                        'provider_token' => $this->signProviderName($providerName),
+                    ]
+                );
             }
 
             // @codeCoverageIgnoreStart
@@ -1429,22 +1888,35 @@ final class Firewall
         // reason as the block path: neither returns here.
         $this->announce(new RequestChallenged($request, $plugin, $providerName));
 
-        if ($this->firewallMode === FirewallMode::Exception) {
-            throw new ChallengeRequiredException(sprintf(
-                'Challenge required by plugin: %s',
-                $plugin->getName()
-            ));
-        }
-
-        // @codeCoverageIgnoreStart
-        $body = $challengeProvider->renderInterstitial($request, [
+        // Built once, above the mode branch, and handed to both paths.
+        //
+        // It used to be assembled inside the branch that writes the response,
+        // which left `mode: exception` with no way to reach it -- and
+        // `provider_token` is not reproducible from outside this class, because
+        // the prefix it signs is a private constant and the signer is protected
+        // on a final class. A host rendering without it locks the visitor out
+        // permanently and silently (#311).
+        $renderContext = [
             'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
             'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
             'ttl' => (string) $ttl,
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
             'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
             'provider_token' => $this->signProviderName($providerName),
-        ]);
+        ];
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new ChallengeRequiredException(
+                sprintf('Challenge required by plugin: %s', $plugin->getName()),
+                null,
+                $challengeProvider,
+                $providerName,
+                $renderContext
+            );
+        }
+
+        // @codeCoverageIgnoreStart
+        $body = $challengeProvider->renderInterstitial($request, $renderContext);
 
         http_response_code(200);
         if (!headers_sent()) {
@@ -1868,6 +2340,21 @@ final class Firewall
             'plugin_type' => $plugin::class,
             'status_code' => $plugin->getStatusCode($request),
         ]));
+
+        // Refusing and recording are separate decisions (#203). A rule can
+        // refuse without writing anything, which is what a deliberate,
+        // temporary refusal of everybody needs: a lockdown that records every
+        // visitor leaves a block list full of customers once it is lifted, each
+        // on an escalating ban nobody asked for (#304).
+        if (!$this->recordsOffenses($plugin)) {
+            $this->getLogger()->info('Request blocked without recording', $this->getContext($request, [
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'recorded' => false,
+            ]));
+
+            return true;
+        }
 
         $expirationTime = $this->determineExpirationTime(
             $request,
