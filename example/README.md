@@ -5,13 +5,13 @@ running in a local Docker environment. Use it to test configurations,
 experiment with plugins, and understand how the firewall behaves.
 
 **Full documentation:
-[Local Example Environment](../docs/guides/example-environment.md)**
+[Local Example Environment](../docs/getting-started/example-environment.md)**
 
 | Page | Covers |
 |---|---|
-| [Local Example Environment](../docs/guides/example-environment.md) | Starting and stopping the Docker stack, spoofing client IPs with `X-Forwarded-For`, the config files here, worked blocking examples, and troubleshooting |
-| [GeoIP Setup](../docs/guides/geoip-setup.md) | Downloading GeoLite2 databases, the MaxMind web service, and Docker volume mounting |
-| [Demo Application](../docs/guides/demo.md) | The runnable demo in [`demo/`](demo/) — challenge flow and repeat-offender escalation |
+| [Local Example Environment](../docs/getting-started/example-environment.md) | Starting and stopping the Docker stack, spoofing client IPs with `X-Forwarded-For`, the config files here, worked blocking examples, and troubleshooting |
+| [GeoIP Setup](../docs/how-to/geoip-setup.md) | Downloading GeoLite2 databases, the MaxMind web service, and Docker volume mounting |
+| [Demo Application](../docs/getting-started/demo.md) | The runnable demo in [`demo/`](demo/) — challenge flow and repeat-offender escalation |
 
 ## Quick start
 
@@ -38,6 +38,6 @@ Then visit <http://localhost:8080>.
 
 ## Editing these docs
 
-The pages above are built from [`docs/guides/`](../docs/guides/). Change the
+The pages above are built from [`docs/getting-started/`](../docs/getting-started/). Change the
 Markdown there, not this file. See
 [Writing Documentation](../docs/contributing/documentation.md).

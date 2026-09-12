@@ -80,35 +80,39 @@ require_once __DIR__ . '/vendor/autoload.php';
 
 ```mermaid
 flowchart TD
-    A[Incoming request] --> B{mode: disabled?}
-    B -->|yes| Z[Allow]
-    B -->|no| C{On the storage blocklist?}
-    C -->|yes| Y[Block]
-    C -->|no| D[allow plugins, by weight]
+    A["Incoming request"] --> B{"mode is disabled,<br/>or a CLI process?"}
+    B -->|yes| Z(["Allow"])
+    B -->|no| S{"POST to the<br/>challenge path?"}
+    S -->|yes| H(["Verify the solution"])
+    S -->|no| D["allow bucket, by weight"]
     D -->|match| Z
-    D -->|no match| E[challenge plugins, by weight]
-    E -->|match, no valid pass token| X[Serve interstitial]
-    E -->|no match, or valid token| F[block plugins, by weight]
+    D -->|no match| C{"On the durable<br/>block list?"}
+    C -->|yes| Y(["Block"])
+    C -->|no| E["challenge bucket, by weight"]
+    E -->|"match, no valid pass token"| X(["Serve interstitial"])
+    E -->|"no match, or valid token"| F["block bucket, by weight"]
     F -->|match| Y
     F -->|no match| Z
 ```
 
-Allow plugins short-circuit everything. A valid challenge pass token skips the
-challenge bucket but never suppresses a block. See
-[Plugin Architecture](plugins/index.md) for the full ordering rules and
-[Challenge Responses](plugins/challenges.md) for the interstitial flow.
+Allow rules short-circuit everything — **including the durable block list**, which is
+consulted after them. A valid pass token skips the challenge bucket but never suppresses a
+block, and `weight` sorts rules only *within* a bucket.
+
+[Evaluation Order](reference/evaluation-order.md) is the full version, with what each mode
+changes and the three things people most often get wrong.
 
 ## Where to go next
 
 | I want to… | Read |
 |---|---|
 | Get something running locally in five minutes | [Test Drive](getting-started/test-drive.md) |
-| Drop this into Drupal, WordPress, Symfony, or Laravel | [Platform Integration](getting-started/platform-integration.md) |
+| Drop this into Drupal, WordPress, Symfony, or Laravel | [Platform Integration](how-to/platform-integration.md) |
 | Understand every configuration key | [Configuration Overview](configuration/index.md) |
 | Stop bots without hard-blocking humans | [Challenge Responses](plugins/challenges.md) |
 | Use a ready-made rule set | [Available Presets](presets/available.md) |
-| Catch exceptions instead of letting the library `exit()` | [Error Handling](guides/error-handling.md) |
-| Write my own plugin or storage backend | [Custom Plugins](guides/custom-plugins.md) · [Custom Storage](guides/custom-storage.md) |
+| Catch exceptions instead of letting the library `exit()` | [Error Handling](reference/error-handling.md) |
+| Write my own plugin or storage backend | [Custom Plugins](how-to/custom-plugins.md) · [Custom Storage](how-to/custom-storage.md) |
 | Migrate an old `bypass:` / `block:` config | [Legacy Config Format](reference/legacy-format.md) |
 | Contribute code or docs | [Contributing](contributing/index.md) |
 

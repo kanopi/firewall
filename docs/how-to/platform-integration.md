@@ -1,6 +1,6 @@
 # Platform Integration
 
-Each snippet below uses the default `mode: block`, where the firewall sends its own response and exits. If you set `mode: exception`, wrap `evaluate()` as shown in [Error Handling & Exceptions](../guides/error-handling.md).
+Each snippet below uses the default `mode: block`, where the firewall sends its own response and exits. If you set `mode: exception`, wrap `evaluate()` as shown in [Error Handling & Exceptions](../reference/error-handling.md).
 
 ## Drupal
 

@@ -1,5 +1,8 @@
 # Malicious Request Detection Preset
 #
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# changed about what this blocks, separately from the library version.
+#
 # This preset uses the VulnerabilityScore plugin to detect and block potentially
 # malicious requests based on multiple risk factors. It provides production-ready
 # protection against common web attacks including:

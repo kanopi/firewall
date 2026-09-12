@@ -14,6 +14,12 @@ That applies to the handlers that take a file path: `StreamHandler` and `Rotatin
 
 > **Heads up:** several Monolog handlers require additional PHP extensions or third-party packages. Slack/IFTTT/Pushover/Telegram need `ext-curl`; `SendGridHandler` and `SymfonyMailerHandler` may require `composer require` of the relevant transport package. See the [Monolog handler docs](https://seldaek.github.io/monolog/doc/02-handlers-formatters-processors.html) for each handler's prerequisites.
 
+!!! tip "Just need the logs somewhere?"
+
+    This page is the reference — every handler, every option, and what each one costs. If
+    you are wiring up a destination for the first time,
+    [Send Logs Somewhere](../how-to/send-logs-somewhere.md) is the short version.
+
 ## File logging
 
 Write every event to a flat file:
@@ -290,13 +296,13 @@ firewall.WARNING: Database table is behind the schema this release declares
   {"table":"firewall_log","missing":["column severity_hint"],"remedy":"Run bin/firewall-migrate ..."}
 ```
 
-[`bin/firewall-migrate`](../guides/schema-migrations.md) adds what is missing. It only ever
+[`bin/firewall-migrate`](../how-to/schema-migrations.md) adds what is missing. It only ever
 adds — nothing is dropped, renamed or rewritten — so no run of it can lose a row.
 
 The check behind that warning introspects the table, which costs more than it sounds, so it
 runs on 1% of constructions rather than all of them. `schema_check_probability: 0` alongside
 `prune_probability` turns it off and leaves the question to the script — see
-[what the check costs](../guides/schema-migrations.md#what-the-check-costs-and-why-it-is-sampled).
+[what the check costs](../how-to/schema-migrations.md#what-the-check-costs-and-why-it-is-sampled).
 
 ## Email alerts
 

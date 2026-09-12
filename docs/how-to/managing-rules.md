@@ -165,7 +165,7 @@ reconstruct a rule from memory, and the next person can read what it was.
 
 ## Related
 
-- [Seeing and lifting blocks](../guides/diagnosing.md) — `bin/firewall-block` manages the
+- [Seeing and lifting blocks](diagnosing.md) — `bin/firewall-block` manages the
   *runtime* block list, which is a different question from the rules in a config
 - [Loading & Includes](../configuration/loading-and-includes.md) — the merge semantics this
   relies on

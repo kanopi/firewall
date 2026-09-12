@@ -11,28 +11,11 @@ The pass token is:
 - **Delivered two ways** — as an `HttpOnly; Secure; SameSite=Strict` cookie *and* as a value the interstitial JS writes to `localStorage` so SPA callers can attach it to XHRs via a custom header (defaults to `X-Firewall-Challenge`).
 - **Expires** after `metadata.default_expiration_time` seconds for the matched plugin (default `3600`).
 
-## Minimum configuration
+!!! tip "Setting one up for the first time?"
 
-```yaml
-challenge:
-  provider: math                # 'math', 'altcha', 'turnstile' or 'recaptcha'; or a FQCN implementing ChallengeProviderInterface
-  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'   # REQUIRED. Long random string, ideally from an env var.
-  cookie_name: fw_challenge_pass
-  header_name: X-Firewall-Challenge
-  path: /_firewall/challenge    # The URL the interstitial POSTs to
-
-plugins:
-  - plugin: "Kanopi\\Firewall\\Plugins\\Asn"
-    response: challenge
-    weight: -10
-    enable: true
-    metadata:
-      default_expiration_time: 3600   # Pass token TTL in seconds
-    config:
-      - "asn:AS14618"   # Show the challenge to AWS traffic
-```
-
-If any plugin uses `response: challenge`, `challenge.secret` is **required**. Startup fails fast with `ConfigurationException` when it is empty — the firewall will not silently fall back to plaintext tokens.
+    This page is the reference — how the pass token works, what each provider costs you,
+    and the interface to write your own. To just get a challenge running, start with
+    [Add a Challenge](../how-to/add-a-challenge.md).
 
 ## Single-use solutions
 
@@ -169,7 +152,7 @@ Four providers ship with the firewall — set `challenge.provider` to a short na
     default) or the invisible, score-based v3. Verified server-side against
     Google's siteverify API.
 
-The math and ALTCHA screenshots come from the [demo application](../guides/demo.md), which serves each provider on its own route.
+The math and ALTCHA screenshots come from the [demo application](../getting-started/demo.md), which serves each provider on its own route.
 
 Which to pick is mostly a question of what you are willing to depend on:
 

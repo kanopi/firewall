@@ -43,23 +43,68 @@ mkdocs build --strict
     link, a link to a page that is not in the nav, or a missing snippet file.
     Catching that locally is faster than waiting for CircleCI.
 
+## The four kinds of page
+
+The docs follow [Diátaxis](https://diataxis.fr/). Four modes, and **a page belongs to
+exactly one** — mixing them is what produced the grab-bag `guides/` directory this replaced,
+which held tutorials, how-to and explanation under one name.
+
+| Mode | The reader is | Written to be | Lives in |
+|---|---|---|---|
+| **Tutorial** | learning | followed start to finish | `getting-started/` |
+| **How-to** | working | followed, from a goal they already have | `how-to/` |
+| **Reference** | looking something up | scanned, not read | `configuration/`, `plugins/`, `presets/`, `reference/` |
+| **Explanation** | trying to understand | read away from the keyboard | woven into the above |
+
+### Deciding which one you are writing
+
+Ask what the reader is doing at the moment they open the page, not what the page is about.
+The same subject appears in several modes and they are different pages:
+
+- *"Show me it working"* → **tutorial**. It has to succeed on the reader's machine, so
+  every step needs a visible result.
+- *"I need to set up GeoIP"* → **how-to**. They already know why; do not explain, instruct.
+- *"What does `banning_status_code` do?"* → **reference**. Complete and dry. No narrative.
+- *"Why does an allow rule beat the block list?"* → **explanation**.
+
+If a page answers two of those, it is two pages. That is what
+[#194](https://github.com/kanopi/firewall/issues/194) is for.
+
+### Explanation does not have a directory
+
+Deliberately. Explanation attaches to the thing it explains, so it lives as a section inside
+the reference or how-to page it belongs to — the way "Listeners cannot change a verdict"
+sits inside *React to Decisions*. A separate `explanation/` tree would mean every "why"
+lives one click away from the "what", which is how nobody reads it.
+
 ## Where things live
 
 ```text
 docs/
 ├── index.md                    Home page
-├── getting-started/            Install → first blocked request
-├── configuration/              Every YAML key, one page per section
-├── plugins/                    One page per plugin
-├── presets/                    The shipped rule sets
-├── guides/                     Task-oriented walkthroughs
-├── reference/                  Lookup tables
+├── getting-started/            TUTORIAL   Install → first blocked request → try it
+├── how-to/                     HOW-TO     One page per goal, each ending with it done
+├── configuration/              REFERENCE  Every YAML key, one page per section
+├── plugins/                    REFERENCE  One page per plugin
+├── presets/                    REFERENCE  The shipped rule sets
+├── reference/                  REFERENCE  Lookup tables that belong to no section above
 ├── contributing/               Process (this section)
 ├── requirements.txt            Pinned docs toolchain
 └── assets/
     ├── images/                 Screenshots and diagrams
     └── stylesheets/extra.css   Small style overrides
 ```
+
+!!! warning "Moving or renaming a page needs two things, and neither is the link"
+
+    **1. A redirect.** Add it to `redirect_maps` in `mkdocs.yml`. Old URLs are in published
+    release notes and blog posts and cannot be edited after the fact.
+
+    **2. Check whether the code points at it.** `firewall-doctor` and
+    `firewall-check --lint` print `See docs/…` pointers that live in PHP strings, so
+    `mkdocs build --strict` cannot see them. `DocumentedReferenceTest` holds them — run
+    `composer phpunit:unit` after moving anything, including after renaming a *heading*
+    that something links to by anchor.
 
 The site structure is not inferred from the directory tree — it comes from the
 `nav:` block in [`mkdocs.yml`](https://github.com/kanopi/firewall/blob/2.x/mkdocs.yml)
@@ -234,7 +279,7 @@ composer demo          # http://localhost:8000
 composer demo:reset    # clear stored blocks between captures
 ```
 
-See [Demo Application](../guides/demo.md) for the available routes.
+See [Demo Application](../getting-started/demo.md) for the available routes.
 
 ## Diagrams
 

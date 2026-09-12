@@ -24,6 +24,13 @@ plugins:
       - 203.0.113.7      # local additions still land last
 ```
 
+!!! tip "Just want one working?"
+
+    This page is the complete reference — every option, every format, every guardrail. If
+    you are trying to *do* something rather than look something up,
+    [Add a Rule Source](../how-to/add-a-rule-source.md) is four worked examples and no
+    theory.
+
 ---
 
 ## The pipeline
@@ -622,7 +629,7 @@ Cache directory: /var/cache/firewall/sources
 
 It exits `0` when everything loaded, `1` when any source failed, and `2` when the
 configuration itself could not be read — so a deploy step can fail on a bad list. See
-[Syncing Rule Sources](../guides/syncing-sources.md) for cron and deploy recipes.
+[Syncing Rule Sources](../how-to/syncing-sources.md) for cron and deploy recipes.
 
 The same upstream declared on several plugin entries is fetched once per run, not once
 per plugin.
@@ -636,112 +643,6 @@ define('KANOPI_FIREWALL_SOURCES_OFFLINE', true);
 In offline mode a remote source is served from cache, and one with nothing cached is an
 error rather than a silently empty rule list. Local files are still read normally, which
 is the intended arrangement: sync to disk out of band, serve from disk.
-
----
-
-## Worked examples
-
-### The same data, three different responses
-
-Because a source carries data and not policy, one list can drive whichever response suits
-the deployment:
-
-```yaml
-plugins:
-  # Trusted automation — straight through, nothing else runs
-  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
-    response: allow
-    weight: -200
-    enable: true
-    metadata:
-      sources:
-        - name: uptimerobot
-          upstream: "{config_dir}/lists/uptimerobot.txt"
-          validate: cidr
-          required: true
-
-  # Bulk cloud egress — plausible, but prove it
-  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
-    response: challenge
-    weight: 0
-    enable: true
-    metadata:
-      sources:
-        - name: cloud-egress
-          upstream: "{config_dir}/lists/cloud-egress.txt"
-          validate: cidr
-
-  # Known bad — gone
-  - plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
-    response: block
-    weight: 10
-    enable: true
-    metadata:
-      sources:
-        - name: tor-exits
-          upstream: "{config_dir}/lists/tor-exits.txt"
-          validate: cidr
-```
-
-### A cloud provider's range document
-
-```yaml
-- plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
-  response: challenge
-  enable: true
-  metadata:
-    sources:
-      - name: cloud-ec2-us
-        upstream: https://example.org/v1/ranges.json
-        format: json
-        select: "{prefixes,ipv6_prefixes}.*"
-        where:
-          - "service:EC2"
-          - "region@starts_with:us-"
-        template: "{value[ip_prefix|ipv6_prefix]}"
-        validate: cidr
-        max_delta: 0.25
-        ttl: 21600
-```
-
-### A CSV of ASNs
-
-```yaml
-- plugin: "Kanopi\\Firewall\\Plugins\\Asn"
-  response: challenge
-  enable: true
-  metadata:
-    reader:
-      type: reader
-      db: /usr/local/share/GeoIP/GeoLite2-ASN.mmdb
-    sources:
-      - name: hosting-asns
-        upstream: "{config_dir}/lists/hosting-asns.csv"
-        format: csv
-        where:
-          - "category:hosting"
-        template: "asn:{value[asn]}"
-```
-
-### Several sources into one plugin
-
-Sources contribute in declaration order and inline `config:` is appended after all of
-them, so a deployment can always add an entry without editing a shared list.
-
-```yaml
-- plugin: "Kanopi\\Firewall\\Plugins\\IpAddress"
-  response: allow
-  weight: -200
-  enable: true
-  metadata:
-    sources:
-      - "{config_dir}/lists/circleci.txt"
-      - "{config_dir}/lists/uptimerobot.txt"
-      - "{config_dir}/lists/github-actions.txt"
-  config:
-    - 127.0.0.1
-    - 10.0.0.0/8
-```
 
 ---
 
@@ -809,7 +710,7 @@ They sit at different levels for exactly that reason.
 
 **A sync job needs the credentials too.** `bin/firewall-sources` is a separate process
 from your application, so a token in your web server's environment is not automatically
-present in cron. See [Syncing Rule Sources](../guides/syncing-sources.md#credentials).
+present in cron. See [Syncing Rule Sources](../how-to/syncing-sources.md#credentials).
 
 **Declare `format` when the extension lies.** Inference reads the extension and falls back
 to `txt`. An endpoint like `https://example.org/v1/ranges` serving JSON needs

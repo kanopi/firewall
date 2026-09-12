@@ -1,5 +1,8 @@
 # Rate Limiting Preset
 #
+# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# changed about what this blocks, separately from the library version.
+#
 # Production-ready rate limiting configuration to protect against:
 # - DDoS attacks
 # - Brute force attacks (login, password reset)

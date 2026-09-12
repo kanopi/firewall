@@ -106,7 +106,7 @@ plugins:
 
 To enable country and ASN-based scoring in `malicious-requests.yml`:
 
-1. **Download GeoIP databases** (see [example/README.md](../guides/geoip-setup.md))
+1. **Download GeoIP databases** (see [example/README.md](../how-to/geoip-setup.md))
 
 2. **Create an override config** to enable GeoIP:
 
