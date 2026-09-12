@@ -190,6 +190,44 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
      * enforce, so nothing changes for a rule that declares nothing.
      */
     /**
+     * The attribute name a `response: mark` rule annotates the request with.
+     *
+     * Defaults to the rule's own name, so `metadata.name: suspicious-agent` becomes
+     * `firewall.mark.suspicious-agent` without anything else being configured. A rule that
+     * wants several rules to raise one shared signal names it explicitly.
+     *
+     * @return string
+     *   The attribute suffix.
+     */
+    public function getMarkName(): string
+    {
+        $configured = $this->metadata['mark_as'] ?? null;
+
+        if (is_string($configured) && trim($configured) !== '') {
+            return trim($configured);
+        }
+
+        return $this->getName();
+    }
+
+    /**
+     * An optional header to set on the request alongside the attribute.
+     *
+     * For a host that reads headers rather than HttpFoundation attributes. Empty by
+     * default: a firewall that silently adds headers to every marked request is a firewall
+     * that surprises whatever reads them next.
+     *
+     * @return string
+     *   The header name, or an empty string.
+     */
+    public function getMarkHeader(): string
+    {
+        $header = $this->metadata['mark_header'] ?? null;
+
+        return is_string($header) ? trim($header) : '';
+    }
+
+    /**
      * Whether the rule explicitly opted *in* to recording.
      *
      * Separate from `recordsOffenses()`, which answers the opposite question with the

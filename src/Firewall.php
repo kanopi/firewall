@@ -35,6 +35,7 @@ use Kanopi\Firewall\Event\DecisionEvent;
 use Kanopi\Firewall\Event\RequestAllowed;
 use Kanopi\Firewall\Event\RequestBlocked;
 use Kanopi\Firewall\Event\RequestChallenged;
+use Kanopi\Firewall\Event\RequestMarked;
 use Kanopi\Firewall\Event\RequestRecorded;
 use Kanopi\Firewall\Event\RequestRedirected;
 use Kanopi\Firewall\Utility\Config;
@@ -108,6 +109,9 @@ final class Firewall
      * @param PluginManager|null $redirectPluginManager
      *   Rules with `response: redirect`, which send the visitor somewhere
      *   instead of refusing them (#203).
+     * @param PluginManager|null $markPluginManager
+     *   Rules with `response: mark`, which annotate the request and leave the
+     *   decision to the application (#203).
      */
     protected function __construct(
         private StorageInterface $storage,
@@ -121,7 +125,8 @@ final class Firewall
         private ?ChallengeProviderRegistry $challengeProviderRegistry = null,
         private ?EventDispatcherInterface $eventDispatcher = null,
         private ?PluginManager $recordPluginManager = null,
-        private ?PluginManager $redirectPluginManager = null
+        private ?PluginManager $redirectPluginManager = null,
+        private ?PluginManager $markPluginManager = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -331,7 +336,8 @@ final class Firewall
             $providerRegistry,
             $eventDispatcher,
             PluginManager::createFromPluginsArray($partitioned['record']),
-            PluginManager::createFromPluginsArray($partitioned['redirect'])
+            PluginManager::createFromPluginsArray($partitioned['redirect']),
+            PluginManager::createFromPluginsArray($partitioned['mark'])
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -910,6 +916,65 @@ final class Firewall
     }
 
     /**
+     * Annotate the request and let the application decide.
+     *
+     * The firewall stops being only a gate here. A comment form can show a CAPTCHA to
+     * requests that were marked rather than to everybody, and the call stays with the code
+     * that knows what the request was trying to do.
+     *
+     * Sets `firewall.mark.<name>` on the request, and `firewall.marks` accumulating every
+     * mark raised, so an application can ask either question without knowing which rules
+     * exist.
+     *
+     * **The attribute only reaches code holding this same `Request`.** A Symfony or Laravel
+     * integration passes its own and sees it; a `settings.php` bootstrap that later builds
+     * a fresh request object does not. `RequestMarked` is the channel that always arrives,
+     * which is why it carries the mark's name rather than only where it was written.
+     *
+     * @param Request $request
+     *   The request to annotate.
+     * @param PluginInterface $plugin
+     *   The rule that matched.
+     */
+    protected function mark(Request $request, PluginInterface $plugin): void
+    {
+        $name = $plugin instanceof AbstractPluginBase ? $plugin->getMarkName() : $plugin->getName();
+        $attribute = 'firewall.mark.' . $name;
+
+        $request->attributes->set($attribute, true);
+
+        // A list as well as a flag. Asking "was this marked at all" should not
+        // require knowing every rule name in the configuration.
+        $marks = $request->attributes->get('firewall.marks', []);
+        $marks = is_array($marks) ? $marks : [];
+
+        if (!in_array($name, $marks, true)) {
+            $marks[] = $name;
+        }
+
+        $request->attributes->set('firewall.marks', $marks);
+
+        $header = $plugin instanceof AbstractPluginBase ? $plugin->getMarkHeader() : '';
+
+        if ($header !== '') {
+            $request->headers->set($header, $name);
+        }
+
+        // Info, not warning. A mark is not a complaint -- it is a note for the
+        // application, and a rule marking most of a site's traffic is a
+        // reasonable configuration rather than something to shout about.
+        $this->getLogger()->info('Request marked', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'mark' => $name,
+            'attribute' => $attribute,
+            'enforced' => false,
+        ]));
+
+        $this->announce(new RequestMarked($request, $plugin, $name, $attribute));
+    }
+
+    /**
      * Send the visitor somewhere instead of refusing them.
      *
      * Terminal, like a block: nothing after this runs. Unlike a block it records nothing by
@@ -1193,6 +1258,15 @@ final class Firewall
         }
 
         $this->enforceStorageBlocklist($request);
+
+        // Marking happens before recording, and both before anything terminal.
+        // A rule that only raises a signal has to run even on a request that is
+        // about to be refused: the application may still want to know why, and
+        // a mark that only appeared on requests nobody refused would be a
+        // signal you could not correlate with anything.
+        if (($plugin = $this->markPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->mark($request, $plugin);
+        }
 
         // Record rules run here, and this request keeps going.
         //

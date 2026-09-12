@@ -22,7 +22,8 @@ flowchart TD
     BUCKET1 -->|no match| LIST{"on the<br/>block list?"}
 
     LIST -->|yes| BLOCKED2(["blocked — offense recorded"])
-    LIST -->|no| REC["record bucket<br/>(writes, does not refuse)"]
+    LIST -->|no| MRK["mark bucket<br/>(annotates, does not act)"]
+    MRK --> REC["record bucket<br/>(writes, does not refuse)"]
     REC --> BUCKET2["challenge bucket<br/>(sorted by weight)"]
 
     BUCKET2 -->|"match, holds a pass token<br/>for that provider"| RDR
@@ -44,11 +45,12 @@ flowchart TD
 | 3 | **Challenge submission** | A POST to `challenge.path` is intercepted *before any bucket*, so an unrelated rule can never trap a visitor in a challenge loop. The block list is still enforced first — a client that already earned a ban does not get to solve its way out. |
 | 4 | **Allow bucket** | First bucket. A match ends evaluation. |
 | 5 | **Durable block list** | Storage-backed repeat-offender state, from earlier requests. |
-| 6 | **Record bucket** | `response: record` writes the client to the block list and lets this request through. |
-| 7 | **Challenge bucket** | A valid pass token *for that rule's provider* skips it. |
-| 8 | **Redirect bucket** | `response: redirect` sends the visitor to `metadata.redirect_to`. |
-| 9 | **Block bucket** | A match refuses the request, and records it unless `metadata.record: false`. |
-| 10 | **Allowed** | Nothing objected. |
+| 6 | **Mark bucket** | `response: mark` annotates the request and changes nothing else. |
+| 7 | **Record bucket** | `response: record` writes the client to the block list and lets this request through. |
+| 8 | **Challenge bucket** | A valid pass token *for that rule's provider* skips it. |
+| 9 | **Redirect bucket** | `response: redirect` sends the visitor to `metadata.redirect_to`. |
+| 10 | **Block bucket** | A match refuses the request, and records it unless `metadata.record: false`. |
+| 11 | **Allowed** | Nothing objected. |
 
 ## The three things people get wrong
 
@@ -101,6 +103,7 @@ is wanted without the other.
 | `response: block` + `metadata.record: false` | ✅ | — |
 | `response: record` | — | ✅ |
 | `response: redirect` | sends elsewhere | only with `metadata.record: true` |
+| `response: mark` | — | — |
 | `metadata.mode: log` | — | — |
 
 **`response: record`** serves the request normally and blocks the *next* one. That is what a
@@ -115,6 +118,20 @@ would simply refuse them. It records nothing by default — a redirect is a sign
 ban, and somebody sent to a notice page who came back to find themselves blocked instead
 would have no way to understand why. The defaults are opposite on purpose: a block records
 unless told not to, a redirect records only when told to.
+
+**`response: mark`** does neither. It annotates the request — `firewall.mark.<name>`, plus
+`firewall.marks` listing everything raised — and leaves the decision to the application. A
+comment form can then show a CAPTCHA only to requests the firewall found suspicious rather
+than to everybody. It runs before anything terminal, so a request that is also blocked is
+still marked: a signal that only appeared on requests nobody refused would be one you could
+not correlate with anything.
+
+!!! note "The attribute reaches only code holding the same Request"
+
+    A Symfony or Laravel integration passes its own `Request` and sees it. A `settings.php`
+    bootstrap that later builds a fresh one does not. `metadata.mark_header` also sets a
+    header, and the `RequestMarked` [decision event](../how-to/decision-events.md) is the
+    channel that always arrives.
 
 **`metadata.record: false`** refuses and leaves nothing behind. A deliberate, temporary
 refusal of everybody is not evidence that anybody misbehaved — recording them means lifting
