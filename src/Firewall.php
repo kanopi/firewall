@@ -19,6 +19,7 @@ use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
@@ -35,6 +36,7 @@ use Kanopi\Firewall\Event\RequestAllowed;
 use Kanopi\Firewall\Event\RequestBlocked;
 use Kanopi\Firewall\Event\RequestChallenged;
 use Kanopi\Firewall\Event\RequestRecorded;
+use Kanopi\Firewall\Event\RequestRedirected;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\PanicSwitch;
@@ -103,6 +105,9 @@ final class Firewall
      * @param PluginManager|null $recordPluginManager
      *   Rules with `response: record`, which write a client to the block list
      *   and let the request through (#203). NULL when none are configured.
+     * @param PluginManager|null $redirectPluginManager
+     *   Rules with `response: redirect`, which send the visitor somewhere
+     *   instead of refusing them (#203).
      */
     protected function __construct(
         private StorageInterface $storage,
@@ -115,7 +120,8 @@ final class Firewall
         private array $challengeConfig = [],
         private ?ChallengeProviderRegistry $challengeProviderRegistry = null,
         private ?EventDispatcherInterface $eventDispatcher = null,
-        private ?PluginManager $recordPluginManager = null
+        private ?PluginManager $recordPluginManager = null,
+        private ?PluginManager $redirectPluginManager = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -324,7 +330,8 @@ final class Firewall
             $challengeConfig,
             $providerRegistry,
             $eventDispatcher,
-            PluginManager::createFromPluginsArray($partitioned['record'])
+            PluginManager::createFromPluginsArray($partitioned['record']),
+            PluginManager::createFromPluginsArray($partitioned['redirect'])
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -903,6 +910,84 @@ final class Firewall
     }
 
     /**
+     * Send the visitor somewhere instead of refusing them.
+     *
+     * Terminal, like a block: nothing after this runs. Unlike a block it records nothing by
+     * default -- a redirect is not a ban, and a client sent to a notice page who came back
+     * to find themselves blocked instead would have no way to understand why. A rule can
+     * opt in with `metadata.record: true`.
+     *
+     * @param Request $request
+     *   The request being redirected.
+     * @param PluginInterface $plugin
+     *   The rule that matched.
+     *
+     * @throws FirewallRedirectException
+     *   In `mode: exception`, so the host can write its own response.
+     * @throws ConfigurationException
+     *   When the rule names no destination, which it cannot act on.
+     */
+    protected function sendRedirectResponse(Request $request, PluginInterface $plugin): void
+    {
+        $location = $plugin instanceof AbstractPluginBase ? $plugin->getRedirectLocation() : '';
+        $status = $plugin instanceof AbstractPluginBase ? $plugin->getRedirectStatus() : 302;
+
+        if ($location === '') {
+            // Loud rather than approximate. Falling through to the block bucket
+            // would refuse a visitor the operator meant to send somewhere, and
+            // serving a redirect to nowhere is worse than either.
+            throw new ConfigurationException(sprintf(
+                'Rule "%s" uses response: redirect but names no metadata.redirect_to, so there is '
+                . 'nowhere to send the visitor.',
+                $plugin->getName()
+            ));
+        }
+
+        if ($this->firewallMode === FirewallMode::Log) {
+            $this->getLogger()->warning('Request would be redirected (log mode)', $this->getContext($request, [
+                'mode' => 'log',
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'location' => $location,
+            ]));
+
+            $this->announce(new RequestRedirected($request, $plugin, $location, $status, false));
+
+            return;
+        }
+
+        // Opt-in, not opt-out: see AbstractPluginBase::recordsExplicitly().
+        if ($plugin instanceof AbstractPluginBase && $plugin->recordsExplicitly()) {
+            $this->record($request, $plugin);
+        }
+
+        $this->getLogger()->notice('Sending redirect response', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'location' => $location,
+            'status_code' => $status,
+        ]));
+
+        // Before the throw and before the header is written; neither returns.
+        $this->announce(new RequestRedirected($request, $plugin, $location, $status));
+
+        if ($this->firewallMode === FirewallMode::Exception) {
+            throw new FirewallRedirectException($location, $status);
+        }
+
+        // @codeCoverageIgnoreStart
+        http_response_code($status);
+
+        if (!headers_sent()) {
+            header('Location: ' . $location, true, $status);
+            header('Cache-Control: no-store');
+        }
+
+        exit;
+        // @codeCoverageIgnoreEnd
+    }
+
+    /**
      * Write a client to the block list without refusing this request.
      *
      * The other half of separating refusing from recording. `block()` does both; this does
@@ -1155,6 +1240,14 @@ final class Firewall
             } else {
                 $this->sendChallengeResponse($request, $plugin);
             }
+        }
+
+        // Between challenge and block, and the ordering is the point: the
+        // terminal buckets run gentlest first. A redirect leaves the visitor
+        // somewhere to go, so a rule offering that beats one that would simply
+        // refuse them.
+        if (($plugin = $this->redirectPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->sendRedirectResponse($request, $plugin);
         }
 
         if (($plugin = $this->blockingPluginManager->evaluate($request)) !== false) {

@@ -190,6 +190,57 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
      * enforce, so nothing changes for a rule that declares nothing.
      */
     /**
+     * Whether the rule explicitly opted *in* to recording.
+     *
+     * Separate from `recordsOffenses()`, which answers the opposite question with the
+     * opposite default. A block records unless told not to; a redirect records only when
+     * told to. Both are "what would surprise an operator least", and they differ because
+     * one is a ban and the other is a signpost.
+     *
+     * @return bool
+     *   TRUE only when `metadata.record` is the boolean TRUE.
+     */
+    public function recordsExplicitly(): bool
+    {
+        return ($this->metadata['record'] ?? null) === true;
+    }
+
+    /**
+     * Where a `response: redirect` rule sends the visitor.
+     *
+     * Read from the rule's own configuration and never from the request, which is what
+     * keeps it from becoming an open redirect. A rule with no destination cannot act; the
+     * firewall treats that as a misconfiguration rather than guessing at one.
+     *
+     * @return string
+     *   The destination, or an empty string when none is configured.
+     */
+    public function getRedirectLocation(): string
+    {
+        $location = $this->metadata['redirect_to'] ?? null;
+
+        return is_string($location) ? trim($location) : '';
+    }
+
+    /**
+     * Which redirect status to send.
+     *
+     * 302 by default: a rule's verdict can change with the next configuration edit, and a
+     * 301 is cached by browsers and intermediaries more or less forever. Somebody caught by
+     * a rule that is later tuned should not keep being sent to the notice page long after
+     * the rule stopped matching.
+     *
+     * @return int
+     *   301, 302, 307 or 308. Anything else falls back to 302.
+     */
+    public function getRedirectStatus(): int
+    {
+        $status = $this->metadata['redirect_status'] ?? null;
+
+        return in_array($status, [301, 302, 307, 308], true) ? $status : 302;
+    }
+
+    /**
      * Whether a block by this rule is written to the durable block list.
      *
      * `metadata.record: false` refuses the request and records nothing, which is what a

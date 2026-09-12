@@ -25,9 +25,11 @@ flowchart TD
     LIST -->|no| REC["record bucket<br/>(writes, does not refuse)"]
     REC --> BUCKET2["challenge bucket<br/>(sorted by weight)"]
 
-    BUCKET2 -->|"match, holds a pass token<br/>for that provider"| BUCKET3
+    BUCKET2 -->|"match, holds a pass token<br/>for that provider"| RDR
     BUCKET2 -->|"match, no token"| CHALLENGE(["interstitial served"])
-    BUCKET2 -->|"no match"| BUCKET3["block bucket<br/>(sorted by weight)"]
+    BUCKET2 -->|"no match"| RDR["redirect bucket<br/>(sorted by weight)"]
+    RDR -->|match| SENT(["sent elsewhere — 302"])
+    RDR -->|no match| BUCKET3["block bucket<br/>(sorted by weight)"]
 
     BUCKET3 -->|match| BLOCKED3(["blocked — offense recorded"])
     BUCKET3 -->|no match| ALLOW4(["allowed"])
@@ -44,8 +46,9 @@ flowchart TD
 | 5 | **Durable block list** | Storage-backed repeat-offender state, from earlier requests. |
 | 6 | **Record bucket** | `response: record` writes the client to the block list and lets this request through. |
 | 7 | **Challenge bucket** | A valid pass token *for that rule's provider* skips it. |
-| 8 | **Block bucket** | A match refuses the request, and records it unless `metadata.record: false`. |
-| 9 | **Allowed** | Nothing objected. |
+| 8 | **Redirect bucket** | `response: redirect` sends the visitor to `metadata.redirect_to`. |
+| 9 | **Block bucket** | A match refuses the request, and records it unless `metadata.record: false`. |
+| 10 | **Allowed** | Nothing objected. |
 
 ## The three things people get wrong
 
@@ -97,6 +100,7 @@ is wanted without the other.
 | `response: block` | ✅ | ✅ |
 | `response: block` + `metadata.record: false` | ✅ | — |
 | `response: record` | — | ✅ |
+| `response: redirect` | sends elsewhere | only with `metadata.record: true` |
 | `metadata.mode: log` | — | — |
 
 **`response: record`** serves the request normally and blocks the *next* one. That is what a
@@ -104,6 +108,13 @@ honeypot needs: refusing the fetch tells a scanner exactly which URL is wired, w
 one thing a honeypot must not do. It runs after the block list and before the terminal
 buckets, so an allow rule still wins and a client already blocked is refused rather than
 re-recorded.
+
+**`response: redirect`** is terminal like a block, and runs *before* it: the terminal
+buckets go gentlest first, so a rule offering the visitor somewhere to go beats one that
+would simply refuse them. It records nothing by default — a redirect is a signpost, not a
+ban, and somebody sent to a notice page who came back to find themselves blocked instead
+would have no way to understand why. The defaults are opposite on purpose: a block records
+unless told not to, a redirect records only when told to.
 
 **`metadata.record: false`** refuses and leaves nothing behind. A deliberate, temporary
 refusal of everybody is not evidence that anybody misbehaved — recording them means lifting
