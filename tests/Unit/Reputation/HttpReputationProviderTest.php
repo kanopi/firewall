@@ -32,6 +32,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
         $GLOBALS['fake_reputation_http_response'] = null;
         $GLOBALS['fake_reputation_http_handles'] = [];
         $GLOBALS['fake_reputation_http_urls'] = [];
+        $GLOBALS['fake_reputation_http_requests'] = [];
 
         parent::tearDown();
     }
@@ -164,7 +165,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
             'is rate limiting us' => [429, '{}', 'rate limiting this firewall'],
             'fell over' => [503, '{}', 'returned HTTP 503'],
             'said nothing' => [200, '', 'empty body'],
-            'said something that is not JSON' => [200, '<html>maintenance</html>', 'not JSON'],
+            'said something that is not JSON' => [200, '<html>maintenance</html>', 'is not json'],
         ];
     }
 
@@ -195,7 +196,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
         $GLOBALS['fake_reputation_http_response'] = false;
 
         $provider = $this->provider([
-            'url' => 'https://reputation.example.com/v1/score?token=s3cret&ip={ip}',
+            'upstream' => 'https://reputation.example.com/v1/score?token=s3cret&ip={ip}',
         ]);
 
         try {
@@ -214,14 +215,19 @@ final class HttpReputationProviderTest extends AbstractTestCase
     {
         $this->fakeResponse(200, (string) json_encode(['data' => ['score' => 5]]));
 
-        $provider = $this->provider(['auth' => ['type' => 'bearer', 'token' => 'abc123']]);
+        $provider = $this->provider([
+            'upstream' => [
+                'url' => 'https://reputation.example.com/v1/score?ip={ip}',
+                'auth' => ['type' => 'bearer', 'token' => 'abc123'],
+            ],
+        ]);
 
-        // The shim cannot read request headers back, so this asserts the half
-        // it can: a bearer credential does not end up in the URL, which is
-        // where it would be logged, cached by a proxy and kept in an access
-        // log for a year.
         $provider->check('203.0.113.5');
 
+        $this->assertContains('Authorization: Bearer abc123', $GLOBALS['fake_reputation_http_requests'][0]['header']);
+
+        // And nowhere near the URL, which is where it would be logged, cached
+        // by a proxy, and kept in an access log for a year.
         $this->assertStringNotContainsString('abc123', (string) ($GLOBALS['fake_reputation_http_urls'][0] ?? ''));
     }
 
@@ -232,9 +238,183 @@ final class HttpReputationProviderTest extends AbstractTestCase
     {
         $this->fakeResponse(200, (string) json_encode(['data' => ['score' => 5]]));
 
-        $this->provider(['auth' => ['type' => 'query', 'name' => 'key', 'value' => 'abc123']])->check('203.0.113.5');
+        $this->provider(['upstream' => [
+            'url' => 'https://reputation.example.com/v1/score?ip={ip}',
+            'auth' => ['type' => 'query', 'name' => 'key', 'value' => 'abc123'],
+        ]])->check('203.0.113.5');
 
         $this->assertStringContainsString('key=abc123', (string) ($GLOBALS['fake_reputation_http_urls'][0] ?? ''));
+    }
+
+    /**
+     * A POST, with the address in the body.
+     *
+     * The reason `upstream:` is the whole SourceUpstream block rather than a
+     * `url:` of its own: a service that takes a JSON body needed `method`,
+     * `body` and a content type, and every one of those already existed.
+     */
+    public function testItCanPostTheAddressInABody(): void
+    {
+        $this->fakeResponse(200, (string) json_encode(['data' => ['score' => 91]]));
+
+        $provider = $this->provider([
+            'upstream' => [
+                'url' => 'https://reputation.example.com/v1/score',
+                'method' => 'POST',
+                'body' => '{"ip": "{ip}"}',
+                'headers' => ['X-Tenant' => 'acme'],
+            ],
+        ]);
+
+        $this->assertSame(91.0, $provider->check('203.0.113.5')->score);
+
+        // The URL is the one configured -- no query string grew out of the
+        // substitution -- and the address went in the body instead.
+        $this->assertSame(
+            ['https://reputation.example.com/v1/score'],
+            $GLOBALS['fake_reputation_http_urls']
+        );
+
+        $sent = $GLOBALS['fake_reputation_http_requests'][0];
+
+        $this->assertSame('POST', $sent['method']);
+        $this->assertSame('{"ip": "203.0.113.5"}', $sent['content']);
+        $this->assertContains('X-Tenant: acme', $sent['header']);
+        $this->assertContains('Content-Type: application/json', $sent['header']);
+    }
+
+    /**
+     * A body carrying an address is still valid JSON afterwards.
+     *
+     * `{ip}` inside a quoted string means the substitution has to be escaped
+     * the way JSON escapes a string, or an address with a quote in it -- which
+     * is not an address, but is what somebody would send at a firewall that
+     * trusts a forwarded header -- would break the document or inject a field
+     * into it.
+     */
+    public function testAnAddressSubstitutedIntoABodyIsEscaped(): void
+    {
+        $this->fakeResponse(200, (string) json_encode(['data' => ['score' => 1]]));
+
+        $this->provider([
+            'upstream' => [
+                'url' => 'https://reputation.example.com/v1/score',
+                'method' => 'POST',
+                'body' => '{"ip": "{ip}", "tenant": "acme"}',
+            ],
+        ])->check('203.0.113.5" , "tenant": "someone-else');
+
+        $sent = (string) ($GLOBALS['fake_reputation_http_requests'][0]['content'] ?? '');
+        $decoded = json_decode($sent, true);
+
+        $this->assertIsArray($decoded, 'The body must still be JSON: ' . $sent);
+        $this->assertSame('acme', $decoded['tenant'], 'The address must not be able to overwrite a field.');
+        $this->assertSame('203.0.113.5" , "tenant": "someone-else', $decoded['ip']);
+    }
+
+    /**
+     * A score read out of plain text, by pattern.
+     *
+     * `score_path` addresses structure; a service answering `risk=82 reason=proxy`
+     * has none. The pattern reads the raw body, so `format:` does not have to
+     * mean anything for it.
+     */
+    public function testAScoreCanBeReadFromTextByPattern(): void
+    {
+        $this->fakeResponse(200, "risk=82 reason=open-proxy\n");
+
+        $provider = $this->provider(['score_pattern' => '/risk=(\d+)/', 'score_path' => null]);
+
+        $this->assertSame(82.0, $provider->check('203.0.113.5')->score);
+    }
+
+    /**
+     * A pattern that does not match is a failure, not a zero.
+     *
+     * The same rule as a `score_path` that resolves to nothing, and for the
+     * same reason: reading "no match" as a clean score turns a service that
+     * changed its output into protection that is silently off.
+     */
+    public function testAPatternThatDoesNotMatchIsAFailure(): void
+    {
+        $this->fakeResponse(200, 'service unavailable, try later');
+
+        $this->expectException(ReputationUnavailableException::class);
+        $this->expectExceptionMessageMatches('/returned no score/');
+
+        $this->provider(['score_pattern' => '/risk=(\d+)/', 'score_path' => null])->check('203.0.113.5');
+    }
+
+    /**
+     * A line-oriented body is a list of lines, so a path still addresses it.
+     *
+     * This is the decoder registry doing the work: `txt` produces the same
+     * list of records a rule source gets, and `score_path: 0` is the first of
+     * them. No new concept for "the response is just the number".
+     */
+    public function testATextBodyIsDecodedIntoLines(): void
+    {
+        $this->fakeResponse(200, "82\n");
+
+        $this->assertSame(82.0, $this->provider(['format' => 'txt', 'score_path' => '0'])->check('203.0.113.5')->score);
+    }
+
+    /**
+     * XML, addressed with the same dot path as everything else.
+     *
+     * Attributes land under `@attributes`, which is SimpleXML's shape and the
+     * one an API's own documentation will match.
+     */
+    public function testAnXmlBodyIsAddressedWithTheSamePath(): void
+    {
+        $this->fakeResponse(200, '<response><data score="77"/></response>');
+
+        $verdict = $this->provider([
+            'format' => 'xml',
+            'score_path' => 'data.@attributes.score',
+        ])->check('203.0.113.5');
+
+        $this->assertSame(77.0, $verdict->score);
+    }
+
+    /**
+     * An XML body carrying a DOCTYPE is refused rather than parsed.
+     *
+     * A response body is bytes somebody else's server produced. Every familiar
+     * way of weaponising one -- an entity pointing at `file:///etc/passwd` or
+     * an internal URL, or entities that expand to gigabytes -- starts with a
+     * DOCTYPE, and nothing that publishes a score sends one.
+     *
+     * The refusal reaches the rule as a failed lookup, so the request is
+     * allowed through rather than 500ing on a hostile response.
+     */
+    public function testAnXmlDoctypeIsRefused(): void
+    {
+        $this->fakeResponse(
+            200,
+            '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]><r><score>&x;</score></r>'
+        );
+
+        try {
+            $this->provider(['format' => 'xml', 'score_path' => 'score'])->check('203.0.113.5');
+            $this->fail('A DOCTYPE must be refused.');
+        } catch (ReputationUnavailableException $reputationUnavailableException) {
+            $this->assertStringContainsString('DOCTYPE', $reputationUnavailableException->getMessage());
+            $this->assertStringNotContainsString('root:', $reputationUnavailableException->getMessage());
+        }
+    }
+
+    /**
+     * A body in a format the rule did not declare is a failure.
+     */
+    public function testABodyInAnotherFormatIsAFailure(): void
+    {
+        $this->fakeResponse(200, 'score: 82');
+
+        $this->expectException(ReputationUnavailableException::class);
+        $this->expectExceptionMessageMatches('/is not json/');
+
+        $this->provider()->check('203.0.113.5');
     }
 
     /**
@@ -247,9 +427,9 @@ final class HttpReputationProviderTest extends AbstractTestCase
     public function testAUrlWithoutTheAddressIsRefused(): void
     {
         $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessageMatches('/does not contain `\{ip\}`/');
+        $this->expectExceptionMessageMatches('/never mentions `\{ip\}`/');
 
-        new HttpReputationProvider(['url' => 'https://reputation.example.com/v1/score', 'score_path' => 'score']);
+        new HttpReputationProvider(['upstream' => 'https://reputation.example.com/v1/score', 'score_path' => 'score']);
     }
 
     /**
@@ -259,7 +439,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
     {
         try {
             new HttpReputationProvider([
-                'url' => 'https://reputation.example.com/v1/score?token=s3cret',
+                'upstream' => 'https://reputation.example.com/v1/score?token=s3cret',
                 'score_path' => 'score',
             ]);
             $this->fail('A URL without {ip} must be refused.');
@@ -292,16 +472,49 @@ final class HttpReputationProviderTest extends AbstractTestCase
     public static function unusableConfigurations(): array
     {
         return [
-            'no url' => [['score_path' => 'score'], 'needs a `url`'],
-            'a url that is not a string' => [['url' => 42, 'score_path' => 'score'], 'needs a `url`'],
-            'no score_path' => [['url' => 'https://example.com/?ip={ip}'], 'needs a `score_path`'],
+            'no upstream' => [['score_path' => 'score'], 'needs an `upstream`'],
+            'an upstream that is neither a string nor a map' => [
+                ['upstream' => 42, 'score_path' => 'score'],
+                'must be a URL string or a map',
+            ],
+            'an upstream with no url' => [
+                ['upstream' => ['method' => 'POST'], 'score_path' => 'score'],
+                'needs a non-empty "url"',
+            ],
+            'no way of finding a score' => [
+                ['upstream' => 'https://example.com/?ip={ip}'],
+                'needs either a `score_path`',
+            ],
+            'a method nothing can send' => [
+                ['upstream' => ['url' => 'https://example.com/?ip={ip}', 'method' => 'DELETE'], 'score_path' => 'score'],
+                'upstream.method must be one of',
+            ],
             'an auth that is not a map' => [
-                ['url' => 'https://example.com/?ip={ip}', 'score_path' => 'score', 'auth' => 'bearer abc'],
-                '`auth` must be a map',
+                ['upstream' => ['url' => 'https://example.com/?ip={ip}', 'auth' => 'bearer abc'], 'score_path' => 'score'],
+                'auth must be a map',
             ],
             'an auth with no type' => [
-                ['url' => 'https://example.com/?ip={ip}', 'score_path' => 'score', 'auth' => ['token' => 'abc']],
+                ['upstream' => ['url' => 'https://example.com/?ip={ip}', 'auth' => ['token' => 'abc']], 'score_path' => 'score'],
                 'auth.type must be one of',
+            ],
+            'a credential over plain http' => [
+                [
+                    'upstream' => ['url' => 'http://example.com/?ip={ip}', 'auth' => ['type' => 'bearer', 'token' => 'x']],
+                    'score_path' => 'score',
+                ],
+                'refusing to send credentials over plain http',
+            ],
+            'a format nothing decodes' => [
+                ['upstream' => 'https://example.com/?ip={ip}', 'score_path' => 'score', 'format' => 'protobuf'],
+                'No decoder registered for format',
+            ],
+            'a pattern that does not compile' => [
+                ['upstream' => 'https://example.com/?ip={ip}', 'score_pattern' => '/risk=(/'],
+                'not a usable regular expression',
+            ],
+            'a pattern that captures nothing' => [
+                ['upstream' => 'https://example.com/?ip={ip}', 'score_pattern' => '/risk=\\d+/'],
+                'has no capturing group',
             ],
         ];
     }
@@ -336,7 +549,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
 
         $this->assertSame(
             'http-scores-internal',
-            $this->provider(['url' => 'https://scores.internal/?ip={ip}'])->getSlug()
+            $this->provider(['upstream' => 'https://scores.internal/?ip={ip}'])->getSlug()
         );
     }
 
@@ -375,7 +588,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
     private function provider(array $config = []): HttpReputationProvider
     {
         return new HttpReputationProvider($config + [
-            'url' => 'https://reputation.example.com/v1/score?ip={ip}',
+            'upstream' => 'https://reputation.example.com/v1/score?ip={ip}',
             'score_path' => 'data.score',
         ]);
     }
@@ -386,6 +599,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
     private function fakeResponse(int $status, string $body): void
     {
         $GLOBALS['fake_reputation_http_urls'] = [];
+        $GLOBALS['fake_reputation_http_requests'] = [];
         $GLOBALS['fake_reputation_http_response'] = [
             'headers' => ['HTTP/1.1 ' . $status . ' ' . ($status === 200 ? 'OK' : 'Error')],
             'body' => $body,

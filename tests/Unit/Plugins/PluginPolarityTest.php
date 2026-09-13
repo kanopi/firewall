@@ -116,7 +116,7 @@ class PluginPolarityTest extends AbstractTestCase
             'Reputation' => [
                 fn (): PluginInterface => new \Kanopi\Firewall\Plugins\Reputation([], [
                     'provider'   => 'http',
-                    'url'        => self::REPUTATION_URL,
+                    'upstream'   => self::REPUTATION_URL,
                     'score_path' => 'data.score',
                     'threshold'  => 75,
                     'cache_dir'  => self::seedReputationCache(),

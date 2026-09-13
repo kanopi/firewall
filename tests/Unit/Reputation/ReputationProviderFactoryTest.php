@@ -33,7 +33,7 @@ final class ReputationProviderFactoryTest extends AbstractTestCase
         $this->assertInstanceOf(
             HttpReputationProvider::class,
             ReputationProviderFactory::create('http', [
-                'url' => 'https://example.com/?ip={ip}',
+                'upstream' => 'https://example.com/?ip={ip}',
                 'score_path' => 'score',
             ])
         );

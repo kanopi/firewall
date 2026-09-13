@@ -66,7 +66,7 @@ values a plugin wants needs nothing but an `upstream`.
 |---|---|---|---|
 | `upstream` | string or map | *required* | Where the list lives and how to ask for it — see [Upstreams](#upstreams) |
 | `name` | string | derived from `upstream` | Used in logs, errors, and match attribution |
-| `format` | enum | inferred from extension, else `txt` | `txt`, `json`, `ndjson`, `yaml`, `csv`, `tsv` |
+| `format` | enum | inferred from extension, else `txt` | `txt`, `json`, `ndjson`, `yaml`, `csv`, `tsv`, `xml` |
 | `compression` | enum | inferred from extension, else `none` | `none`, `gzip` |
 | `select` | string | none | Dot-path selecting records from the decoded document |
 | `where` | list | `[]` | Conditional-logic rules every kept record must satisfy |

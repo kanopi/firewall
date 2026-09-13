@@ -19,9 +19,11 @@ plugins:
       name: internal-reputation
     config:
       provider: http
-      url: "https://reputation.example.com/v1/score?ip={ip}"
+      upstream: "https://reputation.example.com/v1/score?ip={ip}"
       score_path: data.score
       threshold: 75
+      when:
+        - "path@starts_with:/login"
 ```
 
 `provider` is `abuseipdb`, `http`, or the class name of [one you
@@ -29,55 +31,136 @@ wrote](#writing-a-provider). `AbuseIpdb` is this rule with `provider: abuseipdb`
 is why nothing about that plugin's configuration changed when this was extracted out from
 under it.
 
+## Only ask where it is worth asking
+
+A reputation lookup is the most expensive thing in an evaluation: a network round trip, a
+slice of somebody's quota, and latency in front of a visitor. On most sites only a handful of
+paths justify it.
+
+`when:` is a list of the [same conditions](../configuration/conditional-logic.md) every other
+rule uses, so path gating and method gating are the same feature:
+
+```yaml
+when:
+  - "path@starts_with:/login"
+  - "path:/checkout"
+```
+
+```yaml
+when:
+  - type: AND
+    rules:
+      - "method:POST"
+      - "path:/login"
+```
+
+Entries are first-match-wins, like a plugin's `config:` list — any one matching is enough. No
+`when:` means every request, which is what rules written before 2.27.0 did.
+
+!!! warning "A misspelled condition gates the rule off entirely"
+
+    `pathh:/login` matches nothing, so the lookup never happens — while the configuration
+    still reads as though reputation is being checked on `/login`. The rule reports it at
+    `warning` on startup, with a suggestion, the same way an unusable rule is reported.
+
 ## The `http` provider
 
-For any endpoint that takes an address and answers with JSON.
+For any endpoint that takes an address and answers with something parseable.
 
 | Key | Type | Default | |
 |---|---|---|---|
-| `url` | string | *required* | Must contain `{ip}`, where the address goes |
-| `score_path` | string | *required* | Where the score is, in the dot syntax a source `select:` uses |
-| `trusted_path` | string | *unset* | Where an "allow this one" flag is, if the service has one |
-| `auth` | map | *unset* | `bearer`, `basic`, `header` or `query`, exactly as a [rule source](../configuration/sources.md#authentication) declares it |
+| `upstream` | string or map | *required* | The endpoint, exactly as a [rule source declares one](../configuration/sources.md#upstreams) |
+| `format` | enum | `json` | `json`, `txt`, `csv`, `tsv`, `ndjson`, `yaml`, `xml` |
+| `score_path` | string | | Where the score is in the decoded body, in the dot syntax a source `select:` uses |
+| `score_pattern` | string | | *Or* a regular expression with one capturing group, read from the raw body |
+| `trusted_path` / `trusted_pattern` | string | *unset* | The same two ways of finding an "allow this one" flag |
 | `provider_name` | string | `Reputation service` | What the log lines call it |
 | `public_only` | bool | `true` | `false` to look up private and reserved addresses too |
-| `timeout` | float | `2.0` | Seconds to wait before giving up and allowing the request |
+| `content_type` | string | `application/json` | Sent with an `upstream.body` |
+
+`upstream:` is the whole [source upstream](../configuration/sources.md#upstreams) block, so
+`method`, `headers`, `body`, `auth`, `timeout`, `max_redirects` and `allow_insecure` all work
+here because they already worked there — including the refusal to send a credential over
+plain `http`.
+
+### A GET with a token
 
 ```yaml
 config:
   provider: http
-  url: "https://reputation.example.com/v1/score?ip={ip}"
-  auth:
-    type: bearer
-    token: "%env(REPUTATION_TOKEN)%"
+  upstream:
+    url: "https://reputation.example.com/v1/score?ip={ip}"
+    auth:
+      type: bearer
+      token: "%env(REPUTATION_TOKEN)%"
   score_path: data.score
-  trusted_path: data.allowlisted
-  provider_name: Example Reputation
-  threshold: 75
 ```
 
-against a service answering:
+### A POST with the address in the body
 
-```json
-{"data": {"score": 82, "allowlisted": false}}
+```yaml
+config:
+  provider: http
+  upstream:
+    url: "https://reputation.example.com/v1/score"
+    method: POST
+    body: '{"ip": "{ip}", "tenant": "acme"}'
+    headers:
+      X-Request-Source: firewall
+  score_path: data.risk
 ```
 
-Nothing here is new vocabulary. `auth:` is the same block rule sources have taken since
-2.19.0, including the redaction that keeps a token out of a log line; `score_path` is the
-same dot syntax as a source's `select:`.
+`{ip}` is substituted in the URL **and** the body, JSON-escaped on the way in so an address
+carrying a quote cannot break the document or overwrite a field beside it.
 
-!!! danger "The URL has to contain `{ip}`"
+### A plain-text service
 
-    A URL that does not name the address returns the same body for every visitor — a
-    reputation check that can neither fail nor help. The rule refuses to start rather than
-    letting you discover it from a log line saying every address scores 4.
+Some services answer with a line rather than a document. Two ways to read one:
 
-!!! warning "A missing score is a failure, not a zero"
+```yaml
+format: txt
+score_path: 0            # the body is "82\n" — a list of lines, so 0 is the first
+```
 
-    If `score_path` resolves to nothing — the endpoint changed shape, or answers
-    `{"error": "..."}` with a 200 — the lookup is treated as **failed** and the rule fails
-    open loudly. Reading it as zero would score every visitor clean: protection switched off,
-    with a healthy-looking service behind it.
+```yaml
+score_pattern: '/risk=(\d+)/'    # the body is "risk=82 reason=open-proxy"
+```
+
+A pattern reads the **raw body**, so `format:` means nothing alongside it; a path reads the
+**decoded structure**. Use one or the other. A pattern must compile and must capture
+something — both are checked at startup, not per request.
+
+### XML
+
+```yaml
+format: xml
+score_path: data.@attributes.score      # <response><data score="77"/></response>
+```
+
+Attributes land under `@attributes`, which is SimpleXML's convention and the shape the API's
+own documentation will match.
+
+!!! danger "An XML body with a `DOCTYPE` is refused"
+
+    A response body is bytes somebody else's server produced, and every familiar way of
+    weaponising one starts with a document type declaration: an entity pointing at
+    `file:///etc/passwd` or an internal URL (XXE — a file read and an SSRF out of a response
+    body), or nested entities that expand to gigabytes. Nothing that publishes a score sends
+    one, so the decoder rejects the body before the parser sees it. It reaches the rule as a
+    failed lookup, so the request is allowed through rather than erroring.
+
+!!! danger "A missing score is a failure, not a zero"
+
+    If `score_path` resolves to nothing, or `score_pattern` does not match — the endpoint
+    changed shape, or answers `{"error": "..."}` with a 200 — the lookup is treated as
+    **failed** and the rule fails open loudly. Reading it as zero would score every visitor
+    clean: protection switched off, with a healthy-looking service behind it.
+
+!!! danger "The request has to name the address"
+
+    `{ip}` must appear in the URL or the body. Without it the same question is asked for
+    every visitor — a reputation check that can neither fail nor help — so the rule refuses
+    to start.
 
 ## Settings every provider shares
 

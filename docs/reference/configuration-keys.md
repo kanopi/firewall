@@ -140,10 +140,14 @@ Every `sources:` option is its own table in [Rule Sources](../configuration/sour
 | `block_duration` | int | `3600` | How long the address is remembered |
 | `api_key` | string | *unset* | `abuseipdb`: required, or the rule is inert |
 | `max_age_in_days` | int | `30` | `abuseipdb`: how far back reports count |
-| `url` | string | *required* | `http`: must contain `{ip}` |
-| `score_path` | string | *required* | `http`: dot path to the score |
+| `when` | list | *unset* | Conditions gating the lookup — same syntax as any rule |
+| `upstream` | string or map | *required* | `http`: the endpoint, as [a source declares one](../configuration/sources.md#upstreams). Must contain `{ip}` |
+| `format` | string | `json` | `http`: `json`, `txt`, `csv`, `tsv`, `ndjson`, `yaml`, `xml` |
+| `score_path` | string | | `http`: dot path to the score in the decoded body |
+| `score_pattern` | string | | `http`: or a regex with one capturing group, read from the raw body |
 | `trusted_path` | string | *unset* | `http`: dot path to an "allow this one" flag |
-| `auth` | map | *unset* | `http`: as [a source declares it](../configuration/sources.md#authentication) |
+| `trusted_pattern` | string | *unset* | `http`: or a regex for the same |
+| `content_type` | string | `application/json` | `http`: sent with an `upstream.body` |
 | `provider_name` | string | *see docs* | `http`: what log lines call the service |
 | `public_only` | bool | `true` | `http`: `false` also looks up private addresses |
 | `timeout` | float | `2.0` | Seconds to wait before giving up |

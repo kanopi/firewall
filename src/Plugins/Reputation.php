@@ -15,6 +15,9 @@ use Kanopi\Firewall\Exception\ReputationUnavailableException;
 use Kanopi\Firewall\Reputation\ReputationProviderFactory;
 use Kanopi\Firewall\Reputation\ReputationProviderInterface;
 use Kanopi\Firewall\Reputation\ReputationVerdict;
+use Kanopi\Firewall\Utility\RuleDiagnostics;
+use Kanopi\Firewall\Traits\EvaluateTrait;
+use Kanopi\Firewall\Traits\RequestValueTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -68,6 +71,9 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class Reputation extends AbstractPluginBase
 {
+    use EvaluateTrait;
+    use RequestValueTrait;
+
     /**
      * Score at or above which the plugin matches.
      *
@@ -124,6 +130,10 @@ class Reputation extends AbstractPluginBase
      */
     public function evaluate(Request $request): bool
     {
+        if (!$this->applies($request)) {
+            return false;
+        }
+
         $provider = $this->provider();
         $problem = $provider->getConfigurationProblem();
 
@@ -219,6 +229,124 @@ class Reputation extends AbstractPluginBase
     public function getExpirationTime(?Request $request = null): int
     {
         return (int) ($this->config['block_duration'] ?? 3600);
+    }
+
+    /**
+     * Whether this request is one worth asking about.
+     *
+     * A reputation lookup is the most expensive thing in an evaluation -- a
+     * network round trip, a slice of somebody's quota, and latency in front of
+     * a visitor -- and for most sites only a handful of paths are worth
+     * spending it on. `when:` is the gate:
+     *
+     * ```yaml
+     * config:
+     *   when:
+     *     - "path@starts_with:/login"
+     *     - "path:/checkout"
+     * ```
+     *
+     * The conditions are the ones documented for every other rule, so `method`,
+     * `header.*`, `post.*`, `query` and the rest all work here without this
+     * inventing a `paths:` or a `methods:` key that would have meant learning a
+     * second vocabulary for the same idea. Like a plugin's `config:` list, the
+     * entries are first-match-wins: any one of them matching is enough.
+     *
+     * No `when:` means every request, which is what every rule written before
+     * this did.
+     *
+     * @param Request $request
+     *   The request under evaluation.
+     *
+     * @return bool
+     *   TRUE when the lookup should happen.
+     */
+    protected function applies(Request $request): bool
+    {
+        $when = $this->config['when'] ?? null;
+
+        if (!is_array($when) || $when === []) {
+            return true;
+        }
+
+        if ($this->evaluateRequest($request, $when)) {
+            return true;
+        }
+
+        $this->getLogger()->debug('Reputation lookup skipped - the request is outside `when`', $this->getContext($request, [
+            'plugin' => $this->getName(),
+        ]));
+
+        return false;
+    }
+
+    /**
+     * Resolve a `when:` variable against the request.
+     *
+     * `EvaluateTrait` leaves this as a hook returning NULL so that a class can
+     * use rule evaluation without exposing a request vocabulary. Every
+     * condition here is about the request, so it delegates to the shared
+     * resolver -- the same one `Url` rules and rate-limit keys use, so `path`,
+     * `method`, `header.*`, `post.*`, `query` and `cookie.*` mean here exactly
+     * what they mean there.
+     *
+     * @param Request $request
+     *   The request under evaluation.
+     * @param string $variable
+     *   The variable named in a condition.
+     *
+     * @return mixed
+     *   Its value, or NULL when this rule cannot resolve it.
+     */
+    protected function getValue(Request $request, string $variable): mixed
+    {
+        return $this->resolveRequestValue($request, $variable);
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * The vocabulary `when:` accepts. Used by `reportUnusableRules()` below
+     * rather than by the base implementation, which inspects `config:` as a
+     * rule list and returns early here because this rule's `config:` is a map.
+     */
+    protected function knownRuleVariables(): array
+    {
+        return ['method', 'host', 'path', 'query', 'scheme', 'port', 'post', 'header', 'cookie'];
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Points the rule checker at `when:`, which is the only rule list this
+     * plugin has.
+     *
+     * A misspelled condition matters more here than in most places. A rule
+     * whose condition cannot match simply never fires; a **gate** whose
+     * condition cannot match turns the rule off for every request, while the
+     * configuration still reads as though reputation is being checked on
+     * `/login` (#165).
+     */
+    protected function reportUnusableRules(): void
+    {
+        parent::reportUnusableRules();
+
+        $when = $this->config['when'] ?? null;
+
+        if (!is_array($when) || $when === []) {
+            return;
+        }
+
+        $result = RuleDiagnostics::inspect($when, $this->knownRuleVariables());
+        $this->config['when'] = $result['rules'];
+
+        foreach ($result['issues'] as $issue) {
+            $this->getLogger()->warning('Reputation `when` condition will not match anything - the rule is gated off every request', [
+                'plugin' => $this->getName(),
+                'rule' => $issue['rule'],
+                'reason' => $issue['reason'],
+            ]);
+        }
     }
 
     /**

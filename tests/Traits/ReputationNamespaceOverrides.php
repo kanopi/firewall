@@ -44,6 +44,11 @@ $GLOBALS['fake_reputation_http_response'] = null;
 $GLOBALS['fake_reputation_http_handles'] = [];
 
 /**
+ * The request options of each call this file intercepted.
+ */
+$GLOBALS['fake_reputation_http_requests'] = [];
+
+/**
  * @param string $filename
  *   Target to open.
  * @param string $mode
@@ -70,6 +75,15 @@ function fopen($filename, $mode, ...$args)
     // that the address reached the endpoint, and that a credential did not
     // reach anywhere it should not.
     $GLOBALS['fake_reputation_http_urls'][] = $filename;
+
+    // And the request itself, out of the stream context: method, headers and
+    // body, exactly as they would have gone on the wire. Without this a test
+    // of "what did we send" can only re-do the sending code and assert its own
+    // copy of it.
+    $context = $args[1] ?? null;
+    $GLOBALS['fake_reputation_http_requests'][] = is_resource($context)
+        ? (\stream_context_get_options($context)['http'] ?? [])
+        : [];
 
     $handle = \fopen('php://memory', 'r+');
 

@@ -345,6 +345,7 @@ final class SourceDefinition
             'yaml', 'yml' => 'yaml',
             'csv' => 'csv',
             'tsv' => 'tsv',
+            'xml' => 'xml',
             default => 'txt',
         };
     }

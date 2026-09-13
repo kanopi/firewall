@@ -230,7 +230,7 @@ final class ReputationTest extends AbstractTestCase
     public function testTheDefaultProviderIsTheGenericHttpOne(): void
     {
         $rule = new Reputation([], [
-            'url' => 'https://reputation.example.com/v1/score?ip={ip}',
+            'upstream' => 'https://reputation.example.com/v1/score?ip={ip}',
             'score_path' => 'data.score',
             'cache_dir' => $this->cacheDir,
         ]);
@@ -242,6 +242,92 @@ final class ReputationTest extends AbstractTestCase
         // no and the rule returns without opening a socket -- having resolved
         // `http` on the way past, which is what this is asserting.
         $this->assertFalse($rule->evaluate($this->getRequest('10.0.0.4')));
+    }
+
+    /**
+     * `when:` keeps the lookup off the paths that do not need it.
+     *
+     * A reputation lookup is the most expensive thing in an evaluation -- a
+     * round trip, a slice of quota, and latency in front of a visitor. On most
+     * sites only a handful of paths are worth spending it on, and without a
+     * gate the only way to have it on `/login` is to have it on every image
+     * request too.
+     */
+    public function testWhenKeepsTheLookupOffOtherPaths(): void
+    {
+        $rule = $this->rule(
+            ['threshold' => 75, 'when' => ['path@starts_with:/login']],
+            [new ReputationVerdict(100.0), new ReputationVerdict(100.0)]
+        );
+
+        $this->assertTrue($rule->evaluate($this->request('/login', '203.0.113.5')));
+        $this->assertFalse(
+            $rule->evaluate($this->request('/logo.png', '203.0.113.6')),
+            'A path outside `when` must not be looked up, however bad the address is.'
+        );
+    }
+
+    /**
+     * It is the condition vocabulary, so it gates on method too.
+     *
+     * The reason this is `when:` rather than a `paths:` key: "only on POSTs to
+     * /login" is one condition list away, and needed no second vocabulary for
+     * the same idea.
+     */
+    public function testWhenGatesOnMethodAsWellAsPath(): void
+    {
+        $rule = $this->rule(
+            ['threshold' => 75, 'when' => [['type' => 'AND', 'rules' => ['method:POST', 'path:/login']]]],
+            [new ReputationVerdict(100.0), new ReputationVerdict(100.0)]
+        );
+
+        $this->assertFalse($rule->evaluate($this->request('/login', '203.0.113.5')));
+        $this->assertTrue($rule->evaluate($this->request('/login', '203.0.113.6', 'POST')));
+    }
+
+    /**
+     * Several conditions are first-match-wins, like every other rule list.
+     */
+    public function testWhenIsFirstMatchWins(): void
+    {
+        $rule = $this->rule(
+            ['threshold' => 75, 'when' => ['path:/login', 'path:/checkout']],
+            [new ReputationVerdict(100.0), new ReputationVerdict(100.0)]
+        );
+
+        $this->assertTrue($rule->evaluate($this->request('/checkout', '203.0.113.5')));
+    }
+
+    /**
+     * No `when:` is every request, which is what rules without one always did.
+     */
+    public function testNoWhenMeansEveryRequest(): void
+    {
+        $rule = $this->rule(['threshold' => 75], [new ReputationVerdict(100.0)]);
+
+        $this->assertTrue($rule->evaluate($this->request('/anything', '203.0.113.5')));
+    }
+
+    /**
+     * A misspelled condition is reported, because it turns the rule off.
+     *
+     * A rule whose condition cannot match simply never fires. A **gate** whose
+     * condition cannot match gates the rule off every request, while the
+     * configuration still reads as though reputation is checked on `/login`
+     * (#165).
+     */
+    public function testAMisspelledConditionIsReported(): void
+    {
+        $handler = $this->captureLogs();
+
+        new Reputation([], [
+            'provider' => 'http',
+            'upstream' => 'https://reputation.example.com/v1/score?ip={ip}',
+            'score_path' => 'data.score',
+            'when' => ['pathh:/login'],
+        ]);
+
+        $this->assertTrue($handler->hasWarningContaining('gated off every request'));
     }
 
     /**
@@ -352,7 +438,7 @@ final class ReputationTest extends AbstractTestCase
 
         $rule = new class ([], [
             'provider' => 'http',
-            'url' => 'https://reputation.example.com/v1/score?ip={ip}',
+            'upstream' => 'https://reputation.example.com/v1/score?ip={ip}',
             'score_path' => 'data.score',
             'cache_dir' => $this->cacheDir,
         ]) extends Reputation {
@@ -372,6 +458,14 @@ final class ReputationTest extends AbstractTestCase
         ]));
 
         $this->assertNull($rule->exposedRead('203.0.113.5'));
+    }
+
+    /**
+     * A request at a path, from an address.
+     */
+    private function request(string $path, string $ip, string $method = 'GET'): Request
+    {
+        return Request::create($path, $method, [], [], [], ['REMOTE_ADDR' => $ip]);
     }
 
     /**
