@@ -86,6 +86,56 @@ plugins:
         sample: 3600  # Block direct script access
 ```
 
+## What a limit counts by
+
+By default, the client IP and the rule's own pattern — so `/api/*` at 100/min is 100
+requests across every endpoint under it, from one address. `key:` changes that:
+
+```yaml
+config:
+  - path: /login
+    rate: 5
+    sample: 300
+    key: [post.name]                # per account, across every address
+  - path: /api/*
+    rate: 100
+    sample: 60
+    key: [client_ip, path]          # per endpoint, not per API
+```
+
+| Component | |
+|---|---|
+| `client_ip` | The client address. The default identity |
+| `rule_pattern` | The rule's `path` value — `/api/*` |
+| `path` | The **request** path — `/api/users` |
+| `method`, `host`, `query`, `scheme`, `port` | As the [URL plugin](url.md) reads them |
+| `header.x`, `post.x`, `cookie.x`, `query.x` | Same vocabulary, same nesting |
+
+`metadata.default_key` sets it for every rule that declares none. A rule's own `key:` wins.
+
+### Why the default is often wrong
+
+- **Credential stuffing spreads across addresses.** Ten thousand IPs at three attempts each
+  stays under a 10-per-5-minutes rule on every bucket, and the account is gone. `key:
+  [post.name]` counts the account instead, and the attack shows up in one bucket.
+- **Carrier and corporate NAT share one.** An office, school or mobile network is one
+  address, so a limit tuned for one person throttles a thousand.
+- **API keys from rotating egress are not countable at all** by IP. `key:
+  [header.x-api-key]` makes them countable.
+
+!!! note "A composed key is stored hashed"
+
+    A key can name `post.password` or `header.authorization`, and a rate limit is not a
+    reason for a credential to be written to Redis, a database, or a file on disk. Declare a
+    `key:` and the stored key becomes an opaque hash.
+
+    The **default** key is stored in the clear exactly as it always was, so upgrading resets
+    nobody's counters. Only rules that opt in change shape.
+
+    A component that resolves to nothing — a header that was not sent — still occupies its
+    position, so a request missing the field does not share a bucket with one whose field is
+    genuinely empty.
+
 ## Paths with no rule of their own
 
 Every path is rate limited by default, not only the ones listed under `config:`. A request

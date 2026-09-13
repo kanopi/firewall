@@ -14,6 +14,7 @@ namespace Kanopi\Firewall\Plugins;
 use Kanopi\Firewall\RateLimitStorage\PrunableRateLimitStorageInterface;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageFactory;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
+use Kanopi\Firewall\Traits\RequestValueTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -21,6 +22,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class RateLimit extends AbstractPluginBase
 {
+    use RequestValueTrait;
+
     /**
      * The smallest limit that can be enforced.
      *
@@ -40,6 +43,16 @@ class RateLimit extends AbstractPluginBase
      * Rate Limit Storage.
      */
     protected ?RateLimitStorageInterface $storage = null;
+
+    /**
+     * What a rate limit counts by when nothing says otherwise.
+     *
+     * The client IP and the rule's pattern: exactly the key every release before 2.27.0
+     * built, so a configuration that declares no `key` is unchanged (#200).
+     *
+     * @var array<int, string>
+     */
+    private const DEFAULT_KEY = ['client_ip', 'rule_pattern'];
 
     /**
      * Constructs a new RateLimit object.
@@ -168,11 +181,105 @@ class RateLimit extends AbstractPluginBase
      */
     protected function buildRateKey(Request $request, array $rule): string
     {
-        return sprintf(
-            'rate:%s:%s',
-            $request->getClientIp(),
-            $rule['path']
-        );
+        $components = $this->keyComponents($rule);
+
+        // The default is the legacy key, byte for byte, rather than a hash of
+        // the same two values. A composed key has to be hashed -- see below --
+        // and hashing the default as well would reset every counter on every
+        // install the moment they upgrade. Rate state is cheap to lose, but
+        // losing it site-wide during the upgrade of a firewall is a window
+        // nobody asked for.
+        if ($components === self::DEFAULT_KEY) {
+            return sprintf('rate:%s:%s', $request->getClientIp(), $rule['path']);
+        }
+
+        $parts = [];
+
+        foreach ($components as $component) {
+            $parts[] = $component . '=' . $this->keyComponentValue($request, $rule, $component);
+        }
+
+        // Hashed, because a composed key can name `post.username` or
+        // `header.authorization`, and a rate limit is not a reason for a
+        // credential to be written to Redis, a database, or a file on disk.
+        // The separator is in the hashed material so ["a", "bc"] and ["ab",
+        // "c"] cannot collide.
+        return 'rate:' . hash('xxh128', implode("\0", $parts));
+    }
+
+    /**
+     * Which request fields this rule counts by.
+     *
+     * Per rule, falling back to `metadata.default_key`, falling back to the client IP and
+     * the rule's own pattern -- which is what every version before 2.27.0 did, and what
+     * every configuration that declares nothing keeps doing.
+     *
+     * @param array<string, mixed> $rule
+     *   The matched rule.
+     *
+     * @return array<int, string>
+     *   Component names, in declaration order.
+     */
+    protected function keyComponents(array $rule): array
+    {
+        foreach ([$rule['key'] ?? null, $this->metadata['default_key'] ?? null] as $declared) {
+            if (!is_array($declared)) {
+                continue;
+            }
+
+            $components = array_values(array_filter(
+                $declared,
+                static fn(mixed $c): bool => is_string($c) && trim($c) !== ''
+            ));
+
+            if ($components !== []) {
+                return array_map(static fn(string $c): string => strtolower(trim($c)), $components);
+            }
+        }
+
+        return self::DEFAULT_KEY;
+    }
+
+    /**
+     * Resolve one component of the key to a string.
+     *
+     * An unresolvable component -- a header that was not sent, a POST field that is not
+     * there -- becomes the empty string rather than being dropped. Dropping it would make
+     * a request missing the field share a bucket with one whose field is genuinely empty,
+     * and the position of every later component would shift.
+     *
+     * @param Request $request
+     *   The request.
+     * @param array<string, mixed> $rule
+     *   The matched rule.
+     * @param string $component
+     *   The component name.
+     *
+     * @return string
+     *   Its value.
+     */
+    protected function keyComponentValue(Request $request, array $rule, string $component): string
+    {
+        if ($component === 'client_ip') {
+            return (string) $request->getClientIp();
+        }
+
+        if ($component === 'rule_pattern') {
+            return is_string($rule['path'] ?? null) ? $rule['path'] : '';
+        }
+
+        // Everything else is the vocabulary the Url plugin already uses --
+        // `path`, `method`, `host`, `header.x`, `post.y`, `cookie.z`,
+        // `query.q`. A second spelling of the same idea is how `sample` and
+        // `window` came to mean the same thing in two places.
+        $value = $this->resolveRequestValue($request, $component);
+
+        // Never an array: `resolveRequestValue()` folds repeated headers to a
+        // string and deliberately resolves a nested array under `post` or
+        // `query` to NULL, so there is nothing here to guard against. An
+        // `is_array()` branch would be unreachable, and unreachable defensive
+        // code is a claim about behaviour that nothing checks.
+        return is_scalar($value) ? (string) $value : '';
     }
 
     /**

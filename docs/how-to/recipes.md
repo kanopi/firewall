@@ -9,7 +9,7 @@ configuration and a link to the reference behind it.
 | [Stop a login flood](#stop-a-login-flood) | Rate Limit |
 | [Catch a scanner with a honeypot](#catch-a-scanner-with-a-honeypot) | `response: record` |
 | [Let Googlebot in safely](#let-googlebot-in-safely) | User Agent + reverse-DNS verification |
-| [Rate limit an API by key](#rate-limit-an-api-by-key) | Not configurable yet — see below |
+| [Rate limit an API by key](#rate-limit-an-api-by-key) | Rate Limit |
 | [Run in observe mode for a week](#run-in-observe-mode-for-a-week) | Mode |
 | [Find out why a request was blocked](#find-out-why-a-request-was-blocked) | `firewall-check` |
 | [Put the site behind a challenge during an incident](#put-the-site-behind-a-challenge-during-an-incident) | Challenge |
@@ -169,18 +169,35 @@ fails at the first step.
 
 ## Rate limit an API by key
 
-**Not from configuration, today.** The rate limit key is built from the client IP and the
-matched path:
+Name the field to count by:
 
-```php
-sprintf('rate:%s:%s', $request->getClientIp(), $rule['path'])
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    enable: true
+    metadata:
+      name: api-limits
+      limit_unlisted_paths: false
+    config:
+      - path: /api/*
+        rate: 1000
+        sample: 3600
+        key: [header.x-api-key]     # per key, whatever address it comes from
 ```
 
-So every client behind one NAT or one corporate proxy shares a bucket, and an API key gets
-no bucket of its own. [#200](https://github.com/kanopi/firewall/issues/200) is the
-configuration-level fix and is not yet scheduled.
+Any request field works — `header.*`, `post.*`, `cookie.*`, `query.*`, plus `client_ip`,
+`path` and `rule_pattern`. See [Rate Limit](../plugins/rate-limit.md#what-a-limit-counts-by).
 
-Until then, `buildRateKey()` is `protected` — one method on a subclass:
+A composed key is stored hashed, so a token named in a `key:` never reaches the backend.
+
+!!! tip "Counting by account stops credential stuffing"
+
+    `key: [post.name]` on a login rule counts attempts against the *account*, so ten
+    thousand addresses trying one account land in one bucket instead of ten thousand.
+
+If you need something the field vocabulary cannot express, `buildRateKey()` is still
+`protected` — one method on a subclass:
 
 ```php
 final class ApiKeyRateLimit extends \Kanopi\Firewall\Plugins\RateLimit
