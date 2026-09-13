@@ -110,6 +110,20 @@ class PluginPolarityTest extends AbstractTestCase
             // Seeded through the cache rather than a stubbed subclass, so this
             // exercises the shipped class and never touches the network: one
             // address pre-scored above the threshold, one below.
+            // Same technique as AbuseIpdb below, against the generic rule: the
+            // verdict is pre-cached, so this exercises the shipped class and
+            // never opens a socket.
+            'Reputation' => [
+                fn (): PluginInterface => new \Kanopi\Firewall\Plugins\Reputation([], [
+                    'provider'   => 'http',
+                    'url'        => self::REPUTATION_URL,
+                    'score_path' => 'data.score',
+                    'threshold'  => 75,
+                    'cache_dir'  => self::seedReputationCache(),
+                ]),
+                fn (): Request => self::browserRequest('/', ['REMOTE_ADDR' => self::ABUSEIPDB_REPORTED_IP]),
+                fn (): Request => self::browserRequest('/', ['REMOTE_ADDR' => self::ABUSEIPDB_CLEAN_IP]),
+            ],
             'AbuseIpdb' => [
                 fn (): PluginInterface => new AbuseIpdb([], [
                     'api_key'   => 'polarity-test-key',
@@ -120,6 +134,40 @@ class PluginPolarityTest extends AbstractTestCase
                 fn (): Request => self::browserRequest('/', ['REMOTE_ADDR' => self::ABUSEIPDB_CLEAN_IP]),
             ],
         ];
+    }
+
+    /**
+     * The endpoint the generic reputation case is pointed at, never called.
+     */
+    private const REPUTATION_URL = 'https://reputation.example.com/v1/score?ip={ip}';
+
+    /**
+     * Write the two verdicts the generic reputation case relies on.
+     *
+     * @return string
+     *   The cache directory to hand the rule.
+     */
+    private static function seedReputationCache(): string
+    {
+        $directory = sys_get_temp_dir() . '/reputation-polarity';
+
+        if (!is_dir($directory)) {
+            mkdir($directory, 0775, true);
+        }
+
+        $entries = [
+            self::ABUSEIPDB_REPORTED_IP => 100,
+            self::ABUSEIPDB_CLEAN_IP => 0,
+        ];
+
+        foreach ($entries as $ip => $score) {
+            file_put_contents(
+                $directory . '/http-reputation-example-com-' . sha1((string) $ip) . '.json',
+                (string) json_encode(['verdict' => ['score' => $score, 'trusted' => false]]),
+            );
+        }
+
+        return $directory;
     }
 
     /**
@@ -143,11 +191,10 @@ class PluginPolarityTest extends AbstractTestCase
         foreach ($entries as $ip => $score) {
             file_put_contents(
                 $directory . '/abuseipdb-' . sha1((string) $ip) . '.json',
-                (string) json_encode(['report' => [
-                    'abuse_confidence_score' => $score,
-                    'is_whitelisted'         => false,
-                    'total_reports'          => $score > 0 ? 42 : 0,
-                    'country_code'           => 'RU',
+                (string) json_encode(['verdict' => [
+                    'score'      => $score,
+                    'trusted'    => false,
+                    'attributes' => ['abuse_confidence_score' => $score],
                 ]]),
             );
         }

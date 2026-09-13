@@ -123,6 +123,31 @@ Identity-verifying plugins (User Agent, and any implementing
 
 Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option).
 
+## `config:` — reputation rules
+
+`Reputation` and `AbuseIpdb` take a map rather than a rule list. See
+[Reputation](../plugins/reputation.md).
+
+| Key | Type | Default | |
+|---|---|---|---|
+| `provider` | string | `http` (`abuseipdb` on `AbuseIpdb`) | `abuseipdb`, `http`, or a class implementing `ReputationProviderInterface` |
+| `threshold` | float | `75` | Score at or above which the rule matches, on the provider's scale |
+| `cache_ttl` | int | provider's | How long a verdict is reused |
+| `error_cache_ttl` | int | provider's | How long a failed lookup is remembered |
+| `cache_dir` | string | temp dir | Where verdicts are cached |
+| `on_error` | string | `fail_open` | `fail_open`, `last_known_good` |
+| `block_status` | int | `403` | Status returned when the rule blocks |
+| `block_duration` | int | `3600` | How long the address is remembered |
+| `api_key` | string | *unset* | `abuseipdb`: required, or the rule is inert |
+| `max_age_in_days` | int | `30` | `abuseipdb`: how far back reports count |
+| `url` | string | *required* | `http`: must contain `{ip}` |
+| `score_path` | string | *required* | `http`: dot path to the score |
+| `trusted_path` | string | *unset* | `http`: dot path to an "allow this one" flag |
+| `auth` | map | *unset* | `http`: as [a source declares it](../configuration/sources.md#authentication) |
+| `provider_name` | string | *see docs* | `http`: what log lines call the service |
+| `public_only` | bool | `true` | `http`: `false` also looks up private addresses |
+| `timeout` | float | `2.0` | Seconds to wait before giving up |
+
 ## PHP constants
 
 Set before `Firewall::create()`. These exist because they must be readable before any YAML
