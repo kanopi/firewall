@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Traits\EvaluateTrait;
+use Kanopi\Firewall\Traits\RequestValueTrait;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -11,6 +14,7 @@ use Symfony\Component\HttpFoundation\Request;
 class Url extends AbstractPluginBase
 {
     use EvaluateTrait;
+    use RequestValueTrait;
 
     /**
      * {@inheritdoc}
@@ -69,6 +73,7 @@ class Url extends AbstractPluginBase
             $this->getLogger()->warning('Empty variable provided for URL evaluation', $this->getContext($request, [
                 'variable' => $variable,
             ]));
+
             return null;
         }
 
@@ -77,94 +82,11 @@ class Url extends AbstractPluginBase
             'segments' => $segments,
         ]));
 
-        $isHeader = false;
-
-        switch (strtolower((string) $segments[0])) {
-            case 'method':
-                return $request->getMethod();
-
-            case 'host':
-                return $request->getHost();
-
-            case 'path':
-                return $request->getPathInfo();
-
-            case 'query':
-                if (count($segments) === 1) {
-                    return $request->getQueryString();
-                }
-
-                $data = $request->query->all();
-                break;
-
-            case 'scheme':
-                return $request->getScheme();
-
-            case 'port':
-                return $request->getPort();
-
-            case 'post':
-                $data = $request->request->all();
-                break;
-
-            case 'header':
-                $data = $request->headers->all();
-                $isHeader = true;
-                // Header names are case-insensitive by spec, and Symfony
-                // lowercases them on the way in. Without this, `header.User-Agent`
-                // — the natural way to write it — resolves to nothing.
-                $segments = array_map(
-                    strtolower(...),
-                    $segments
-                );
-                break;
-
-            case 'cookie':
-                $data = $request->cookies->all();
-                break;
-
-            default:
-                return null;
-        }
-
-        if (count($segments) === 1) {
-            return http_build_query($data, '', ' ');
-        }
-
-        // Traverse nested keys
-        foreach (array_slice($segments, 1) as $segment) {
-            if (!is_array($data) || !array_key_exists($segment, $data)) {
-                return null;
-            }
-
-            $data = $data[$segment];
-        }
-
-        if ($isHeader && is_array($data)) {
-            // Symfony's HeaderBag stores every header as a *list* of values,
-            // because HTTP permits a field to appear more than once. Returning
-            // NULL for that array is what made every `header.*` rule match
-            // nothing at all, silently (#169). Fold repeats the way the spec
-            // does, so `header.user-agent` is the string it looks like.
-            //
-            // Deliberately limited to headers. An array under `query` or
-            // `post` — `?items[]=a&items[]=b` — is what the client actually
-            // sent, not a storage artefact, and flattening it would let a
-            // `contains` rule match across values the client never put
-            // together. Those keep resolving to NULL.
-            foreach ($data as $value) {
-                if ($value !== null && !is_scalar($value)) {
-                    return null;
-                }
-            }
-
-            return implode(', ', array_map(
-                static fn (mixed $value): string => (string) $value,
-                $data
-            ));
-        }
-
-        return is_string($data) ? $data : null;
+        // The resolution itself lives in RequestValueTrait, because rate-limit
+        // keys read the same vocabulary and two implementations of `header.*`
+        // would drift (#200). The logging stays here: it is about URL rule
+        // evaluation, which is not what every caller is doing.
+        return $this->resolveRequestValue($request, $variable);
     }
 
     /**

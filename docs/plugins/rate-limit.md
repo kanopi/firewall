@@ -86,6 +86,110 @@ plugins:
         sample: 3600  # Block direct script access
 ```
 
+## What a limit counts by
+
+By default, the client IP and the rule's own pattern — so `/api/*` at 100/min is 100
+requests across every endpoint under it, from one address. `key:` changes that:
+
+```yaml
+config:
+  - path: /login
+    rate: 5
+    sample: 300
+    key: [post.name]                # per account, across every address
+  - path: /api/*
+    rate: 100
+    sample: 60
+    key: [client_ip, path]          # per endpoint, not per API
+```
+
+| Component | |
+|---|---|
+| `client_ip` | The client address. The default identity |
+| `rule_pattern` | The rule's `path` value — `/api/*` |
+| `path` | The **request** path — `/api/users` |
+| `method`, `host`, `query`, `scheme`, `port` | As the [URL plugin](url.md) reads them |
+| `header.x`, `post.x`, `cookie.x`, `query.x` | Same vocabulary, same nesting |
+
+`metadata.default_key` sets it for every rule that declares none. A rule's own `key:` wins.
+
+### Why the default is often wrong
+
+- **Credential stuffing spreads across addresses.** Ten thousand IPs at three attempts each
+  stays under a 10-per-5-minutes rule on every bucket, and the account is gone. `key:
+  [post.name]` counts the account instead, and the attack shows up in one bucket.
+- **Carrier and corporate NAT share one.** An office, school or mobile network is one
+  address, so a limit tuned for one person throttles a thousand.
+- **API keys from rotating egress are not countable at all** by IP. `key:
+  [header.x-api-key]` makes them countable.
+
+!!! danger "Counting by an account can lock that account out"
+
+    `key: [post.name]` counts every attempt against the named account, from anywhere — which
+    is the point, and also means **anyone can spend a victim's budget for them**. An attacker
+    who makes five failed logins as `alice` locks `alice` out for the rest of the window.
+
+    That is the classic account-lockout trade, and it is real: choose it when stopping
+    credential stuffing matters more than an attacker being able to deny one account for five
+    minutes.
+
+
+!!! danger "Add an account key — do not swap the address one out for it"
+
+    An account key gives **every account its own budget**, so one address walking a username
+    list is never limited by it. Each name is a fresh bucket, and since a non-address key
+    does not ban an address, that address is never stopped at all:
+
+    ```
+    5 addresses against "victim" (rate 3)   → 3 through, then refused
+    one of them switches to alice/bob/carol → all succeed
+    is that address banned?                 → no
+    ```
+
+    The two keys catch opposite attacks — many addresses against one account, and one address
+    against many accounts — so replacing the address-keyed rule with an account-keyed one
+    *removes* brute-force protection while looking like it tightens it. Run both:
+
+    ```yaml
+    config:
+      - path: /login
+        rate: 5
+        sample: 300
+        key: [post.name]          # the account, from anywhere
+      - path: /login
+        rate: 50
+        sample: 300               # and the address, much looser
+    ```
+
+    `firewall-check --lint` warns when a path has an identity-keyed rule and no address-keyed
+    one.
+
+!!! warning "A non-address key does not ban an address"
+
+    The durable block list is keyed on the **client IP**. A rule counting by anything else
+    therefore refuses the request but does **not** write an IP ban, and that is the default.
+
+    Otherwise an attacker could exhaust a victim's account budget from their own machines,
+    and the victim's next login — from their own address — would trip the limit and put
+    *that* address on the block list, where it is refused for everything and lengthened by
+    `blocking_escalation` each time. Remote, unauthenticated, against arbitrary users.
+
+    `metadata.record: true` opts back in, for a deployment where the counted identity and the
+    address are the same thing.
+
+!!! note "A composed key is stored hashed"
+
+    A key can name `post.password` or `header.authorization`, and a rate limit is not a
+    reason for a credential to be written to Redis, a database, or a file on disk. Declare a
+    `key:` and the stored key becomes an opaque hash.
+
+    The **default** key is stored in the clear exactly as it always was, so upgrading resets
+    nobody's counters. Only rules that opt in change shape.
+
+    A component that resolves to nothing — a header that was not sent — still occupies its
+    position, so a request missing the field does not share a bucket with one whose field is
+    genuinely empty.
+
 ## Paths with no rule of their own
 
 Every path is rate limited by default, not only the ones listed under `config:`. A request
