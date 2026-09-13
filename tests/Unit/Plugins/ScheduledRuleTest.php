@@ -72,9 +72,30 @@ final class ScheduledRuleTest extends AbstractTestCase
     public function testAnUnreadableScheduleStopsTheRule(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessageMatches('/active\.timezone` is required/');
+        $this->expectExceptionMessageMatches('/not a timezone this system knows/');
 
-        new TestScheduledPlugin(['active' => ['days' => ['mon']]]);
+        new TestScheduledPlugin(['active' => ['timezone' => 'America/Atlantis', 'days' => ['mon']]]);
+    }
+
+    /**
+     * A rule that never named a zone is scheduled in UTC, not in the host's.
+     *
+     * The plugin path, not the parser's: a rule built on a machine set to Los Angeles is
+     * still read in UTC, so the same configuration behaves the same way on a laptop, in a
+     * container and in production.
+     */
+    public function testAnUnnamedTimezoneIsUtcAtThePluginToo(): void
+    {
+        $was = date_default_timezone_get();
+        date_default_timezone_set('America/Los_Angeles');
+
+        try {
+            $plugin = new TestScheduledPlugin(['active' => ['hours' => '00:00-23:59']]);
+
+            $this->assertSame('UTC', $plugin->getSchedule()?->getTimezone()->getName());
+        } finally {
+            date_default_timezone_set($was);
+        }
     }
 
     /**

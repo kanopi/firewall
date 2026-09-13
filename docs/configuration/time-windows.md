@@ -26,23 +26,45 @@ rule is skipped **before** it evaluates, so a sleeping GeoLocation rule costs no
 lookup, and — the part that matters — a sleeping rate limit does not spend a request out of
 anybody's budget for a window it was never going to enforce.
 
-Every key is optional except one.
+Every key is optional.
 
 | Key | Type | Meaning |
 |---|---|---|
-| `timezone` | string | **Required.** An identifier like `America/Los_Angeles` or `UTC` |
+| `timezone` | string | An identifier like `America/Los_Angeles`. Defaults to **UTC** — never the server's zone |
 | `days` | list | Days the rule is awake: `mon` … `sun`, or full names. Absent means every day |
 | `hours` | string or list | `HH:MM-HH:MM`, or several. Absent means all day |
 | `from` | string | `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`. The rule does not run before it |
 | `until` | string | The same, and the rule does not run after it |
 
-## The timezone is required, on purpose
+## The timezone defaults to UTC, and never to the server's
 
-There is an obvious default — the server's zone — and it is the wrong one. A rule that
-takes its meaning from the host means one thing on a laptop, another in a container that
-ships with UTC, and a third the morning somebody moves the region. A rule that changes
-behaviour when the infrastructure moves is worse than no rule, so `active:` without a
-`timezone` refuses to start.
+Leave `timezone` out and the window is read in UTC. The host's zone is deliberately not
+consulted: a rule that takes its meaning from the machine means one thing on a laptop,
+another in a container that ships with UTC, and a third the morning somebody moves the
+region — with nothing in the configuration changing to say so. A fixed default is a rule
+that means the same thing everywhere it is deployed.
+
+UTC also has no daylight saving, so a window that does not name a zone is one that never
+changes length.
+
+!!! warning "UTC is a safe default, not a correct one for business hours"
+
+    `hours: "18:00-06:00"` with no timezone is 18:00 **UTC** — 11:00 in Los Angeles, 02:00
+    in Singapore. Nothing in the configuration or the logs looks wrong when that is not
+    what you meant, so name the zone whenever the window is about people:
+
+    ```yaml
+    active:
+      timezone: America/Los_Angeles
+      hours: "18:00-06:00"
+    ```
+
+    `firewall-check --lint` warns on a scheduled rule that does not name one, and naming
+    `UTC` explicitly silences it.
+
+A `timezone` that *is* written and is not a zone this system knows — a typo, or an
+identifier that does not exist — stops the rule rather than falling back to the default.
+The point of the key is that the zone is never guessed.
 
 ## Everything is the clock on the wall
 
@@ -186,7 +208,14 @@ came to be documented under `FileStorage` in five places when the key is `storag
 
 It also warns about an `active:` block that constrains nothing — a timezone and no window,
 or an empty map — because that rule runs at all times, which is never what somebody who
-wrote a schedule meant.
+wrote a schedule meant, and about a window that never named a zone:
+
+```
+  ! Rule "after-hours" is scheduled without naming a timezone
+      Its window is read in UTC. That is deliberate -- the server's zone is never used, so
+      the rule means the same thing on every host -- but if the window means business hours
+      somewhere, name that zone: `timezone: America/Los_Angeles`.
+```
 
 ## What this is not
 

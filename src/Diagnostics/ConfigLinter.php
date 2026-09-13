@@ -652,18 +652,39 @@ class ConfigLinter
                 continue;
             }
 
-            if ($schedule instanceof Schedule && !$schedule->isAlwaysActive()) {
+            if (!$schedule instanceof Schedule || $schedule->isAlwaysActive()) {
+                // Readable, and constraining nothing: `active: {}`, or an
+                // `active:` holding only a timezone. The rule runs exactly as
+                // it would with no schedule at all, which is not what somebody
+                // who wrote one expects, and is silent in every other surface.
+                $findings[] = Diagnosis::warning(
+                    sprintf('Rule "%s" has an empty `active:` block', $this->nameOf($plugin)),
+                    'It constrains nothing, so the rule runs at all times. Give it `days`, `hours`, '
+                    . '`from` or `until`, or remove it.',
+                    'configuration/time-windows.md'
+                );
+
                 continue;
             }
 
-            // Readable, and constraining nothing: `active: {}`, or an `active:`
-            // holding only a timezone. The rule runs exactly as it would with
-            // no schedule at all, which is not what somebody who wrote one
-            // expects, and is silent in every other surface.
+            $active = is_array($metadata['active']) ? $metadata['active'] : [];
+            $declared = $active['timezone'] ?? null;
+
+            if (is_string($declared) && trim($declared) !== '') {
+                continue;
+            }
+
+            // The window is being read in UTC. That is a fixed default rather
+            // than the host's zone, so it means the same thing everywhere the
+            // config is deployed -- but "business hours" in UTC is hours off
+            // for most of the world, and nothing about the configuration or
+            // the logs would look wrong. Saying which zone it was read in is
+            // the cheapest place to catch that (#205).
             $findings[] = Diagnosis::warning(
-                sprintf('Rule "%s" has an empty `active:` block', $this->nameOf($plugin)),
-                'It constrains nothing, so the rule runs at all times. Give it `days`, `hours`, '
-                . '`from` or `until`, or remove it.',
+                sprintf('Rule "%s" is scheduled without naming a timezone', $this->nameOf($plugin)),
+                "Its window is read in UTC. That is deliberate -- the server's zone is never used, "
+                . 'so the rule means the same thing on every host -- but if the window means business '
+                . 'hours somewhere, name that zone: `timezone: America/Los_Angeles`.',
                 'configuration/time-windows.md'
             );
         }

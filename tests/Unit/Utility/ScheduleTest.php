@@ -348,6 +348,65 @@ final class ScheduleTest extends TestCase
     }
 
     /**
+     * An unnamed timezone is UTC, and is never the host's.
+     *
+     * The two halves are separate claims and the second is the one worth a test: the
+     * server's zone is set to Los Angeles here, and the window is still read in UTC. A
+     * rule that took its meaning from the host would mean one thing on a laptop, another
+     * in a container that ships with UTC, and a third the day somebody moves the region,
+     * with nothing in the configuration changing.
+     */
+    public function testAnUnnamedTimezoneIsUtcAndNotTheServers(): void
+    {
+        $was = date_default_timezone_get();
+        date_default_timezone_set('America/Los_Angeles');
+
+        try {
+            $schedule = $this->schedule(['hours' => '09:00-17:00']);
+
+            $this->assertSame('UTC', $schedule->getTimezone()->getName());
+
+            // 2026-09-14 16:00Z is 09:00 in Los Angeles. Read as UTC -- which is what
+            // happens -- it is inside the window; read in the server's zone it would be
+            // at the very edge of it, and the assertion below would be the one to move.
+            $this->assertTrue($schedule->isActiveAt($this->at('2026-09-14 16:00')));
+            // 2026-09-14 08:00Z is 01:00 in Los Angeles: outside either way, and the
+            // control for the assertion above.
+            $this->assertFalse($schedule->isActiveAt($this->at('2026-09-14 08:00')));
+            // 2026-09-14 23:00Z is 16:00 in Los Angeles -- inside a window read in the
+            // server's zone, outside one read in UTC. This is the assertion that fails
+            // if the default ever becomes the host's zone.
+            $this->assertFalse($schedule->isActiveAt($this->at('2026-09-14 23:00')));
+        } finally {
+            date_default_timezone_set($was);
+        }
+    }
+
+    /**
+     * An empty timezone is the same as an absent one.
+     *
+     * `timezone: "%env(TZ)%"` resolving to nothing is the realistic way to get here, and
+     * it should land on the documented default rather than on a parse failure that stops
+     * the rule.
+     */
+    public function testAnEmptyTimezoneIsTheDefault(): void
+    {
+        $this->assertSame('UTC', $this->schedule(['timezone' => '   ', 'days' => ['mon']])->getTimezone()->getName());
+    }
+
+    /**
+     * A schedule with no timezone still says which zone it was read in.
+     *
+     * `firewall-doctor` prints this next to a sleeping rule, so the operator who never
+     * wrote a zone finds out which one they got from the report rather than from a
+     * support ticket.
+     */
+    public function testTheDescriptionNamesTheDefaultedZone(): void
+    {
+        $this->assertSame('09:00-17:00 (UTC)', $this->schedule(['hours' => '09:00-17:00'])->describe());
+    }
+
+    /**
      * The zone is readable, for a caller that wants to say when "now" is there.
      */
     public function testTheTimezoneIsAvailable(): void
@@ -391,13 +450,14 @@ final class ScheduleTest extends TestCase
                 ['timezone' => 'UTC', 'hour' => '18:00-06:00'],
                 '`active` does not understand `hour`',
             ],
-            'no timezone' => [['days' => ['mon']], '`active.timezone` is required'],
-            'empty timezone' => [['timezone' => '   ', 'days' => ['mon']], '`active.timezone` is required'],
             'timezone that is not one' => [
                 ['timezone' => 'America/Atlantis'],
                 'not a timezone this system knows: America/Atlantis',
             ],
-            'timezone that is not a string' => [['timezone' => 7], '`active.timezone` is required'],
+            'timezone that is not a string' => [
+                ['timezone' => 7, 'days' => ['mon']],
+                '`active.timezone` must be an identifier like `America/Los_Angeles`; got int',
+            ],
             'empty days' => [['timezone' => 'UTC', 'days' => []], '`active.days` is an empty list'],
             'a day that is not one' => [
                 ['timezone' => 'UTC', 'days' => ['funday']],

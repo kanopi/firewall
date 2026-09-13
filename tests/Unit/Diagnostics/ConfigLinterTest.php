@@ -771,6 +771,33 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
+     * A schedule that does not name a zone says which one it got.
+     *
+     * The zone defaults to UTC rather than to the host's, so the rule means the same
+     * thing everywhere it is deployed -- but "business hours" in UTC is hours off for
+     * most of the world, and neither the configuration nor the logs would look wrong.
+     * This is the cheapest place to catch that (#205).
+     */
+    public function testAScheduleWithoutATimezoneSaysWhichOneItGot(): void
+    {
+        $this->assertSame(
+            ['Rule "after-hours" is scheduled without naming a timezone'],
+            $this->titles($this->lintSchedule(['hours' => '18:00-06:00']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Naming the zone -- including naming UTC on purpose -- silences it.
+     */
+    public function testNamingTheTimezoneSilencesTheWarning(): void
+    {
+        $this->assertSame(
+            [],
+            $this->titles($this->lintSchedule(['timezone' => 'UTC', 'hours' => '18:00-06:00']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
      * A schedule that says something is left alone.
      */
     public function testAUsableScheduleIsNotReported(): void

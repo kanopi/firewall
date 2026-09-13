@@ -46,12 +46,17 @@ namespace Kanopi\Firewall\Utility;
  * Neither is a bug to be fixed; a rule about business hours *should* follow the clock on the
  * wall of the business.
  *
- * ## The timezone is required, and that is the point
+ * ## The timezone defaults to UTC, and never to the server's
  *
- * Defaulting to the server's zone would make a rule mean one thing on a developer's laptop,
- * another in a container that ships with UTC, and a third the day somebody moves the region.
- * A rule that changes behaviour when the infrastructure moves is worse than no rule, so
- * `timezone` is mandatory the moment anything else in `active:` is set.
+ * Omitting it is fine and means UTC. Taking it from the host would not be: the rule would
+ * mean one thing on a developer's laptop, another in a container that ships with UTC, and a
+ * third the day somebody moves the region, with nothing in the configuration changing. A
+ * fixed default is a rule that means the same thing everywhere it is deployed.
+ *
+ * UTC is the right default for a second reason -- it has no daylight saving, so a window
+ * that does not name a zone is also a window that does not change length twice a year. What
+ * it is *not* is the right zone for "business hours", so `--lint` says which zone a
+ * scheduled rule is being read in when it was not told one.
  *
  * ## A schedule that cannot be understood stops the rule
  *
@@ -256,7 +261,7 @@ final class Schedule
     }
 
     /**
-     * Read `active.timezone`, which is never optional and never inferred.
+     * Read `active.timezone`, defaulting to UTC and never to the server's.
      *
      * @param mixed $timezone
      *   The configured value.
@@ -265,16 +270,21 @@ final class Schedule
      *   The zone to compare in.
      *
      * @throws \InvalidArgumentException
-     *   When absent or not a zone this system knows.
+     *   When something is written there and it is not a zone this system knows.
+     *   A name that cannot be resolved is a typo, and the whole point of this
+     *   key is that the zone is not guessed.
      */
     private static function readTimezone(mixed $timezone): \DateTimeZone
     {
-        if (!is_string($timezone) || trim($timezone) === '') {
-            throw new \InvalidArgumentException(
-                '`active.timezone` is required, as an identifier like `America/Los_Angeles` or `UTC`. '
-                . "The server's zone is deliberately not a default: a rule that changes behaviour "
-                . 'when a container moves is worse than no rule.'
-            );
+        if ($timezone === null || (is_string($timezone) && trim($timezone) === '')) {
+            return new \DateTimeZone('UTC');
+        }
+
+        if (!is_string($timezone)) {
+            throw new \InvalidArgumentException(sprintf(
+                '`active.timezone` must be an identifier like `America/Los_Angeles`; got %s.',
+                get_debug_type($timezone)
+            ));
         }
 
         try {
