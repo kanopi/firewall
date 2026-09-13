@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Utility\LazyObjectRegistry;
+use Kanopi\Firewall\Utility\Schedule;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -196,6 +197,34 @@ class PluginManager
         /** @var PluginInterface $plugin */
         foreach ($this->registry->getIterator() as $plugin) {
             $pluginName = $plugin->getName();
+
+            // Before evaluation, not after. A sleeping rule should cost a
+            // comparison rather than a GeoIP lookup -- and a sleeping rate
+            // limit must not spend a request out of somebody's budget for a
+            // window it was never going to enforce (#205).
+            if ($plugin instanceof ScheduledRuleInterface && !$plugin->isActiveNow()) {
+                $schedule = $plugin->getSchedule();
+
+                $this->getLogger()->debug('Rule is outside its active window', $this->getContext($request, [
+                    'plugin_name' => $pluginName,
+                    'plugin_type' => $plugin::class,
+                    'active_window' => $schedule instanceof Schedule ? $schedule->describe() : null,
+                ]));
+
+                // Recorded rather than omitted, and flagged rather than left
+                // to look like a rule that ran and matched nothing -- which is
+                // what `--explain` would otherwise show, and is the confusion
+                // scheduling exists to remove.
+                $evaluatedPlugins[] = [
+                    'plugin' => $pluginName,
+                    'result' => false,
+                    'active' => false,
+                    'window' => $schedule instanceof Schedule ? $schedule->describe() : null,
+                ];
+
+                continue;
+            }
+
             $startTime = microtime(true);
 
             $status = $plugin->evaluate($request);

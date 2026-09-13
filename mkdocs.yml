@@ -234,6 +234,7 @@ nav:
       - Global Settings: configuration/global.md
       - Storage: configuration/storage.md
       - Conditional Logic: configuration/conditional-logic.md
+      - Time Windows: configuration/time-windows.md
       - Rule Sources: configuration/sources.md
       - Logging: configuration/logging.md
       - Runtime Overrides: configuration/overrides.md

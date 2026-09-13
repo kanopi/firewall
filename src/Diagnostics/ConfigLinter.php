@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Diagnostics;
 
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Kanopi\Firewall\Utility\RuleDiagnostics;
 
@@ -118,6 +119,10 @@ class ConfigLinter
         }
 
         foreach ($this->checkRateKeyCoverage($plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkSchedules($plugins) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -608,5 +613,61 @@ class ConfigLinter
         }
 
         return array_values(array_filter($known, is_string(...)));
+    }
+
+    /**
+     * Schedules that will not do what they say, or anything at all.
+     *
+     * A rule with an unreadable `active:` block refuses to start, which is
+     * deliberate (#205) and expensive to discover in production. Every message
+     * a schedule can throw is a static fact about the configuration, so all of
+     * them are available here, before the deploy.
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkSchedules(array $plugins): array
+    {
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+
+            if (!isset($metadata['active'])) {
+                continue;
+            }
+
+            try {
+                $schedule = Schedule::fromMetadata($metadata['active']);
+            } catch (\InvalidArgumentException $invalidArgumentException) {
+                $findings[] = Diagnosis::error(
+                    sprintf('Rule "%s" has a schedule that cannot be read', $this->nameOf($plugin)),
+                    $invalidArgumentException->getMessage() . ' The rule will not start.',
+                    'configuration/time-windows.md'
+                );
+
+                continue;
+            }
+
+            if ($schedule instanceof Schedule && !$schedule->isAlwaysActive()) {
+                continue;
+            }
+
+            // Readable, and constraining nothing: `active: {}`, or an `active:`
+            // holding only a timezone. The rule runs exactly as it would with
+            // no schedule at all, which is not what somebody who wrote one
+            // expects, and is silent in every other surface.
+            $findings[] = Diagnosis::warning(
+                sprintf('Rule "%s" has an empty `active:` block', $this->nameOf($plugin)),
+                'It constrains nothing, so the rule runs at all times. Give it `days`, `hours`, '
+                . '`from` or `until`, or remove it.',
+                'configuration/time-windows.md'
+            );
+        }
+
+        return $findings;
     }
 }
