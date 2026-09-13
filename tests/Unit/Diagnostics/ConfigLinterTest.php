@@ -704,6 +704,126 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
+     * A schedule, on a rule the linter will read.
+     *
+     * @param mixed $active
+     *   The `metadata.active` block as configured.
+     *
+     * @return array<int, Diagnosis>
+     */
+    private function lintSchedule(mixed $active): array
+    {
+        return $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\IpAddress',
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['name' => 'after-hours', 'active' => $active],
+                'config' => ['203.0.113.5'],
+            ]],
+        ]);
+    }
+
+    /**
+     * A schedule that cannot be read stops the rule, so say so before the deploy.
+     *
+     * Every message `Schedule` can throw is a static fact about the configuration -- no
+     * clock, no environment -- which makes all of them available here, where finding out
+     * is cheap (#205).
+     */
+    public function testAScheduleThatCannotBeReadIsAnError(): void
+    {
+        $findings = $this->lintSchedule(['timezone' => 'UTC', 'days' => ['funday']]);
+
+        $this->assertSame(
+            ['Rule "after-hours" has a schedule that cannot be read'],
+            $this->titles($findings, Diagnosis::ERROR)
+        );
+
+        $detail = array_values(array_filter(
+            $findings,
+            static fn(Diagnosis $d): bool => $d->status === Diagnosis::ERROR
+        ))[0]->detail;
+
+        $this->assertStringContainsString('`active.days` does not understand `funday`', (string) $detail);
+        $this->assertStringContainsString('The rule will not start.', (string) $detail);
+    }
+
+    /**
+     * A schedule that constrains nothing is a warning, not an error.
+     *
+     * `active:` with a timezone and no window runs at all times, which is never what
+     * somebody who wrote a schedule meant -- and is silent everywhere else, because
+     * nothing about it is malformed.
+     */
+    public function testAScheduleThatConstrainsNothingWarns(): void
+    {
+        $this->assertSame(
+            ['Rule "after-hours" has an empty `active:` block'],
+            $this->titles($this->lintSchedule(['timezone' => 'UTC']), Diagnosis::WARNING)
+        );
+
+        $this->assertSame(
+            ['Rule "after-hours" has an empty `active:` block'],
+            $this->titles($this->lintSchedule([]), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * A schedule that does not name a zone says which one it got.
+     *
+     * The zone defaults to UTC rather than to the host's, so the rule means the same
+     * thing everywhere it is deployed -- but "business hours" in UTC is hours off for
+     * most of the world, and neither the configuration nor the logs would look wrong.
+     * This is the cheapest place to catch that (#205).
+     */
+    public function testAScheduleWithoutATimezoneSaysWhichOneItGot(): void
+    {
+        $this->assertSame(
+            ['Rule "after-hours" is scheduled without naming a timezone'],
+            $this->titles($this->lintSchedule(['hours' => '18:00-06:00']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Naming the zone -- including naming UTC on purpose -- silences it.
+     */
+    public function testNamingTheTimezoneSilencesTheWarning(): void
+    {
+        $this->assertSame(
+            [],
+            $this->titles($this->lintSchedule(['timezone' => 'UTC', 'hours' => '18:00-06:00']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * A schedule that says something is left alone.
+     */
+    public function testAUsableScheduleIsNotReported(): void
+    {
+        $findings = $this->lintSchedule([
+            'timezone' => 'America/Los_Angeles',
+            'days' => ['mon', 'tue', 'wed', 'thu', 'fri'],
+            'hours' => '18:00-06:00',
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+    }
+
+    /**
+     * A rule with no schedule is not asked about one.
+     */
+    public function testARuleWithoutAScheduleIsNotChecked(): void
+    {
+        $findings = $this->lint($this->goodConfig());
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+    }
+
+    /**
      * The linter leaves the application's logger as it found it.
      *
      * It no longer swaps one in -- rule inspection is read without building a

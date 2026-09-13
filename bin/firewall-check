@@ -472,6 +472,12 @@ foreach ($handler->getRecords() as $record) {
                     'plugin' => (string) $entry['plugin'],
                     'matched' => (bool) ($entry['result'] ?? false),
                     'time_ms' => is_numeric($entry['time_ms'] ?? null) ? (float) $entry['time_ms'] : 0.0,
+                    // A scheduled rule outside its window did not evaluate at
+                    // all. Reporting it as a rule that ran and matched nothing
+                    // would be the wrong answer to "why wasn't this caught?"
+                    // (#205).
+                    'asleep' => ($entry['active'] ?? true) === false,
+                    'window' => is_string($entry['window'] ?? null) ? $entry['window'] : null,
                 ];
             }
         }
@@ -644,6 +650,17 @@ if (isset($options['json'])) {
         }
 
         foreach ($evaluated as $entry) {
+            if ($entry['asleep']) {
+                printf(
+                    "  %-7s %-28s %s\n",
+                    'ASLEEP',
+                    $entry['plugin'],
+                    $entry['window'] === null ? 'outside its active window' : 'awake ' . $entry['window'],
+                );
+
+                continue;
+            }
+
             printf(
                 "  %-7s %-28s %6.2f ms\n",
                 $entry['matched'] ? 'MATCH' : 'pass',

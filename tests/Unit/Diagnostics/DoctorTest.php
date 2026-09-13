@@ -89,6 +89,59 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * A sleeping rule is named, so it is not mistaken for a broken one.
+     *
+     * The whole cost of scheduling a rule is the afternoon somebody spends finding out
+     * why it matched nothing, so this is the feature's other half (#205).
+     */
+    public function testASleepingRuleIsReported(): void
+    {
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = [
+            'name' => 'after-hours',
+            'active' => ['timezone' => 'UTC', 'until' => '2000-01-01'],
+        ];
+
+        $findings = $this->diagnose($config);
+
+        $this->assertContains('Rule after-hours is asleep right now', $this->titles($findings));
+    }
+
+    /**
+     * Reported as information, not as a warning.
+     *
+     * A rule outside its window is doing what it was configured to do. A warning every
+     * night on a correct configuration is how a report stops being read.
+     */
+    public function testASleepingRuleIsNotAWarning(): void
+    {
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = [
+            'name' => 'after-hours',
+            'active' => ['timezone' => 'UTC', 'until' => '2000-01-01'],
+        ];
+
+        $findings = $this->diagnose($config);
+
+        $this->assertNotContains('Rule after-hours is asleep right now', $this->titles($findings, Diagnosis::WARNING));
+        $this->assertNotContains('Rule after-hours is asleep right now', $this->titles($findings, Diagnosis::ERROR));
+    }
+
+    /**
+     * A rule inside its window is just a rule.
+     */
+    public function testAnAwakeRuleIsNotReportedAsAsleep(): void
+    {
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = [
+            'name' => 'after-hours',
+            'active' => ['timezone' => 'UTC', 'from' => '2000-01-01'],
+        ];
+
+        $this->assertNotContains('Rule after-hours is asleep right now', $this->titles($this->diagnose($config)));
+    }
+
+    /**
      * A working installation reports no errors.
      */
     public function testAWorkingInstallationHasNoErrors(): void
