@@ -117,6 +117,10 @@ class ConfigLinter
             $findings[] = $diagnosi;
         }
 
+        foreach ($this->checkRateKeyCoverage($plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
         if (array_filter($findings, static fn(Diagnosis $diagnosis): bool => $diagnosis->status !== Diagnosis::OK) === []) {
             $findings[] = Diagnosis::ok(
                 sprintf('%d rule%s inspected', count($plugins), count($plugins) === 1 ? '' : 's'),
@@ -413,6 +417,92 @@ class ConfigLinter
 
     /**
      * Rules that cannot match anything.    /**
+     * A path rate-limited only by something other than the address.
+     *
+     * `key: [post.name]` counts attempts against an account from anywhere, which is what
+     * stops credential stuffing -- and it gives **every account its own budget**, so one
+     * address walking a username list is never limited by it. Each name is a fresh bucket,
+     * and because a non-address key does not record, that address is never banned either.
+     *
+     * Replacing an address-keyed rule with an account-keyed one therefore removes
+     * brute-force protection while looking like it tightens it. The two are complements:
+     * one catches many addresses against one account, the other one address against many
+     * accounts.
+     *
+     * A warning, not an error. It is a legitimate configuration for somebody who limits by
+     * address somewhere else, or in front of the application entirely (#200).
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   Declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkRateKeyCoverage(array $plugins): array
+    {
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            if (($plugin['plugin'] ?? null) !== \Kanopi\Firewall\Plugins\RateLimit::class) {
+                continue;
+            }
+
+            $rules = is_array($plugin['config'] ?? null) ? $plugin['config'] : [];
+            $default = is_array($plugin['metadata']['default_key'] ?? null)
+                ? $plugin['metadata']['default_key']
+                : null;
+
+            $byAddress = [];
+            $byOther = [];
+
+            foreach ($rules as $rule) {
+                if (!is_array($rule)) {
+                    continue;
+                }
+
+                if (!is_string($rule['path'] ?? null)) {
+                    continue;
+                }
+
+                $key = is_array($rule['key'] ?? null) ? $rule['key'] : $default;
+
+                if ($key === null) {
+                    // Nothing declared: the default key includes the address.
+                    $byAddress[$rule['path']] = true;
+                    continue;
+                }
+
+                $names = array_map(
+                    static fn(mixed $c): string => is_string($c) ? strtolower(trim($c)) : '',
+                    $key
+                );
+
+                if (in_array('client_ip', $names, true)) {
+                    $byAddress[$rule['path']] = true;
+                } else {
+                    $byOther[$rule['path']] = true;
+                }
+            }
+
+            foreach (array_keys(array_diff_key($byOther, $byAddress)) as $path) {
+                $findings[] = Diagnosis::warning(
+                    sprintf('%s is rate limited by identity, but not by address', $path),
+                    sprintf(
+                        'Every value of that key gets its own budget, so one address trying many of '
+                        . 'them is never limited -- and a non-address key does not ban an address '
+                        . 'either. Add a second, looser rule for %s keyed on client_ip to keep '
+                        . 'brute-force protection alongside it.',
+                        $path
+                    ),
+                    'plugins/rate-limit.md#what-a-limit-counts-by'
+                );
+            }
+        }
+
+        return $findings;
+    }
+
+    /**
      * Rules that cannot match anything.
      *
      * Constructing a plugin is what inspects its rules (#173), and the report

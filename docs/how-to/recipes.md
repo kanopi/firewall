@@ -198,10 +198,14 @@ A composed key is stored hashed, so a token named in a `key:` never reaches the 
     account budget and get the *victim's* address banned. See
     [Rate Limit](../plugins/rate-limit.md#what-a-limit-counts-by).
 
-!!! tip "Counting by account stops credential stuffing"
+!!! tip "Counting by account stops credential stuffing — alongside, not instead"
 
     `key: [post.name]` on a login rule counts attempts against the *account*, so ten
     thousand addresses trying one account land in one bucket instead of ten thousand.
+
+    Keep an address-keyed rule for the same path too. An account key gives every account its
+    own budget, so one address working through a username list is never limited by it —
+    the two catch opposite attacks. `firewall-check --lint` warns if you have only one.
 
 If you need something the field vocabulary cannot express, `buildRateKey()` is still
 `protected` — one method on a subclass:

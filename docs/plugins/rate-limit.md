@@ -131,7 +131,24 @@ config:
 
     That is the classic account-lockout trade, and it is real: choose it when stopping
     credential stuffing matters more than an attacker being able to deny one account for five
-    minutes. Combining it with an IP-keyed rule at a looser limit gives you both signals:
+    minutes.
+
+
+!!! danger "Add an account key — do not swap the address one out for it"
+
+    An account key gives **every account its own budget**, so one address walking a username
+    list is never limited by it. Each name is a fresh bucket, and since a non-address key
+    does not ban an address, that address is never stopped at all:
+
+    ```
+    5 addresses against "victim" (rate 3)   → 3 through, then refused
+    one of them switches to alice/bob/carol → all succeed
+    is that address banned?                 → no
+    ```
+
+    The two keys catch opposite attacks — many addresses against one account, and one address
+    against many accounts — so replacing the address-keyed rule with an account-keyed one
+    *removes* brute-force protection while looking like it tightens it. Run both:
 
     ```yaml
     config:
@@ -143,6 +160,9 @@ config:
         rate: 50
         sample: 300               # and the address, much looser
     ```
+
+    `firewall-check --lint` warns when a path has an identity-keyed rule and no address-keyed
+    one.
 
 !!! warning "A non-address key does not ban an address"
 

@@ -120,6 +120,39 @@ class RateKeyDoesNotBanBystandersTest extends AbstractTestCase
     }
 
     /**
+     * An account key gives every account its own budget.
+     *
+     * Which is the point, and also the limitation: one address working through a username
+     * list gets a fresh budget per name and is never limited by that rule — nor banned,
+     * since a non-address key does not record. An account key and an address key catch
+     * opposite attacks, and swapping one for the other removes protection while looking
+     * like it adds it.
+     *
+     * Pinned as a test because it is the behaviour somebody will reason their way to the
+     * wrong answer about, and `firewall-check --lint` now warns about the configuration
+     * that produces it.
+     */
+    public function testAnAccountKeyDoesNotLimitOneAddressAcrossManyAccounts(): void
+    {
+        $firewall = $this->firewall(['post.name']);
+
+        // Spend one account's budget entirely.
+        foreach (['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4'] as $ip) {
+            $this->attempt($firewall, $ip);
+        }
+
+        // The same address now tries other accounts, and each is a fresh bucket.
+        foreach (['alice', 'bob', 'carol', 'dave'] as $name) {
+            $this->assertTrue(
+                $this->attempt($firewall, '10.0.0.3', $name),
+                sprintf('An account key does not limit one address across accounts; %s should pass.', $name)
+            );
+        }
+
+        $this->assertFalse($this->isBanned($firewall, '10.0.0.3'));
+    }
+
+    /**
      * A limit counting by address still bans, because there the address really
      * did spend the budget.
      */
