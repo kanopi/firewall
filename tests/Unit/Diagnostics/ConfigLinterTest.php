@@ -527,6 +527,183 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
+     * A rate limit rule, as the linter reads it.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     * @param array<int, mixed>|null           $default
+     *
+     * @return array<int, Diagnosis>
+     */
+    private function lintRateRules(array $rules, ?array $default = null): array
+    {
+        $metadata = ['name' => 'limits'];
+
+        if ($default !== null) {
+            $metadata['default_key'] = $default;
+        }
+
+        return $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => \Kanopi\Firewall\Plugins\RateLimit::class,
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => $metadata,
+                'config' => $rules,
+            ]],
+        ]);
+    }
+
+    /**
+     * Counting by account without also counting by address is the quiet hole.
+     *
+     * Every value of an identity key gets its own budget, so one address
+     * walking a username list is never limited by it -- and because a
+     * non-address key does not record an offense, that address is never banned
+     * either. Somebody who *replaces* their IP-keyed rule with an account-keyed
+     * one has removed brute-force protection while believing they tightened it,
+     * which is exactly the shape a linter exists to catch (#200).
+     */
+    public function testAnIdentityKeyWithoutAnAddressKeyWarns(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']],
+        ]);
+
+        $this->assertSame(
+            ['/login is rate limited by identity, but not by address'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The pair is the supported shape, so the pair is silent.
+     */
+    public function testAnIdentityKeyAlongsideAnAddressKeyIsFine(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']],
+            ['path' => '/login', 'rate' => 50, 'sample' => 300],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * The component name is read the way the plugin reads it.
+     *
+     * `Client_IP` and `  client_ip ` are the same component to `RateLimit`, and
+     * a linter that disagreed with the code it is linting would send somebody
+     * to add a rule they already have.
+     */
+    public function testTheAddressComponentIsMatchedLoosely(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'key' => [' Client_IP ', 'post.name']],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * A plugin-wide default key is what an undeclared rule inherits.
+     *
+     * Reading the rule alone would call this one address-keyed -- it declares
+     * no key at all -- when `default_key` has already taken the address out of
+     * it for every rule in the plugin.
+     */
+    public function testAnIdentityDefaultKeyAppliesToRulesThatDeclareNone(): void
+    {
+        $findings = $this->lintRateRules(
+            [['path' => '/login', 'rate' => 5]],
+            ['post.name']
+        );
+
+        $this->assertSame(
+            ['/login is rate limited by identity, but not by address'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Only components that are strings are components.
+     *
+     * A malformed key is somebody else's finding; this check's job is not to
+     * mistake `key: [123]` for an address and stay quiet about a path that has
+     * no address-keyed rule.
+     */
+    public function testANonStringKeyComponentIsNotAnAddress(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'key' => [123]],
+        ]);
+
+        $this->assertSame(
+            ['/login is rate limited by identity, but not by address'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Rules the check cannot read are left to the checks that can.
+     *
+     * A rule that is not an array, or whose path is not a string, is already
+     * broken in ways the linter reports elsewhere. Counting it here would
+     * either warn twice or warn about a path that does not exist.
+     */
+    public function testRulesWithoutAReadablePathAreSkipped(): void
+    {
+        $findings = $this->lintRateRules([
+            'path:/login',
+            ['rate' => 5, 'key' => ['post.name']],
+            ['path' => 404, 'rate' => 5, 'key' => ['post.name']],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * Nothing about this check fires on a plugin that does not rate limit.
+     *
+     * `key` means something different to other plugins, and a URL rule keyed on
+     * a header is not missing a companion rule.
+     */
+    public function testTheCheckOnlyReadsRateLimitRules(): void
+    {
+        $findings = $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\Url',
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['name' => 'admin-paths'],
+                'config' => [['path' => '/wp-admin', 'key' => ['post.name']]],
+            ]],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * A rate limit plugin with an unreadable config list has no rules to read.
+     */
+    public function testARateLimitPluginWithoutRulesIsSkipped(): void
+    {
+        $findings = $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => \Kanopi\Firewall\Plugins\RateLimit::class,
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['name' => 'limits', 'default_key' => 'post.name'],
+                'config' => 'not-a-list',
+            ]],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
      * The linter leaves the application's logger as it found it.
      *
      * It no longer swaps one in -- rule inspection is read without building a

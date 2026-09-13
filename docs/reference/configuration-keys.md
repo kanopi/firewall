@@ -110,6 +110,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `mark_header` | string | — | Also set this header on the request when marking |
 | `redirect_to` | string | — | Required by `response: redirect`. Never built from the request, so it cannot become an open redirect |
 | `redirect_status` | int | `302` | `301`, `302`, `307` or `308` |
+| `default_key` | list | `[client_ip, rule_pattern]` | What rate limits count by, for rules declaring no `key:` |
 | `sources` | list | `[]` | Pull this rule's entries from elsewhere | [Rule Sources](../configuration/sources.md) |
 | `challenge_provider` | string | `challenge.provider` | Per-rule provider override | [Per-plugin providers](../plugins/challenges.md#per-plugin-providers) |
 | `config` | list | — | Legacy alias for the entry's `config:` | [Legacy format](legacy-format.md) |
