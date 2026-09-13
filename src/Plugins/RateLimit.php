@@ -55,6 +55,13 @@ class RateLimit extends AbstractPluginBase
     private const DEFAULT_KEY = ['client_ip', 'rule_pattern'];
 
     /**
+     * The rule that tripped, so `recordsOffenses()` can see what it counted by.
+     *
+     * @var array<array-key, mixed>
+     */
+    private array $matchedRule = [];
+
+    /**
      * Constructs a new RateLimit object.
      */
     public function __construct(array $metadata = [], array $config = [])
@@ -208,6 +215,36 @@ class RateLimit extends AbstractPluginBase
     }
 
     /**
+     * Whether a block by this rule is written to the durable block list.
+     *
+     * **A limit that counts something other than the client IP does not ban the client
+     * IP.** The block list is keyed on the address (`AbstractStorageBase::getKey()`), so a
+     * rule counting by `post.name` would punish an address for a budget it may not have
+     * spent — and an attacker who exhausts a victim's account budget from their own
+     * machines would get the *victim's* address banned, for everything, with
+     * `blocking_escalation` lengthening it each time.
+     *
+     * That is a remote denial of service against arbitrary users, so it is off by default
+     * rather than documented. The request is still refused; only the durable IP ban is
+     * withheld.
+     *
+     * `metadata.record: true` opts back in, for a deployment where the counted identity and
+     * the address are the same thing.
+     *
+     * @return bool
+     *   TRUE when a block by this rule is recorded.
+     */
+    public function recordsOffenses(): bool
+    {
+        // An explicit answer in the config wins either way.
+        if (is_bool($this->metadata['record'] ?? null)) {
+            return $this->metadata['record'];
+        }
+
+        return in_array('client_ip', $this->keyComponents($this->matchedRule), true);
+    }
+
+    /**
      * Which request fields this rule counts by.
      *
      * Per rule, falling back to `metadata.default_key`, falling back to the client IP and
@@ -310,6 +347,7 @@ class RateLimit extends AbstractPluginBase
             return false;
         }
 
+        $this->matchedRule = $matchedRule;
         $key = $this->buildRateKey($request, $matchedRule);
         $now = time();
         $windowStart = $now - intval($matchedRule['sample']);

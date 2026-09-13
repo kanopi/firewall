@@ -191,6 +191,13 @@ Any request field works — `header.*`, `post.*`, `cookie.*`, `query.*`, plus `c
 
 A composed key is stored hashed, so a token named in a `key:` never reaches the backend.
 
+!!! warning "Counting by something other than the address does not ban an address"
+
+    The durable block list is keyed on the client IP, so a rule with a non-address key
+    refuses the request and writes no ban — otherwise an attacker could exhaust a victim's
+    account budget and get the *victim's* address banned. See
+    [Rate Limit](../plugins/rate-limit.md#what-a-limit-counts-by).
+
 !!! tip "Counting by account stops credential stuffing"
 
     `key: [post.name]` on a login rule counts attempts against the *account*, so ten

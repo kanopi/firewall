@@ -123,6 +123,40 @@ config:
 - **API keys from rotating egress are not countable at all** by IP. `key:
   [header.x-api-key]` makes them countable.
 
+!!! danger "Counting by an account can lock that account out"
+
+    `key: [post.name]` counts every attempt against the named account, from anywhere — which
+    is the point, and also means **anyone can spend a victim's budget for them**. An attacker
+    who makes five failed logins as `alice` locks `alice` out for the rest of the window.
+
+    That is the classic account-lockout trade, and it is real: choose it when stopping
+    credential stuffing matters more than an attacker being able to deny one account for five
+    minutes. Combining it with an IP-keyed rule at a looser limit gives you both signals:
+
+    ```yaml
+    config:
+      - path: /login
+        rate: 5
+        sample: 300
+        key: [post.name]          # the account, from anywhere
+      - path: /login
+        rate: 50
+        sample: 300               # and the address, much looser
+    ```
+
+!!! warning "A non-address key does not ban an address"
+
+    The durable block list is keyed on the **client IP**. A rule counting by anything else
+    therefore refuses the request but does **not** write an IP ban, and that is the default.
+
+    Otherwise an attacker could exhaust a victim's account budget from their own machines,
+    and the victim's next login — from their own address — would trip the limit and put
+    *that* address on the block list, where it is refused for everything and lengthened by
+    `blocking_escalation` each time. Remote, unauthenticated, against arbitrary users.
+
+    `metadata.record: true` opts back in, for a deployment where the counted identity and the
+    address are the same thing.
+
 !!! note "A composed key is stored hashed"
 
     A key can name `post.password` or `header.authorization`, and a rate limit is not a
