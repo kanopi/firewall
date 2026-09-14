@@ -32,8 +32,14 @@
       report generation holds the whole coverage set in memory and dies
       partway through writing the HTML with "Allowed memory size exhausted",
       which looks like a test failure but is not one.
+
+      Raised from 512M in 2.28.0, where the suite grew past it. The symptom is
+      worth knowing because it is not reproducible: the run dies at whatever
+      point the peak lands, so it fails on one run and passes on the next, and
+      the line it dies on is in a vendor file rather than a test. Three runs of
+      the same suite failed at 80%, 95% and not at all.
     -->
-    <ini name="memory_limit" value="512M" />
+    <ini name="memory_limit" value="1G" />
     <env name="FIREWALL_BYPASS_CLI" value="1" />
     <env name="FIREWALL_TEST" value="1" />
   </php>

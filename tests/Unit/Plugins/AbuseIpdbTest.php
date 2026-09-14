@@ -8,6 +8,7 @@ use Kanopi\Firewall\Exception\ReputationUnavailableException;
 use Kanopi\Firewall\Plugins\AbuseIpdb;
 use Kanopi\Firewall\Reputation\AbuseIpdbProvider;
 use Kanopi\Firewall\Reputation\ReputationProviderInterface;
+use Kanopi\Firewall\Reputation\ReputationSubject;
 use Kanopi\Firewall\Reputation\ReputationVerdict;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
@@ -373,7 +374,7 @@ class AbuseIpdbTest extends AbstractTestCase
              */
             public function exposedCachePath(string $ip): ?string
             {
-                return $this->cachePath($ip);
+                return $this->cachePath(new ReputationSubject($ip));
             }
         };
     }

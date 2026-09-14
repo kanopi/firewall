@@ -63,7 +63,7 @@ use Kanopi\Firewall\Utility\DotPath;
  * 200, would otherwise read as "every address is clean" -- protection silently
  * switched off, with a healthy-looking service behind it.
  */
-class HttpReputationProvider implements ReputationProviderInterface
+class HttpReputationProvider implements SubjectAwareReputationProviderInterface
 {
     /**
      * How long a verdict stays cached, in seconds.
@@ -84,9 +84,14 @@ class HttpReputationProvider implements ReputationProviderInterface
     protected const DEFAULT_TIMEOUT = 2.0;
 
     /**
-     * The token replaced with the address being asked about.
+     * The token replaced with the subject being asked about.
+     *
+     * `{ip}` is the same token under its 2.27.0 name, kept because a
+     * configuration written against that release should not need editing to
+     * keep working -- and because for a rule that scores addresses it is still
+     * the more readable of the two.
      */
-    protected const TOKEN = '{ip}';
+    protected const TOKENS = ['{subject}', '{ip}'];
 
     /**
      * The endpoint, as a rule source would declare it.
@@ -130,11 +135,11 @@ class HttpReputationProvider implements ReputationProviderInterface
             throw new ConfigurationException($throwable->getMessage(), 0, $throwable);
         }
 
-        if (!str_contains($this->upstream->url . $this->upstream->body, self::TOKEN)) {
+        if (!$this->mentionsSubject()) {
             throw new ConfigurationException(sprintf(
                 'The reputation upstream never mentions `%s`, so it would ask the same question for every '
                 . 'visitor: %s',
-                self::TOKEN,
+                self::TOKENS[0],
                 SourceAuth::redactUrl($this->upstream->url)
             ));
         }
@@ -203,12 +208,49 @@ class HttpReputationProvider implements ReputationProviderInterface
      */
     public function knowsAbout(string $ip): bool
     {
+        return $this->knowsAboutSubject(new ReputationSubject($ip));
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Any kind. A rule pointed at an endpoint that scores email addresses is
+     * the operator saying the endpoint scores email addresses, and this
+     * provider has no way to know better -- unlike `AbuseIpdbProvider`, which
+     * knows exactly what AbuseIPDB scores and says so by not implementing this
+     * interface at all.
+     */
+    public function handles(ReputationSubject $reputationSubject): bool
+    {
+        return true;
+    }
+
+    /**
+     * Whether a particular value is worth a call.
+     *
+     * Only addresses are filtered. There is no equivalent of "not publicly
+     * routable" for an email address, and inventing one -- a syntax check, a
+     * disposable-domain list -- would be this library making a judgement the
+     * service it is about to ask exists to make.
+     *
+     * @param ReputationSubject $reputationSubject
+     *   The subject to look up.
+     *
+     * @return bool
+     *   TRUE when the lookup is worth making.
+     */
+    protected function knowsAboutSubject(ReputationSubject $reputationSubject): bool
+    {
+        if (!$reputationSubject->isAddress()) {
+            return true;
+        }
+
         if (($this->config['public_only'] ?? true) === false) {
-            return filter_var($ip, FILTER_VALIDATE_IP) !== false;
+            return filter_var($reputationSubject->value, FILTER_VALIDATE_IP) !== false;
         }
 
         return filter_var(
-            $ip,
+            $reputationSubject->value,
             FILTER_VALIDATE_IP,
             FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
         ) !== false;
@@ -235,7 +277,15 @@ class HttpReputationProvider implements ReputationProviderInterface
      */
     public function check(string $ip): ReputationVerdict
     {
-        $body = $this->request($ip);
+        return $this->checkSubject(new ReputationSubject($ip));
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function checkSubject(ReputationSubject $reputationSubject): ReputationVerdict
+    {
+        $body = $this->request($reputationSubject);
         $score = $this->extract($body, $this->scorePattern(), $this->scorePath());
 
         if (!is_numeric($score)) {
@@ -252,10 +302,10 @@ class HttpReputationProvider implements ReputationProviderInterface
     }
 
     /**
-     * Ask the endpoint about one address.
+     * Ask the endpoint about one subject.
      *
-     * @param string $ip
-     *   The address to substitute into the request.
+     * @param ReputationSubject $reputationSubject
+     *   What to substitute into the request.
      *
      * @return string
      *   The response body.
@@ -263,9 +313,9 @@ class HttpReputationProvider implements ReputationProviderInterface
      * @throws ReputationUnavailableException
      *   When the endpoint cannot be reached or does not answer with a 200.
      */
-    protected function request(string $ip): string
+    protected function request(ReputationSubject $reputationSubject): string
     {
-        $url = str_replace(self::TOKEN, rawurlencode($ip), $this->upstream->requestUrl());
+        $url = str_replace(self::TOKENS, rawurlencode($reputationSubject->value), $this->upstream->requestUrl());
         $headers = ['Accept: application/json'];
 
         foreach ($this->upstream->requestHeaders() as $name => $value) {
@@ -289,7 +339,11 @@ class HttpReputationProvider implements ReputationProviderInterface
             // Substituted in the body too, which is the whole point of POST
             // support: `{"ip": "{ip}"}`. Encoded as JSON rather than for a URL,
             // since that is what a body of this shape is.
-            $options['content'] = str_replace(self::TOKEN, trim((string) json_encode($ip), '"'), $this->upstream->body);
+            $options['content'] = str_replace(
+                self::TOKENS,
+                trim((string) json_encode($reputationSubject->value), '"'),
+                $this->upstream->body
+            );
             $options['header'][] = 'Content-Type: ' . $this->contentType();
         }
 
@@ -436,6 +490,29 @@ class HttpReputationProvider implements ReputationProviderInterface
             null => 'the reputation service returned no parseable status',
             default => 'the reputation service returned HTTP ' . $status,
         };
+    }
+
+    /**
+     * Whether the request names the subject anywhere.
+     *
+     * The URL or the body -- a POST carrying the subject in its body needs no
+     * token in its query string, and requiring one there would mean putting an
+     * email address in an access log to satisfy a check.
+     *
+     * @return bool
+     *   TRUE when a token appears in either.
+     */
+    protected function mentionsSubject(): bool
+    {
+        $written = $this->upstream->url . $this->upstream->body;
+
+        foreach (self::TOKENS as $token) {
+            if (str_contains($written, $token)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

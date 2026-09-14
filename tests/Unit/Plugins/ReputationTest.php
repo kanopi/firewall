@@ -10,6 +10,8 @@ use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\AbuseIpdb;
 use Kanopi\Firewall\Plugins\Reputation;
 use Kanopi\Firewall\Reputation\ReputationProviderInterface;
+use Kanopi\Firewall\Reputation\ReputationSubject;
+use Kanopi\Firewall\Reputation\SubjectAwareReputationProviderInterface;
 use Kanopi\Firewall\Reputation\ReputationVerdict;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
@@ -32,11 +34,22 @@ final class ReputationTest extends AbstractTestCase
      */
     private string $cacheDir;
 
+    /**
+     * Subject values the scripted provider was asked about, in order.
+     *
+     * Static because the double is an anonymous class built inside a helper;
+     * what reached the provider is the assertion for half this file.
+     *
+     * @var array<int, string>
+     */
+    private static array $asked = [];
+
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->cacheDir = sys_get_temp_dir() . '/reputation-test-' . bin2hex(random_bytes(6));
+        self::$asked = [];
     }
 
     protected function tearDown(): void
@@ -309,6 +322,213 @@ final class ReputationTest extends AbstractTestCase
     }
 
     /**
+     * A rule can score what was submitted rather than who submitted it (#341).
+     *
+     * The other half of what a reputation service is for: an email at signup
+     * against a disposable-mailbox or breach service, a username at login
+     * against a credential-stuffing corpus.
+     */
+    public function testARuleCanScoreASubmittedValue(): void
+    {
+        $rule = $this->rule(
+            ['threshold' => 75, 'subject' => 'post.email'],
+            [new ReputationVerdict(90.0)]
+        );
+
+        $request = Request::create('/register', 'POST', ['email' => 'alice@example.com'], [], [], [
+            'REMOTE_ADDR' => '203.0.113.5',
+        ]);
+
+        $this->assertTrue($rule->evaluate($request));
+    }
+
+    /**
+     * The provider is asked about the submitted value, not the address.
+     *
+     * Asserted on what reached the provider, because "it matched" would pass
+     * just as well if the rule had quietly looked up the IP.
+     */
+    public function testTheSubmittedValueIsWhatReachesTheProvider(): void
+    {
+        $rule = $this->rule(
+            ['threshold' => 75, 'subject' => 'post.email'],
+            [new ReputationVerdict(90.0)]
+        );
+
+        $rule->evaluate(Request::create('/register', 'POST', ['email' => 'alice@example.com'], [], [], [
+            'REMOTE_ADDR' => '203.0.113.5',
+        ]));
+
+        $this->assertSame(['alice@example.com'], self::$asked);
+    }
+
+    /**
+     * A request that carries no subject is skipped, not asked with nothing.
+     *
+     * `subject: post.email` on a site means most requests carry no email --
+     * a signup form is one path out of thousands. Sending an empty subject
+     * would be worse than skipping: a scoring service asked about "" answers
+     * something, and the answer is about nothing.
+     */
+    public function testARequestWithoutTheSubjectIsSkipped(): void
+    {
+        $rule = $this->rule(
+            ['threshold' => 75, 'subject' => 'post.email'],
+            [new ReputationVerdict(90.0)]
+        );
+
+        $this->assertFalse($rule->evaluate($this->getRequest('203.0.113.5')));
+        $this->assertSame([], self::$asked, 'Nothing should have been looked up.');
+    }
+
+    /**
+     * A subject that arrives empty is the same as one that is absent.
+     */
+    public function testAnEmptySubjectIsSkipped(): void
+    {
+        $rule = $this->rule(['threshold' => 75, 'subject' => 'post.email'], [new ReputationVerdict(90.0)]);
+
+        $request = Request::create('/register', 'POST', ['email' => '   '], [], [], ['REMOTE_ADDR' => '203.0.113.5']);
+
+        $this->assertFalse($rule->evaluate($request));
+        $this->assertSame([], self::$asked);
+    }
+
+    /**
+     * `subject_hash` sends a digest, so the value never leaves the server.
+     *
+     * The only way to ask a third party about an email address without sending
+     * one. Case-folded first, because every service that takes a digest
+     * normalises before hashing -- otherwise `Alice@` and `alice@` are two
+     * different mailboxes to it.
+     */
+    public function testASubjectCanBeSentAsADigest(): void
+    {
+        $rule = $this->rule(
+            ['threshold' => 75, 'subject' => 'post.email', 'subject_hash' => 'sha256'],
+            [new ReputationVerdict(90.0)]
+        );
+
+        $rule->evaluate(Request::create('/register', 'POST', ['email' => 'Alice@Example.com'], [], [], [
+            'REMOTE_ADDR' => '203.0.113.5',
+        ]));
+
+        $this->assertSame([hash('sha256', 'alice@example.com')], self::$asked);
+        $this->assertStringNotContainsString('alice', self::$asked[0]);
+    }
+
+    /**
+     * A hash algorithm this system does not have stops the rule at startup.
+     *
+     * A rule that quietly stopped hashing would be sending plaintext email
+     * addresses to a third party, which is not a thing to discover from a log.
+     */
+    public function testAnUnknownHashAlgorithmStopsTheRule(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessageMatches('/not a hash algorithm this system has/');
+
+        new Reputation([], [
+            'provider' => 'http',
+            'upstream' => 'https://reputation.example.com/v1/score?ip={ip}',
+            'score_path' => 'data.score',
+            'subject' => 'post.email',
+            'subject_hash' => 'rot13',
+        ]);
+    }
+
+    /**
+     * Two subjects never share a cache entry.
+     *
+     * Different questions, and on some services different scales. An address
+     * keeps the 2.27.0 filename exactly, so upgrading orphans nothing.
+     */
+    public function testSubjectsAreCachedSeparately(): void
+    {
+        $rule = new class ([], [
+            'provider' => 'http',
+            'upstream' => 'https://reputation.example.com/v1/score?ip={subject}',
+            'score_path' => 'data.score',
+            'cache_dir' => $this->cacheDir,
+        ]) extends Reputation {
+            public function exposedPath(ReputationSubject $subject): ?string
+            {
+                return $this->cachePath($subject);
+            }
+        };
+
+        $address = (string) $rule->exposedPath(new ReputationSubject('203.0.113.5'));
+        $email = (string) $rule->exposedPath(new ReputationSubject('203.0.113.5', 'post.email'));
+
+        $this->assertNotSame($address, $email);
+        $this->assertStringContainsString('post-email-', $email);
+        $this->assertStringEndsWith(sha1('203.0.113.5') . '.json', $address);
+    }
+
+    /**
+     * A provider that only scores addresses refuses the rule at startup.
+     *
+     * AbuseIPDB scores addresses. Sending it a username gets an answer, and
+     * the answer is about something else — so this is a configuration error,
+     * not a runtime surprise.
+     */
+    public function testAProviderThatOnlyScoresAddressesRefusesASubmittedSubject(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessageMatches('/only scores client addresses/');
+
+        new AbuseIpdb([], ['api_key' => 'k', 'subject' => 'post.email']);
+    }
+
+    /**
+     * A provider that does handle the subject builds without complaint.
+     *
+     * The other side of the check above, through the real factory rather than
+     * a double -- so the thing being asserted is that a genuine `http` provider
+     * and a `subject:` reach agreement at construction.
+     */
+    public function testAProviderThatHandlesTheSubjectBuilds(): void
+    {
+        $rule = new Reputation([], [
+            'provider' => 'http',
+            'upstream' => 'https://reputation.example.com/v1/score?q={subject}',
+            'score_path' => 'data.score',
+            'subject' => 'post.email',
+            'cache_dir' => $this->cacheDir,
+        ]);
+
+        $this->assertSame('Reputation', $rule->getName());
+    }
+
+    /**
+     * A subject-aware provider can still refuse a kind it does not score.
+     *
+     * `handles()` is per kind, so a provider that scores email addresses and
+     * not phone numbers can say so, and the rule refuses to start rather than
+     * asking it anyway.
+     */
+    public function testASubjectAwareProviderCanRefuseAKind(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessageMatches('/does not score that kind of subject/');
+
+        new Reputation([], [
+            'provider' => FussyReputationProvider::class,
+            'subject' => 'post.phone',
+        ]);
+    }
+
+    /**
+     * The same provider is fine for the subject it does score.
+     */
+    public function testAnAddressOnlyProviderIsFineForAddresses(): void
+    {
+        $rule = new AbuseIpdb([], ['api_key' => 'k', 'cache_dir' => $this->cacheDir]);
+
+        $this->assertSame('AbuseIPDB', $rule->getName());
+    }
+
+    /**
      * A misspelled condition is reported, because it turns the rule off.
      *
      * A rule whose condition cannot match simply never fires. A **gate** whose
@@ -360,12 +580,42 @@ final class ReputationTest extends AbstractTestCase
      */
     public function testAnUnusableProviderStopsTheRule(): void
     {
-        $rule = new Reputation([], ['provider' => 'spamhaus']);
-
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessageMatches('/resolves to no class/');
 
-        $rule->evaluate($this->getRequest('203.0.113.5'));
+        new Reputation([], ['provider' => 'spamhaus']);
+    }
+
+    /**
+     * And it stops it at construction, which is where it becomes a report.
+     *
+     * `LazyObjectRegistry` catches a rule whose construction throws and
+     * `getFailedRules()` reports it. 2.27.0 built the provider on first use
+     * instead, so a `provider:` naming no class threw out of `evaluate()` --
+     * an exception on every request rather than one broken rule in a report --
+     * while the docblock claimed the opposite.
+     */
+    public function testAnUnusableProviderIsAFailedRuleRatherThanAnExceptionPerRequest(): void
+    {
+        $config = [
+            'plugins' => [[
+                'plugin' => Reputation::class,
+                'response' => 'block',
+                'enable' => true,
+                'config' => ['provider' => 'spamhaus'],
+            ]],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $firewall = \Kanopi\Firewall\Firewall::create([$config]);
+        $failed = $firewall->getFailedRules();
+
+        $this->assertCount(1, $failed);
+        $this->assertStringContainsString('resolves to no class', $failed[0]['error']);
+
+        // And the request is evaluated by the rules that did build, rather
+        // than failing.
+        $this->assertTrue($firewall->evaluate($this->getRequest('203.0.113.5')));
     }
 
     /**
@@ -418,7 +668,7 @@ final class ReputationTest extends AbstractTestCase
         $rule = new class ([], ['api_key' => 'k', 'threshold' => 75, 'cache_dir' => $this->cacheDir]) extends AbuseIpdb {
             public function exposedRead(string $ip): ?ReputationVerdict
             {
-                return $this->readCache($ip);
+                return $this->readCache(new ReputationSubject($ip));
             }
         };
 
@@ -444,12 +694,12 @@ final class ReputationTest extends AbstractTestCase
         ]) extends Reputation {
             public function exposedRead(string $ip): ?ReputationVerdict
             {
-                return $this->readCache($ip);
+                return $this->readCache(new ReputationSubject($ip));
             }
 
             public function exposedPath(string $ip): ?string
             {
-                return $this->cachePath($ip);
+                return $this->cachePath(new ReputationSubject($ip));
             }
         };
 
@@ -458,6 +708,17 @@ final class ReputationTest extends AbstractTestCase
         ]));
 
         $this->assertNull($rule->exposedRead('203.0.113.5'));
+    }
+
+    /**
+     * Record what the scripted provider was asked about.
+     *
+     * @param string $value
+     *   The subject value that reached it.
+     */
+    public static function record(string $value): void
+    {
+        self::$asked[] = $value;
     }
 
     /**
@@ -491,7 +752,7 @@ final class ReputationTest extends AbstractTestCase
     {
         $config['cache_dir'] ??= $this->cacheDir;
 
-        $provider = new class ($config, $results) implements ReputationProviderInterface {
+        $provider = new class ($config, $results) implements SubjectAwareReputationProviderInterface {
             /**
              * @param array<string, mixed> $config
              * @param array<int, ReputationVerdict|ReputationUnavailableException> $scripted
@@ -522,6 +783,18 @@ final class ReputationTest extends AbstractTestCase
 
             public function check(string $ip): ReputationVerdict
             {
+                return $this->checkSubject(new ReputationSubject($ip));
+            }
+
+            public function handles(ReputationSubject $subject): bool
+            {
+                return true;
+            }
+
+            public function checkSubject(ReputationSubject $subject): ReputationVerdict
+            {
+                ReputationTest::record($subject->value);
+
                 $next = array_shift($this->scripted);
 
                 if ($next === null) {
