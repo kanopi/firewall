@@ -10,7 +10,9 @@ Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallEx
     ├── StorageException           Storage file is unusable
     │   └── StorageConnectionException  Database storage cannot be reached
     ├── FirewallBlockedException    ─┐
-    ├── ChallengeRequiredException   ├─ only in mode: exception
+    │   └── FirewallLockdownException │
+    ├── FirewallRedirectException     ├─ only in mode: exception
+    ├── ChallengeRequiredException    │
     └── ChallengeSolvedException    ─┘
 ```
 
@@ -21,9 +23,11 @@ Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallEx
 | `StorageConnectionException` | A `DatabaseStorage` / `DatabaseRateLimitStorage` cannot build its connection, create its schema manager, or reach the database. Carries the redacted target (`driver=… host=… dbname=…`) and the driver exception as `previous`. | Fix the credentials or reachability. Thrown at construction, so `DatabaseStorage` surfaces from `create()`; rate-limit storage is built lazily and surfaces on the first evaluated request. |
 | `FirewallBlockedException` | `mode: exception` only — a `block` plugin matched. Carries `getStatusCode()` and the interpolated banning message. | Render your framework's error response with that status code. |
 | `ChallengeRequiredException` | `mode: exception` only — a `challenge` plugin matched and the visitor holds no valid pass token, **or** a posted solution was rejected. | Render the interstitial yourself, or return the status your API expects. |
+| `FirewallLockdownException` | `mode: exception` only — [lockdown](../configuration/global.md#lockdown) is active and the address is not in `lockdown_allow`. **Extends `FirewallBlockedException`**, so a host catching that already handles it; caught on its own it carries `getRetryAfter()`. | Return the status with a `Retry-After` header, so a monitor backs off instead of hammering. |
+| `FirewallRedirectException` | `mode: exception` only — a `redirect` rule matched. Carries `getLocation()` and `getStatusCode()`. The location is never built from the request, so it cannot become an open redirect. | Return your framework's redirect response. |
 | `ChallengeSolvedException` | `mode: exception` only — a posted solution verified. Carries `getToken()` (the minted pass token) and `getRedirect()` (a sanitized, same-origin target). | Set the pass-token cookie / return the token to the client, then redirect to `getRedirect()`. |
 
-Note that the three request-time exceptions are thrown **only** in `mode: exception`. In the default `block` mode the firewall writes the response and calls `exit()` itself, so there is nothing to catch.
+Note that the five request-time exceptions are thrown **only** in `mode: exception`. In the default `block` mode the firewall writes the response and calls `exit()` itself, so there is nothing to catch.
 
 Config *loading* problems are conditional: a missing, unreadable, or malformed config file — including circular `configs:` includes, unresolvable `%env(...)%` tokens, and use of a disabled filesystem processor — is logged at `error` level and produces an empty or partial ruleset, and raises `ConfigurationException` only when [`global.require_config: true`](../configuration/global.md#requiring-the-config-to-load) is set. See [Fail open or fail closed?](#fail-open-or-fail-closed) for why that matters.
 
