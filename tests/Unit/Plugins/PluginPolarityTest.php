@@ -110,6 +110,18 @@ class PluginPolarityTest extends AbstractTestCase
             // Seeded through the cache rather than a stubbed subclass, so this
             // exercises the shipped class and never touches the network: one
             // address pre-scored above the threshold, one below.
+            // Edge signals are a claim, so the polarity case has to arrive
+            // through a trusted proxy to be read at all -- set and unset
+            // around the evaluation, because trusted proxies are
+            // process-global.
+            'EdgeSignal' => [
+                fn (): PluginInterface => new \Kanopi\Firewall\Plugins\EdgeSignal(
+                    ['name' => 'cloudflare-bots', 'provider' => 'cloudflare'],
+                    ['bot_score <= 5']
+                ),
+                fn (): Request => self::edgeRequest('2'),
+                fn (): Request => self::edgeRequest('91'),
+            ],
             // Same technique as AbuseIpdb below, against the generic rule: the
             // verdict is pre-cached, so this exercises the shipped class and
             // never opens a socket.
@@ -134,6 +146,36 @@ class PluginPolarityTest extends AbstractTestCase
                 fn (): Request => self::browserRequest('/', ['REMOTE_ADDR' => self::ABUSEIPDB_CLEAN_IP]),
             ],
         ];
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Trusted proxies are process-global: the edge-signal case sets them so
+     * its headers are read at all, and leaving them set would change how every
+     * later test in the run resolves a client address.
+     */
+    protected function tearDown(): void
+    {
+        Request::setTrustedProxies([], Request::HEADER_X_FORWARDED_FOR);
+
+        parent::tearDown();
+    }
+
+    /**
+     * A request carrying a Cloudflare bot score, from a trusted edge.
+     *
+     * @param string $score
+     *   The score the edge claims.
+     */
+    private static function edgeRequest(string $score): Request
+    {
+        Request::setTrustedProxies(['203.0.113.0/24'], Request::HEADER_X_FORWARDED_FOR);
+
+        $request = self::browserRequest('/', ['REMOTE_ADDR' => '203.0.113.9']);
+        $request->headers->set('Cf-Bot-Score', $score);
+
+        return $request;
     }
 
     /**

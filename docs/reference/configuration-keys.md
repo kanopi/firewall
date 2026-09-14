@@ -123,6 +123,17 @@ Identity-verifying plugins (User Agent, and any implementing
 
 Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option).
 
+## `metadata:` — edge signal rules
+
+`EdgeSignal` reads what a CDN decided. See [Edge Signals](../plugins/edge-signals.md).
+
+| Key | Type | Default | |
+|---|---|---|---|
+| `provider` | string | `custom` | `cloudflare`, `fastly`, `custom` |
+| `headers` | map | `[]` | Signal to header name; layers over the profile |
+
+Signals: `bot_score`, `verified_bot`, `ja3`, `ja4`.
+
 ## `config:` — reputation rules
 
 `Reputation` and `AbuseIpdb` take a map rather than a rule list. See

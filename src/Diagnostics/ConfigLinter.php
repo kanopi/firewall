@@ -126,6 +126,10 @@ class ConfigLinter
             $findings[] = $diagnosi;
         }
 
+        foreach ($this->checkBotScoreDirection($plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
         if (array_filter($findings, static fn(Diagnosis $diagnosis): bool => $diagnosis->status !== Diagnosis::OK) === []) {
             $findings[] = Diagnosis::ok(
                 sprintf('%d rule%s inspected', count($plugins), count($plugins) === 1 ? '' : 's'),
@@ -690,5 +694,101 @@ class ConfigLinter
         }
 
         return $findings;
+    }
+
+    /**
+     * Bot score rules pointing the wrong way up (#206).
+     *
+     * Cloudflare's bot score is **1 for a certain bot and 99 for a certain
+     * human** -- the opposite direction to every other score in this library,
+     * where high is bad. `bot_score > 30` reads like "block the bots" and
+     * blocks everybody who is not one.
+     *
+     * The mistake is invisible afterwards. The rule matches, the block page is
+     * served, the log says a rule fired, and the only symptom is that real
+     * visitors are gone -- so this is worth catching in the one place it is
+     * still cheap.
+     *
+     * Only on rules that refuse. `response: allow` with `bot_score > 30` is
+     * "let the humans past", which is the same comparison meaning the right
+     * thing.
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkBotScoreDirection(array $plugins): array
+    {
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            if (($plugin['plugin'] ?? null) !== \Kanopi\Firewall\Plugins\EdgeSignal::class) {
+                continue;
+            }
+
+            // `record`, `redirect` and `mark` refuse nothing, and `allow` wants
+            // the comparison this is looking for.
+            if (!in_array($plugin['response'] ?? 'block', ['block', 'challenge'], true)) {
+                continue;
+            }
+
+            $rules = is_array($plugin['config'] ?? null) ? $plugin['config'] : [];
+
+            foreach ($rules as $rule) {
+                $written = $this->botScoreComparison($rule);
+
+                if ($written === null) {
+                    continue;
+                }
+
+                $findings[] = Diagnosis::warning(
+                    sprintf('Rule "%s" blocks traffic with a HIGH bot score', $this->nameOf($plugin)),
+                    sprintf(
+                        'A CDN bot score runs from 1 (certainly a bot) to 99 (certainly a human), so `%s` '
+                        . 'refuses the visitors most likely to be people. To block bots, compare the other '
+                        . 'way: `bot_score <= 5`.',
+                        $written
+                    ),
+                    'plugins/edge-signals.md#the-scale-runs-the-other-way'
+                );
+            }
+        }
+
+        return $findings;
+    }
+
+    /**
+     * A rule comparing `bot_score` upwards, written back as configured.
+     *
+     * Both shapes, because a check that only read the simple string form would
+     * be silent on exactly the configuration somebody wrote carefully.
+     *
+     * @param mixed $rule
+     *   One entry of the rule list.
+     *
+     * @return string|null
+     *   The comparison, or NULL when the rule is not one.
+     */
+    private function botScoreComparison(mixed $rule): ?string
+    {
+        if (is_string($rule)) {
+            return preg_match('/^\s*bot_score\s*(>=?)\s*(\d+)\s*$/', $rule, $matches) === 1
+                ? trim($rule)
+                : null;
+        }
+
+        if (!is_array($rule) || ($rule['variable'] ?? null) !== 'bot_score') {
+            return null;
+        }
+
+        $operator = $rule['operator'] ?? null;
+
+        if (!is_string($operator) || !in_array($operator, ['greater_than', 'greater_than_or_equal', '>', '>='], true)) {
+            return null;
+        }
+
+        return sprintf('bot_score %s %s', $operator, is_scalar($rule['value'] ?? null) ? (string) $rule['value'] : '?');
     }
 }
