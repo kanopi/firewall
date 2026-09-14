@@ -39,6 +39,15 @@ does it — "block a country", "stop a login flood", "let Googlebot in safely".
 
     [:octicons-arrow-right-24: Host recipes](hosting.md)
 
+-   :material-swap-horizontal:{ .lg .middle } **Migrating From Another Firewall**
+
+    ---
+
+    Wordfence, ModSecurity or Cloudflare rules expressed here — and, first, an honest list of
+    what does not move.
+
+    [:octicons-arrow-right-24: Migrating](migrating.md)
+
 -   :material-shield-account-outline:{ .lg .middle } **Add a Challenge**
 
     ---
