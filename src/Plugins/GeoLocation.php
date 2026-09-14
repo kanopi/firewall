@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Plugins;
 
+use Kanopi\Firewall\Traits\EdgeTrustTrait;
 use Kanopi\Firewall\Traits\EvaluateTrait;
 use Kanopi\Firewall\Traits\GeoLocationTrait;
 use Kanopi\Firewall\Utility\GeoHeaderMap;
@@ -21,6 +22,7 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class GeoLocation extends AbstractPluginBase
 {
+    use EdgeTrustTrait;
     use EvaluateTrait;
     use GeoLocationTrait;
 
@@ -123,32 +125,6 @@ class GeoLocation extends AbstractPluginBase
         }
 
         return 'reader';
-    }
-
-    /**
-     * Whether an edge header may be believed for this request.
-     *
-     * A geo header is a claim, and a claim is only worth anything when the
-     * request provably came through the edge that makes it. Otherwise a request
-     * straight to the origin can set `CF-IPCountry: US` and pick its own
-     * country — and against a `response: allow` entry that is not a weakened
-     * control but a complete bypass, since an allow match short-circuits
-     * everything after it.
-     *
-     * Symfony already knows whether a request arrived via a trusted proxy, and
-     * a deployment behind a CDN has to configure that anyway for
-     * `getClientIp()` to be right. So that is the gate rather than a second
-     * list to maintain.
-     *
-     * @param Request $request
-     *   The request under evaluation.
-     *
-     * @return bool
-     *   TRUE when the headers may be read.
-     */
-    protected function edgeIsTrusted(Request $request): bool
-    {
-        return $request->isFromTrustedProxy();
     }
 
     public function evaluate(Request $request): bool

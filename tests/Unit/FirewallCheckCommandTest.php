@@ -126,6 +126,59 @@ final class FirewallCheckCommandTest extends AbstractTestCase
         );
     }
 
+    /**
+     * A sleeping rule is shown as asleep, not as a rule that matched nothing.
+     *
+     * `pass` next to a scheduled rule is the wrong answer to "why wasn't this caught?" --
+     * it says the rule ran, which is the one thing that did not happen (#205). The window
+     * travels with it, because the next question is always "awake when?".
+     */
+    public function testExplainShowsASleepingRuleAsAsleep(): void
+    {
+        $config = $this->writeConfig(
+            "global: { mode: block }\n"
+            . "plugins:\n"
+            . "  - plugin: 'Kanopi\\Firewall\\Plugins\\IpAddress'\n"
+            . "    response: block\n    enable: true\n"
+            . "    metadata:\n"
+            . "      name: after-hours\n"
+            . "      active: { timezone: UTC, until: '2000-01-01' }\n"
+            . "    config: ['198.51.100.7']\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--url=/', '--ip=198.51.100.7', '--explain']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code'], 'A sleeping block rule does not block');
+        $this->assertStringContainsString('ASLEEP  after-hours', $result['stdout']);
+        $this->assertStringContainsString('awake until 2000-01-01 (UTC)', $result['stdout']);
+        $this->assertStringNotContainsString('pass    after-hours', $result['stdout']);
+    }
+
+    /**
+     * `--lint` refuses a schedule that cannot be read, before it reaches production.
+     */
+    public function testLintReportsAScheduleThatCannotBeRead(): void
+    {
+        $config = $this->writeConfig(
+            "global: { mode: block }\n"
+            . "plugins:\n"
+            . "  - plugin: 'Kanopi\\Firewall\\Plugins\\Url'\n"
+            . "    response: block\n    enable: true\n"
+            . "    metadata:\n"
+            . "      name: after-hours\n"
+            . "      active: { timezone: America/Atlantis }\n"
+            . "    config: ['path:/wp-admin']\n"
+        );
+
+        $result = $this->runCheck(['--config=' . $config, '--lint']);
+
+        $this->assertSame(1, $result['code'], $result['stdout'] . $result['stderr']);
+        $this->assertStringContainsString(
+            'has a schedule that cannot be read',
+            $result['stdout'] . $result['stderr']
+        );
+    }
+
     private function script(): string
     {
         return dirname(__DIR__, 2) . '/bin/firewall-check';

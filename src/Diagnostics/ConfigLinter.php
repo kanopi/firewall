@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Diagnostics;
 
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Kanopi\Firewall\Utility\RuleDiagnostics;
 
@@ -114,6 +115,18 @@ class ConfigLinter
         }
 
         foreach ($this->checkLiteralWildcards($plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkRateKeyCoverage($plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkSchedules($plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkBotScoreDirection($plugins) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -413,6 +426,92 @@ class ConfigLinter
 
     /**
      * Rules that cannot match anything.    /**
+     * A path rate-limited only by something other than the address.
+     *
+     * `key: [post.name]` counts attempts against an account from anywhere, which is what
+     * stops credential stuffing -- and it gives **every account its own budget**, so one
+     * address walking a username list is never limited by it. Each name is a fresh bucket,
+     * and because a non-address key does not record, that address is never banned either.
+     *
+     * Replacing an address-keyed rule with an account-keyed one therefore removes
+     * brute-force protection while looking like it tightens it. The two are complements:
+     * one catches many addresses against one account, the other one address against many
+     * accounts.
+     *
+     * A warning, not an error. It is a legitimate configuration for somebody who limits by
+     * address somewhere else, or in front of the application entirely (#200).
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   Declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkRateKeyCoverage(array $plugins): array
+    {
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            if (($plugin['plugin'] ?? null) !== \Kanopi\Firewall\Plugins\RateLimit::class) {
+                continue;
+            }
+
+            $rules = is_array($plugin['config'] ?? null) ? $plugin['config'] : [];
+            $default = is_array($plugin['metadata']['default_key'] ?? null)
+                ? $plugin['metadata']['default_key']
+                : null;
+
+            $byAddress = [];
+            $byOther = [];
+
+            foreach ($rules as $rule) {
+                if (!is_array($rule)) {
+                    continue;
+                }
+
+                if (!is_string($rule['path'] ?? null)) {
+                    continue;
+                }
+
+                $key = is_array($rule['key'] ?? null) ? $rule['key'] : $default;
+
+                if ($key === null) {
+                    // Nothing declared: the default key includes the address.
+                    $byAddress[$rule['path']] = true;
+                    continue;
+                }
+
+                $names = array_map(
+                    static fn(mixed $c): string => is_string($c) ? strtolower(trim($c)) : '',
+                    $key
+                );
+
+                if (in_array('client_ip', $names, true)) {
+                    $byAddress[$rule['path']] = true;
+                } else {
+                    $byOther[$rule['path']] = true;
+                }
+            }
+
+            foreach (array_keys(array_diff_key($byOther, $byAddress)) as $path) {
+                $findings[] = Diagnosis::warning(
+                    sprintf('%s is rate limited by identity, but not by address', $path),
+                    sprintf(
+                        'Every value of that key gets its own budget, so one address trying many of '
+                        . 'them is never limited -- and a non-address key does not ban an address '
+                        . 'either. Add a second, looser rule for %s keyed on client_ip to keep '
+                        . 'brute-force protection alongside it.',
+                        $path
+                    ),
+                    'plugins/rate-limit.md#what-a-limit-counts-by'
+                );
+            }
+        }
+
+        return $findings;
+    }
+
+    /**
      * Rules that cannot match anything.
      *
      * Constructing a plugin is what inspects its rules (#173), and the report
@@ -518,5 +617,178 @@ class ConfigLinter
         }
 
         return array_values(array_filter($known, is_string(...)));
+    }
+
+    /**
+     * Schedules that will not do what they say, or anything at all.
+     *
+     * A rule with an unreadable `active:` block refuses to start, which is
+     * deliberate (#205) and expensive to discover in production. Every message
+     * a schedule can throw is a static fact about the configuration, so all of
+     * them are available here, before the deploy.
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkSchedules(array $plugins): array
+    {
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+
+            if (!isset($metadata['active'])) {
+                continue;
+            }
+
+            try {
+                $schedule = Schedule::fromMetadata($metadata['active']);
+            } catch (\InvalidArgumentException $invalidArgumentException) {
+                $findings[] = Diagnosis::error(
+                    sprintf('Rule "%s" has a schedule that cannot be read', $this->nameOf($plugin)),
+                    $invalidArgumentException->getMessage() . ' The rule will not start.',
+                    'configuration/time-windows.md'
+                );
+
+                continue;
+            }
+
+            if (!$schedule instanceof Schedule || $schedule->isAlwaysActive()) {
+                // Readable, and constraining nothing: `active: {}`, or an
+                // `active:` holding only a timezone. The rule runs exactly as
+                // it would with no schedule at all, which is not what somebody
+                // who wrote one expects, and is silent in every other surface.
+                $findings[] = Diagnosis::warning(
+                    sprintf('Rule "%s" has an empty `active:` block', $this->nameOf($plugin)),
+                    'It constrains nothing, so the rule runs at all times. Give it `days`, `hours`, '
+                    . '`from` or `until`, or remove it.',
+                    'configuration/time-windows.md'
+                );
+
+                continue;
+            }
+
+            $active = is_array($metadata['active']) ? $metadata['active'] : [];
+            $declared = $active['timezone'] ?? null;
+
+            if (is_string($declared) && trim($declared) !== '') {
+                continue;
+            }
+
+            // The window is being read in UTC. That is a fixed default rather
+            // than the host's zone, so it means the same thing everywhere the
+            // config is deployed -- but "business hours" in UTC is hours off
+            // for most of the world, and nothing about the configuration or
+            // the logs would look wrong. Saying which zone it was read in is
+            // the cheapest place to catch that (#205).
+            $findings[] = Diagnosis::warning(
+                sprintf('Rule "%s" is scheduled without naming a timezone', $this->nameOf($plugin)),
+                "Its window is read in UTC. That is deliberate -- the server's zone is never used, "
+                . 'so the rule means the same thing on every host -- but if the window means business '
+                . 'hours somewhere, name that zone: `timezone: America/Los_Angeles`.',
+                'configuration/time-windows.md'
+            );
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Bot score rules pointing the wrong way up (#206).
+     *
+     * Cloudflare's bot score is **1 for a certain bot and 99 for a certain
+     * human** -- the opposite direction to every other score in this library,
+     * where high is bad. `bot_score > 30` reads like "block the bots" and
+     * blocks everybody who is not one.
+     *
+     * The mistake is invisible afterwards. The rule matches, the block page is
+     * served, the log says a rule fired, and the only symptom is that real
+     * visitors are gone -- so this is worth catching in the one place it is
+     * still cheap.
+     *
+     * Only on rules that refuse. `response: allow` with `bot_score > 30` is
+     * "let the humans past", which is the same comparison meaning the right
+     * thing.
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkBotScoreDirection(array $plugins): array
+    {
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            if (($plugin['plugin'] ?? null) !== \Kanopi\Firewall\Plugins\EdgeSignal::class) {
+                continue;
+            }
+
+            // `record`, `redirect` and `mark` refuse nothing, and `allow` wants
+            // the comparison this is looking for.
+            if (!in_array($plugin['response'] ?? 'block', ['block', 'challenge'], true)) {
+                continue;
+            }
+
+            $rules = is_array($plugin['config'] ?? null) ? $plugin['config'] : [];
+
+            foreach ($rules as $rule) {
+                $written = $this->botScoreComparison($rule);
+
+                if ($written === null) {
+                    continue;
+                }
+
+                $findings[] = Diagnosis::warning(
+                    sprintf('Rule "%s" blocks traffic with a HIGH bot score', $this->nameOf($plugin)),
+                    sprintf(
+                        'A CDN bot score runs from 1 (certainly a bot) to 99 (certainly a human), so `%s` '
+                        . 'refuses the visitors most likely to be people. To block bots, compare the other '
+                        . 'way: `bot_score <= 5`.',
+                        $written
+                    ),
+                    'plugins/edge-signals.md#the-scale-runs-the-other-way'
+                );
+            }
+        }
+
+        return $findings;
+    }
+
+    /**
+     * A rule comparing `bot_score` upwards, written back as configured.
+     *
+     * Both shapes, because a check that only read the simple string form would
+     * be silent on exactly the configuration somebody wrote carefully.
+     *
+     * @param mixed $rule
+     *   One entry of the rule list.
+     *
+     * @return string|null
+     *   The comparison, or NULL when the rule is not one.
+     */
+    private function botScoreComparison(mixed $rule): ?string
+    {
+        if (is_string($rule)) {
+            return preg_match('/^\s*bot_score\s*(>=?)\s*(\d+)\s*$/', $rule, $matches) === 1
+                ? trim($rule)
+                : null;
+        }
+
+        if (!is_array($rule) || ($rule['variable'] ?? null) !== 'bot_score') {
+            return null;
+        }
+
+        $operator = $rule['operator'] ?? null;
+
+        if (!is_string($operator) || !in_array($operator, ['greater_than', 'greater_than_or_equal', '>', '>='], true)) {
+            return null;
+        }
+
+        return sprintf('bot_score %s %s', $operator, is_scalar($rule['value'] ?? null) ? (string) $rule['value'] : '?');
     }
 }

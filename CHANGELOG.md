@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.27.0](https://github.com/kanopi/firewall/releases/tag/v2.27.0) — 2026-09-14
+
+Notice more: a rate limit can count the account rather than the IP, a rule can ask a reputation service of your choosing or read the bot score and TLS fingerprint a CDN already computed at the edge, and any rule can be given a window — so what a rule notices, and when it notices it, stop being fixed to the client address and always-on.
+
 ## [2.26.0](https://github.com/kanopi/firewall/releases/tag/v2.26.0) — 2026-09-12
 
 More than block or allow: refusing and recording come apart, so a honeypot can record without refusing and a lockdown can refuse without recording — plus `redirect` and `mark` response actions, and a fix for a silent permanent lockout in `mode: exception` with per-rule challenge providers.

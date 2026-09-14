@@ -450,6 +450,23 @@ class Doctor
             $findings[] = Diagnosis::ok('Every configured rule is running');
         }
 
+        // Reported as OK, deliberately. A rule outside its window is doing
+        // exactly what it was configured to do, and a warning for that would
+        // fire every night on a correct configuration until nobody read the
+        // warnings any more. It still has to be *said*, because a scheduled
+        // rule matching nothing looks identical to a broken one (#205).
+        foreach ($firewall->getSleepingRules() as $rule) {
+            $findings[] = Diagnosis::ok(
+                sprintf('Rule %s is asleep right now', $rule['plugin']),
+                sprintf(
+                    'Configured as a %s rule, awake %s. Until then it matches nothing, which is not '
+                    . 'the same as being broken.',
+                    $rule['bucket'],
+                    $rule['window']
+                )
+            );
+        }
+
         return $findings;
     }
 

@@ -527,6 +527,413 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
+     * A rate limit rule, as the linter reads it.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     * @param array<int, mixed>|null           $default
+     *
+     * @return array<int, Diagnosis>
+     */
+    private function lintRateRules(array $rules, ?array $default = null): array
+    {
+        $metadata = ['name' => 'limits'];
+
+        if ($default !== null) {
+            $metadata['default_key'] = $default;
+        }
+
+        return $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => \Kanopi\Firewall\Plugins\RateLimit::class,
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => $metadata,
+                'config' => $rules,
+            ]],
+        ]);
+    }
+
+    /**
+     * Counting by account without also counting by address is the quiet hole.
+     *
+     * Every value of an identity key gets its own budget, so one address
+     * walking a username list is never limited by it -- and because a
+     * non-address key does not record an offense, that address is never banned
+     * either. Somebody who *replaces* their IP-keyed rule with an account-keyed
+     * one has removed brute-force protection while believing they tightened it,
+     * which is exactly the shape a linter exists to catch (#200).
+     */
+    public function testAnIdentityKeyWithoutAnAddressKeyWarns(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']],
+        ]);
+
+        $this->assertSame(
+            ['/login is rate limited by identity, but not by address'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The pair is the supported shape, so the pair is silent.
+     */
+    public function testAnIdentityKeyAlongsideAnAddressKeyIsFine(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']],
+            ['path' => '/login', 'rate' => 50, 'sample' => 300],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * The component name is read the way the plugin reads it.
+     *
+     * `Client_IP` and `  client_ip ` are the same component to `RateLimit`, and
+     * a linter that disagreed with the code it is linting would send somebody
+     * to add a rule they already have.
+     */
+    public function testTheAddressComponentIsMatchedLoosely(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'key' => [' Client_IP ', 'post.name']],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * A plugin-wide default key is what an undeclared rule inherits.
+     *
+     * Reading the rule alone would call this one address-keyed -- it declares
+     * no key at all -- when `default_key` has already taken the address out of
+     * it for every rule in the plugin.
+     */
+    public function testAnIdentityDefaultKeyAppliesToRulesThatDeclareNone(): void
+    {
+        $findings = $this->lintRateRules(
+            [['path' => '/login', 'rate' => 5]],
+            ['post.name']
+        );
+
+        $this->assertSame(
+            ['/login is rate limited by identity, but not by address'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Only components that are strings are components.
+     *
+     * A malformed key is somebody else's finding; this check's job is not to
+     * mistake `key: [123]` for an address and stay quiet about a path that has
+     * no address-keyed rule.
+     */
+    public function testANonStringKeyComponentIsNotAnAddress(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5, 'key' => [123]],
+        ]);
+
+        $this->assertSame(
+            ['/login is rate limited by identity, but not by address'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Rules the check cannot read are left to the checks that can.
+     *
+     * A rule that is not an array, or whose path is not a string, is already
+     * broken in ways the linter reports elsewhere. Counting it here would
+     * either warn twice or warn about a path that does not exist.
+     */
+    public function testRulesWithoutAReadablePathAreSkipped(): void
+    {
+        $findings = $this->lintRateRules([
+            'path:/login',
+            ['rate' => 5, 'key' => ['post.name']],
+            ['path' => 404, 'rate' => 5, 'key' => ['post.name']],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * Nothing about this check fires on a plugin that does not rate limit.
+     *
+     * `key` means something different to other plugins, and a URL rule keyed on
+     * a header is not missing a companion rule.
+     */
+    public function testTheCheckOnlyReadsRateLimitRules(): void
+    {
+        $findings = $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\Url',
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['name' => 'admin-paths'],
+                'config' => [['path' => '/wp-admin', 'key' => ['post.name']]],
+            ]],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * A rate limit plugin with an unreadable config list has no rules to read.
+     */
+    public function testARateLimitPluginWithoutRulesIsSkipped(): void
+    {
+        $findings = $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => \Kanopi\Firewall\Plugins\RateLimit::class,
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['name' => 'limits', 'default_key' => 'post.name'],
+                'config' => 'not-a-list',
+            ]],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * A schedule, on a rule the linter will read.
+     *
+     * @param mixed $active
+     *   The `metadata.active` block as configured.
+     *
+     * @return array<int, Diagnosis>
+     */
+    private function lintSchedule(mixed $active): array
+    {
+        return $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\IpAddress',
+                'response' => 'block',
+                'enable' => true,
+                'metadata' => ['name' => 'after-hours', 'active' => $active],
+                'config' => ['203.0.113.5'],
+            ]],
+        ]);
+    }
+
+    /**
+     * A schedule that cannot be read stops the rule, so say so before the deploy.
+     *
+     * Every message `Schedule` can throw is a static fact about the configuration -- no
+     * clock, no environment -- which makes all of them available here, where finding out
+     * is cheap (#205).
+     */
+    public function testAScheduleThatCannotBeReadIsAnError(): void
+    {
+        $findings = $this->lintSchedule(['timezone' => 'UTC', 'days' => ['funday']]);
+
+        $this->assertSame(
+            ['Rule "after-hours" has a schedule that cannot be read'],
+            $this->titles($findings, Diagnosis::ERROR)
+        );
+
+        $detail = array_values(array_filter(
+            $findings,
+            static fn(Diagnosis $d): bool => $d->status === Diagnosis::ERROR
+        ))[0]->detail;
+
+        $this->assertStringContainsString('`active.days` does not understand `funday`', (string) $detail);
+        $this->assertStringContainsString('The rule will not start.', (string) $detail);
+    }
+
+    /**
+     * A schedule that constrains nothing is a warning, not an error.
+     *
+     * `active:` with a timezone and no window runs at all times, which is never what
+     * somebody who wrote a schedule meant -- and is silent everywhere else, because
+     * nothing about it is malformed.
+     */
+    public function testAScheduleThatConstrainsNothingWarns(): void
+    {
+        $this->assertSame(
+            ['Rule "after-hours" has an empty `active:` block'],
+            $this->titles($this->lintSchedule(['timezone' => 'UTC']), Diagnosis::WARNING)
+        );
+
+        $this->assertSame(
+            ['Rule "after-hours" has an empty `active:` block'],
+            $this->titles($this->lintSchedule([]), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * A schedule that does not name a zone says which one it got.
+     *
+     * The zone defaults to UTC rather than to the host's, so the rule means the same
+     * thing everywhere it is deployed -- but "business hours" in UTC is hours off for
+     * most of the world, and neither the configuration nor the logs would look wrong.
+     * This is the cheapest place to catch that (#205).
+     */
+    public function testAScheduleWithoutATimezoneSaysWhichOneItGot(): void
+    {
+        $this->assertSame(
+            ['Rule "after-hours" is scheduled without naming a timezone'],
+            $this->titles($this->lintSchedule(['hours' => '18:00-06:00']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Naming the zone -- including naming UTC on purpose -- silences it.
+     */
+    public function testNamingTheTimezoneSilencesTheWarning(): void
+    {
+        $this->assertSame(
+            [],
+            $this->titles($this->lintSchedule(['timezone' => 'UTC', 'hours' => '18:00-06:00']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * A schedule that says something is left alone.
+     */
+    public function testAUsableScheduleIsNotReported(): void
+    {
+        $findings = $this->lintSchedule([
+            'timezone' => 'America/Los_Angeles',
+            'days' => ['mon', 'tue', 'wed', 'thu', 'fri'],
+            'hours' => '18:00-06:00',
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+    }
+
+    /**
+     * A rule with no schedule is not asked about one.
+     */
+    public function testARuleWithoutAScheduleIsNotChecked(): void
+    {
+        $findings = $this->lint($this->goodConfig());
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+        $this->assertSame([], $this->titles($findings, Diagnosis::ERROR));
+    }
+
+    /**
+     * Blocking on a HIGH bot score blocks people.
+     *
+     * A CDN bot score runs from 1 (certainly a bot) to 99 (certainly a human),
+     * which is the opposite direction to every other score in this library.
+     * `bot_score > 30` reads like "block the bots" and refuses everybody who is
+     * not one -- and the mistake is invisible afterwards: the rule matches, the
+     * block page is served, the log says a rule fired, and the only symptom is
+     * that real visitors stopped arriving (#206).
+     */
+    public function testBlockingOnAHighBotScoreWarns(): void
+    {
+        $findings = $this->lintEdgeRule('block', ['bot_score > 30']);
+
+        $this->assertSame(
+            ['Rule "cloudflare-bots" blocks traffic with a HIGH bot score'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The same comparison on an allow rule is correct, and is left alone.
+     *
+     * `response: allow` with `bot_score > 30` is "let the humans past", which
+     * is the right way round. A check that warned about both would be teaching
+     * people to ignore it.
+     */
+    public function testAllowingOnAHighBotScoreIsFine(): void
+    {
+        $this->assertSame([], $this->titles($this->lintEdgeRule('allow', ['bot_score > 30']), Diagnosis::WARNING));
+    }
+
+    /**
+     * And the rule that actually blocks bots is silent.
+     */
+    public function testBlockingOnALowBotScoreIsFine(): void
+    {
+        $this->assertSame([], $this->titles($this->lintEdgeRule('block', ['bot_score <= 5']), Diagnosis::WARNING));
+    }
+
+    /**
+     * Challenging on a high score is the same mistake, more politely.
+     */
+    public function testChallengingOnAHighBotScoreWarns(): void
+    {
+        $this->assertSame(
+            ['Rule "cloudflare-bots" blocks traffic with a HIGH bot score'],
+            $this->titles($this->lintEdgeRule('challenge', ['bot_score >= 30']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The structured rule form is read too.
+     *
+     * A check that only understood the simple string would be silent on
+     * exactly the configuration somebody wrote carefully -- and the mistake is
+     * the same mistake.
+     */
+    public function testAStructuredBotScoreComparisonIsReadToo(): void
+    {
+        $findings = $this->lintEdgeRule('block', [
+            ['variable' => 'bot_score', 'operator' => 'greater_than', 'value' => 30],
+        ]);
+
+        $this->assertSame(
+            ['Rule "cloudflare-bots" blocks traffic with a HIGH bot score'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Rules that are about something else, or are not rules, are left alone.
+     */
+    public function testRulesThatAreNotBotScoreComparisonsAreIgnored(): void
+    {
+        $findings = $this->lintEdgeRule('block', [
+            'ja3:e7d705a3286e19ea42f587b344ee6865',
+            ['variable' => 'bot_score', 'operator' => 'less_than', 'value' => 5],
+            ['variable' => 'ja4', 'operator' => 'greater_than', 'value' => 5],
+            ['variable' => 'bot_score', 'operator' => 7],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * An edge rule, as the linter reads it.
+     *
+     * @param string $response
+     *   The bucket the rule is configured in.
+     * @param array<int, mixed> $rules
+     *   Its rule list.
+     *
+     * @return array<int, Diagnosis>
+     */
+    private function lintEdgeRule(string $response, array $rules): array
+    {
+        return $this->lint([
+            'global' => ['mode' => 'block'],
+            'challenge' => ['provider' => 'math', 'secret' => str_repeat('k', 40)],
+            'plugins' => [[
+                'plugin' => \Kanopi\Firewall\Plugins\EdgeSignal::class,
+                'response' => $response,
+                'enable' => true,
+                'metadata' => ['name' => 'cloudflare-bots', 'provider' => 'cloudflare'],
+                'config' => $rules,
+            ]],
+        ]);
+    }
+
+    /**
      * The linter leaves the application's logger as it found it.
      *
      * It no longer swaps one in -- rule inspection is read without building a

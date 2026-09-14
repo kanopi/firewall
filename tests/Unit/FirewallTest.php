@@ -19,6 +19,7 @@ use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Tests\Challenge\ReceiptlessSingleUseProvider;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Tests\Plugins\TestThrowingPlugin;
+use Kanopi\Firewall\Tests\Plugins\TestTruePlugin;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
@@ -709,6 +710,108 @@ class FirewallTest extends AbstractTestCase
         // And having found out, it does not go back and ask again.
         $this->assertCount(1, $firewall->getFailedRules());
         $this->assertSame(1, TestThrowingPlugin::$constructions);
+    }
+
+    /**
+     * A rule with an unreadable schedule is reported as not running.
+     *
+     * The docs promise this: a schedule nobody can read stops the rule rather than being
+     * ignored, and lands in the same report as a rule whose storage backend is
+     * unreachable. Guessing would mean choosing silently between over-blocking and not
+     * protecting at all (#205).
+     */
+    public function testAnUnreadableScheduleIsReportedAsAFailedRule(): void
+    {
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'block',
+                    'enable' => true,
+                    'config' => ['203.0.113.5'],
+                    'metadata' => ['active' => ['timezone' => 'America/Atlantis']],
+                ],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $failed = Firewall::create([$config])->getFailedRules();
+
+        $this->assertCount(1, $failed);
+        $this->assertSame('block', $failed[0]['bucket']);
+        $this->assertStringContainsString('not a timezone this system knows', $failed[0]['error']);
+    }
+
+    /**
+     * The rules that are running and asleep, named with the window they wait for.
+     *
+     * The other half of a scheduled rule (#205): one matching nothing looks exactly like
+     * a broken one, so a status page has to be able to tell them apart without anybody
+     * reading YAML at 2am.
+     */
+    public function testGetSleepingRulesNamesTheBucketAndTheWindow(): void
+    {
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'block',
+                    'enable' => true,
+                    'config' => ['203.0.113.5'],
+                    'metadata' => [
+                        'name' => 'after-hours',
+                        'active' => ['timezone' => 'UTC', 'until' => '2000-01-01'],
+                    ],
+                ],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $this->assertSame(
+            [[
+                'bucket' => 'block',
+                'plugin' => 'after-hours',
+                'window' => 'until 2000-01-01 (UTC)',
+            ]],
+            Firewall::create([$config])->getSleepingRules()
+        );
+    }
+
+    /**
+     * A rule inside its window is not sleeping, and neither is one without a schedule.
+     *
+     * Three shapes, because the report has to be quiet about all of them: a scheduled rule
+     * that is awake, a rule that never had a schedule -- which is every rule written
+     * before 2.27.0 -- and a custom rule implementing `PluginInterface` directly, which
+     * has never heard of `ScheduledRuleInterface` and must not be asked.
+     */
+    public function testGetSleepingRulesIsEmptyWhenEveryRuleIsAwake(): void
+    {
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'allow',
+                    'enable' => true,
+                    'config' => ['10.0.0.1'],
+                    'metadata' => ['active' => ['timezone' => 'UTC', 'from' => '2000-01-01']],
+                ],
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'block',
+                    'enable' => true,
+                    'config' => ['203.0.113.5'],
+                ],
+                [
+                    'plugin' => TestTruePlugin::class,
+                    'response' => 'allow',
+                    'enable' => true,
+                ],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $this->assertSame([], Firewall::create([$config])->getSleepingRules());
     }
 
     /**

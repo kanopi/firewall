@@ -18,6 +18,7 @@ use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\NestedArray;
 use Kanopi\Firewall\Utility\RuleDiagnostics;
+use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\Path;
 use Kanopi\Firewall\Utility\ReverseDnsVerifier;
 use Psr\Cache\CacheItemPoolInterface;
@@ -27,7 +28,7 @@ use Symfony\Component\HttpFoundation\Request;
 /**
  * Abstract Plugin used for creating a plugin.
  */
-abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterface, IdentityVerificationInterface, ChallengeProviderAwareInterface
+abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterface, IdentityVerificationInterface, ChallengeProviderAwareInterface, ScheduledRuleInterface
 {
     use LoggingTrait;
 
@@ -51,6 +52,11 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
      * Lazily built verifier, so a rule that never matches never builds one.
      */
     protected ?ReverseDnsVerifier $reverseDnsVerifier = null;
+
+    /**
+     * When this rule is awake, or NULL for a rule that always is.
+     */
+    protected ?Schedule $schedule = null;
 
     /**
      * {@inheritdoc}
@@ -492,6 +498,41 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
         $this->config = $this->mergeSourceEntries($entries, $this->config);
         $this->reportUnusableRules();
         $this->reportUnrecognisedMode();
+
+        // Last, and allowed to throw. A schedule nobody can read is a rule
+        // nobody can reason about, so it takes the rule out rather than
+        // guessing which way the operator meant it (#205). Everything above
+        // has already been logged by the time it does.
+        $this->schedule = Schedule::fromMetadata($this->metadata['active'] ?? null);
+    }
+
+    /**
+     * Whether this rule is inside its active window right now.
+     *
+     * Asked by `PluginManager` before evaluation rather than inside it, so a
+     * sleeping rule costs one comparison and takes no side effect with it.
+     *
+     * @return bool
+     *   TRUE when the rule should be evaluated.
+     */
+    public function isActiveNow(): bool
+    {
+        if (!$this->schedule instanceof Schedule) {
+            return true;
+        }
+
+        return $this->schedule->isActiveAt(new \DateTimeImmutable('now'));
+    }
+
+    /**
+     * The schedule this rule keeps, if it keeps one.
+     *
+     * @return Schedule|null
+     *   NULL for a rule that runs at all times.
+     */
+    public function getSchedule(): ?Schedule
+    {
+        return $this->schedule;
     }
 
     /**
