@@ -251,6 +251,7 @@ nav:
       - Vulnerability Score: plugins/vulnerability-score.md
       - OWASP CRS: plugins/crs.md
       - AbuseIPDB: plugins/abuseipdb.md
+      - Edge Signals: plugins/edge-signals.md
   - Presets:
       - presets/index.md
       - Available Presets: presets/available.md

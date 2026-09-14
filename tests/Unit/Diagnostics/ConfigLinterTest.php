@@ -824,6 +824,116 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
+     * Blocking on a HIGH bot score blocks people.
+     *
+     * A CDN bot score runs from 1 (certainly a bot) to 99 (certainly a human),
+     * which is the opposite direction to every other score in this library.
+     * `bot_score > 30` reads like "block the bots" and refuses everybody who is
+     * not one -- and the mistake is invisible afterwards: the rule matches, the
+     * block page is served, the log says a rule fired, and the only symptom is
+     * that real visitors stopped arriving (#206).
+     */
+    public function testBlockingOnAHighBotScoreWarns(): void
+    {
+        $findings = $this->lintEdgeRule('block', ['bot_score > 30']);
+
+        $this->assertSame(
+            ['Rule "cloudflare-bots" blocks traffic with a HIGH bot score'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The same comparison on an allow rule is correct, and is left alone.
+     *
+     * `response: allow` with `bot_score > 30` is "let the humans past", which
+     * is the right way round. A check that warned about both would be teaching
+     * people to ignore it.
+     */
+    public function testAllowingOnAHighBotScoreIsFine(): void
+    {
+        $this->assertSame([], $this->titles($this->lintEdgeRule('allow', ['bot_score > 30']), Diagnosis::WARNING));
+    }
+
+    /**
+     * And the rule that actually blocks bots is silent.
+     */
+    public function testBlockingOnALowBotScoreIsFine(): void
+    {
+        $this->assertSame([], $this->titles($this->lintEdgeRule('block', ['bot_score <= 5']), Diagnosis::WARNING));
+    }
+
+    /**
+     * Challenging on a high score is the same mistake, more politely.
+     */
+    public function testChallengingOnAHighBotScoreWarns(): void
+    {
+        $this->assertSame(
+            ['Rule "cloudflare-bots" blocks traffic with a HIGH bot score'],
+            $this->titles($this->lintEdgeRule('challenge', ['bot_score >= 30']), Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The structured rule form is read too.
+     *
+     * A check that only understood the simple string would be silent on
+     * exactly the configuration somebody wrote carefully -- and the mistake is
+     * the same mistake.
+     */
+    public function testAStructuredBotScoreComparisonIsReadToo(): void
+    {
+        $findings = $this->lintEdgeRule('block', [
+            ['variable' => 'bot_score', 'operator' => 'greater_than', 'value' => 30],
+        ]);
+
+        $this->assertSame(
+            ['Rule "cloudflare-bots" blocks traffic with a HIGH bot score'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * Rules that are about something else, or are not rules, are left alone.
+     */
+    public function testRulesThatAreNotBotScoreComparisonsAreIgnored(): void
+    {
+        $findings = $this->lintEdgeRule('block', [
+            'ja3:e7d705a3286e19ea42f587b344ee6865',
+            ['variable' => 'bot_score', 'operator' => 'less_than', 'value' => 5],
+            ['variable' => 'ja4', 'operator' => 'greater_than', 'value' => 5],
+            ['variable' => 'bot_score', 'operator' => 7],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * An edge rule, as the linter reads it.
+     *
+     * @param string $response
+     *   The bucket the rule is configured in.
+     * @param array<int, mixed> $rules
+     *   Its rule list.
+     *
+     * @return array<int, Diagnosis>
+     */
+    private function lintEdgeRule(string $response, array $rules): array
+    {
+        return $this->lint([
+            'global' => ['mode' => 'block'],
+            'challenge' => ['provider' => 'math', 'secret' => str_repeat('k', 40)],
+            'plugins' => [[
+                'plugin' => \Kanopi\Firewall\Plugins\EdgeSignal::class,
+                'response' => $response,
+                'enable' => true,
+                'metadata' => ['name' => 'cloudflare-bots', 'provider' => 'cloudflare'],
+                'config' => $rules,
+            ]],
+        ]);
+    }
+
+    /**
      * The linter leaves the application's logger as it found it.
      *
      * It no longer swaps one in -- rule inspection is read without building a
