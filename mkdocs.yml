@@ -212,6 +212,7 @@ nav:
       - Recipes: how-to/recipes.md
       - Integrate With Your Platform: how-to/platform-integration.md
       - Host Recipes: how-to/hosting.md
+      - Migrating From Another Firewall: how-to/migrating.md
       - Add a Challenge: how-to/add-a-challenge.md
       - Add a Rule Source: how-to/add-a-rule-source.md
       - Send Logs Somewhere: how-to/send-logs-somewhere.md
