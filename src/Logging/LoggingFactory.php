@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Logging;
 
 use Monolog\Formatter\FormatterInterface;
 use Monolog\Handler\HandlerInterface;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Monolog\Level;
 use Monolog\Logger;
 
@@ -135,6 +136,36 @@ class LoggingFactory
                 $logger->pushHandler($handler);
             }
         }
+
+        // A handler that throws while *writing* is the other half of #346, and
+        // the half that actually bit: Monolog's StreamHandler creates its
+        // directory on first write, not in its constructor, so a destination
+        // that does not exist builds cleanly and throws from whatever line
+        // happened to log first -- which during `Firewall::create()` took the
+        // whole firewall down, and after it would have been a 500 mid-request.
+        //
+        // Monolog already wraps every handler call for this and rethrows when
+        // no exception handler is set. Setting one is what turns "the log
+        // failed" from an exception into a recorded fact, for every handler
+        // rather than the ones this package happens to ship -- `DatabaseHandler`
+        // has caught its own failures since #181.
+        //
+        // Nothing is logged from in here. The logger is the thing that just
+        // failed, and writing to it would re-enter the handler that threw.
+        // `DegradedBackends` needs no logger, which is why it is the right
+        // place for a fact about logging being broken.
+        $logger->setExceptionHandler(static function (\Throwable $throwable): void {
+            DegradedBackends::record('logger', 'log destination', $throwable->getMessage());
+        });
+
+        // Note where the line is: a handler whose *constructor* throws still
+        // takes `create()` with it, and should. `SyslogHandler` given the
+        // string `LOG_USER` instead of the constant is an operator error that
+        // a deploy should stop on, and this package already refuses to start
+        // for a challenge provider that does not resolve or a schedule that
+        // cannot be read. What changed is the environment case -- a
+        // destination that is fine in configuration and absent on this host --
+        // which is the one that reached a running request.
 
         return $logger;
     }
