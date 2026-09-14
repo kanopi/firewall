@@ -30,6 +30,15 @@ does it — "block a country", "stop a login flood", "let Googlebot in safely".
 
     [:octicons-arrow-right-24: Platform integration](platform-integration.md)
 
+-   :material-server:{ .lg .middle } **Host Recipes**
+
+    ---
+
+    What a host has to answer before the firewall behaves — what is in front of it, where it
+    can write, where logs go — and how to get those answers out of your own environment.
+
+    [:octicons-arrow-right-24: Host recipes](hosting.md)
+
 -   :material-shield-account-outline:{ .lg .middle } **Add a Challenge**
 
     ---
