@@ -1395,7 +1395,6 @@ final class Firewall
     }
 
     /**
-     * Evaluate the current request to see if valid and can pass the firewall.    /**
      * Evaluate the current request to see if valid and can pass the firewall.
      *
      * @param \Symfony\Component\HttpFoundation\Request|null $request
@@ -1415,6 +1414,15 @@ final class Firewall
      *   pass token is held, or when a posted solution is invalid.
      * @throws ChallengeSolvedException
      *   In `mode: exception`, when a posted challenge solution is valid.
+     * @throws FirewallRedirectException
+     *   In `mode: exception`, when a `response: redirect` rule matches. Carries
+     *   the location and status, so the host can return its framework's own
+     *   redirect response (#290).
+     * @throws FirewallLockdownException
+     *   In `mode: exception`, when lockdown is active and the address is not in
+     *   `lockdown_allow`. Extends `FirewallBlockedException`, so a host
+     *   catching that still works; caught on its own it carries
+     *   `getRetryAfter()` (#304).
      * @throws ConfigurationException
      *   In every mode, when a challenge plugin matches but no challenge
      *   provider is configured. `create()` normally rejects that wiring
