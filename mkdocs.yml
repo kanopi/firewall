@@ -247,6 +247,7 @@ nav:
       - User Agent: plugins/user-agent.md
       - ASN: plugins/asn.md
       - Rate Limit: plugins/rate-limit.md
+      - Reputation: plugins/reputation.md
       - Vulnerability Score: plugins/vulnerability-score.md
       - OWASP CRS: plugins/crs.md
       - AbuseIPDB: plugins/abuseipdb.md

@@ -123,6 +123,35 @@ Identity-verifying plugins (User Agent, and any implementing
 
 Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option).
 
+## `config:` — reputation rules
+
+`Reputation` and `AbuseIpdb` take a map rather than a rule list. See
+[Reputation](../plugins/reputation.md).
+
+| Key | Type | Default | |
+|---|---|---|---|
+| `provider` | string | `http` (`abuseipdb` on `AbuseIpdb`) | `abuseipdb`, `http`, or a class implementing `ReputationProviderInterface` |
+| `threshold` | float | `75` | Score at or above which the rule matches, on the provider's scale |
+| `cache_ttl` | int | provider's | How long a verdict is reused |
+| `error_cache_ttl` | int | provider's | How long a failed lookup is remembered |
+| `cache_dir` | string | temp dir | Where verdicts are cached |
+| `on_error` | string | `fail_open` | `fail_open`, `last_known_good` |
+| `block_status` | int | `403` | Status returned when the rule blocks |
+| `block_duration` | int | `3600` | How long the address is remembered |
+| `api_key` | string | *unset* | `abuseipdb`: required, or the rule is inert |
+| `max_age_in_days` | int | `30` | `abuseipdb`: how far back reports count |
+| `when` | list | *unset* | Conditions gating the lookup — same syntax as any rule |
+| `upstream` | string or map | *required* | `http`: the endpoint, as [a source declares one](../configuration/sources.md#upstreams). Must contain `{ip}` |
+| `format` | string | `json` | `http`: `json`, `txt`, `csv`, `tsv`, `ndjson`, `yaml`, `xml` |
+| `score_path` | string | | `http`: dot path to the score in the decoded body |
+| `score_pattern` | string | | `http`: or a regex with one capturing group, read from the raw body |
+| `trusted_path` | string | *unset* | `http`: dot path to an "allow this one" flag |
+| `trusted_pattern` | string | *unset* | `http`: or a regex for the same |
+| `content_type` | string | `application/json` | `http`: sent with an `upstream.body` |
+| `provider_name` | string | *see docs* | `http`: what log lines call the service |
+| `public_only` | bool | `true` | `http`: `false` also looks up private addresses |
+| `timeout` | float | `2.0` | Seconds to wait before giving up |
+
 ## PHP constants
 
 Set before `Firewall::create()`. These exist because they must be readable before any YAML

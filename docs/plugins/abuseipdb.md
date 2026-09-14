@@ -6,6 +6,15 @@ Checks the client IP against [AbuseIPDB](https://www.abuseipdb.com/), which scor
 
 Requires a free API key from [abuseipdb.com/account/api](https://www.abuseipdb.com/account/api). With no `api_key` the plugin is a no-op that matches nothing, so it is safe to add to a config before the key is provisioned.
 
+!!! info "It is the [Reputation plugin](reputation.md) with one provider fixed"
+
+    Since 2.27.0 the caching, the threshold and the fail-open posture belong to `Reputation`,
+    and the AbuseIPDB specifics to a provider it asks. **Nothing on this page changed** —
+    every key still lives where it did, and verdicts cached by earlier versions are still
+    read. What is new is that the same machinery now points at any scoring service, including
+    [one you write](reputation.md#writing-a-provider), and that `on_error: last_known_good`
+    is available here too.
+
 ## Configuration Example
 
 ```yaml
@@ -35,6 +44,10 @@ plugins:
       block_status: 403
       # How long the firewall remembers the offending IP (seconds)
       block_duration: 3600
+      # What to do when AbuseIPDB cannot answer. `fail_open` (the default) is
+      # no match; `last_known_good` reuses the expired verdict this firewall
+      # already had for that address. See the Reputation plugin.
+      # on_error: last_known_good
 ```
 
 The `api_key` uses an `%env()%` token so the key never lands in a config file — see [Environment Variables in YAML](../configuration/environment-variables.md). Note that `${ABUSEIPDB_API_KEY}` is *not* a supported form and resolves to nothing.
@@ -75,7 +88,7 @@ If a site is large enough that unique visitors alone exceed the quota, put the p
 
 ## What gets logged
 
-A match logs at `info` level with `ip`, `abuse_confidence_score`, `threshold`, `total_reports`, and `country_code`.
+A match logs at `info` level with `ip`, `score`, `threshold`, `abuse_confidence_score`, `total_reports`, and `country_code`.
 
 A failed lookup logs at `warning` with `error`, `http_status`, and a note that the request was allowed through. Distinct causes are named rather than collapsed into one message — a rejected API key, an exhausted quota, and an unreachable endpoint need different responses from whoever reads the log.
 

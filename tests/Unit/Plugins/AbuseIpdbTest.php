@@ -4,17 +4,26 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
+use Kanopi\Firewall\Exception\ReputationUnavailableException;
 use Kanopi\Firewall\Plugins\AbuseIpdb;
+use Kanopi\Firewall\Reputation\AbuseIpdbProvider;
+use Kanopi\Firewall\Reputation\ReputationProviderInterface;
+use Kanopi\Firewall\Reputation\ReputationVerdict;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Tests for the AbuseIPDB reputation plugin.
  *
- * The network call is the one thing these tests replace: `fetch()` is
- * overridden by a double that returns scripted results and counts how often it
- * was asked. Everything else — the threshold comparison, the cache, the
- * fail-open path, the routable-address check — is the shipped code.
+ * The network call is the one thing these tests replace: the rule's provider is
+ * a real `AbuseIpdbProvider` with `check()` scripted, counting how often it was
+ * asked. Everything else — the threshold comparison, the cache, the fail-open
+ * path, the routable-address check — is the shipped code.
+ *
+ * The seam moved from the plugin's own `fetch()` to the provider when the
+ * provider interface was extracted (#204). What it stands for did not: this
+ * file is still the AbuseIPDB rule's decisions, and `AbuseIpdbTransportTest` is
+ * still everything inside the call.
  *
  * Call counting is load-bearing rather than incidental. The free tier allows
  * 1,000 checks a day, so "how many times did this call the API" is a
@@ -57,7 +66,7 @@ class AbuseIpdbTest extends AbstractTestCase
             $plugin->evaluate($this->getRequest('203.0.113.5')),
             'With no api_key the plugin must be inert. Matching here would block every request for someone who added the plugin before provisioning a key.',
         );
-        $this->assertSame(0, $plugin->fetchCount, 'An unconfigured plugin must not call the API.');
+        $this->assertSame(0, $plugin->fetchCount(), 'An unconfigured plugin must not call the API.');
     }
 
     public function testPrivateAddressIsNotLookedUp(): void
@@ -65,7 +74,7 @@ class AbuseIpdbTest extends AbstractTestCase
         $plugin = $this->plugin([], [self::report(100)]);
 
         $this->assertFalse($plugin->evaluate($this->getRequest('10.0.0.5')));
-        $this->assertSame(0, $plugin->fetchCount, 'Private space cannot be in AbuseIPDB — looking it up spends quota to learn nothing.');
+        $this->assertSame(0, $plugin->fetchCount(), 'Private space cannot be in AbuseIPDB — looking it up spends quota to learn nothing.');
     }
 
     public function testReservedAddressIsNotLookedUp(): void
@@ -73,7 +82,7 @@ class AbuseIpdbTest extends AbstractTestCase
         $plugin = $this->plugin([], [self::report(100)]);
 
         $this->assertFalse($plugin->evaluate($this->getRequest('127.0.0.1')));
-        $this->assertSame(0, $plugin->fetchCount);
+        $this->assertSame(0, $plugin->fetchCount());
     }
 
     public function testScoreAtTheThresholdMatches(): void
@@ -120,7 +129,7 @@ class AbuseIpdbTest extends AbstractTestCase
 
         $this->assertTrue($plugin->evaluate($request));
         $this->assertTrue($plugin->evaluate($request), 'The cached verdict must produce the same decision.');
-        $this->assertSame(1, $plugin->fetchCount, 'A second request from the same address must be served from cache.');
+        $this->assertSame(1, $plugin->fetchCount(), 'A second request from the same address must be served from cache.');
     }
 
     public function testDifferentAddressesEachCostOneLookup(): void
@@ -129,7 +138,7 @@ class AbuseIpdbTest extends AbstractTestCase
 
         $this->assertTrue($plugin->evaluate($this->getRequest('203.0.113.5')));
         $this->assertFalse($plugin->evaluate($this->getRequest('203.0.113.6')));
-        $this->assertSame(2, $plugin->fetchCount, 'The cache is keyed per address, so a new address is a new lookup.');
+        $this->assertSame(2, $plugin->fetchCount(), 'The cache is keyed per address, so a new address is a new lookup.');
     }
 
     public function testExpiredVerdictIsRefetched(): void
@@ -141,7 +150,7 @@ class AbuseIpdbTest extends AbstractTestCase
             $plugin->evaluate($this->getRequest('203.0.113.5')),
             'With the TTL expired the second call must consult the API again and use its fresher answer.',
         );
-        $this->assertSame(2, $plugin->fetchCount);
+        $this->assertSame(2, $plugin->fetchCount());
     }
 
     public function testFailureIsCachedSoAnOutageDoesNotCostEveryRequestATimeout(): void
@@ -156,7 +165,7 @@ class AbuseIpdbTest extends AbstractTestCase
         $this->assertFalse($plugin->evaluate($request));
         $this->assertSame(
             1,
-            $plugin->fetchCount,
+            $plugin->fetchCount(),
             'A failure must be remembered briefly. Retrying on every request would make each one wait the full timeout, which is a slowdown wearing fail-open as a disguise.',
         );
     }
@@ -174,7 +183,7 @@ class AbuseIpdbTest extends AbstractTestCase
             $plugin->evaluate($request),
             'Once the short failure window lapses the plugin must try again rather than staying blind.',
         );
-        $this->assertSame(2, $plugin->fetchCount);
+        $this->assertSame(2, $plugin->fetchCount());
     }
 
     public function testCorruptCacheEntryIsRefetchedRatherThanTrusted(): void
@@ -189,7 +198,7 @@ class AbuseIpdbTest extends AbstractTestCase
             $plugin->evaluate($this->getRequest('203.0.113.5')),
             'A truncated or hand-edited entry must count as a miss, not as a clean verdict.',
         );
-        $this->assertSame(1, $plugin->fetchCount);
+        $this->assertSame(1, $plugin->fetchCount());
     }
 
     public function testCacheFileNameDoesNotContainTheAddress(): void
@@ -227,26 +236,7 @@ class AbuseIpdbTest extends AbstractTestCase
         $this->assertSame(3600, $plugin->getExpirationTime());
     }
 
-    public function testStatusLineIsParsedFromWrapperHeaders(): void
-    {
-        $plugin = $this->plugin([], []);
 
-        $this->assertSame(200, $plugin->exposedStatusFromHeaders(['HTTP/1.1 200 OK', 'Content-Type: application/json']));
-        $this->assertSame(429, $plugin->exposedStatusFromHeaders(['HTTP/2 429 Too Many Requests']));
-        $this->assertNull($plugin->exposedStatusFromHeaders(['Content-Type: application/json']));
-        $this->assertNull($plugin->exposedStatusFromHeaders([]));
-    }
-
-    public function testFailuresAreDescribedInTermsAnOperatorCanActOn(): void
-    {
-        $plugin = $this->plugin([], []);
-
-        $this->assertStringContainsString('API key', $plugin->exposedDescribeStatus(401));
-        $this->assertStringContainsString('quota', $plugin->exposedDescribeStatus(429));
-        $this->assertStringContainsString('invalid', $plugin->exposedDescribeStatus(422));
-        $this->assertStringContainsString('503', $plugin->exposedDescribeStatus(503));
-        $this->assertStringContainsString('no parseable status', $plugin->exposedDescribeStatus(null));
-    }
 
     public function testNameAndDescriptionAreReported(): void
     {
@@ -257,89 +247,125 @@ class AbuseIpdbTest extends AbstractTestCase
     }
 
     /**
-     * A successful scripted fetch result.
+     * A scripted verdict.
      *
-     * @return array<string, mixed>
+     * @param int $score
+     *   The abuse confidence score.
+     * @param bool $whitelisted
+     *   Whether AbuseIPDB vouches for the address.
+     *
+     * @return ReputationVerdict
+     *   What the provider would have returned.
      */
-    private static function report(int $score, bool $whitelisted = false): array
+    private static function report(int $score, bool $whitelisted = false): ReputationVerdict
     {
-        return ['report' => [
+        return new ReputationVerdict((float) $score, $whitelisted, [
             'abuse_confidence_score' => $score,
-            'is_whitelisted'         => $whitelisted,
-            'total_reports'          => $score > 0 ? 7 : 0,
-            'country_code'           => 'RU',
-        ]];
+            'total_reports' => $score > 0 ? 7 : 0,
+            'country_code' => 'RU',
+        ]);
     }
 
     /**
-     * A failed scripted fetch result.
+     * A scripted failure.
      *
-     * @return array<string, mixed>
+     * @param string $error
+     *   What the provider could not do.
+     * @param int|null $status
+     *   The status behind it, when there was one.
+     *
+     * @return ReputationUnavailableException
+     *   What the provider would have thrown.
      */
-    private static function failure(string $error, ?int $status): array
+    private static function failure(string $error, ?int $status): ReputationUnavailableException
     {
-        return ['error' => $error, 'http_status' => $status];
+        return new ReputationUnavailableException($error, $status);
     }
 
     /**
-     * Build the plugin with the network replaced by scripted results.
+     * Build the rule with the network replaced by scripted results.
      *
      * `api_key` defaults to a placeholder because most cases want a configured
-     * plugin; the unconfigured case omits it explicitly.
+     * rule; the unconfigured case omits it explicitly.
      *
      * @param array<string, mixed> $config
      *   Plugin config. `cache_dir` is filled in with this test's directory.
-     * @param array<int, array<string, mixed>> $fetchResults
-     *   Results to return from successive fetch() calls, in order.
+     * @param array<int, ReputationVerdict|ReputationUnavailableException> $results
+     *   Results for successive lookups, in order.
      */
-    private function plugin(array $config, array $fetchResults): AbuseIpdb
+    private function plugin(array $config, array $results): AbuseIpdb
     {
         $config['cache_dir'] ??= $this->cacheDir;
 
-        // Most cases want a configured plugin. Pass an explicit
+        // Most cases want a configured rule. Pass an explicit
         // `'api_key' => null` to exercise the unconfigured path.
         if (!array_key_exists('api_key', $config)) {
             $config['api_key'] = 'test-key';
         }
 
-        return new class ([], $config, $fetchResults) extends AbuseIpdb {
+        // A real provider with only the call replaced, so the api_key check
+        // and the routable-address check under test are the shipped ones.
+        $provider = new class ($config, $results) extends AbuseIpdbProvider {
             /**
-             * How many times the API was called.
+             * How many times the API was asked.
              */
-            public int $fetchCount = 0;
+            public int $calls = 0;
 
             /**
-             * Remaining scripted results.
-             *
-             * @var array<int, array<string, mixed>>
-             */
-            private array $scripted;
-
-            /**
-             * @param array<int|string, mixed> $metadata
              * @param array<int|string, mixed> $config
-             * @param array<int, array<string, mixed>> $scripted
+             * @param array<int, ReputationVerdict|ReputationUnavailableException> $scripted
              */
-            public function __construct(array $metadata, array $config, array $scripted)
+            public function __construct(array $config, private array $scripted)
             {
-                parent::__construct($metadata, $config);
-                $this->scripted = $scripted;
+                parent::__construct($config);
             }
 
             /**
              * {@inheritdoc}
              */
-            protected function fetch(string $ip, string $apiKey): array
+            public function check(string $ip): ReputationVerdict
             {
-                $this->fetchCount++;
+                $this->calls++;
 
                 $next = array_shift($this->scripted);
+
                 if ($next === null) {
-                    return ['error' => 'the test scripted no further results', 'http_status' => null];
+                    throw new ReputationUnavailableException('the test scripted no further results');
                 }
 
-                /** @phpstan-ignore-next-line — scripted shape is asserted by the test that supplies it. */
+                if ($next instanceof ReputationUnavailableException) {
+                    throw $next;
+                }
+
                 return $next;
+            }
+        };
+
+        return new class ([], $config, $provider) extends AbuseIpdb {
+            /**
+             * @param array<int|string, mixed> $metadata
+             * @param array<int|string, mixed> $config
+             */
+            public function __construct(array $metadata, array $config, private readonly ReputationProviderInterface $scripted)
+            {
+                parent::__construct($metadata, $config);
+            }
+
+            /**
+             * {@inheritdoc}
+             */
+            protected function provider(): ReputationProviderInterface
+            {
+                return $this->scripted;
+            }
+
+            /**
+             * How many times the API was asked.
+             */
+            public function fetchCount(): int
+            {
+                /** @phpstan-ignore-next-line — the double this test supplies. */
+                return $this->scripted->calls;
             }
 
             /**
@@ -348,24 +374,6 @@ class AbuseIpdbTest extends AbstractTestCase
             public function exposedCachePath(string $ip): ?string
             {
                 return $this->cachePath($ip);
-            }
-
-            /**
-             * Expose statusFromHeaders() for assertions.
-             *
-             * @param array<int, string> $headers
-             */
-            public function exposedStatusFromHeaders(array $headers): ?int
-            {
-                return $this->statusFromHeaders($headers);
-            }
-
-            /**
-             * Expose describeStatus() for assertions.
-             */
-            public function exposedDescribeStatus(?int $status): string
-            {
-                return $this->describeStatus($status);
             }
         };
     }

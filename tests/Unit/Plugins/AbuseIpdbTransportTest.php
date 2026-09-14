@@ -5,9 +5,14 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit\Plugins;
 
 require_once __DIR__ . '/../../Traits/PluginsNamespaceOverrides.php';
+// Two files, because the split is real: the HTTP call lives with the provider
+// in `Kanopi\Firewall\Reputation` and the verdict cache lives with the rule in
+// `Kanopi\Firewall\Plugins` (#204). This test exercises both halves.
+require_once __DIR__ . '/../../Traits/ReputationNamespaceOverrides.php';
 
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\AbuseIpdb;
+use Kanopi\Firewall\Reputation\AbuseIpdbProvider;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Monolog\Level;
@@ -49,8 +54,8 @@ final class AbuseIpdbTransportTest extends AbstractTestCase
     {
         // These are process-global. A leaked flag would feed a canned HTTP
         // response, or a forced failure, to every later test in the run.
-        $GLOBALS['fake_plugin_http_response'] = null;
-        $GLOBALS['fake_plugin_http_handles'] = [];
+        $GLOBALS['fake_reputation_http_response'] = null;
+        $GLOBALS['fake_reputation_http_handles'] = [];
         $GLOBALS['simulate_plugins_file_get_contents_failure'] = false;
         $GLOBALS['simulate_plugins_file_put_contents_failure'] = false;
         $GLOBALS['simulate_plugins_is_dir_failure'] = false;
@@ -113,7 +118,7 @@ final class AbuseIpdbTransportTest extends AbstractTestCase
      */
     public function testUnreachableApiDoesNotMatch(): void
     {
-        $GLOBALS['fake_plugin_http_response'] = false;
+        $GLOBALS['fake_reputation_http_response'] = false;
 
         $handler = $this->captureLogs();
 
@@ -156,7 +161,7 @@ final class AbuseIpdbTransportTest extends AbstractTestCase
      */
     public function testResponseWithNoStatusLineDoesNotMatch(): void
     {
-        $GLOBALS['fake_plugin_http_response'] = [
+        $GLOBALS['fake_reputation_http_response'] = [
             'headers' => ['Content-Type: application/json'],
             'body' => '{"data":{"abuseConfidenceScore":100}}',
         ];
@@ -169,7 +174,7 @@ final class AbuseIpdbTransportTest extends AbstractTestCase
      */
     public function testRequestWithoutAClientIpIsSkipped(): void
     {
-        $GLOBALS['fake_plugin_http_response'] = false;
+        $GLOBALS['fake_reputation_http_response'] = false;
 
         $request = Request::create('/', 'GET');
         $request->server->remove('REMOTE_ADDR');
@@ -279,14 +284,14 @@ final class AbuseIpdbTransportTest extends AbstractTestCase
      */
     public function testNumericTimeoutIsUsedAsConfigured(): void
     {
-        $plugin = new class ([], ['api_key' => 'k', 'timeout' => '2.5']) extends AbuseIpdb {
+        $provider = new class (['api_key' => 'k', 'timeout' => '2.5']) extends AbuseIpdbProvider {
             public function exposedTimeout(): float
             {
                 return $this->timeout();
             }
         };
 
-        $this->assertSame(2.5, $plugin->exposedTimeout());
+        $this->assertSame(2.5, $provider->exposedTimeout());
     }
 
     /**
@@ -346,7 +351,7 @@ final class AbuseIpdbTransportTest extends AbstractTestCase
      */
     private function fakeResponse(int $status, string $body): void
     {
-        $GLOBALS['fake_plugin_http_response'] = [
+        $GLOBALS['fake_reputation_http_response'] = [
             'headers' => ['HTTP/1.1 ' . $status . ' ' . ($status === 200 ? 'OK' : 'Error')],
             'body' => $body,
         ];

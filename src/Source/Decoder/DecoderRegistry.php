@@ -40,6 +40,7 @@ final class DecoderRegistry
             'json' => new JsonDecoder(),
             'ndjson' => new NdjsonDecoder(),
             'yaml' => new YamlDecoder(),
+            'xml' => new XmlDecoder(),
             'csv' => $csvDecoder,
             'tsv' => $csvDecoder,
         ];
