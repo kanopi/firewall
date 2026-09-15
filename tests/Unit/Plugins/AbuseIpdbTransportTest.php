@@ -13,6 +13,7 @@ require_once __DIR__ . '/../../Traits/ReputationNamespaceOverrides.php';
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Plugins\AbuseIpdb;
 use Kanopi\Firewall\Reputation\AbuseIpdbProvider;
+use Kanopi\Firewall\Reputation\ReputationSubject;
 use Kanopi\Firewall\Tests\Logging\TestLogHandler;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Monolog\Level;
@@ -329,12 +330,12 @@ final class AbuseIpdbTransportTest extends AbstractTestCase
              */
             public function exposedWriteCache(string $ip, array $entry): void
             {
-                $this->writeCache($ip, $entry);
+                $this->writeCache(new ReputationSubject($ip), $entry);
             }
 
             public function exposedCachePath(string $ip): ?string
             {
-                return $this->cachePath($ip);
+                return $this->cachePath(new ReputationSubject($ip));
             }
         };
 

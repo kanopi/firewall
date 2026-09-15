@@ -31,6 +31,38 @@ Note that the five request-time exceptions are thrown **only** in `mode: excepti
 
 Config *loading* problems are conditional: a missing, unreadable, or malformed config file — including circular `configs:` includes, unresolvable `%env(...)%` tokens, and use of a disabled filesystem processor — is logged at `error` level and produces an empty or partial ruleset, and raises `ConfigurationException` only when [`global.require_config: true`](../configuration/global.md#requiring-the-config-to-load) is set. See [Fail open or fail closed?](#fail-open-or-fail-closed) for why that matters.
 
+## A log destination that cannot be written
+
+A handler that throws while writing — Monolog's `StreamHandler` pointed at a directory that
+does not exist on this host, a socket that is refused — **does not take the request with
+it**. The failure is recorded and the firewall carries on.
+
+```php
+foreach ($firewall->getDegradedBackends() as $backend) {
+    // ['component' => 'logger', 'backend' => 'log destination', 'error' => '...']
+}
+```
+
+`firewall-doctor` reports it:
+
+```
+  ✗ The logger is running without its store
+      log destination could not be reached: There is no existing directory at
+      "/files/private" and it could not be created: Read-only file system
+```
+
+That is the same posture as [storage that cannot reach its
+server](#checking-that-a-backend-can-reach-its-server), and for the same reason: a firewall
+that will not start is not log-only operation — in the default `block` mode it is no
+protection at all.
+
+!!! note "A handler that cannot be *constructed* still stops the deploy"
+
+    The two are different problems. `SyslogHandler` given the string `LOG_USER` instead of
+    the constant is an operator error that YAML cannot express, and this library refuses to
+    start for operator errors. A destination that is correct in configuration and absent on
+    this host is an environment problem, and only discoverable when something writes.
+
 ## Checking that every rule is running
 
 A rule whose constructor throws — a rate limit backend pointed at a Redis host that is not answering, a storage path that lost its permissions — is logged at `error` level and skipped. The request is evaluated by the rules that *did* build, which is deliberate: a broken backend should not take the site down. But for a `block` rule it is a fail-open, and a firewall running three rules short looks exactly like a firewall running correctly.

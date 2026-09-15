@@ -147,6 +147,8 @@ Signals: `bot_score`, `verified_bot`, `ja3`, `ja4`.
 | `error_cache_ttl` | int | provider's | How long a failed lookup is remembered |
 | `cache_dir` | string | temp dir | Where verdicts are cached |
 | `on_error` | string | `fail_open` | `fail_open`, `last_known_good` |
+| `subject` | string | `client_ip` | What to score: `client_ip`, `post.*`, `header.*`, `query.*`, `cookie.*` |
+| `subject_hash` | string | *unset* | Send a digest of the subject instead of the value, e.g. `sha256` |
 | `block_status` | int | `403` | Status returned when the rule blocks |
 | `block_duration` | int | `3600` | How long the address is remembered |
 | `api_key` | string | *unset* | `abuseipdb`: required, or the rule is inert |

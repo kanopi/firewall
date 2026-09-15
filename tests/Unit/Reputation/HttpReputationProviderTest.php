@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../Traits/ReputationNamespaceOverrides.php';
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Exception\ReputationUnavailableException;
 use Kanopi\Firewall\Reputation\HttpReputationProvider;
+use Kanopi\Firewall\Reputation\ReputationSubject;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -418,6 +419,90 @@ final class HttpReputationProviderTest extends AbstractTestCase
     }
 
     /**
+     * `{subject}` is the token, and `{ip}` is still the same token (#341).
+     *
+     * A configuration written against 2.27.0 keeps working without an edit,
+     * which is the whole reason the old spelling stayed.
+     */
+    public function testEitherTokenNamesTheSubject(): void
+    {
+        $this->fakeResponse(200, (string) json_encode(['data' => ['score' => 40]]));
+
+        $provider = $this->provider(['upstream' => 'https://reputation.example.com/v1/score?q={subject}']);
+
+        $provider->checkSubject(new ReputationSubject('alice@example.com', 'post.email'));
+
+        $this->assertSame(
+            ['https://reputation.example.com/v1/score?q=alice%40example.com'],
+            $GLOBALS['fake_reputation_http_urls']
+        );
+    }
+
+    /**
+     * A subject in the body, which is where an email address belongs.
+     *
+     * A GET puts it in a URL, and a URL reaches access logs, proxy caches and
+     * referrer headers. For anything that is not an address, a POST body is
+     * the difference between asking a question and publishing the answer.
+     */
+    public function testASubjectCanBeSentInTheBody(): void
+    {
+        $this->fakeResponse(200, (string) json_encode(['data' => ['score' => 40]]));
+
+        $provider = $this->provider([
+            'upstream' => [
+                'url' => 'https://reputation.example.com/v1/score',
+                'method' => 'POST',
+                'body' => '{"email": "{subject}"}',
+            ],
+        ]);
+
+        $provider->checkSubject(new ReputationSubject('alice@example.com', 'post.email'));
+
+        $sent = $GLOBALS['fake_reputation_http_requests'][0];
+
+        $this->assertSame('{"email": "alice@example.com"}', $sent['content']);
+        $this->assertStringNotContainsString('alice', (string) $GLOBALS['fake_reputation_http_urls'][0]);
+    }
+
+    /**
+     * It answers about any kind, and says so.
+     *
+     * Unlike `AbuseIpdbProvider`, which knows exactly what AbuseIPDB scores.
+     * An endpoint configured by an operator scores whatever they pointed it at,
+     * and this provider has no way to know better.
+     */
+    public function testItHandlesAnySubjectKind(): void
+    {
+        $this->assertTrue($this->provider()->handles(new ReputationSubject('x', 'post.email')));
+        $this->assertTrue($this->provider()->handles(new ReputationSubject('x')));
+    }
+
+    /**
+     * `public_only` is about addresses, and means nothing for anything else.
+     *
+     * There is no equivalent of "not publicly routable" for an email address,
+     * and inventing one -- a syntax check, a disposable-domain list -- would be
+     * this library making the judgement the service it is about to ask exists
+     * to make.
+     */
+    public function testPublicOnlyDoesNotFilterNonAddressSubjects(): void
+    {
+        $provider = new class ([
+            'upstream' => 'https://reputation.example.com/v1/score?q={subject}',
+            'score_path' => 'data.score',
+        ]) extends HttpReputationProvider {
+            public function exposedKnows(ReputationSubject $subject): bool
+            {
+                return $this->knowsAboutSubject($subject);
+            }
+        };
+
+        $this->assertFalse($provider->exposedKnows(new ReputationSubject('10.0.0.4')));
+        $this->assertTrue($provider->exposedKnows(new ReputationSubject('anything', 'post.email')));
+    }
+
+    /**
      * A URL that does not name the address is refused at construction.
      *
      * It would return the same body for every visitor: a reputation check that
@@ -427,7 +512,7 @@ final class HttpReputationProviderTest extends AbstractTestCase
     public function testAUrlWithoutTheAddressIsRefused(): void
     {
         $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessageMatches('/never mentions `\{ip\}`/');
+        $this->expectExceptionMessageMatches('/never mentions `\{subject\}`/');
 
         new HttpReputationProvider(['upstream' => 'https://reputation.example.com/v1/score', 'score_path' => 'score']);
     }

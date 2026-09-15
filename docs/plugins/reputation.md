@@ -162,6 +162,90 @@ own documentation will match.
     every visitor — a reputation check that can neither fail nor help — so the rule refuses
     to start.
 
+## Scoring something other than the address
+
+A reputation service answers two quite different questions, and until 2.28.0 this rule could
+only ask one of them. `subject:` asks the other — score the thing being **submitted**:
+
+```yaml
+config:
+  provider: http
+  subject: post.email               # default: client_ip
+  when:
+    - "path:/register"
+  upstream:
+    url: "https://verify.example.com/check"
+    method: POST
+    body: '{"email": "{subject}"}'
+  score_path: data.risk
+  threshold: 75
+```
+
+The field vocabulary is the one rate-limit keys and `when:` conditions already use:
+`client_ip`, `post.*`, `header.*`, `query.*`, `cookie.*`.
+
+`{subject}` is the token; `{ip}` still works and means the same thing, so a 2.27.0
+configuration needs no edit.
+
+**A request that does not carry the subject is skipped**, not asked with an empty value — on
+most sites `post.email` exists on one path out of thousands. Sending an empty subject would
+be worse than skipping: a scoring service asked about `""` answers *something*, and the
+answer is about nothing.
+
+Pair it with [`when:`](#only-ask-where-it-is-worth-asking). A signup form is one path;
+without a gate the rule wakes on every request to find out there is no email on it.
+
+### The subject leaves your server
+
+!!! danger "This sends user data to a third party — decide that on purpose"
+
+    An email address is personal data. A username is credential-adjacent. `subject:` is the
+    one setting in this library that takes something a visitor typed and sends it somewhere
+    else, so it is worth being deliberate about which service, under what agreement, and
+    whether your privacy notice says so.
+
+    Nothing about this is a reason not to use it — checking a signup against a
+    breach corpus is a real control. It is a reason to know you turned it on.
+
+**Send a digest instead**, if the service takes one:
+
+```yaml
+subject: post.email
+subject_hash: sha256        # the value never leaves the server
+```
+
+The value is lower-cased before hashing, because every service that accepts a digest
+normalises first — otherwise `Alice@example.com` and `alice@example.com` are two different
+mailboxes to it. An algorithm this system does not have stops the rule at startup rather
+than quietly falling back to plaintext.
+
+**The logs never carry the value.** A non-address subject is written as its kind and a short
+digest — `post.email 3f2a91c0b7d4` — which is enough to correlate two entries and not enough
+to be a disclosure. A firewall writes log lines on every request, and those outlive the
+request by however long the logs are kept.
+
+### Not every provider can answer
+
+`handles()` is per kind, so a provider says which subjects it scores. **AbuseIPDB scores
+addresses**, so pointing an AbuseIPDB rule at `subject: post.email` refuses to start:
+
+```
+The reputation rule is configured with `subject: post.email`, but AbuseIPDB only scores
+client addresses. Point it at a provider that scores that, or remove `subject:`.
+```
+
+That is a configuration error rather than a runtime surprise, because sending a username to
+a service that scores IP addresses gets an answer, and the answer is about something else.
+
+A provider opts in by implementing `SubjectAwareReputationProviderInterface` alongside
+`ReputationProviderInterface` — see [writing a provider](#writing-a-provider).
+
+### Caching
+
+Each subject kind gets its own cache entry, so a score for `post.email` and one for an
+address are never confused. An address keeps the file name it had in 2.27.0, so upgrading
+orphans nothing.
+
 ## Settings every provider shares
 
 | Key | Type | Default | |
@@ -171,6 +255,8 @@ own documentation will match.
 | `error_cache_ttl` | int | provider's | How long a *failed* lookup is remembered |
 | `cache_dir` | string | temp dir | Where verdicts are cached |
 | `on_error` | enum | `fail_open` | What to do when the service cannot answer |
+| `subject` | string | `client_ip` | What to look up — `post.email`, `header.x-api-key`, … |
+| `subject_hash` | string | *unset* | Send a digest rather than the value: `sha256` |
 | `block_status` | int | `403` | Status returned when this rule blocks |
 | `block_duration` | int | `3600` | How long the address is remembered |
 
@@ -276,6 +362,36 @@ class SpamhausProvider implements ReputationProviderInterface
     public function getDefaultErrorCacheTtl(): int { return 300; }
 }
 ```
+
+To score more than addresses, implement `SubjectAwareReputationProviderInterface` too — two
+more methods, and the address-only contract keeps working unchanged:
+
+```php
+class BreachCorpusProvider implements SubjectAwareReputationProviderInterface
+{
+    // ... the seven above, then:
+
+    // Asked once, when the rule is built. A rule whose `subject:` this refuses
+    // does not start.
+    public function handles(ReputationSubject $subject): bool
+    {
+        return $subject->kind === 'post.email';
+    }
+
+    public function checkSubject(ReputationSubject $subject): ReputationVerdict
+    {
+        // $subject->value is the thing to look up, already hashed when the rule
+        // configured `subject_hash`. $subject->describe() is what may be logged.
+        return new ReputationVerdict(score: 82.0);
+    }
+}
+```
+
+The two interfaces are separate rather than one widened interface, because
+`ReputationProviderInterface` shipped in 2.27.0 with this page telling people how to write
+one. Widening it a release later would have made every provider written from it fatally
+incomplete on a `composer update` — the same reason `ObserveModeInterface` and
+`ScheduledRuleInterface` are separate from `PluginInterface`.
 
 Then name the class:
 

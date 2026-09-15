@@ -262,7 +262,14 @@ Blocks common malicious PHP files, attack patterns, and suspicious URLs includin
 
 ## Pantheon Platform Presets
 
-Two presets wire the firewall into [Pantheon](https://pantheon.io)'s environment rather than adding rules. Both read Pantheon's `PRESSFLOW_SETTINGS` / filesystem conventions, so they are no-ops (or wrong) anywhere else.
+Two presets wire the firewall into [Pantheon](https://pantheon.io)'s environment rather than adding rules. Both read Pantheon's `PRESSFLOW_SETTINGS` / filesystem conventions, so neither does anything useful anywhere else — but they fail differently, and the difference matters:
+
+| Preset | Included off-platform |
+|---|---|
+| `storage-pantheon.yml` | Degrades. The `%env(safe:…)%` fallbacks leave the credentials empty and the firewall uses its default storage |
+| `logging-pantheon.yml` | **Stops the firewall from starting.** `/files/private/` cannot be created elsewhere, and Monolog throws from the handler's constructor, which `Firewall::create()` does not catch |
+
+Include `logging-pantheon.yml` behind an environment check rather than unconditionally in a config shared with local development.
 
 ### `storage-pantheon.yml`
 

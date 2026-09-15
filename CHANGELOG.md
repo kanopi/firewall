@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.28.0](https://github.com/kanopi/firewall/releases/tag/v2.28.0) — 2026-09-15
+
+Getting here from there: the four questions a host has to answer before the firewall behaves and how to get them out of your own environment, what an existing Wordfence, ModSecurity or Cloudflare rule translates to here, a reputation rule that can score the email somebody submitted rather than only the address it came from — and a log destination that does not exist on this host no longer stopping the firewall from starting, which is what running the first of those found.
+
 ## [2.27.0](https://github.com/kanopi/firewall/releases/tag/v2.27.0) — 2026-09-14
 
 Notice more: a rate limit can count the account rather than the IP, a rule can ask a reputation service of your choosing or read the bot score and TLS fingerprint a CDN already computed at the edge, and any rule can be given a window — so what a rule notices, and when it notices it, stop being fixed to the client address and always-on.
