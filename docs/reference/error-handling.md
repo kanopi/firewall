@@ -73,7 +73,7 @@ A rule whose constructor throws — a rate limit backend pointed at a Redis host
 $firewall = Firewall::create([__DIR__ . '/firewall.yml']);
 
 foreach ($firewall->getFailedRules() as $rule) {
-    // bucket: allow | challenge | block
+    // bucket: allow | mark | record | challenge | redirect | block
     // plugin: Kanopi\Firewall\Plugins\RateLimit:2
     // error:  Connection refused
     $status->addError(sprintf(
@@ -93,6 +93,8 @@ Two things about the call:
 - **A rule that already failed is never retried.** Re-running a constructor that throws on every request buys nothing, least of all a connection that is not coming back.
 
 An empty array means every configured rule is constructed and active. It says nothing about rules you disabled with `enable: false` or left out of the config — those never enter the registry, and are not failures.
+
+The bucket is one of the six `response:` values, reported in the order `evaluate()` consults them. Before 2.29.0 only `allow`, `challenge` and `block` were reported: `mark`, `record` and `redirect` arrived in 2.26.0 and this method never learned about them, so a `response: record` honeypot whose backend was unreachable was not running while `firewall-doctor` said every configured rule was. If you match on the bucket value, three more are now possible.
 
 ## Checking that a backend can reach its server
 
