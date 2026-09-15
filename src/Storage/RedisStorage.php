@@ -44,6 +44,16 @@ class RedisStorage extends AbstractStorageBase implements QueryableStorageInterf
     use AddressMatchTrait;
 
     /**
+     * Why the connection failed, when the reason is that there is no extension.
+     *
+     * A constant rather than an inline string: it is data, and as an arm of a
+     * multi-line ternary it was a line CI could never execute -- the extension
+     * is always installed there, which is the one environment where this
+     * message is never the right one.
+     */
+    private const NO_EXTENSION = 'the redis extension is not installed on this host';
+
+    /**
      * Redis connection, or null when one could not be established.
      */
     protected ?Redis $redis = null;
@@ -95,21 +105,35 @@ class RedisStorage extends AbstractStorageBase implements QueryableStorageInterf
             $this->getLogger()->info('Redis storage initialized', [
                 'prefix' => $this->redisPrefix,
             ]);
-        } catch (\Exception $exception) {
+        } catch (\Throwable $throwable) {
+            // `\Throwable`, not `\Exception`. A server that is not answering
+            // throws an exception and degrades correctly; `ext-redis` not being
+            // installed throws an `\Error` from `new Redis()`, which was caught
+            // by nothing -- not here, and not by a host catching `\Exception`
+            // or `FirewallException` either. The firewall simply did not start
+            // (#356, the same shape as #277).
+            //
             // Left null, and every method below degrades rather than fatals.
             // A storage backend that cannot connect must say so and let the
             // firewall carry on enforcing what it can -- taking the site down
             // because the block list is unreachable helps nobody.
             $this->redis = null;
+
+            // "Class \"Redis\" not found" is the truth and not the sentence an
+            // operator needs; the extension being absent is a different fix
+            // from the server being down, and this is the only place that
+            // knows which one happened.
+            $reason = extension_loaded('redis') ? $throwable->getMessage() : self::NO_EXTENSION;
+
             $this->getLogger()->error('Failed to initialize Redis storage', [
-                'error' => $exception->getMessage(),
+                'error' => $reason,
             ]);
 
             // Logged and also recorded, so a host application's status report
             // can say the block list is unreachable rather than leaving it to
             // a log scraper. The rule still runs; it just has nothing to
             // consult (#273).
-            DegradedBackends::record('block list', self::class, $exception->getMessage());
+            DegradedBackends::record('block list', self::class, $reason);
         }
     }
 

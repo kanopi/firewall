@@ -208,4 +208,34 @@ class RedisRateLimitStorageTest extends AbstractTestCase
 
         $storage->recordRequest('test-key', 1234567890);
     }
+
+    /**
+     * A connection that cannot be established degrades rather than fatalling.
+     *
+     * The counterpart to `RedisStorageTest::testAnUnusableConnectionDegradesQuietly()`,
+     * and the half that was missing: this class held its connection in a
+     * **non-nullable** typed property, so a failed construction left it
+     * uninitialized rather than null. Reading an uninitialized typed property
+     * throws `\Error`, which the `catch (\Exception …)` in each method does
+     * not catch — so the backend degraded at startup and then fataled on the
+     * first request that counted anything (#356).
+     *
+     * Injecting a mock whose `echo()` throws is how a construction failure is
+     * reproduced with the extension present, which is the case CI runs.
+     */
+    public function testAnUnusableConnectionDegradesQuietly(): void
+    {
+        $redis = $this->createMock(Redis::class);
+        $redis->method('echo')->willThrowException(new \RuntimeException('connection refused'));
+
+        $storage = new RedisRateLimitStorage(['instance' => $redis]);
+
+        // Each of these reads the connection, and each used to reach an
+        // uninitialized property.
+        $storage->recordRequest('a-key', time());
+
+        $this->assertSame(0, $storage->countRequests('a-key', 0, PHP_INT_MAX));
+        $this->assertSame(0, $storage->forget('a-key', time()));
+    }
+
 }

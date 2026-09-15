@@ -21,9 +21,26 @@ use Redis;
 class RedisRateLimitStorage extends AbstractRateLimitStorage implements PrunableRateLimitStorageInterface
 {
     /**
-     * Redis Connection class.
+     * Why the connection failed, when the reason is that there is no extension.
+     *
+     * A constant rather than an inline string: it is data, and as an arm of a
+     * multi-line ternary it was a line CI could never execute -- the extension
+     * is always installed there, which is the one environment where this
+     * message is never the right one.
      */
-    protected Redis $redis;
+    private const NO_EXTENSION = 'the redis extension is not installed on this host';
+
+    /**
+     * Redis Connection class, or NULL when it could not be opened.
+     *
+     * Nullable so a failed construction leaves something every method can
+     * check. It was a non-nullable typed property, which meant a failed
+     * construction left it *uninitialized* -- and reading an uninitialized
+     * typed property throws `\Error`, which the `catch (\Exception …)` in each
+     * method below does not catch either. The backend degraded at startup and
+     * then fataled on the first request that used it (#356).
+     */
+    protected ?Redis $redis = null;
 
     /**
      * Redis Prefix.
@@ -64,14 +81,40 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
                 'prefix' => $this->redisPrefix,
                 'ttl' => $config['ttl'] ?? 3600,
             ]);
-        } catch (\Exception $exception) {
+        } catch (\Throwable $throwable) {
+            // `\Throwable`, not `\Exception`. A server that is not answering
+            // throws an exception and degrades correctly; `ext-redis` not being
+            // installed throws an `\Error` from `new Redis()`, which was caught
+            // by nothing -- not here, and not by a host catching `\Exception`
+            // or `FirewallException` either. The firewall simply did not start
+            // (#356, the same shape as #277).
+            //
+            // Left null, and every method below degrades rather than fatals.
+            // A storage backend that cannot connect must say so and let the
+            // firewall carry on enforcing what it can -- taking the site down
+            // because the rate limit counters are unreachable helps nobody.
+            //
+            // Assigned explicitly because an injected `instance` is already on
+            // the property by the time `echo()` throws: without this the
+            // guards below would pass and every call would go to a connection
+            // that has already failed.
+            $this->redis = null;
+
+            // "Class \"Redis\" not found" is the truth and not the sentence an
+            // operator needs; the extension being absent is a different fix
+            // from the server being down, and this is the only place that
+            // knows which one happened.
+            $reason = extension_loaded('redis') ? $throwable->getMessage() : self::NO_EXTENSION;
+
             $this->getLogger()->error('Failed to initialize Redis rate limit storage', [
-                'error' => $exception->getMessage(),
+                'error' => $reason,
             ]);
 
-            // See RedisStorage: the rule runs, counting nothing, and a status
-            // report needs to be able to say so (#273).
-            DegradedBackends::record('rate limit', self::class, $exception->getMessage());
+            // Logged and also recorded, so a host application's status report
+            // can say the rate limit counters are unreachable rather than leaving it to
+            // a log scraper. The rule still runs; it just has nothing to
+            // consult (#273).
+            DegradedBackends::record('rate limit', self::class, $reason);
         }
     }
 
@@ -80,6 +123,10 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
      */
     public function recordRequest(string $key, int $timestamp): void
     {
+        if (!$this->redis instanceof Redis) {
+            return;
+        }
+
         $redisKey = $this->redisPrefix . $key;
         $ttl = $this->config['ttl'] ?? 3600;
 
@@ -122,6 +169,10 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
      */
     public function forget(string $key, int $before): int
     {
+        if (!$this->redis instanceof Redis) {
+            return 0;
+        }
+
         $redisKey = $this->redisPrefix . $key;
 
         try {
@@ -158,10 +209,23 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
      */
     public function countRequests(string $key, int $start, int $end): int
     {
+        if (!$this->redis instanceof Redis) {
+            // Zero, which is what a counter that recorded nothing holds. A
+            // rate limit that cannot count does not match, which is the
+            // fail-open this backend has always chosen deliberately.
+            return 0;
+        }
+
         $redisKey = $this->redisPrefix . $key;
 
         try {
+            // `zCount()` returns `Redis|int|false` -- false when the command
+            // fails without raising, which the `int` return type below cannot
+            // carry. It reached production as a TypeError rather than as a
+            // count of zero (#356, found by a test written for something
+            // else).
             $count = $this->redis->zCount($redisKey, (string)$start, (string)$end);
+            $count = is_int($count) ? $count : 0;
 
             $this->getLogger()->debug('Redis rate limit request count', [
                 'key' => $key,
