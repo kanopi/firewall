@@ -21,6 +21,16 @@ use Redis;
 class RedisRateLimitStorage extends AbstractRateLimitStorage implements PrunableRateLimitStorageInterface
 {
     /**
+     * Why the connection failed, when the reason is that there is no extension.
+     *
+     * A constant rather than an inline string: it is data, and as an arm of a
+     * multi-line ternary it was a line CI could never execute -- the extension
+     * is always installed there, which is the one environment where this
+     * message is never the right one.
+     */
+    private const NO_EXTENSION = 'the redis extension is not installed on this host';
+
+    /**
      * Redis Connection class, or NULL when it could not be opened.
      *
      * Nullable so a failed construction leaves something every method can
@@ -94,9 +104,7 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
             // operator needs; the extension being absent is a different fix
             // from the server being down, and this is the only place that
             // knows which one happened.
-            $reason = extension_loaded('redis')
-                ? $throwable->getMessage()
-                : 'the redis extension is not installed on this host';
+            $reason = extension_loaded('redis') ? $throwable->getMessage() : self::NO_EXTENSION;
 
             $this->getLogger()->error('Failed to initialize Redis rate limit storage', [
                 'error' => $reason,

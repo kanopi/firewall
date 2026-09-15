@@ -44,6 +44,16 @@ class RedisStorage extends AbstractStorageBase implements QueryableStorageInterf
     use AddressMatchTrait;
 
     /**
+     * Why the connection failed, when the reason is that there is no extension.
+     *
+     * A constant rather than an inline string: it is data, and as an arm of a
+     * multi-line ternary it was a line CI could never execute -- the extension
+     * is always installed there, which is the one environment where this
+     * message is never the right one.
+     */
+    private const NO_EXTENSION = 'the redis extension is not installed on this host';
+
+    /**
      * Redis connection, or null when one could not be established.
      */
     protected ?Redis $redis = null;
@@ -113,9 +123,7 @@ class RedisStorage extends AbstractStorageBase implements QueryableStorageInterf
             // operator needs; the extension being absent is a different fix
             // from the server being down, and this is the only place that
             // knows which one happened.
-            $reason = extension_loaded('redis')
-                ? $throwable->getMessage()
-                : 'the redis extension is not installed on this host';
+            $reason = extension_loaded('redis') ? $throwable->getMessage() : self::NO_EXTENSION;
 
             $this->getLogger()->error('Failed to initialize Redis storage', [
                 'error' => $reason,
