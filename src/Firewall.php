@@ -1337,9 +1337,22 @@ final class Firewall
     }
 
     /**
-     * The three rule buckets, ordered the way `evaluate()` consults them.
+     * Every rule bucket, ordered the way `evaluate()` consults them.
      *
      * So a report reads in the order the firewall would have applied the rules.
+     *
+     * All six, not the three this returned until 2.29.0. `mark`, `record` and
+     * `redirect` arrived in 2.26.0 and the health reporting never learned about
+     * them, so a `response: record` honeypot whose backend was unreachable was
+     * **not running** while `firewall-doctor` said every configured rule was
+     * (#353). That is #260's failure reopened for the buckets added since.
+     *
+     * The last three are typed nullable, so they are narrowed here rather than
+     * returned as they are. In practice they are always present -- `create()`
+     * is the only caller of a protected constructor on a final class, and it
+     * passes all six -- and making them required is not available, because the
+     * constructor declares optional parameters ahead of them. The narrowing is
+     * the type system's price for that ordering, not a case to go looking for.
      *
      * @return array<string, PluginManager>
      *   Keyed by the bucket name an operator configured.
@@ -1348,7 +1361,10 @@ final class Firewall
     {
         return [
             'allow' => $this->bypassPluginManager,
+            'mark' => $this->markPluginManager,
+            'record' => $this->recordPluginManager,
             'challenge' => $this->challengePluginManager,
+            'redirect' => $this->redirectPluginManager,
             'block' => $this->blockingPluginManager,
         ];
     }

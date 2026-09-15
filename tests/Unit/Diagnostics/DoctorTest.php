@@ -89,6 +89,32 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * A broken honeypot is not a clean bill of health.
+     *
+     * The user-visible half of #353. `checkRules()` reports "Every configured
+     * rule is running" whenever `getFailedRules()` is empty, and until 2.29.0
+     * that method could not see a `record` rule at all -- so a honeypot whose
+     * backend was unreachable produced a green report.
+     */
+    public function testABrokenRecordRuleIsNotACleanBillOfHealth(): void
+    {
+        $config = $this->workingConfig();
+        $config['plugins'][] = [
+            'plugin' => \Kanopi\Firewall\Tests\Plugins\TestThrowingPlugin::class,
+            'response' => 'record',
+            'enable' => true,
+        ];
+
+        $titles = $this->titles($this->diagnose($config));
+
+        $this->assertNotContains('Every configured rule is running', $titles);
+        $this->assertContains(
+            'Rule ' . \Kanopi\Firewall\Tests\Plugins\TestThrowingPlugin::class . ':0 is not running',
+            $titles
+        );
+    }
+
+    /**
      * A sleeping rule is named, so it is not mistaken for a broken one.
      *
      * The whole cost of scheduling a rule is the afternoon somebody spends finding out
