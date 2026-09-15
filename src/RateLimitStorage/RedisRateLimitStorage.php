@@ -83,6 +83,12 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
             // A storage backend that cannot connect must say so and let the
             // firewall carry on enforcing what it can -- taking the site down
             // because the rate limit counters are unreachable helps nobody.
+            //
+            // Assigned explicitly because an injected `instance` is already on
+            // the property by the time `echo()` throws: without this the
+            // guards below would pass and every call would go to a connection
+            // that has already failed.
+            $this->redis = null;
 
             // "Class \"Redis\" not found" is the truth and not the sentence an
             // operator needs; the extension being absent is a different fix
@@ -205,7 +211,13 @@ class RedisRateLimitStorage extends AbstractRateLimitStorage implements Prunable
         $redisKey = $this->redisPrefix . $key;
 
         try {
+            // `zCount()` returns `Redis|int|false` -- false when the command
+            // fails without raising, which the `int` return type below cannot
+            // carry. It reached production as a TypeError rather than as a
+            // count of zero (#356, found by a test written for something
+            // else).
             $count = $this->redis->zCount($redisKey, (string)$start, (string)$end);
+            $count = is_int($count) ? $count : 0;
 
             $this->getLogger()->debug('Redis rate limit request count', [
                 'key' => $key,
