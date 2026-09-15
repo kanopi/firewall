@@ -102,6 +102,16 @@ The bucket is one of the six `response:` values, reported in the order `evaluate
 
 `RedisStorage` and `RedisRateLimitStorage` deliberately catch a connection failure, log it, and answer every read as though nothing were stored, so the firewall carries on enforcing every rule that does not depend on them. The plugin therefore constructs successfully, and `getFailedRules()` correctly reports nothing — while a rate limit rule counts nothing and lets every request through.
 
+!!! note "`ext-redis` not being installed is the same kind of problem"
+
+    A config that names Redis storage on a host without the extension degrades exactly like an unreachable server, and says which of the two it is:
+
+    ```
+    the redis extension is not installed on this host
+    ```
+
+    Before 2.29.0 it was neither — `new Redis()` against a missing extension raises `\Error` rather than an exception, so it was caught by nothing and `Firewall::create()` did not return. A host catching `\Exception` or `FirewallException` did not catch it either. The realistic way to meet it was checking out a production config on a laptop.
+
 ```php
 foreach ($firewall->getDegradedBackends() as $backend) {
     // component: 'block list' | 'rate limit'
