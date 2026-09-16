@@ -229,6 +229,15 @@ final class SourceLoader
             ]);
         }
 
+        // Two questions, asked separately: is the entry well formed, and would
+        // it match everybody. `0.0.0.0/0` passes the first and fails the
+        // second (#364).
+        $entries = $this->validator()->refuseCatchAll(
+            $entries,
+            $sourceDefinition->name,
+            $sourceDefinition->allowCatchAll
+        );
+
         return $this->validator()->filter($entries, $sourceDefinition->validate, $sourceDefinition->name);
     }
 

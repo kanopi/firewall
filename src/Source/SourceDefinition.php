@@ -74,6 +74,11 @@ final class SourceDefinition
      *   CSV/TSV only: treat the first row as column names.
      * @param string $comment
      *   Text formats only: strip from this marker to end of line.
+     * @param bool $allowCatchAll
+     *   Whether this source may contribute an entry matching every address.
+     *   Refused by default: a feed containing `0.0.0.0/0` blocks every visitor,
+     *   and a plugin cannot tell whether it is in the allow bucket or the block
+     *   one, so the source is where the intent has to be declared (#364).
      * @param string|null $delimiter
      *   CSV/TSV only: field delimiter. Null picks the format default.
      */
@@ -93,6 +98,7 @@ final class SourceDefinition
         public readonly bool $headerRow = true,
         public readonly string $comment = '#',
         public readonly ?string $delimiter = null,
+        public readonly bool $allowCatchAll = false,
     ) {
     }
 
@@ -207,6 +213,7 @@ final class SourceDefinition
             headerRow: (bool) ($declaration['header_row'] ?? true),
             comment: is_string($declaration['comment'] ?? null) ? $declaration['comment'] : '#',
             delimiter: is_string($declaration['delimiter'] ?? null) ? $declaration['delimiter'] : null,
+            allowCatchAll: (bool) ($declaration['allow_catch_all'] ?? false),
         );
     }
 
@@ -273,6 +280,11 @@ final class SourceDefinition
             $this->headerRow,
             $this->comment,
             $this->delimiter,
+            // Changes which entries survive, so it belongs here for the same
+            // reason `validate` does. `ttl`, `on_error`, `required` and
+            // `max_delta` deliberately do not: they change when or whether a
+            // refresh happens, not what a body decodes to (#364).
+            $this->allowCatchAll,
         ]));
     }
 
