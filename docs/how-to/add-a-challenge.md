@@ -42,6 +42,10 @@ form action needs it. On a site at `example.com/` those are the same string; on 
 The base path is taken from the request, so **this needs no configuration** — `path` keeps its
 one job and the form action is built from it.
 
+Two shapes of `path` are left exactly as written, so a configuration you have already
+adjusted by hand is not mangled on upgrade: one that is not rooted at `/` (an absolute URL is
+the host's own choice), and one that already carries the base path.
+
 Set `submit_url` only when the browser's view of the URL and the application's differ by
 something the request cannot work out, which in practice means a proxy that rewrites paths:
 

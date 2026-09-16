@@ -124,6 +124,42 @@ final class SubdirectoryChallengeTest extends AbstractTestCase
     }
 
     /**
+     * A `path` that is not rooted at `/` is left alone.
+     *
+     * An absolute URL is the host's own choice, and a base path concatenated
+     * onto one produces `/apphttps://edge.example.com/challenge` — indefensible
+     * output whatever the input was.
+     *
+     * From #361, which proposed this guard. It is worth having even though no
+     * *working* configuration can be in that state: an absolute `path` also
+     * stops submissions being recognised, so anybody who has one is midway
+     * through diagnosing this bug, which is exactly who should not be handed a
+     * mangled URL.
+     */
+    public function testAPathThatIsNotRootedAtSlashIsLeftAlone(): void
+    {
+        $this->assertSame(
+            'https://edge.example.com/challenge',
+            $this->submitUrlFor('/app/gated', '/app', [], 'https://edge.example.com/challenge')
+        );
+    }
+
+    /**
+     * And a `path` that already carries the base path is not doubled.
+     *
+     * The other guard from #361. `/app/app/_firewall/challenge` is what
+     * prefixing unconditionally produces for somebody who tried to fix this by
+     * hand before upgrading.
+     */
+    public function testAPathAlreadyCarryingTheBasePathIsNotDoubled(): void
+    {
+        $this->assertSame(
+            '/app/_firewall/challenge',
+            $this->submitUrlFor('/app/gated', '/app', [], '/app/_firewall/challenge')
+        );
+    }
+
+    /**
      * `redirect_to` is next to it and was already correct.
      *
      * Asserted rather than assumed: the two lines are adjacent, both are about
@@ -160,11 +196,21 @@ final class SubdirectoryChallengeTest extends AbstractTestCase
      *   The subdirectory the application is served from, or NULL for the root.
      * @param array<string, mixed> $challenge
      *   Extra `challenge:` configuration.
+     * @param string|null $challengePath
+     *   An override for `challenge.path`, for the guards that are about it.
      */
-    private function submitUrlFor(string $path, ?string $basePath, array $challenge = []): string
-    {
+    private function submitUrlFor(
+        string $path,
+        ?string $basePath,
+        array $challenge = [],
+        ?string $challengePath = null
+    ): string {
         $server = ($basePath === null ? [] : $this->subdirectoryServer($basePath)) + ['REMOTE_ADDR' => '203.0.113.5'];
         $request = Request::create('http://example.com' . $path, 'GET', [], [], [], $server);
+
+        if ($challengePath !== null) {
+            $challenge['path'] = $challengePath;
+        }
 
         try {
             $this->firewall($challenge)->evaluate($request);

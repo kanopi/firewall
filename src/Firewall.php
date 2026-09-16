@@ -2141,13 +2141,36 @@ final class Firewall
             return trim($configured);
         }
 
-        $path = $this->challengeConfig['path'] ?? null;
+        $configuredPath = $this->challengeConfig['path'] ?? null;
 
         // Read as a string or not at all, rather than cast inline: rector
         // removes a `(string)` in a concatenation as redundant, which turns a
         // `path` that is not a string into a PHPStan error at level max and,
         // before that, into whatever PHP makes of concatenating it.
-        return $request->getBasePath() . (is_string($path) && $path !== '' ? $path : '/_firewall/challenge');
+        $path = is_string($configuredPath) && $configuredPath !== '' ? $configuredPath : '/_firewall/challenge';
+
+        // Anything not rooted at `/` is the host's own choice -- an absolute
+        // URL, or a relative action the browser resolves itself -- and a base
+        // path concatenated onto it produces
+        // `/apphttps://edge.example.com/challenge`, which is indefensible
+        // output whatever the input was.
+        if (!str_starts_with($path, '/')) {
+            return $path;
+        }
+
+        $basePath = rtrim($request->getBasePath(), '/');
+
+        // Already carrying the base path, so adding it again gives
+        // `/app/app/_firewall/challenge`. No *working* configuration can be in
+        // that state -- a prefixed `path` stops submissions being recognised,
+        // which is the other half of this bug -- but somebody midway through
+        // fixing one is exactly who is reading this, and doubling it silently
+        // is a poor way to meet them.
+        if ($basePath === '' || str_starts_with($path, $basePath . '/')) {
+            return $path;
+        }
+
+        return $basePath . $path;
     }
 
     protected function sanitizeRedirect(string $target): string
