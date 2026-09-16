@@ -73,6 +73,7 @@ values a plugin wants needs nothing but an `upstream`.
 | `template` | string or map | none | Output shape; records pass through untouched when absent |
 | `validate` | enum | none | `cidr`, `ip`, `regex`, `string` |
 | `max_delta` | float | none | Reject a refresh moving the entry count by more than this fraction |
+| `max_entries` | int | none | Reject a refresh producing more entries than this — see [Ceilings](#max_size-and-max_entries) |
 | `ttl` | int | `KANOPI_FIREWALL_CACHE_TTL`, else 3600 | Seconds before the cached copy is revalidated |
 | `on_error` | enum | `last_known_good` | `last_known_good`, `fail_open`, `abort` |
 | `required` | bool | `false` | Abort rather than degrade when this source fails |
@@ -94,6 +95,7 @@ values a plugin wants needs nothing but an `upstream`.
 | `body` | string | none | Request body, for methods that take one |
 | `timeout` | float | `KANOPI_FIREWALL_CACHE_TIMEOUT`, else 5.0 | Seconds to wait |
 | `max_redirects` | int | `5` | Redirect hops to follow |
+| `max_size` | int or size | `32M` | Refuse a body larger than this. `0` is no limit — see [Ceilings](#max_size-and-max_entries) |
 | `allow_insecure` | bool | `false` | Permit credentials over plain `http://` |
 
 A bare string is shorthand for a source with nothing but an upstream, and an upstream with
@@ -503,6 +505,11 @@ the wrong things, which is worse than one rule fewer.
 These matter most when `upstream` is a URL you do not control. A feed that breaks, or is
 tampered with, otherwise reaches a plugin's rule list intact.
 
+They answer different questions and none substitutes for another: is each entry well formed
+(`validate`), is this the publisher's file ([`checksum`/`signature`](#verifying-what-you-fetched)),
+is it a plausible *size* (`max_size`, `max_entries`), and is it a plausible amount of *change*
+(`max_delta`).
+
 ### `validate`
 
 | Value | Accepts |
@@ -518,6 +525,78 @@ entries are rule maps rather than values, so the scalar validators pass them thr
 
 A `/0` prefix is accepted but logged as a warning — it covers the entire address space,
 is essentially never intended, and is catastrophic in either an allow or a block list.
+
+### `max_size` and `max_entries`
+
+`upstream.timeout` bounds how long a fetch may take and `max_redirects` bounds where it may go.
+Until 2.30.0 nothing bounded how *much* came back, so an upstream that grew without bound was
+read without bound — and the body and its decoded form are held at once, the decoded form usually
+being the larger of the two.
+
+```yaml
+upstream:
+  url: https://example.org/v1/blocklist.txt
+  max_size: 10M        # bytes, or K/M/G. Default 32M. 0 for no limit
+max_entries: 250000    # refuse a refresh producing more than this
+```
+
+`max_size` **defaults to 32 MiB rather than to nothing**, so *"a list that grows to 4 GB should
+fail, not OOM the refresh job"* needs no configuration to be true. It is far above any published
+list in common use — AWS's `ip-ranges.json`, the largest most deployments meet, is under 3 MB —
+and far below the point at which a refresh job dies.
+
+Both **refuse rather than truncate**. Half a block list is a list whose meaning nobody knows: it
+would load, match fewer things than it should, and look exactly like a list that is simply
+shorter this week.
+
+Both fail the source the way a failed fetch does, so [`on_error`](#failure-policy) applies and
+`last_known_good` keeps the previous artifact.
+
+!!! note "The read is bounded, not just the check"
+
+    `max_size` is enforced while the body is being read, one byte past the ceiling, so an
+    oversized response is *detectable* without ever being *held*. Reading it all and measuring
+    afterwards is the obvious shape and is the exact failure this exists to prevent. A local file
+    is checked by `stat` before it is opened at all.
+
+    The ceiling covers a `checksum:`/`signature:` sidecar too. A digest arriving as four gigabytes
+    is itself worth refusing.
+
+!!! warning "A ceiling bounds what comes *in*, not what is already cached"
+
+    Adding `max_entries` to a source that already has 50,000 entries cached does not reject them;
+    it applies to the next fetch. That is deliberate — the fallback for a refused load is
+    `last_known_good`, which is that same cached list, so failing on the cache path would log an
+    error every load and serve the list anyway. `max_delta` has always worked this way. To apply
+    a new ceiling now, clear the source cache and re-sync.
+
+### An error page where a list should be
+
+The realistic failure is not an attack. A CDN, a captive portal or a misconfigured proxy answers
+with HTML where a text file should be — and it is *small*, so `max_size` says nothing about it. It
+decodes as `txt` without complaint and produces a few dozen lines that are not addresses.
+
+With a `validate:` set, every one of those lines is dropped, and the source is left contributing
+nothing. That used to be silent apart from a warning: the rule simply stopped matching.
+
+A source that decoded to something and validated down to **nothing** now fails:
+
+```
+Source failed to load; using last known good copy
+  source: abusive-ips
+  reason: Source "abusive-ips": every one of its 4 entries failed `validate: cidr`, so it has
+          nothing to contribute. That is usually an error page where a list should be.
+          First: "<html>", "<head><title>404 Not Found</title></head>", "<body>nope</body>"
+  entries: 51204
+```
+
+This is deliberately *not* the same as dropping bad entries. One malformed line in a 9,000-entry
+list still drops that line and keeps the other 8,999 — that is what `validate` is for, and it
+would be a poor trade to lose it. The escalation is about a source that produced nothing at all,
+which is a different claim.
+
+It needs a `validate:`. Without one there is nothing an entry can fail, and an empty result is
+just an empty list — which is a legitimate thing for a feed to publish on a quiet day.
 
 ### `max_delta`
 

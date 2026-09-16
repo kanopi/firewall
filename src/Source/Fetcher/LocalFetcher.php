@@ -72,6 +72,26 @@ final class LocalFetcher implements FetcherInterface
             ));
         }
 
+        // Before the read, not after. A local file is the one upstream whose
+        // size can be known without paying for it, so a list that has grown
+        // past the ceiling costs a stat rather than a four-gigabyte string
+        // (#366). A `false` from filesize() -- a race, or a path the stat
+        // cache disagrees about -- falls through to the read rather than
+        // failing the source over a number it could not get.
+        $limit = $sourceDefinition->upstream->maxSize;
+        $size = $limit > 0 ? @filesize($path) : false;
+
+        if (is_int($size) && $size > $limit) {
+            throw new SourceException(sprintf(
+                'Source "%s": "%s" is %d bytes, more than upstream.max_size allows (%d). Refusing '
+                . 'it rather than using part of a list.',
+                $sourceDefinition->name,
+                $path,
+                $size,
+                $limit
+            ));
+        }
+
         $body = $this->readFile($path);
 
         if ($body === false) {

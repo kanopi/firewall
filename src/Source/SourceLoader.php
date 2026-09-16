@@ -172,6 +172,15 @@ final class SourceLoader
 
         $entries = $this->pipeline($sourceDefinition, $body);
 
+        // Before the delta check, because a ceiling is an absolute statement
+        // and a delta is a relative one: on a first load there is nothing to
+        // compare against, and "how big may this be" still has an answer.
+        $this->validator()->assertEntryCount(
+            count($entries),
+            $sourceDefinition->maxEntries,
+            $sourceDefinition->name
+        );
+
         $this->validator()->assertDelta(
             count($entries),
             isset($meta['entry_count']) ? (int) $meta['entry_count'] : null,
@@ -346,7 +355,19 @@ final class SourceLoader
             $sourceDefinition->allowCatchAll
         );
 
-        return $this->validator()->filter($entries, $sourceDefinition->validate, $sourceDefinition->name);
+        $validated = $this->validator()->filter($entries, $sourceDefinition->validate, $sourceDefinition->name);
+
+        // A third question, asked of the source rather than of an entry: it
+        // decoded to something and none of it survived, which is an error page
+        // where a list should be rather than a list with problems (#366).
+        $this->validator()->assertNotEmptied(
+            $entries,
+            $validated,
+            $sourceDefinition->validate,
+            $sourceDefinition->name
+        );
+
+        return $validated;
     }
 
     /**

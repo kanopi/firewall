@@ -228,6 +228,11 @@ final class HttpFetcher implements FetcherInterface
 
         [$responseBody, $responseHeaders] = $this->readStream($sourceDefinition, $url, $options);
 
+        // Checked here rather than beside the read, so a fetcher that overrides
+        // readStream() is still held to the ceiling. The read bounds the memory;
+        // this bounds what is accepted.
+        $this->assertWithinSize($sourceDefinition, $responseBody);
+
         if ($responseHeaders === []) {
             throw new SourceException(sprintf(
                 'Source "%s": no response headers from "%s".',
@@ -272,9 +277,20 @@ final class HttpFetcher implements FetcherInterface
             ));
         }
 
+        $limit = $sourceDefinition->upstream->maxSize;
+
         try {
             $meta = stream_get_meta_data($handle);
-            $body = stream_get_contents($handle);
+
+            // One byte past the ceiling, so an oversized body is *detectable*
+            // without ever being *held*. Reading it all and measuring
+            // afterwards is the obvious shape and is the exact failure this
+            // guards against: a list that grows to four gigabytes should fail,
+            // not take the refresh job with it (#366).
+            //
+            // `-1` is stream_get_contents()' own "read everything", so no
+            // limit needs no branch here.
+            $body = stream_get_contents($handle, $limit > 0 ? $limit + 1 : -1);
         } finally {
             fclose($handle);
         }
@@ -288,6 +304,58 @@ final class HttpFetcher implements FetcherInterface
         }
 
         return [$body, $headers];
+    }
+
+    /**
+     * Refuse a body that reached the ceiling.
+     *
+     * Refused rather than truncated. Half a block list is a list whose meaning
+     * nobody knows -- it would load, match fewer things than it should, and
+     * look exactly like a list that is simply shorter this week.
+     *
+     * @param SourceDefinition $sourceDefinition
+     *   The source being fetched.
+     * @param string|false $body
+     *   What came back.
+     *
+     * @throws SourceException
+     *   When the body is larger than `upstream.max_size` allows.
+     */
+    private function assertWithinSize(SourceDefinition $sourceDefinition, string|false $body): void
+    {
+        $limit = $sourceDefinition->upstream->maxSize;
+
+        if ($limit <= 0 || $body === false || strlen($body) <= $limit) {
+            return;
+        }
+
+        throw new SourceException(sprintf(
+            'Source "%s": upstream sent more than upstream.max_size allows (%s). Refusing it '
+            . 'rather than using part of a list. Raise max_size if the list has genuinely grown, '
+            . 'or set it to 0 for no limit.',
+            $sourceDefinition->name,
+            $this->describeSize($limit)
+        ));
+    }
+
+    /**
+     * A byte count a person can read.
+     *
+     * @param int $bytes
+     *   The size.
+     *
+     * @return string
+     *   The size in the largest unit that leaves it whole.
+     */
+    private function describeSize(int $bytes): string
+    {
+        foreach (['GiB' => 1073741824, 'MiB' => 1048576, 'KiB' => 1024] as $unit => $scale) {
+            if ($bytes >= $scale && $bytes % $scale === 0) {
+                return intdiv($bytes, $scale) . ' ' . $unit;
+            }
+        }
+
+        return $bytes . ' bytes';
     }
 
     /**
