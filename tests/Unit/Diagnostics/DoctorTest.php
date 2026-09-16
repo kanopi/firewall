@@ -168,6 +168,98 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * A shared block list is reported as shared, and its local copy checked.
+     *
+     * Checking only the top-level `config:` found nothing to check on a shared
+     * setup and said nothing about it -- while the local copy, which is the
+     * entire reason the arrangement exists, might not be writable (#223).
+     */
+    public function testASharedBlockListIsReportedAndItsLocalCopyChecked(): void
+    {
+        $config = $this->workingConfig();
+        $config['storage'] = [
+            'type' => '\\Kanopi\\Firewall\\Storage\\SharedStorage',
+            'config' => [
+                'shared' => [
+                    'type' => '\\Kanopi\\Firewall\\Storage\\InMemoryStorage',
+                    'config' => [],
+                ],
+                'local' => [
+                    'type' => '\\Kanopi\\Firewall\\Storage\\FileStorage',
+                    'config' => [
+                        'storage_file' => $this->dir . '/blocked.data',
+                        'offense_file' => $this->dir . '/offenses.data',
+                    ],
+                ],
+            ],
+        ];
+
+        $titles = $this->titles($this->diagnose($config));
+
+        $this->assertContains('Block list is shared across the fleet', $titles);
+        $this->assertContains('Storage path writable (storage_file) [local fallback]', $titles);
+
+        // The detail names both backends, so a report says what the
+        // arrangement actually is rather than that there is one.
+        $detail = (string) array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->title === 'Block list is shared across the fleet'
+        ))[0]->detail;
+
+        $this->assertStringContainsString('InMemoryStorage', $detail);
+        $this->assertStringContainsString('FileStorage', $detail);
+    }
+
+    /**
+     * A side with no `type` is named rather than rendered as an empty string.
+     *
+     * A half-written `shared:` block is a realistic thing to have, and a report
+     * reading "Written to , with FileStorage kept locally" is a report that
+     * looks broken rather than one that says what is wrong.
+     */
+    public function testAnUnnamedBackendIsDescribedRatherThanBlank(): void
+    {
+        $config = $this->workingConfig();
+        $config['storage'] = [
+            'type' => '\\Kanopi\\Firewall\\Storage\\SharedStorage',
+            'config' => ['local' => ['type' => '\\Kanopi\\Firewall\\Storage\\InMemoryStorage']],
+        ];
+
+        $detail = (string) array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => $d->title === 'Block list is shared across the fleet'
+        ))[0]->detail;
+
+        $this->assertStringContainsString('an unnamed backend', $detail);
+    }
+
+    /**
+     * A local copy that cannot be written is an error, not a footnote.
+     *
+     * It is what the node falls back to, so a shared setup whose fallback is
+     * unwritable has the outage protection in name only.
+     */
+    public function testAnUnwritableLocalCopyIsReported(): void
+    {
+        $config = $this->workingConfig();
+        $config['storage'] = [
+            'type' => '\\Kanopi\\Firewall\\Storage\\SharedStorage',
+            'config' => [
+                'shared' => ['type' => '\\Kanopi\\Firewall\\Storage\\InMemoryStorage', 'config' => []],
+                'local' => [
+                    'type' => '\\Kanopi\\Firewall\\Storage\\FileStorage',
+                    'config' => ['storage_file' => '/nonexistent-directory/blocked.data'],
+                ],
+            ],
+        ];
+
+        $this->assertContains(
+            'Storage directory for storage_file does not exist [local fallback]',
+            $this->titles($this->diagnose($config), Diagnosis::ERROR)
+        );
+    }
+
+    /**
      * A working installation reports no errors.
      */
     public function testAWorkingInstallationHasNoErrors(): void

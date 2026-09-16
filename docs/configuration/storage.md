@@ -183,6 +183,94 @@ storage:
       readTimeout: 5
 ```
 
+## A block list shared across a fleet
+
+Ten nodes behind a load balancer each learn about the same attacker independently. An
+attacker gets ten times the budget before any single node blocks them, a ban earned on node 3
+does nothing on node 7, and — the one people notice last —
+[`blocking_escalation`](global.md#multiple-offenses-defense) counts one attacker as ten
+first-time offenders, so the escalation that should make a second offence expensive never
+fires.
+
+Pointing every node at one Redis fixes all of that. What it costs is that an unreachable
+Redis means **no block list at all**: `RedisStorage` degrades by answering "nothing is
+blocked" for every address, which is the right posture for a store the firewall can live
+without and the wrong one for the list whose whole job is to say otherwise.
+
+`SharedStorage` is that arrangement with a local copy underneath it:
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\SharedStorage"
+  config:
+    shared:
+      type: "Kanopi\\Firewall\\Storage\\RedisStorage"
+      config:
+        redis:
+          host: redis.internal
+          port: 6379
+    local:
+      type: "Kanopi\\Firewall\\Storage\\FileStorage"
+      config:
+        storage_file: /var/lib/firewall/blocked.data
+        offense_file: /var/lib/firewall/offenses.data
+```
+
+Both sides take the same `{type, config}` block as `storage:` itself, so any backend works on
+either side.
+
+| | Shared store reachable | Shared store unreachable |
+|---|---|---|
+| Reads | Shared, always | Local |
+| Writes | Shared, **mirrored** to local | Local |
+
+**Reads never come from the local copy while the share is up.** A ban lifted on another node
+applies here on the next request — there is no propagation delay to reason about and no cache
+to go stale. The mirror exists so the node is not starting from nothing the moment the share
+goes away.
+
+### What an outage costs, precisely
+
+The node keeps enforcing every ban it had mirrored and records new ones locally, so an
+attacker blocked during an outage stays blocked on the node that blocked them.
+
+What is lost is the *sharing*: for the length of the outage the fleet is back to learning
+independently, and bans written locally are **not** replayed to the share when it returns.
+They expire where they were written.
+
+That is deliberate. Replaying an outage's worth of local writes into a recovered share means
+reconciling ten nodes' disagreements about the same address, and a ban enforced on one node
+rather than ten is a much better failure than being wrong about who is banned across the
+whole fleet.
+
+### Escalation changes, and that is the point
+
+!!! warning "Existing fleet installs will see bans get longer"
+
+    `blocking_escalation` lengthens a ban by how often an address has offended. Counted per
+    node, ten nodes see one attacker as ten first-timers. Counted once, the second offence is
+    finally the second offence.
+
+    Single-node installs are unaffected. If you are moving a fleet onto a shared list, expect
+    the escalation thresholds you tuned against per-node counts to fire sooner, and re-read
+    them before you switch.
+
+### Checking it
+
+`firewall-doctor` says whether the list is shared, and checks the local copy is writable —
+which matters more than it looks, because the local copy is the entire reason the
+arrangement exists:
+
+```
+  ✓ Block list is shared across the fleet
+      Written to RedisStorage, with FileStorage kept locally so this node keeps enforcing if
+      the share cannot be reached.
+  ✓ Storage path writable (storage_file) [local fallback]
+```
+
+An unreachable share is reported as a degraded backend, so a status page can see it without
+reading logs — see [Error Handling](../reference/error-handling.md#checking-that-a-backend-can-reach-its-server).
+
 ## Searching and Un-blocking
 
 `StorageInterface` gives you keyed access — `get()`, `set()`, `delete()` for an address you already know. That covers the firewall's own hot path, but it leaves two operational questions unanswered: *who is currently blocked?*, and *how do I lift a block that should not have been applied?*
