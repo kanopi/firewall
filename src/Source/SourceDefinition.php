@@ -64,6 +64,8 @@ final class SourceDefinition
      *   One of self::VALIDATORS, asserted per entry.
      * @param float|null $maxDelta
      *   Reject a refresh moving the entry count by more than this fraction.
+     * @param int|null $maxEntries
+     *   Reject a refresh contributing more entries than this. Null is no limit.
      * @param int|null $ttl
      *   Seconds before a cached fetch is revalidated. Null uses the global default.
      * @param string $onError
@@ -103,6 +105,7 @@ final class SourceDefinition
         public readonly ?string $delimiter = null,
         public readonly bool $allowCatchAll = false,
         public readonly ?SourceVerification $verification = null,
+        public readonly ?int $maxEntries = null,
     ) {
     }
 
@@ -183,6 +186,17 @@ final class SourceDefinition
             $maxDelta = (float) $maxDelta;
         }
 
+        $maxEntries = $declaration['max_entries'] ?? null;
+        if ($maxEntries !== null) {
+            if (!is_numeric($maxEntries) || (int) $maxEntries < 1) {
+                throw new SourceException(
+                    sprintf('Source "%s": "max_entries" must be a positive integer.', $name)
+                );
+            }
+
+            $maxEntries = (int) $maxEntries;
+        }
+
         $ttl = $declaration['ttl'] ?? null;
         if ($ttl !== null) {
             if (!is_numeric($ttl) || (int) $ttl < 0) {
@@ -219,6 +233,7 @@ final class SourceDefinition
             delimiter: is_string($declaration['delimiter'] ?? null) ? $declaration['delimiter'] : null,
             allowCatchAll: (bool) ($declaration['allow_catch_all'] ?? false),
             verification: SourceVerification::fromDeclaration($declaration, $name, $sourceUpstream->url),
+            maxEntries: $maxEntries,
         );
     }
 
@@ -310,9 +325,10 @@ final class SourceDefinition
             $this->comment,
             $this->delimiter,
             // Changes which entries survive, so it belongs here for the same
-            // reason `validate` does. `ttl`, `on_error`, `required` and
-            // `max_delta` deliberately do not: they change when or whether a
-            // refresh happens, not what a body decodes to (#364).
+            // reason `validate` does. `ttl`, `on_error`, `required`,
+            // `max_delta` and `max_entries` deliberately do not: they change
+            // when or whether a refresh happens, not what a body decodes to
+            // (#364, #366).
             $this->allowCatchAll,
             // Not because it changes the decode -- it does not -- but because
             // entries cached before a source was given a `checksum:` came from

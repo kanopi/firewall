@@ -51,6 +51,21 @@ final class SourceUpstream
     public const METHODS = ['GET', 'POST', 'HEAD'];
 
     /**
+     * Bytes a source body may reach before it is refused (#366).
+     *
+     * 32 MiB. Chosen to be far above any published list this is likely to meet
+     * -- AWS's `ip-ranges.json`, the largest in common use, is under 3 MB -- and
+     * far below the point at which a refresh job dies: for most of these formats
+     * the decoded form is larger than the body and both are held at once, so the
+     * ceiling has to leave room for the decode inside an ordinary `memory_limit`.
+     *
+     * A finite default rather than none, because *"a list that grows to 4 GB
+     * should fail, not OOM the refresh job"* (#120) needs no configuration to be
+     * true. `max_size: 0` opts out for a deployment that means it.
+     */
+    public const DEFAULT_MAX_SIZE = 33554432;
+
+    /**
      * @param string $url
      *   Absolute path, relative path, or URL.
      * @param string $method
@@ -67,6 +82,8 @@ final class SourceUpstream
      *   Redirect hops to follow. Credentials are dropped on a cross-origin hop.
      * @param bool $allowInsecure
      *   Permit credentials over plain http. Refused by default.
+     * @param int $maxSize
+     *   Bytes the body may reach before the fetch is refused. Zero is no limit.
      */
     private function __construct(
         public readonly string $url,
@@ -77,6 +94,7 @@ final class SourceUpstream
         public readonly ?float $timeout = null,
         public readonly int $maxRedirects = 5,
         public readonly bool $allowInsecure = false,
+        public readonly int $maxSize = self::DEFAULT_MAX_SIZE,
     ) {
     }
 
@@ -192,6 +210,7 @@ final class SourceUpstream
             timeout: $timeout === null ? null : (float) $timeout,
             maxRedirects: (int) $maxRedirects,
             allowInsecure: $allowInsecure,
+            maxSize: self::maxSize($declaration, $sourceName),
         );
     }
 
@@ -223,7 +242,31 @@ final class SourceUpstream
             timeout: $this->timeout,
             maxRedirects: $this->maxRedirects,
             allowInsecure: $this->allowInsecure,
+            // The ceiling covers the sidecar too. One rule rather than a
+            // special case, and a digest arriving as four gigabytes is itself
+            // the thing worth refusing.
+            maxSize: $this->maxSize,
         );
+    }
+
+    /**
+     * The ceiling, in the unit it was most likely written in.
+     *
+     * A number an operator has to divide by 1024 to recognise is a number they
+     * will misread while deciding whether to raise it.
+     *
+     * @return string
+     *   The size in the largest unit that leaves it whole.
+     */
+    public function describeMaxSize(): string
+    {
+        foreach (['GiB' => 1073741824, 'MiB' => 1048576, 'KiB' => 1024] as $unit => $scale) {
+            if ($this->maxSize >= $scale && $this->maxSize % $scale === 0) {
+                return intdiv($this->maxSize, $scale) . ' ' . $unit;
+            }
+        }
+
+        return $this->maxSize . ' bytes';
     }
 
     /**
@@ -282,11 +325,60 @@ final class SourceUpstream
      * on a key rotation would be pure waste.
      *
      * @return array<int, mixed>
-     *   Values contributing to cache identity.
+     *   Values contributing to cache identity. `max_size` is deliberately not
+     *   among them: it decides whether a fetch is accepted at all, not what an
+     *   accepted body decodes to, which is the same reason `timeout` is absent.
      */
     public function fingerprintParts(): array
     {
         return [$this->url, $this->method, $this->headers, $this->body];
+    }
+
+    /**
+     * Read `max_size`, in bytes or in the units people write.
+     *
+     * `10M` is what an operator types; `10485760` is what they would have had
+     * to work out. Both are accepted, and a value that is neither is a
+     * configuration error rather than a silent fall back to the default -- the
+     * point of setting it is to have said something specific.
+     *
+     * @param array<array-key, mixed> $declaration
+     *   The upstream map.
+     * @param string $sourceName
+     *   Source name, for error messages.
+     *
+     * @return int
+     *   Bytes, or 0 for no limit.
+     *
+     * @throws SourceException
+     *   When the value cannot be read as a size.
+     */
+    private static function maxSize(array $declaration, string $sourceName): int
+    {
+        $declared = $declaration['max_size'] ?? null;
+
+        if ($declared === null) {
+            return self::DEFAULT_MAX_SIZE;
+        }
+
+        if (is_int($declared) && $declared >= 0) {
+            return $declared;
+        }
+
+        if (is_string($declared) && preg_match('/^\s*(\d+)\s*([kmg]?)b?\s*$/i', $declared, $match) === 1) {
+            return (int) $match[1] * match (strtolower($match[2])) {
+                'k' => 1024,
+                'm' => 1048576,
+                'g' => 1073741824,
+                default => 1,
+            };
+        }
+
+        throw new SourceException(sprintf(
+            'Source "%s": upstream.max_size must be a number of bytes or a size such as "10M", '
+            . 'or 0 for no limit.',
+            $sourceName
+        ));
     }
 
     /**

@@ -229,6 +229,98 @@ final class EntryValidator
     }
 
     /**
+     * Refuse a source whose entries were all thrown away.
+     *
+     * Separate from `filter()`, and the separation is the point. `filter()`
+     * answers "is this entry well formed", one entry at a time, and dropping a
+     * bad one while keeping the rest is exactly right -- one malformed line in
+     * a 9,000-entry list should not take the other 8,999 with it. There are
+     * tests pinning that, and folding this into it broke them, which was the
+     * tests being right rather than in the way.
+     *
+     * This asks a question about the *source*: it decoded to something, and
+     * none of it survived. That is not a list with problems, it is not a list.
+     * The realistic shape is a CDN or a captive portal answering with an HTML
+     * error page, which decodes as `txt` without complaint and yields a few
+     * dozen lines that are not addresses (#366).
+     *
+     * Failing rather than contributing nothing matters because of what nothing
+     * does: the rule stops matching, and the only evidence is a warning in a
+     * log. Throwing puts it on the `on_error` path, so `last_known_good` keeps
+     * the list that was working an hour ago.
+     *
+     * @param array<int, mixed> $entries
+     *   What was offered to the validator.
+     * @param array<int, mixed> $kept
+     *   What survived it.
+     * @param string|null $type
+     *   The validator that was applied, or NULL when none was.
+     * @param string $sourceName
+     *   Source name, for the error message.
+     *
+     * @throws SourceException
+     *   When a non-empty source validated down to nothing.
+     */
+    public function assertNotEmptied(array $entries, array $kept, ?string $type, string $sourceName): void
+    {
+        if ($type === null || $entries === [] || $kept !== []) {
+            return;
+        }
+
+        throw new SourceException(sprintf(
+            'Source "%s": every one of its %d entries failed `validate: %s`, so it has nothing to '
+            . 'contribute. That is usually an error page where a list should be. First: %s',
+            $sourceName,
+            count($entries),
+            $type,
+            implode(', ', array_map(
+                static fn(mixed $value): string => is_scalar($value)
+                    ? sprintf('"%s"', mb_substr((string) $value, 0, 40))
+                    : gettype($value),
+                array_slice($entries, 0, 3)
+            ))
+        ));
+    }
+
+    /**
+     * Refuse a source contributing more entries than it is allowed to.
+     *
+     * The neighbour of `max_delta`, asking a different question. `max_delta`
+     * bounds how much a list may *change* and needs a previous fetch to compare
+     * against, so it says nothing about the first load. This bounds how large a
+     * list may *be*, and applies from the first one (#366).
+     *
+     * Checked on the entries rather than on the decoded records, because
+     * entries are what `max_delta` counts, what the cache stores and what the
+     * documentation calls them -- one meaning for the word is worth more than
+     * the work saved by refusing a little earlier.
+     *
+     * @param int $count
+     *   Entries this load produced.
+     * @param int|null $maxEntries
+     *   The configured ceiling, or NULL for none.
+     * @param string $sourceName
+     *   Source name, for the error message.
+     *
+     * @throws SourceException
+     *   When the ceiling is exceeded.
+     */
+    public function assertEntryCount(int $count, ?int $maxEntries, string $sourceName): void
+    {
+        if ($maxEntries === null || $count <= $maxEntries) {
+            return;
+        }
+
+        throw new SourceException(sprintf(
+            'Source "%s": produced %d entries, beyond the %d allowed by max_entries. Refusing it '
+            . 'rather than using part of a list.',
+            $sourceName,
+            $count,
+            $maxEntries
+        ));
+    }
+
+    /**
      * Whether one entry matches a validator.
      *
      * @param string $value
