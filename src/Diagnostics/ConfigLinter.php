@@ -130,6 +130,10 @@ class ConfigLinter
             $findings[] = $diagnosi;
         }
 
+        foreach ($this->checkChallengeTtl($config, $plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
         if (array_filter($findings, static fn(Diagnosis $diagnosis): bool => $diagnosis->status !== Diagnosis::OK) === []) {
             $findings[] = Diagnosis::ok(
                 sprintf('%d rule%s inspected', count($plugins), count($plugins) === 1 ? '' : 's'),
@@ -790,5 +794,83 @@ class ConfigLinter
         }
 
         return sprintf('bot_score %s %s', $operator, is_scalar($rule['value'] ?? null) ? (string) $rule['value'] : '?');
+    }
+
+    /**
+     * Challenge rules asking for a longer pass than `challenge.ttl` allows (#367).
+     *
+     * `challenge.ttl` is the default for challenge rules that name no lifetime **and** the
+     * ceiling for the ones that do — including the lifetime posted back by the interstitial,
+     * which is the reason it is a ceiling and not just a default. A rule declaring more than
+     * the ceiling is clamped at runtime and logs a warning when it fires; that log line is on
+     * a running site, arrives one request at a time, and says nothing before the deploy.
+     *
+     * Reported as a warning rather than an error because the firewall works either way: the
+     * pass is shorter than the rule asked for, so visitors are challenged again sooner. It is
+     * a rule that does not do what it says, which is worth one line in CI.
+     *
+     * Only `response: challenge` rules. On a block or record rule
+     * `default_expiration_time` is a ban length and has nothing to do with this.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration, for its `challenge:` section.
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkChallengeTtl(array $config, array $plugins): array
+    {
+        $challenge = is_array($config['challenge'] ?? null) ? $config['challenge'] : [];
+        $declared = $challenge['ttl'] ?? null;
+        $findings = [];
+
+        if ($declared !== null && !is_numeric($declared)) {
+            // Treated as absent at runtime rather than cast to zero, which is the
+            // right behaviour and an invisible one: the firewall runs on the
+            // built-in hour and nothing says the key was discarded.
+            $findings[] = Diagnosis::warning(
+                '`challenge.ttl` is not a number',
+                'It is ignored, and challenge passes last the built-in 3600 seconds. '
+                . 'Give it a whole number of seconds.',
+                'plugins/challenges.md'
+            );
+        }
+
+        $ceiling = is_numeric($declared) ? (int) $declared : 0;
+        if ($ceiling <= 0) {
+            $ceiling = 3600;
+        }
+
+        foreach ($plugins as $plugin) {
+            if (($plugin['response'] ?? 'block') !== 'challenge') {
+                continue;
+            }
+
+            $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+            $wanted = $metadata['default_expiration_time'] ?? null;
+            if (!is_numeric($wanted)) {
+                continue;
+            }
+
+            if ((int) $wanted <= $ceiling) {
+                continue;
+            }
+
+            $findings[] = Diagnosis::warning(
+                sprintf('Rule "%s" asks for a longer challenge pass than `challenge.ttl` allows', $this->nameOf($plugin)),
+                sprintf(
+                    'It sets `default_expiration_time: %d` and the ceiling is %d seconds, so its passes '
+                    . 'last %d. Raise `challenge.ttl`, or lower the rule to match it.',
+                    (int) $wanted,
+                    $ceiling,
+                    $ceiling
+                ),
+                'plugins/challenges.md'
+            );
+        }
+
+        return $findings;
     }
 }

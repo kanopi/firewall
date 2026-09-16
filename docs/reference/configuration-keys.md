@@ -85,6 +85,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `submit_url` | string | `path`, prefixed with the request's base path | Where the interstitial's form POSTs to. Only set it if a proxy rewrites paths | [Add a Challenge](../how-to/add-a-challenge.md#a-host-served-from-a-subdirectory) |
 | `cookie_name` | string | `''` | Pass-token cookie; empty disables cookie delivery | [Challenges](../plugins/challenges.md) |
 | `header_name` | string | `''` | Header an SPA can send the token in | [Challenges](../plugins/challenges.md) |
+| `ttl` | int | `3600` | How long a pass lasts: the default for rules naming none, **and the ceiling for every rule and every submission** | [How long a pass lasts](../plugins/challenges.md#how-long-a-pass-lasts) |
 | `audience` | string | provider name | `aud` claim, to scope tokens between instances | [Scoping tokens](../plugins/challenges.md#scoping-tokens-across-instances) |
 | `provider_options` | map | `[]` | Per-provider settings, keyed by provider name | [Challenges](../plugins/challenges.md) |
 
@@ -106,7 +107,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `name` | string | class name | What the log calls it. Name every rule | [Plugins](../plugins/index.md) |
 | `mode` | string | *enforce* | `log` observes this one rule without enforcing it | [Observe mode](../configuration/global.md#observing-one-rule-while-the-rest-enforce) |
 | `status_code` | int | `banning_status_code` | Per-rule override | [Status Code](../configuration/global.md#status-code) |
-| `default_expiration_time` | int | `3600` | Ban length, or pass-token TTL on a challenge rule | [Global](../configuration/global.md) |
+| `default_expiration_time` | int | `challenge.ttl` on a challenge rule, else `3600` | Ban length, or pass-token TTL. On a challenge rule it is capped by `challenge.ttl` | [Global](../configuration/global.md) |
 | `record` | bool | `true` | `false` refuses without writing to the block list. On a `redirect` rule the default is `false` and `true` opts in | [Evaluation Order](evaluation-order.md#refusing-and-recording-are-separate) |
 | `mark_as` | string | the rule's name | The signal `response: mark` raises, so several rules can raise one |
 | `mark_header` | string | — | Also set this header on the request when marking |
