@@ -224,6 +224,7 @@ nav:
       - Migrate the Schema: how-to/schema-migrations.md
       - Set Up GeoIP: how-to/geoip-setup.md
       - React to Decisions: how-to/decision-events.md
+      - Export Metrics: how-to/metrics.md
       - Write a Custom Plugin: how-to/custom-plugins.md
       - Write a Custom Storage Backend: how-to/custom-storage.md
       - Build a Layered Configuration: how-to/advanced-examples.md
