@@ -196,6 +196,37 @@ final class SourceUpstream
     }
 
     /**
+     * The same upstream, pointed at a sidecar beside the list.
+     *
+     * Keeps the credential, the extra headers and the timeout, because a
+     * private feed's checksum lives behind the same door as the feed. Drops the
+     * method and body: a `POST` that returns a generated list does not describe
+     * how to fetch the static file next to it, and sending the list's request
+     * body to a digest URL is at best meaningless (#365).
+     *
+     * @param string $url
+     *   Where the sidecar lives.
+     *
+     * @return self
+     *   An upstream for the sidecar.
+     */
+    public function sidecar(string $url): self
+    {
+        // `body` is left at its default rather than passed as null: rector
+        // removes a named argument that restates the default, and the reason
+        // it is absent is in the docblock above rather than here.
+        return new self(
+            url: $url,
+            method: 'GET',
+            headers: $this->headers,
+            auth: $this->auth,
+            timeout: $this->timeout,
+            maxRedirects: $this->maxRedirects,
+            allowInsecure: $this->allowInsecure,
+        );
+    }
+
+    /**
      * Whether this upstream is remote rather than a local file.
      *
      * @return bool

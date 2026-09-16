@@ -60,7 +60,8 @@
     },
     "suggest": {
         "symfony/event-dispatcher": "A PSR-14 dispatcher, if you want to be told what the firewall decided about each request. Any PSR-14 implementation works — Kanopi\\Firewall\\Firewall::create() takes the interface, not this package — and the events are read-only, so nothing you register can change a verdict.",
-        "ext-redis": "Required by Kanopi\\Firewall\\Storage\\RedisStorage and Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage, for a shared block list and distributed rate limiting across more than one server. Every other backend works without it."
+        "ext-redis": "Required by Kanopi\\Firewall\\Storage\\RedisStorage and Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage, for a shared block list and distributed rate limiting across more than one server. Every other backend works without it.",
+        "ext-sodium": "Required to verify a rule source declaring `signature:` — an ed25519 detached signature over the fetched body. A source declaring `checksum:` needs nothing extra, and a source declaring neither is unaffected."
     },
     "scripts": {
         "server:start": [

@@ -57,6 +57,8 @@ final class SourceLoader
      *   `where` evaluator, or NULL for the default.
      * @param EntryValidator|null $entryValidator
      *   Entry validator, or NULL for the default.
+     * @param SourceVerifier|null $sourceVerifier
+     *   Checksum/signature verifier, or NULL for the default.
      * @param array<int, FetcherInterface>|null $fetchers
      *   Fetchers to try, or NULL for local plus HTTP.
      * @param bool|null $offline
@@ -74,6 +76,7 @@ final class SourceLoader
         private readonly ?EntryValidator $entryValidator = null,
         ?array $fetchers = null,
         ?bool $offline = null,
+        private readonly ?SourceVerifier $sourceVerifier = null,
     ) {
         $this->fetchers = $fetchers ?? [new LocalFetcher(), new HttpFetcher()];
         $this->offline = $offline ?? (defined('KANOPI_FIREWALL_SOURCES_OFFLINE') && (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE'));
@@ -145,6 +148,14 @@ final class SourceLoader
             ));
         }
 
+        // Before the body-hash short-circuit below, not after. That hash
+        // compares this fetch against the previous one; it is a cache
+        // fingerprint and has never said anything about authenticity. Checking
+        // first also means a source given a `checksum:` after its cache was
+        // warmed gets verified on the next refresh rather than on the next
+        // change (#365).
+        $this->verify($sourceDefinition, $body);
+
         $hash = hash('sha256', $body);
 
         if ($cached !== null && ($meta['body_hash'] ?? null) === $hash) {
@@ -181,6 +192,103 @@ final class SourceLoader
         ]);
 
         return $entries;
+    }
+
+    /**
+     * Check a fetched body against what the source asserts about it.
+     *
+     * Runs on the raw body, before decompression: a digest is published over
+     * the artifact as it is distributed, so `ranges.json.gz` is hashed gzipped.
+     *
+     * @param SourceDefinition $sourceDefinition
+     *   The source being loaded.
+     * @param string $body
+     *   The fetched bytes.
+     *
+     * @throws SourceException
+     *   When the body does not verify, or the sidecar cannot be fetched.
+     *   `SourceManager` turns that into this source's `on_error` policy, which
+     *   is what keeps the last known good copy rather than taking the bytes.
+     */
+    private function verify(SourceDefinition $sourceDefinition, string $body): void
+    {
+        $verification = $sourceDefinition->verification;
+
+        if (!$verification instanceof SourceVerification) {
+            return;
+        }
+
+        $sidecar = $verification->needsSidecar()
+            ? $this->fetchSidecar($sourceDefinition, $verification)
+            : null;
+
+        $this->verifier()->assert(
+            $verification,
+            $body,
+            $sidecar,
+            $sourceDefinition->name,
+            $sourceDefinition->fileName()
+        );
+
+        $this->getLogger()->debug('Source body verified', [
+            'source' => $sourceDefinition->name,
+            'verification' => $verification->describe(),
+        ]);
+    }
+
+    /**
+     * Fetch the sidecar that carries the assertion.
+     *
+     * Goes through the same fetcher the list does, so a local file's checksum
+     * is read from disk and a private feed's is fetched with the same
+     * credential.
+     *
+     * @param SourceDefinition $sourceDefinition
+     *   The source being loaded.
+     * @param SourceVerification $sourceVerification
+     *   What it asserts, for the sidecar's location.
+     *
+     * @return string
+     *   The sidecar body.
+     *
+     * @throws SourceException
+     *   When the sidecar cannot be read, or comes back empty.
+     */
+    private function fetchSidecar(SourceDefinition $sourceDefinition, SourceVerification $sourceVerification): string
+    {
+        // A definition rather than a bare URL, because the fetchers take one
+        // and because `supports()` has to pick local-vs-HTTP for the sidecar
+        // the same way it did for the list. Conditional validators are
+        // deliberately not passed: a 304 here would leave nothing to compare
+        // against, and a sidecar is a few dozen bytes.
+        $sidecarDefinition = new SourceDefinition(
+            name: $sourceDefinition->name . ' (' . $sourceVerification->describe() . ')',
+            upstream: $sourceDefinition->upstream->sidecar($sourceVerification->url ?? ''),
+        );
+
+        $body = $this->fetcher($sidecarDefinition)->fetch($sidecarDefinition)->body;
+
+        if ($body === null || $body === '') {
+            throw new SourceException(sprintf(
+                'Source "%s": the %s sidecar at %s came back empty, so the body cannot be checked.',
+                $sourceDefinition->name,
+                $sourceVerification->algorithm,
+                $sidecarDefinition->displayUpstream()
+            ));
+        }
+
+        return $body;
+    }
+
+    /**
+     * The body verifier, built on first use.
+     *
+     * @return SourceVerifier
+     *   The verifier.
+     */
+    private function verifier(): SourceVerifier
+    {
+        return $this->sourceVerifier ?? new SourceVerifier();
     }
 
     /**

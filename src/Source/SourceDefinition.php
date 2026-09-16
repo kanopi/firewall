@@ -81,6 +81,9 @@ final class SourceDefinition
      *   one, so the source is where the intent has to be declared (#364).
      * @param string|null $delimiter
      *   CSV/TSV only: field delimiter. Null picks the format default.
+     * @param SourceVerification|null $verification
+     *   What the fetched bytes are asserted to be, or NULL to use them
+     *   unverified — which is what most published lists allow for (#365).
      */
     public function __construct(
         public readonly string $name,
@@ -99,6 +102,7 @@ final class SourceDefinition
         public readonly string $comment = '#',
         public readonly ?string $delimiter = null,
         public readonly bool $allowCatchAll = false,
+        public readonly ?SourceVerification $verification = null,
     ) {
     }
 
@@ -214,6 +218,7 @@ final class SourceDefinition
             comment: is_string($declaration['comment'] ?? null) ? $declaration['comment'] : '#',
             delimiter: is_string($declaration['delimiter'] ?? null) ? $declaration['delimiter'] : null,
             allowCatchAll: (bool) ($declaration['allow_catch_all'] ?? false),
+            verification: SourceVerification::fromDeclaration($declaration, $name, $sourceUpstream->url),
         );
     }
 
@@ -242,6 +247,30 @@ final class SourceDefinition
     public function isRemote(): bool
     {
         return $this->upstream->isRemote();
+    }
+
+    /**
+     * Whether this source checks what it fetches.
+     *
+     * @return bool
+     *   TRUE when a checksum or signature is declared.
+     */
+    public function isVerified(): bool
+    {
+        return $this->verification instanceof SourceVerification;
+    }
+
+    /**
+     * The list's file name, for picking a line out of a multi-file sidecar.
+     *
+     * @return string
+     *   The basename of the upstream path, or an empty string.
+     */
+    public function fileName(): string
+    {
+        $path = parse_url($this->upstream->url, PHP_URL_PATH);
+
+        return basename(is_string($path) ? $path : $this->upstream->url);
     }
 
     /**
@@ -285,6 +314,16 @@ final class SourceDefinition
             // `max_delta` deliberately do not: they change when or whether a
             // refresh happens, not what a body decodes to (#364).
             $this->allowCatchAll,
+            // Not because it changes the decode -- it does not -- but because
+            // entries cached before a source was given a `checksum:` came from
+            // bytes nothing checked. Adding verification has to invalidate
+            // them, or the first thing the new setting does is serve the
+            // unverified copy it was added to stop trusting (#365).
+            $this->verification?->mode,
+            $this->verification?->algorithm,
+            $this->verification?->url,
+            $this->verification?->value,
+            $this->verification?->publicKey,
         ]));
     }
 
