@@ -15,6 +15,7 @@
     "license": "MIT",
     "bin": [
         "bin/firewall-block",
+        "bin/firewall-challenge",
         "bin/firewall-check",
         "bin/firewall-doctor",
         "bin/firewall-init",

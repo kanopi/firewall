@@ -87,6 +87,8 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `header_name` | string | `''` | Header an SPA can send the token in | [Challenges](../plugins/challenges.md) |
 | `ttl` | int | `3600` | How long a pass lasts: the default for rules naming none, **and the ceiling for every rule and every submission** | [How long a pass lasts](../plugins/challenges.md#how-long-a-pass-lasts) |
 | `audience` | string | provider name | `aud` claim, to scope tokens between instances | [Scoping tokens](../plugins/challenges.md#scoping-tokens-across-instances) |
+| `passes_valid_from` | int or date | *unset* | Refuse every pass issued before this moment. One value, no storage | [Withdrawing a pass](../plugins/challenges.md#a-line-in-time-challengepasses_valid_from) |
+| `revocable` | bool | `false` | Consult the per-nonce revocation list, at one storage read per valid pass | [Withdrawing a pass](../plugins/challenges.md#one-pass-challengerevocable) |
 | `provider_options` | map | `[]` | Per-provider settings, keyed by provider name | [Challenges](../plugins/challenges.md) |
 
 ## `plugins:` — one entry

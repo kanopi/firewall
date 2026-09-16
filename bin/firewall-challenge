@@ -1,0 +1,355 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * Read a challenge pass, and withdraw one (#368).
+ *
+ * A pass token is stateless and HMAC-signed, so before this the only way to stop
+ * one being accepted was to rotate `challenge.secret` -- which re-challenges
+ * every legitimate visitor holding a pass in order to withdraw a single one.
+ *
+ * Like `bin/firewall-block`, and unlike `bin/firewall-check`, this reads and
+ * writes the *real* store. That is the whole point of it, which is why the
+ * backend is named in the output.
+ *
+ * Usage:
+ *   bin/firewall-challenge config.yml [more.yml ...] [action] [options]
+ *
+ * Actions (exactly one):
+ *   --inspect=TOKEN    Decode a pass: address, provider, issued, expires, nonce
+ *   --revoke=TOKEN     Withdraw that pass, until its own expiry
+ *   --revoke-nonce=N   Withdraw by nonce, for when the log is what you have
+ *   --restore=NONCE    Put a revoked pass back
+ *   --status=NONCE     Whether a nonce is currently revoked, and why
+ *
+ * Options:
+ *   --expires=EPOCH    With --revoke-nonce: when the token expires. Defaults to
+ *                      now plus `challenge.ttl`, which no live pass outlasts
+ *   --reason=TEXT      Recorded alongside a revocation
+ *   --json             Machine-readable output
+ *   --help
+ *
+ * Exit codes:
+ *   0  the question was answered, whatever the answer
+ *   1  the token is not one this configuration signed, or has already expired
+ *   2  the configuration could not be read, or the arguments made no sense
+ */
+
+use Kanopi\Firewall\Exception\ConfigurationException;
+use Kanopi\Firewall\Utility\ChallengePasses;
+use Kanopi\Firewall\Utility\Config;
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require_once $autoloader;
+        break;
+    }
+}
+
+if (!class_exists(ChallengePasses::class)) {
+    fwrite(STDERR, "Unable to locate the Composer autoloader.\n");
+    exit(2);
+}
+
+const EXIT_OK = 0;
+const EXIT_UNANSWERABLE = 1;
+const EXIT_USAGE = 2;
+
+$files = [];
+$actions = [];
+$expires = null;
+$reason = '';
+$json = false;
+
+foreach (array_slice($argv, 1) as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        fwrite(STDOUT, trim(<<<TEXT
+        Read a challenge pass, and withdraw one.
+
+          bin/firewall-challenge config.yml [more.yml ...] [action] [options]
+
+        Actions (exactly one):
+          --inspect=TOKEN    Decode a pass: address, provider, issued, expires, nonce
+          --revoke=TOKEN     Withdraw that pass, until its own expiry
+          --revoke-nonce=N   Withdraw by nonce, for when the log is what you have
+          --restore=NONCE    Put a revoked pass back
+          --status=NONCE     Whether a nonce is currently revoked, and why
+
+        Options:
+          --expires=EPOCH    With --revoke-nonce: when the token expires
+          --reason=TEXT      Recorded alongside a revocation
+          --json             Machine-readable output
+        TEXT) . "\n");
+        exit(EXIT_OK);
+    }
+
+    if ($argument === '--json') {
+        $json = true;
+        continue;
+    }
+
+    if (str_starts_with($argument, '--expires=')) {
+        $value = substr($argument, strlen('--expires='));
+
+        if (!ctype_digit($value) || (int) $value <= 0) {
+            fwrite(STDERR, "--expires must be a unix timestamp.\n");
+            exit(EXIT_USAGE);
+        }
+
+        $expires = (int) $value;
+        continue;
+    }
+
+    if (str_starts_with($argument, '--reason=')) {
+        $reason = substr($argument, strlen('--reason='));
+        continue;
+    }
+
+    $matched = false;
+
+    foreach (['inspect', 'revoke', 'revoke-nonce', 'restore', 'status'] as $action) {
+        if (str_starts_with($argument, '--' . $action . '=')) {
+            $actions[] = [$action, substr($argument, strlen('--' . $action . '='))];
+            $matched = true;
+            break;
+        }
+    }
+
+    if ($matched) {
+        continue;
+    }
+
+    if (str_starts_with($argument, '--')) {
+        fwrite(STDERR, sprintf("Unknown option: %s. Try --help.\n", $argument));
+        exit(EXIT_USAGE);
+    }
+
+    $files[] = $argument;
+}
+
+if ($files === []) {
+    fwrite(STDERR, "No configuration files given. Try --help.\n");
+    exit(EXIT_USAGE);
+}
+
+foreach ($files as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, sprintf("Configuration file not found: %s\n", $file));
+        exit(EXIT_USAGE);
+    }
+}
+
+// Exactly one, and said so rather than guessed at. `--revoke` and `--restore`
+// in the same invocation is somebody midway through changing their mind, and
+// picking an order for them is how the wrong one ends up being the one that ran.
+if (count($actions) !== 1) {
+    fwrite(STDERR, $actions === []
+        ? "Nothing to do. Give one of --inspect, --revoke, --revoke-nonce, --restore or --status.\n"
+        : "Give exactly one action. Try --help.\n");
+    exit(EXIT_USAGE);
+}
+
+Config::clearLoadErrors();
+Config::load($files);
+
+foreach (Config::getLoadErrors() as $error) {
+    fwrite(STDERR, sprintf("Could not load %s: %s\n", $error['file'], $error['message']));
+    exit(EXIT_USAGE);
+}
+
+[$action, $value] = $actions[0];
+$passes = new ChallengePasses($files);
+
+try {
+    $backend = $passes->backend();
+} catch (ConfigurationException $configurationException) {
+    fwrite(STDERR, $configurationException->getMessage() . "\n");
+    exit(EXIT_USAGE);
+}
+
+/**
+ * Report a result and stop.
+ *
+ * @param array<string, mixed> $payload
+ * @param array<int, string> $lines
+ */
+$finish = static function (array $payload, array $lines, int $code) use ($json, $backend): never {
+    if ($json) {
+        fwrite(STDOUT, (string) json_encode($payload + ['backend' => $backend], JSON_PRETTY_PRINT) . "\n");
+        exit($code);
+    }
+
+    foreach ($lines as $line) {
+        fwrite($code === EXIT_OK ? STDOUT : STDERR, $line . "\n");
+    }
+
+    fwrite(STDOUT, sprintf("\n  backend: %s\n", $backend['class']));
+
+    if (!$backend['durable']) {
+        fwrite(STDOUT, "  ! This store does not outlive the process, so a revocation written here is forgotten.\n");
+    }
+
+    if (!$backend['revocable']) {
+        fwrite(STDOUT, "  ! challenge.revocable is off, so the firewall does not consult this list.\n");
+    }
+
+    exit($code);
+};
+
+/**
+ * Decode a token, or stop.
+ *
+ * @return array<string, mixed>
+ */
+$claimsOf = static function (string $token) use ($passes, $finish): array {
+    try {
+        $claims = $passes->inspect($token);
+    } catch (ConfigurationException $configurationException) {
+        $finish(
+            ['error' => $configurationException->getMessage()],
+            [$configurationException->getMessage()],
+            EXIT_USAGE
+        );
+    }
+
+    if ($claims === null) {
+        $finish(
+            ['error' => 'not_signed_by_this_configuration'],
+            ['This is not a pass token signed by this configuration.'],
+            EXIT_UNANSWERABLE
+        );
+    }
+
+    return $claims;
+};
+
+/**
+ * A timestamp a person can read.
+ */
+$when = static fn(mixed $stamp): string => is_int($stamp)
+    ? gmdate('Y-m-d H:i:s', $stamp) . ' UTC'
+    : 'not recorded';
+
+/**
+ * Describe a token's claims.
+ *
+ * @param array<string, mixed> $claims
+ *
+ * @return array<int, string>
+ */
+$describe = static function (array $claims) use ($when, $passes): array {
+    $expiresAt = is_int($claims['exp'] ?? null) ? $claims['exp'] : 0;
+    $issuedAt = is_int($claims['iat'] ?? null) ? $claims['iat'] : 0;
+    $cutoff = $passes->validFrom();
+
+    $lines = [
+        sprintf('  address:  %s', is_string($claims['ip'] ?? null) ? $claims['ip'] : '—'),
+        sprintf('  provider: %s', is_string($claims['prv'] ?? null) ? $claims['prv'] : 'the default (this pass predates per-rule providers)'),
+        sprintf('  audience: %s', is_string($claims['aud'] ?? null) ? $claims['aud'] : '—'),
+        sprintf('  issued:   %s', $when($claims['iat'] ?? null)),
+        sprintf('  expires:  %s%s', $when($claims['exp'] ?? null), $expiresAt > 0 && $expiresAt <= time() ? '  (already expired)' : ''),
+        sprintf('  nonce:    %s', is_string($claims['nonce'] ?? null) ? $claims['nonce'] : '—'),
+    ];
+
+    if ($cutoff > 0 && $issuedAt < $cutoff) {
+        $lines[] = sprintf('  ! Already refused: challenge.passes_valid_from is %s.', $when($cutoff));
+    }
+
+    return $lines;
+};
+
+if ($action === 'inspect') {
+    $claims = $claimsOf($value);
+    $nonce = is_string($claims['nonce'] ?? null) ? $claims['nonce'] : '';
+
+    $finish(
+        ['claims' => $claims, 'revoked' => $passes->record($nonce)],
+        array_merge(
+            ['Pass token:'],
+            $describe($claims),
+            $passes->record($nonce) === null ? [] : ['  status:   REVOKED']
+        ),
+        EXIT_OK
+    );
+}
+
+if ($action === 'status') {
+    $record = $passes->record($value);
+
+    $finish(
+        ['nonce' => $value, 'revoked' => $record],
+        $record === null
+            ? [sprintf('Nonce %s is not revoked.', $value)]
+            : [
+                sprintf('Nonce %s is revoked.', $value),
+                sprintf('  revoked:  %s', $when($record['revoked_at'] ?? null)),
+                sprintf('  until:    %s', $when($record['expires_at'] ?? null)),
+                sprintf('  reason:   %s', ($record['reason'] ?? '') === '' ? '—' : (string) $record['reason']),
+            ],
+        EXIT_OK
+    );
+}
+
+if ($action === 'restore') {
+    $restored = $passes->restore($value);
+
+    $finish(
+        ['nonce' => $value, 'restored' => $restored],
+        [$restored
+            ? sprintf('Nonce %s restored — the pass is accepted again until it expires.', $value)
+            : sprintf('Nonce %s was not revoked; nothing to restore.', $value)],
+        EXIT_OK
+    );
+}
+
+// Both revoke paths converge here: one knows the expiry because the token
+// carried it, the other takes the ceiling because no live pass outlasts it.
+if ($action === 'revoke') {
+    $claims = $claimsOf($value);
+    $nonce = is_string($claims['nonce'] ?? null) ? $claims['nonce'] : '';
+    $expiresAt = $expires ?? (is_int($claims['exp'] ?? null) ? $claims['exp'] : 0);
+    $described = $describe($claims);
+} else {
+    $nonce = $value;
+    $expiresAt = $expires ?? $passes->defaultExpiry();
+    $described = [];
+}
+
+if ($nonce === '') {
+    $finish(
+        ['error' => 'no_nonce'],
+        ['That token carries no nonce, so there is nothing to revoke by.'],
+        EXIT_UNANSWERABLE
+    );
+}
+
+if ($passes->revoke($nonce, $expiresAt, $reason)) {
+    $finish(
+        ['nonce' => $nonce, 'revoked' => true, 'until' => $expiresAt, 'reason' => $reason],
+        array_merge(
+            [sprintf('Revoked %s until %s.', $nonce, $when($expiresAt))],
+            $described
+        ),
+        EXIT_OK
+    );
+}
+
+$finish(
+    ['nonce' => $nonce, 'revoked' => false, 'reason' => 'already_expired'],
+    [sprintf('That pass expired at %s, so there is nothing left to revoke.', $when($expiresAt))],
+    EXIT_UNANSWERABLE
+);
