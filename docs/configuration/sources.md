@@ -77,6 +77,8 @@ values a plugin wants needs nothing but an `upstream`.
 | `on_error` | enum | `last_known_good` | `last_known_good`, `fail_open`, `abort` |
 | `required` | bool | `false` | Abort rather than degrade when this source fails |
 | `allow_catch_all` | bool | `false` | Permit an entry matching every address — see [Entries that match everybody](#entries-that-match-everybody) |
+| `checksum` | string or map | none | Check the fetched bytes against a published digest — see [Verifying what you fetched](#verifying-what-you-fetched) |
+| `signature` | map | none | Check the fetched bytes against a detached signature and a pinned key — see [Verifying what you fetched](#verifying-what-you-fetched) |
 | `header_row` | bool | `true` | CSV/TSV: treat the first row as column names |
 | `comment` | string | `#` | Text formats: strip from this marker to end of line |
 | `delimiter` | string | `,` for csv, tab for tsv | CSV/TSV field delimiter |
@@ -571,6 +573,116 @@ bucket it is in — so the source is where the intent has to be declared.
 
 Changing this option changes the source's fingerprint, so the next load re-decodes rather than
 reusing entries filtered under the old setting.
+
+## Verifying what you fetched
+
+A list arrives over HTTPS and is used. HTTPS authenticates the *host* and protects the
+transport; it says nothing about a repository that was compromised, a CDN object that was
+replaced, or a publisher who pushed the wrong file. Nothing in the pipeline above notices the
+difference.
+
+```yaml
+sources:
+  - name: abusive-ips
+    upstream: https://example.org/v1/abusive-ips.txt
+    checksum: sha256            # sidecar at <upstream>.sha256
+```
+
+Both keys are **opt-in and stay that way.** Most published lists in this ecosystem ship no
+sidecar at all, so a source that declares neither keeps working exactly as before.
+`firewall-doctor` reports how many of your remote sources are in that position, in one line,
+rather than failing them.
+
+!!! warning "The `body_hash` in the cache is not this"
+
+    The loader already hashes each body, and the word `sha256` appearing there makes this look
+    handled. That hash compares *this* fetch against the *previous* one so an unchanged body
+    can skip the decode. It has never been compared against anything a publisher asserted.
+
+### The two tiers, and the gap between them
+
+| | Checks | Defeated by |
+|---|---|---|
+| `checksum:` with a sidecar | The bytes are the bytes the sidecar names | Anyone who can replace the list can replace the sidecar |
+| `checksum:` with a pinned `value:` | The bytes are the bytes *you* named | Nothing — but every publish of the list is a commit here |
+| `signature:` with a pinned key | The bytes were signed by the key you pinned | Compromise of the publisher's signing key |
+
+A sidecar from the same host raises the bar without clearing it. It is worth having as the
+cheap tier, and it is exactly why a pinned-key signature is the one that means something.
+
+### `checksum:`
+
+```yaml
+checksum: sha256                        # shorthand: sidecar at <upstream>.sha256
+
+checksum:
+  algorithm: sha512                     # sha256 (default), sha384, sha512
+  url: https://example.org/SHA256SUMS   # a publisher who keeps every digest in one file
+
+checksum:
+  value: "9f86d081884c7d65…"            # pinned here; nothing is fetched
+```
+
+md5 and sha1 are deliberately not offered. A digest a forger can collide is a digest that says
+nothing, and listing it would invite matching whatever a publisher happens to emit.
+
+The sidecar is read in whichever shape it was published — a bare digest, `coreutils` text or
+binary mode, or a multi-file `SHA256SUMS`, in which case the line naming this file is the one
+used. A sidecar with exactly one line whose file name does not match is accepted: a publisher
+renaming their own file is not a reason to refuse a digest that is right there.
+
+### `signature:`
+
+```yaml
+signature:
+  algorithm: ed25519
+  public_key: "%env(FIREWALL_FEED_KEY)%"   # required — base64, hex, or raw
+  url: https://example.org/v1/list.txt.sig # default: <upstream>.sig
+```
+
+`public_key` is required. A signature with no pinned key verifies that the file was signed by
+whoever signed it, which is not a fact about anything.
+
+Needs `ext-sodium`. A source declaring `signature:` on a host without it **fails** rather than
+running unverified — that source has been marked as one that matters, and quietly skipping the
+check is the one outcome nobody asked for.
+
+### What happens when it does not match
+
+The body is refused and the source takes its ordinary [failure policy](#failure-policy), which
+is why `last_known_good` — the default — means the last **verified** copy keeps serving and
+the refused bytes are never used:
+
+```
+Source failed to load; using last known good copy
+  source: abusive-ips
+  reason: Source "abusive-ips": sha256 checksum mismatch. Expected 9f86d081884c7d65…,
+          got 2c26b46b68ffc68f…
+  entries: 51204
+```
+
+Mark the source `required: true` where serving a stale copy is the wrong direction — an allow
+list, typically — and the mismatch stops the bootstrap instead.
+
+A missing, empty or unreadable sidecar is the same kind of failure. It is not a reason to use
+the body: a source that cannot be checked has not been checked.
+
+Three details worth knowing:
+
+- **The digest covers the artifact as distributed.** A `.gz` list is hashed gzipped, before
+  the pipeline decompresses it, because that is the file the publisher hashed.
+- **The sidecar is fetched the way the list is**, with the same credential and headers — a
+  private feed's digest lives behind the same door — but always as a `GET`, and never with the
+  list's request body.
+- **Adding verification invalidates the cache.** Entries cached before a source was given a
+  `checksum:` came from bytes nothing checked, so they are re-fetched and re-verified rather
+  than reused.
+
+### What it is not
+
+`max_delta` is the neighbouring guardrail and answers a different question. "Is this the
+publisher's file" and "is this a plausible amount of change" are independent, and neither
+substitutes for the other — a signed file can still be a signed mistake.
 
 ## Failure policy
 

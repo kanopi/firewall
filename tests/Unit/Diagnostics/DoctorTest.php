@@ -665,6 +665,67 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * Remote sources fetched without a checksum or a signature are reported —
+     * once, for all of them. Most published lists in this ecosystem ship no
+     * sidecar at all, so a warning per source would be a wall of noise about
+     * something the operator often cannot fix (#365).
+     */
+    public function testUnverifiedRemoteSourcesAreReportedInOneLine(): void
+    {
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [
+            ['name' => 'a-feed', 'upstream' => 'https://example.org/a.txt'],
+            ['name' => 'b-feed', 'upstream' => 'https://example.org/b.txt'],
+        ]];
+
+        $findings = $this->diagnose($config);
+        $unverified = array_values(array_filter(
+            $findings,
+            static fn(Diagnosis $d): bool => str_contains($d->title, 'without verification')
+        ));
+
+        $this->assertCount(1, $unverified);
+        $this->assertSame('2 remote rule sources fetched without verification', $unverified[0]->title);
+        $this->assertStringContainsString('a-feed, b-feed', (string) $unverified[0]->detail);
+    }
+
+    /**
+     * A source that does check what it fetches says so, and is not counted
+     * against the unverified ones.
+     */
+    public function testAVerifiedRemoteSourceIsReportedAsSuch(): void
+    {
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [
+            ['name' => 'a-feed', 'upstream' => 'https://example.org/a.txt', 'checksum' => 'sha256'],
+        ]];
+
+        $titles = $this->titles($this->diagnose($config));
+
+        $this->assertContains('1 rule source verified against a published checksum or signature', $titles);
+        $this->assertSame([], array_filter($titles, static fn(string $t): bool => str_contains($t, 'without verification')));
+    }
+
+    /**
+     * A local file is whatever the pipeline that put it there put there.
+     * Reporting it as unverified says something about that pipeline rather
+     * than about this configuration.
+     */
+    public function testALocalSourceIsNotReportedAsUnverified(): void
+    {
+        $list = $this->dir . '/local-list.txt';
+        file_put_contents($list, "203.0.113.9\n");
+
+        $config = $this->workingConfig();
+        $config['plugins'][0]['metadata'] = ['sources' => [$list]];
+
+        $this->assertSame([], array_filter(
+            $this->titles($this->diagnose($config)),
+            static fn(string $t): bool => str_contains($t, 'without verification')
+        ));
+    }
+
+    /**
      * A source declaration that is not valid is an error.
      */
     public function testAnInvalidSourceDeclarationIsAnError(): void
