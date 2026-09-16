@@ -14,6 +14,7 @@ namespace Kanopi\Firewall\Diagnostics;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\FirewallMode;
 use Kanopi\Firewall\Source\SourceCache;
+use Kanopi\Firewall\Storage\SharedStorage;
 use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DatabaseConsumers;
@@ -539,7 +540,78 @@ class Doctor
     {
         $storage = is_array($config['storage'] ?? null) ? $config['storage'] : [];
         $settings = is_array($storage['config'] ?? null) ? $storage['config'] : [];
+
+        // A shared block list keeps its real paths one level down, under the
+        // backend it falls back to. Checking only the top level found nothing
+        // to check and said nothing -- while the local copy, which is the
+        // entire reason that arrangement exists, might not be writable (#223).
+        // Trimmed, because every documented example writes the class with a
+        // leading backslash -- `"\\Kanopi\\Firewall\\Storage\\SharedStorage"` -- and
+        // `::class` has none. Comparing them raw matched nothing, which is a
+        // check that silently never runs.
+        $declaredType = is_string($storage['type'] ?? null) ? ltrim($storage['type'], '\\') : '';
+
+        if ($declaredType === SharedStorage::class) {
+            $findings = [Diagnosis::ok(
+                'Block list is shared across the fleet',
+                sprintf(
+                    'Written to %s, with %s kept locally so this node keeps enforcing if the share '
+                    . 'cannot be reached.',
+                    $this->storageTypeName($settings['shared'] ?? null),
+                    $this->storageTypeName($settings['local'] ?? null)
+                )
+            )];
+
+            $local = is_array($settings['local'] ?? null) ? $settings['local'] : [];
+            $localSettings = is_array($local['config'] ?? null) ? $local['config'] : [];
+
+            foreach ($this->checkStoragePaths($localSettings, 'local fallback') as $diagnosi) {
+                $findings[] = $diagnosi;
+            }
+
+            return $findings;
+        }
+
+        return $this->checkStoragePaths($settings, null);
+    }
+
+    /**
+     * Name a storage backend for a report, without building it.
+     *
+     * @param mixed $definition
+     *   A `{type, config}` block, or anything else.
+     *
+     * @return string
+     *   The class's short name, or a placeholder.
+     */
+    private function storageTypeName(mixed $definition): string
+    {
+        $type = is_array($definition) ? ($definition['type'] ?? null) : null;
+
+        if (!is_string($type) || $type === '') {
+            return 'an unnamed backend';
+        }
+
+        $short = strrchr($type, '\\');
+
+        return $short === false ? $type : substr($short, 1);
+    }
+
+    /**
+     * Whether the paths a file-backed store needs are usable.
+     *
+     * @param array<string, mixed> $settings
+     *   A backend's own `config:` block.
+     * @param string|null $label
+     *   What to call it in the finding, when it is not the only store.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings, empty for a backend that uses no paths.
+     */
+    private function checkStoragePaths(array $settings, ?string $label): array
+    {
         $findings = [];
+        $suffix = $label === null ? '' : sprintf(' [%s]', $label);
 
         foreach (['storage_file', 'offense_file'] as $key) {
             $path = $settings[$key] ?? null;
@@ -557,7 +629,7 @@ class Doctor
 
             if (!is_dir($directory)) {
                 $findings[] = Diagnosis::error(
-                    sprintf('Storage directory for %s does not exist', $key),
+                    sprintf('Storage directory for %s does not exist%s', $key, $suffix),
                     $directory,
                     'configuration/storage.md'
                 );
@@ -567,7 +639,7 @@ class Doctor
 
             if (!is_writable($directory) || (is_file($path) && !is_writable($path))) {
                 $findings[] = Diagnosis::error(
-                    sprintf('Storage path for %s is not writable', $key),
+                    sprintf('Storage path for %s is not writable%s', $key, $suffix),
                     $path,
                     'configuration/storage.md'
                 );
@@ -575,7 +647,7 @@ class Doctor
                 continue;
             }
 
-            $findings[] = Diagnosis::ok(sprintf('Storage path writable (%s)', $key), $path);
+            $findings[] = Diagnosis::ok(sprintf('Storage path writable (%s)%s', $key, $suffix), $path);
         }
 
         return $findings;
