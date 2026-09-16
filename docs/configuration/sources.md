@@ -562,6 +562,19 @@ Both fail the source the way a failed fetch does, so [`on_error`](#failure-polic
     The ceiling covers a `checksum:`/`signature:` sidecar too. A digest arriving as four gigabytes
     is itself worth refusing.
 
+!!! note "It applies after decompression too"
+
+    `max_size` bounds the body *as fetched*, and decompression is where that would stop meaning
+    anything. Ordinary repetitive list data gzips at better than 500:1 — a 105 KB body expanding
+    to 54 MB is unremarkable, not an attack — so a ceiling that stopped at the wire would be a
+    ceiling with `compression: gzip` as a documented bypass. And `.gz` on a URL turns compression
+    on by inference, without anybody choosing it.
+
+    So the same number applies to the decompressed body, which is the useful reading anyway: the
+    ceiling is on the *list*, not on the transfer. A gzipped source that expands past it is
+    refused rather than decompressed, and the refusal happens during inflation rather than after
+    it.
+
 !!! warning "A ceiling bounds what comes *in*, not what is already cached"
 
     Adding `max_entries` to a source that already has 50,000 entries cached does not reject them;

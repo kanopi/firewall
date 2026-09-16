@@ -231,6 +231,72 @@ class SourceCeilingsTest extends AbstractTestCase
         $this->assertSame(1024, $asked, 'The fetcher must know the ceiling at read time, not after it');
     }
 
+    /**
+     * The half `max_size` alone does not cover.
+     *
+     * It bounds the body *as fetched*, and decompression is where that stops
+     * meaning anything: ordinary repetitive list data gzips at better than
+     * 500:1, so a body comfortably inside the ceiling expands to many times it.
+     * A ceiling with `compression: gzip` as a bypass is not a ceiling — and
+     * `.gz` on a URL turns compression on without anybody asking for it.
+     */
+    public function testAGzipBodyThatExpandsPastTheCeilingIsRefused(): void
+    {
+        $compressed = (string) gzencode(str_repeat("10.0.0.1\n", 200000));
+        $path = $this->fixture('bomb.txt.gz', $compressed);
+
+        $this->assertLessThan(
+            4096,
+            strlen($compressed),
+            'The premise: this body is small enough that max_size alone says nothing about it'
+        );
+
+        $this->expectException(SourceException::class);
+        $this->expectExceptionMessage('gzip body expands beyond upstream.max_size (4 KiB)');
+
+        $this->loader()->load(SourceDefinition::fromArray([
+            'upstream' => ['url' => $path, 'max_size' => '4K'],
+        ]));
+    }
+
+    public function testAGzipBodyWithinTheCeilingDecompressesNormally(): void
+    {
+        $path = $this->fixture('fine.txt.gz', (string) gzencode("10.0.0.1\n10.0.0.2\n"));
+
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2'],
+            $this->loader()->load(SourceDefinition::fromArray([
+                'upstream' => ['url' => $path, 'max_size' => '4K'],
+            ]))
+        );
+    }
+
+    public function testAGzipBodyIsUnboundedWhenTheCeilingIs(): void
+    {
+        $path = $this->fixture('nolimit.txt.gz', (string) gzencode(str_repeat("10.0.0.1\n", 5000)));
+
+        $this->assertCount(5000, $this->loader()->load(SourceDefinition::fromArray([
+            'upstream' => ['url' => $path, 'max_size' => 0],
+        ])));
+    }
+
+    /**
+     * "Did not decode" covers a body that is not gzip and one that would not
+     * fit. Those are different problems with different fixes, so they get
+     * different messages.
+     */
+    public function testABodyThatIsNotGzipAtAllSaysSo(): void
+    {
+        $path = $this->fixture('notgz.txt.gz', '<html><body>404 Not Found</body></html>');
+
+        $this->expectException(SourceException::class);
+        $this->expectExceptionMessage('body is not valid gzip data');
+
+        $this->loader()->load(SourceDefinition::fromArray([
+            'upstream' => ['url' => $path, 'max_size' => '4K'],
+        ]));
+    }
+
     public function testAnEntryCeilingIsEnforced(): void
     {
         $path = $this->fixture('many.txt', "10.0.0.1\n10.0.0.2\n10.0.0.3\n");

@@ -250,6 +250,26 @@ final class SourceUpstream
     }
 
     /**
+     * The ceiling, in the unit it was most likely written in.
+     *
+     * A number an operator has to divide by 1024 to recognise is a number they
+     * will misread while deciding whether to raise it.
+     *
+     * @return string
+     *   The size in the largest unit that leaves it whole.
+     */
+    public function describeMaxSize(): string
+    {
+        foreach (['GiB' => 1073741824, 'MiB' => 1048576, 'KiB' => 1024] as $unit => $scale) {
+            if ($this->maxSize >= $scale && $this->maxSize % $scale === 0) {
+                return intdiv($this->maxSize, $scale) . ' ' . $unit;
+            }
+        }
+
+        return $this->maxSize . ' bytes';
+    }
+
+    /**
      * Whether this upstream is remote rather than a local file.
      *
      * @return bool

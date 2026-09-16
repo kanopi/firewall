@@ -35,6 +35,14 @@ final class SourceLoader
     use LoggingTrait;
 
     /**
+     * The two bytes every gzip member starts with.
+     *
+     * Used only to tell "this is not gzip" from "this is gzip I will not
+     * decompress", which are different problems with different fixes.
+     */
+    private const GZIP_MAGIC = "\x1f\x8b";
+
+    /**
      * Fetchers tried in order.
      *
      * @var array<int, FetcherInterface>
@@ -421,16 +429,42 @@ final class SourceLoader
             ));
         }
 
-        $decoded = @gzdecode($body);
+        // `max_size` bounds the body *as fetched*, and decompression is where
+        // that stops meaning anything: ordinary repetitive list data gzips at
+        // better than 500:1, so a body comfortably inside the ceiling expands
+        // to tens of times it, and a deliberately crafted one does far worse.
+        // A ceiling with `compression: gzip` as a documented bypass is not a
+        // ceiling -- and `.gz` on a URL turns this on without anybody asking
+        // for it (#366).
+        //
+        // gzdecode()'s own limit refuses rather than truncating, and stops
+        // inflating rather than inflating and then trimming, so the ceiling
+        // holds for memory as well as for what is accepted.
+        $limit = $sourceDefinition->upstream->maxSize;
+        $decoded = $limit > 0 ? @gzdecode($body, $limit + 1) : @gzdecode($body);
 
-        if ($decoded === false) {
+        if ($decoded !== false) {
+            return $decoded;
+        }
+
+        // False means "did not decode", which covers both a body that is not
+        // gzip and one that would not fit. The magic bytes separate the first
+        // from the rest; what is left is a body that expands past the ceiling
+        // or is damaged after its header, and the message says both rather
+        // than picking one and being confidently wrong.
+        if ($limit > 0 && str_starts_with($body, self::GZIP_MAGIC)) {
             throw new SourceException(sprintf(
-                'Source "%s": body is not valid gzip data.',
-                $sourceDefinition->name
+                'Source "%s": gzip body expands beyond upstream.max_size (%s), or is damaged past '
+                . 'its header. Refusing it rather than decompressing without a ceiling.',
+                $sourceDefinition->name,
+                $sourceDefinition->upstream->describeMaxSize()
             ));
         }
 
-        return $decoded;
+        throw new SourceException(sprintf(
+            'Source "%s": body is not valid gzip data.',
+            $sourceDefinition->name
+        ));
     }
 
     /**

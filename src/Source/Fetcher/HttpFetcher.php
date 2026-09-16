@@ -334,28 +334,8 @@ final class HttpFetcher implements FetcherInterface
             . 'rather than using part of a list. Raise max_size if the list has genuinely grown, '
             . 'or set it to 0 for no limit.',
             $sourceDefinition->name,
-            $this->describeSize($limit)
+            $sourceDefinition->upstream->describeMaxSize()
         ));
-    }
-
-    /**
-     * A byte count a person can read.
-     *
-     * @param int $bytes
-     *   The size.
-     *
-     * @return string
-     *   The size in the largest unit that leaves it whole.
-     */
-    private function describeSize(int $bytes): string
-    {
-        foreach (['GiB' => 1073741824, 'MiB' => 1048576, 'KiB' => 1024] as $unit => $scale) {
-            if ($bytes >= $scale && $bytes % $scale === 0) {
-                return intdiv($bytes, $scale) . ' ' . $unit;
-            }
-        }
-
-        return $bytes . ' bytes';
     }
 
     /**
