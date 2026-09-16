@@ -16,11 +16,18 @@ challenge:
   cookie_name: fw_challenge_pass
   header_name: X-Firewall-Challenge
   path: /_firewall/challenge    # where a submission is recognised
+  ttl: 3600                     # how long a pass lasts, and the longest one can last
 ```
 
 `challenge.secret` is **required** as soon as any rule uses `response: challenge`. Startup
 fails with `ConfigurationException` if it is empty — the firewall will not fall back to
 unsigned tokens.
+
+`challenge.ttl` is optional and defaults to an hour. It is both the pass lifetime rules
+inherit when they name none and the **ceiling** on what any rule — or any submission — can
+ask for, which matters more than it looks: the lifetime rides in the interstitial's form, so
+without a ceiling it is chosen by whoever posts it. See
+[How long a pass lasts](../plugins/challenges.md#how-long-a-pass-lasts).
 
 !!! warning "The submission path must reach the firewall"
 
@@ -75,7 +82,7 @@ plugins:
     weight: -10
     enable: true
     metadata:
-      default_expiration_time: 3600   # how long the pass token lasts, in seconds
+      default_expiration_time: 900    # this rule's pass lifetime; omit it to inherit challenge.ttl
     config:
       - "asn:AS14618"                 # challenge AWS traffic
 ```

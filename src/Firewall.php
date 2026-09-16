@@ -427,6 +427,7 @@ final class Firewall
             'path' => '/_firewall/challenge',
             'provider_options' => [],
             'audience' => '',
+            'ttl' => self::CHALLENGE_TTL_FALLBACK,
         ];
 
         $challengeConfig = array_replace($defaults, $challengeConfig);
@@ -1714,7 +1715,11 @@ final class Firewall
                     [
                         'submit_url' => $this->challengeSubmitUrl($request),
                         'redirect_to' => $this->sanitizeRedirect($rejectedRedirect === '' ? '/' : $rejectedRedirect),
-                        'ttl' => (string) ($rejectedTtl === '' ? 3600 : max(0, (int) $rejectedTtl)),
+                        // Clamped, not echoed. Re-rendering what was posted
+                        // hands an over-long request straight back to be
+                        // posted again, so the retry asks for the same thing
+                        // the accepting path would have refused (#367).
+                        'ttl' => (string) $this->clampChallengeTtl($rejectedTtl === '' ? 0 : (int) $rejectedTtl),
                         'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
                         'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
                         'provider_token' => $this->signProviderName($providerName),
@@ -1735,11 +1740,31 @@ final class Firewall
         // Both fields ride in on the interstitial's POST, so both are
         // attacker-chosen. Read them off the raw bag — InputBag::get() throws
         // on an array value, and nothing above this frame catches it (#130).
-        // An absent or non-string ttl falls back to the default hour; an
+        // An absent or non-string ttl falls back to `challenge.ttl`; an
         // absent or non-string redirect falls back to the site root, which is
         // what sanitizeRedirect() would have reduced a hostile one to anyway.
         $rawTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
-        $ttl = $rawTtl === '' ? 3600 : max(0, (int) $rawTtl);
+        $requestedTtl = $rawTtl === '' ? 0 : (int) $rawTtl;
+
+        // The lifetime the client asked for is a request, not an instruction.
+        // Before this, `max(0, …)` put a floor under it and nothing put a
+        // ceiling on it: solve one math problem, post `ttl=999999999`, and the
+        // pass token short-circuits every challenge rule this provider serves
+        // for the next thirty-one years — signed, valid, and unrevokable
+        // without rotating the secret (#367).
+        $ttl = $this->clampChallengeTtl($requestedTtl);
+
+        if ($requestedTtl > $ttl) {
+            // Warning, not debug. The interstitial was rendered with a value
+            // this firewall chose, so a larger one arriving back means the
+            // form was edited or the page predates a lowered ceiling. Neither
+            // is visible anywhere else, and the first is worth reading.
+            $this->getLogger()->warning('Challenge pass lifetime clamped to the configured ceiling', $this->getContext($request, [
+                'provider' => $providerName,
+                'requested_ttl' => $requestedTtl,
+                'ttl' => $ttl,
+            ]));
+        }
 
         // Scope the token to what was actually solved. Without this a math
         // pass would satisfy a reCAPTCHA rule, and the cheapest challenge
@@ -1948,9 +1973,24 @@ final class Firewall
             ? $this->challengeProviderRegistry->get($providerName)
             : $this->challengeProvider;
 
-        $ttl = $plugin->getExpirationTime($request);
-        if ($ttl <= 0) {
-            $ttl = 3600;
+        // `metadata.default_expiration_time` → `challenge.ttl` → the built-in
+        // hour. A rule that names nothing inherits the global instead of a
+        // constant nothing points at, which is the ergonomics half of #367.
+        $declaredTtl = $plugin->getExpirationTime($request);
+        $ttl = $this->clampChallengeTtl($declaredTtl);
+
+        if ($declaredTtl > $ttl) {
+            // The ceiling applies to the configuration as well as to the POST.
+            // Clamping here rather than only at submission keeps the number in
+            // the form and the number in the token the same, and names the rule
+            // that has to change — the alternative is a rule that silently
+            // grants less than it says it does.
+            $this->getLogger()->warning('Rule asks for a longer challenge pass than `challenge.ttl` allows', $this->getContext($request, [
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'requested_ttl' => $declaredTtl,
+                'ttl' => $ttl,
+            ]));
         }
 
         $this->getLogger()->notice('Sending challenge response', $this->getContext($request, [
@@ -2171,6 +2211,60 @@ final class Firewall
         }
 
         return $basePath . $path;
+    }
+
+    /**
+     * The pass lifetime used when nothing configures one.
+     *
+     * The hour that was hard-coded in three places before `challenge.ttl`
+     * existed, kept as the value an unconfigured firewall still lands on so
+     * adding the key changes nothing for anybody who does not set it.
+     */
+    private const CHALLENGE_TTL_FALLBACK = 3600;
+
+    /**
+     * The longest a challenge pass is allowed to last, in seconds.
+     *
+     * Read as a number or not at all. `ttl: "one hour"` casting to `0` and
+     * silently becoming the fallback is the same class of quiet wrong this
+     * ticket is about, so a value that is not numeric is treated as absent
+     * rather than as zero.
+     *
+     * @return int
+     *   A positive number of seconds.
+     */
+    private function challengeTtlCeiling(): int
+    {
+        $configured = $this->challengeConfig['ttl'] ?? null;
+        $ceiling = is_numeric($configured) ? (int) $configured : 0;
+
+        return $ceiling > 0 ? $ceiling : self::CHALLENGE_TTL_FALLBACK;
+    }
+
+    /**
+     * Reduce a requested pass lifetime to what the configuration permits.
+     *
+     * One function for both directions, because the two callers have to agree:
+     * the number rendered into the form and the number signed into the token
+     * are the same number, and a visitor holding a cookie the firewall will not
+     * honour has no way to find out why.
+     *
+     * Asking for *less* is honoured — that is asking for less exposure, and
+     * there is nothing to protect against. Asking for nothing, or for a
+     * non-positive value, takes the ceiling: it is the configured default as
+     * well as the limit.
+     *
+     * @param int $requested
+     *   The lifetime asked for, in seconds. Zero or negative means none given.
+     *
+     * @return int
+     *   A positive number of seconds, never above `challenge.ttl`.
+     */
+    private function clampChallengeTtl(int $requested): int
+    {
+        $ceiling = $this->challengeTtlCeiling();
+
+        return $requested > 0 ? min($requested, $ceiling) : $ceiling;
     }
 
     protected function sanitizeRedirect(string $target): string
