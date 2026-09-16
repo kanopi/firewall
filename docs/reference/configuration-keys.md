@@ -63,6 +63,7 @@ Nothing here explains anything; that is deliberate.
 | `DatabaseStorage` | `connection`, `storage_table`, `offenses_table`, `schema_check_probability` | [Storage](../configuration/storage.md) |
 | `RedisStorage` | `redis`, `instance` | Requires `ext-redis` |
 | `InMemoryStorage` | — | Per-process; nothing survives the request |
+| `SharedStorage` | **`shared`**, **`local`** | A fleet-wide list with a local copy underneath. Each is a `{type, config}` block — [Storage](../configuration/storage.md#a-block-list-shared-across-a-fleet) |
 
 Rate-limit counters are stored separately, under the RateLimit plugin's own metadata:
 
