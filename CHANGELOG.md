@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.29.0](https://github.com/kanopi/firewall/releases/tag/v2.29.0) — 2026-09-16
+
+A block that travels: a ban earned on one node now applies to the whole fleet, with a local copy underneath it so an unreachable shared store does not leave the site unguarded — and three places the firewall stopped short of saying what it was doing, each found by using it rather than by reading it: a `record` rule that failed to start and was reported as healthy, Redis storage that took the whole firewall down when the extension was missing rather than degrading, and a challenge no human could complete on a site served from a subdirectory.
+
 ## [2.28.0](https://github.com/kanopi/firewall/releases/tag/v2.28.0) — 2026-09-15
 
 Getting here from there: the four questions a host has to answer before the firewall behaves and how to get them out of your own environment, what an existing Wordfence, ModSecurity or Cloudflare rule translates to here, a reputation rule that can score the email somebody submitted rather than only the address it came from — and a log destination that does not exist on this host no longer stopping the firewall from starting, which is what running the first of those found.
