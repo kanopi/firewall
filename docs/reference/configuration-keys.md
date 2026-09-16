@@ -81,7 +81,8 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 |---|---|---|---|---|
 | `provider` | string | *required* | `math`, `altcha`, `turnstile`, `recaptcha`, or a FQCN | [Challenges](../plugins/challenges.md) |
 | `secret` | string | *required* | HMAC key for pass tokens. Startup fails if empty | [Challenges](../plugins/challenges.md) |
-| `path` | string | `/_firewall/challenge` | Where the interstitial POSTs | [Add a Challenge](../how-to/add-a-challenge.md) |
+| `path` | string | `/_firewall/challenge` | The path a submission is **recognised** at, matched against `getPathInfo()` | [Add a Challenge](../how-to/add-a-challenge.md) |
+| `submit_url` | string | `path`, prefixed with the request's base path | Where the interstitial's form POSTs to. Only set it if a proxy rewrites paths | [Add a Challenge](../how-to/add-a-challenge.md#a-host-served-from-a-subdirectory) |
 | `cookie_name` | string | `''` | Pass-token cookie; empty disables cookie delivery | [Challenges](../plugins/challenges.md) |
 | `header_name` | string | `''` | Header an SPA can send the token in | [Challenges](../plugins/challenges.md) |
 | `audience` | string | provider name | `aud` claim, to scope tokens between instances | [Scoping tokens](../plugins/challenges.md#scoping-tokens-across-instances) |
