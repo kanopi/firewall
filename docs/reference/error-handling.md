@@ -73,7 +73,7 @@ A rule whose constructor throws — a rate limit backend pointed at a Redis host
 $firewall = Firewall::create([__DIR__ . '/firewall.yml']);
 
 foreach ($firewall->getFailedRules() as $rule) {
-    // bucket: allow | challenge | block
+    // bucket: allow | mark | record | challenge | redirect | block
     // plugin: Kanopi\Firewall\Plugins\RateLimit:2
     // error:  Connection refused
     $status->addError(sprintf(
@@ -94,11 +94,23 @@ Two things about the call:
 
 An empty array means every configured rule is constructed and active. It says nothing about rules you disabled with `enable: false` or left out of the config — those never enter the registry, and are not failures.
 
+The bucket is one of the six `response:` values, reported in the order `evaluate()` consults them. Before 2.29.0 only `allow`, `challenge` and `block` were reported: `mark`, `record` and `redirect` arrived in 2.26.0 and this method never learned about them, so a `response: record` honeypot whose backend was unreachable was not running while `firewall-doctor` said every configured rule was. If you match on the bucket value, three more are now possible.
+
 ## Checking that a backend can reach its server
 
 `getFailedRules()` answers one question — *which rules are not running?* There is a second, and an empty answer to the first does not settle it: **a rule can be running and have nothing to consult.**
 
 `RedisStorage` and `RedisRateLimitStorage` deliberately catch a connection failure, log it, and answer every read as though nothing were stored, so the firewall carries on enforcing every rule that does not depend on them. The plugin therefore constructs successfully, and `getFailedRules()` correctly reports nothing — while a rate limit rule counts nothing and lets every request through.
+
+!!! note "`ext-redis` not being installed is the same kind of problem"
+
+    A config that names Redis storage on a host without the extension degrades exactly like an unreachable server, and says which of the two it is:
+
+    ```
+    the redis extension is not installed on this host
+    ```
+
+    Before 2.29.0 it was neither — `new Redis()` against a missing extension raises `\Error` rather than an exception, so it was caught by nothing and `Firewall::create()` did not return. A host catching `\Exception` or `FirewallException` did not catch it either. The realistic way to meet it was checking out a production config on a laptop.
 
 ```php
 foreach ($firewall->getDegradedBackends() as $backend) {

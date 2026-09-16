@@ -1337,9 +1337,22 @@ final class Firewall
     }
 
     /**
-     * The three rule buckets, ordered the way `evaluate()` consults them.
+     * Every rule bucket, ordered the way `evaluate()` consults them.
      *
      * So a report reads in the order the firewall would have applied the rules.
+     *
+     * All six, not the three this returned until 2.29.0. `mark`, `record` and
+     * `redirect` arrived in 2.26.0 and the health reporting never learned about
+     * them, so a `response: record` honeypot whose backend was unreachable was
+     * **not running** while `firewall-doctor` said every configured rule was
+     * (#353). That is #260's failure reopened for the buckets added since.
+     *
+     * The last three are typed nullable, so they are narrowed here rather than
+     * returned as they are. In practice they are always present -- `create()`
+     * is the only caller of a protected constructor on a final class, and it
+     * passes all six -- and making them required is not available, because the
+     * constructor declares optional parameters ahead of them. The narrowing is
+     * the type system's price for that ordering, not a case to go looking for.
      *
      * @return array<string, PluginManager>
      *   Keyed by the bucket name an operator configured.
@@ -1348,7 +1361,10 @@ final class Firewall
     {
         return [
             'allow' => $this->bypassPluginManager,
+            'mark' => $this->markPluginManager,
+            'record' => $this->recordPluginManager,
             'challenge' => $this->challengePluginManager,
+            'redirect' => $this->redirectPluginManager,
             'block' => $this->blockingPluginManager,
         ];
     }
@@ -1696,7 +1712,7 @@ final class Firewall
                     $challengeProvider,
                     $providerName,
                     [
-                        'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
+                        'submit_url' => $this->challengeSubmitUrl($request),
                         'redirect_to' => $this->sanitizeRedirect($rejectedRedirect === '' ? '/' : $rejectedRedirect),
                         'ttl' => (string) ($rejectedTtl === '' ? 3600 : max(0, (int) $rejectedTtl)),
                         'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
@@ -1958,7 +1974,7 @@ final class Firewall
         // on a final class. A host rendering without it locks the visitor out
         // permanently and silently (#311).
         $renderContext = [
-            'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
+            'submit_url' => $this->challengeSubmitUrl($request),
             'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
             'ttl' => (string) $ttl,
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
@@ -2085,6 +2101,78 @@ final class Firewall
      * Accepts only same-origin paths (must start with `/` and must NOT
      * start with `//` or `/\`). Falls back to "/" otherwise.
      */
+    /**
+     * Where the interstitial's form posts to.
+     *
+     * `challenge.path` was doing two incompatible jobs, and on a host served
+     * from a subdirectory they need different values (#358):
+     *
+     * | Needs | On `example.com/app/` |
+     * |---|---|
+     * | Matching, against `getPathInfo()` | `/_firewall/challenge` |
+     * | The form action | `/app/_firewall/challenge` |
+     *
+     * `getPathInfo()` has the base path stripped and a form action needs it, so
+     * configuring either one broke the other and the deployment could not be
+     * configured out of it. The form posted to the web server root, the answer
+     * never reached the firewall, no pass token was minted, and the visitor was
+     * challenged again on the next request -- which means a challenge rule
+     * refused **every human who tried to satisfy it**, indefinitely, while a
+     * bot that ignored the interstitial was unaffected.
+     *
+     * The base path comes from the request rather than from configuration,
+     * because the request is the only thing that knows it. `challenge.path`
+     * keeps its one job -- the value matched against `getPathInfo()` -- and
+     * `challenge.submit_url` is the escape hatch for a deployment behind a
+     * proxy that rewrites paths, where the browser's view and the
+     * application's differ by something this cannot work out.
+     *
+     * @param Request $request
+     *   The request being challenged, for its base path.
+     *
+     * @return string
+     *   An absolute path the browser can post to.
+     */
+    protected function challengeSubmitUrl(Request $request): string
+    {
+        $configured = $this->challengeConfig['submit_url'] ?? null;
+
+        if (is_string($configured) && trim($configured) !== '') {
+            return trim($configured);
+        }
+
+        $configuredPath = $this->challengeConfig['path'] ?? null;
+
+        // Read as a string or not at all, rather than cast inline: rector
+        // removes a `(string)` in a concatenation as redundant, which turns a
+        // `path` that is not a string into a PHPStan error at level max and,
+        // before that, into whatever PHP makes of concatenating it.
+        $path = is_string($configuredPath) && $configuredPath !== '' ? $configuredPath : '/_firewall/challenge';
+
+        // Anything not rooted at `/` is the host's own choice -- an absolute
+        // URL, or a relative action the browser resolves itself -- and a base
+        // path concatenated onto it produces
+        // `/apphttps://edge.example.com/challenge`, which is indefensible
+        // output whatever the input was.
+        if (!str_starts_with($path, '/')) {
+            return $path;
+        }
+
+        $basePath = rtrim($request->getBasePath(), '/');
+
+        // Already carrying the base path, so adding it again gives
+        // `/app/app/_firewall/challenge`. No *working* configuration can be in
+        // that state -- a prefixed `path` stops submissions being recognised,
+        // which is the other half of this bug -- but somebody midway through
+        // fixing one is exactly who is reading this, and doubling it silently
+        // is a poor way to meet them.
+        if ($basePath === '' || str_starts_with($path, $basePath . '/')) {
+            return $path;
+        }
+
+        return $basePath . $path;
+    }
+
     protected function sanitizeRedirect(string $target): string
     {
         if ($target === '' || $target[0] !== '/') {

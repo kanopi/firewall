@@ -743,6 +743,88 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * Every response bucket is reported, not the three that predate 2.26.0.
+     *
+     * `mark`, `record` and `redirect` arrived in 2.26.0 and the health
+     * reporting never learned about them, so a `response: record` honeypot
+     * whose backend was unreachable was **not running** while
+     * `firewall-doctor` reported that every configured rule was (#353).
+     *
+     * That is #260's failure -- a firewall running three rules short looking
+     * exactly like one running correctly -- reopened for the buckets added
+     * since, which is why the assertion is on the whole set rather than on the
+     * three that were missing.
+     */
+    public function testGetFailedRulesCoversEveryBucket(): void
+    {
+        $config = [
+            'plugins' => [
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'allow', 'enable' => true],
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'mark', 'enable' => true],
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'record', 'enable' => true],
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'redirect', 'enable' => true],
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'block', 'enable' => true],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $buckets = array_column(Firewall::create([$config])->getFailedRules(), 'bucket');
+
+        $this->assertSame(['allow', 'mark', 'record', 'redirect', 'block'], $buckets);
+    }
+
+    /**
+     * And the order is the order `evaluate()` consults them in.
+     *
+     * A report that lists buckets in an arbitrary order is a report somebody
+     * has to hold the evaluation ladder in their head to read.
+     */
+    public function testFailedRulesAreReportedInEvaluationOrder(): void
+    {
+        $config = [
+            'plugins' => [
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'block', 'enable' => true],
+                ['plugin' => TestThrowingPlugin::class, 'response' => 'allow', 'enable' => true],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $buckets = array_column(Firewall::create([$config])->getFailedRules(), 'bucket');
+
+        $this->assertSame(['allow', 'block'], $buckets, 'allow is consulted first, however it was declared.');
+    }
+
+    /**
+     * A scheduled rule in a bucket added in 2.26.0 is reported as asleep too.
+     *
+     * `getSleepingRules()` reads the same bucket list, so it inherited the
+     * blind spot -- a scheduled `record` rule was invisible twice over.
+     */
+    public function testGetSleepingRulesCoversEveryBucket(): void
+    {
+        $config = [
+            'plugins' => [
+                [
+                    'plugin' => IpAddress::class,
+                    'response' => 'record',
+                    'enable' => true,
+                    'config' => ['203.0.113.5'],
+                    'metadata' => [
+                        'name' => 'nightly-honeypot',
+                        'active' => ['timezone' => 'UTC', 'until' => '2000-01-01'],
+                    ],
+                ],
+            ],
+            'global' => ['mode' => 'exception'],
+        ];
+
+        $this->assertSame(
+            [['bucket' => 'record', 'plugin' => 'nightly-honeypot', 'window' => 'until 2000-01-01 (UTC)']],
+            Firewall::create([$config])->getSleepingRules()
+        );
+    }
+
+    /**
      * The rules that are running and asleep, named with the window they wait for.
      *
      * The other half of a scheduled rule (#205): one matching nothing looks exactly like

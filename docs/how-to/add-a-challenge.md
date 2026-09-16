@@ -15,7 +15,7 @@ challenge:
   secret: '%env(FIREWALL_CHALLENGE_SECRET)%'   # REQUIRED — long, random, from the environment
   cookie_name: fw_challenge_pass
   header_name: X-Firewall-Challenge
-  path: /_firewall/challenge    # the URL the interstitial POSTs to
+  path: /_firewall/challenge    # where a submission is recognised
 ```
 
 `challenge.secret` is **required** as soon as any rule uses `response: challenge`. Startup
@@ -27,6 +27,42 @@ unsigned tokens.
     `path` is where the interstitial POSTs its answer. If your application routes that URL
     itself, or the firewall runs after your router, a challenged visitor can never solve and
     is locked out for as long as the rule matches.
+
+### A host served from a subdirectory
+
+`path` is matched against `Request::getPathInfo()`, which has the base path **stripped**. The
+form action needs it. On a site at `example.com/` those are the same string; on one at
+`example.com/app/` they are not:
+
+| | |
+|---|---|
+| Matched against `getPathInfo()` | `/_firewall/challenge` |
+| Rendered as the form action | `/app/_firewall/challenge` |
+
+The base path is taken from the request, so **this needs no configuration** — `path` keeps its
+one job and the form action is built from it.
+
+Two shapes of `path` are left exactly as written, so a configuration you have already
+adjusted by hand is not mangled on upgrade: one that is not rooted at `/` (an absolute URL is
+the host's own choice), and one that already carries the base path.
+
+Set `submit_url` only when the browser's view of the URL and the application's differ by
+something the request cannot work out, which in practice means a proxy that rewrites paths:
+
+```yaml
+challenge:
+  path: /_firewall/challenge
+  submit_url: https://edge.example.com/challenge
+```
+
+!!! note "Fixed in 2.29.0"
+
+    Before that, `path` was used for both and a subdirectory install could not be configured
+    out of it: the form posted to the web server root, the answer never reached the firewall,
+    no pass token was minted, and the visitor was challenged again on the next request. A
+    challenge rule refused **every human who tried to satisfy it**, while a bot that ignored
+    the interstitial was unaffected — and it presented as a broken provider rather than a
+    path problem.
 
 ## 2. Point a rule at it
 
