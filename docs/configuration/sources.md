@@ -76,6 +76,7 @@ values a plugin wants needs nothing but an `upstream`.
 | `ttl` | int | `KANOPI_FIREWALL_CACHE_TTL`, else 3600 | Seconds before the cached copy is revalidated |
 | `on_error` | enum | `last_known_good` | `last_known_good`, `fail_open`, `abort` |
 | `required` | bool | `false` | Abort rather than degrade when this source fails |
+| `allow_catch_all` | bool | `false` | Permit an entry matching every address — see [Entries that match everybody](#entries-that-match-everybody) |
 | `header_row` | bool | `true` | CSV/TSV: treat the first row as column names |
 | `comment` | string | `#` | Text formats: strip from this marker to end of line |
 | `delimiter` | string | `,` for csv, tab for tsv | CSV/TSV field delimiter |
@@ -529,6 +530,47 @@ succeeded once. This is what stops an upstream that starts returning an error pa
 an empty document — from quietly emptying your block list.
 
 ---
+
+## Entries that match everybody
+
+An entry of `0.0.0.0/0`, `::/0` or `*` matches every address there is. On a block rule that
+refuses **every visitor to the site**; the firewall is not down, it is working exactly as
+configured, which is worse to diagnose.
+
+Such entries are **refused from a source** and logged at `error`:
+
+```
+Source entries matching every address were refused
+  source: abusive-ips
+  refused: ["0.0.0.0/0"]
+```
+
+The rest of the source is kept — one bad line should not discard fifty thousand good ones,
+and a source that fails wholesale is what [`on_error`](#failure-policy) is for.
+
+!!! note "Why a source and not a local rule"
+
+    `firewall-check --lint` already refuses these values when **you** write them in `config:`.
+    It cannot see them in a source, because linting deliberately does not fetch — so a feed is
+    the one route by which such an entry reaches a block decision without anybody having typed
+    it. The realistic cause is not an attack: a parsing bug that emits an empty line as a
+    prefix, a placeholder shipped by mistake, a CSV column read by the wrong index.
+
+If a source genuinely means it — an allow list that opens the site to everyone during a
+migration, say — declare it:
+
+```yaml
+sources:
+  - name: everyone-for-now
+    upstream: "{config_dir}/open.txt"
+    allow_catch_all: true
+```
+
+The refusal cannot be decided by the rule's `response:`, because a plugin is never told which
+bucket it is in — so the source is where the intent has to be declared.
+
+Changing this option changes the source's fingerprint, so the next load re-decodes rather than
+reusing entries filtered under the old setting.
 
 ## Failure policy
 

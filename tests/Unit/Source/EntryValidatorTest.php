@@ -39,6 +39,102 @@ class EntryValidatorTest extends AbstractTestCase
     }
 
     /**
+     * An entry matching everybody is refused, whatever `validate` says.
+     *
+     * A source is the one route by which an entry reaches a block decision
+     * without an operator having typed it, and `0.0.0.0/0` in a feed refuses
+     * every visitor to the site. `ConfigLinter` refuses that value when
+     * somebody writes it locally and cannot see it here, because linting
+     * deliberately does not fetch sources (#364).
+     *
+     * `validate` is NULL in this case on purpose: an unvalidated `txt` feed is
+     * the likeliest shape for it to arrive in, and a guard that only ran
+     * alongside a declared validator would miss it.
+     *
+     * @param string $entry
+     *   The entry as a feed would carry it.
+     */
+    #[DataProvider('catchAllProvider')]
+    public function testAnEntryMatchingEverybodyIsRefused(string $entry): void
+    {
+        $this->assertSame([], $this->validator->refuseCatchAll([$entry], 'test', false));
+    }
+
+    /**
+     * @return array<string, array{string}>
+     *   Keyed by how a feed would write it.
+     */
+    public static function catchAllProvider(): array
+    {
+        return [
+            'every IPv4 address' => ['0.0.0.0/0'],
+            'the same, abbreviated' => ['0/0'],
+            'every IPv6 address' => ['::/0'],
+            'a wildcard' => ['*'],
+            'padded by the feed' => ['  0.0.0.0/0  '],
+            'the full range form' => ['0.0.0.0-255.255.255.255'],
+        ];
+    }
+
+    /**
+     * The rest of the source survives it.
+     *
+     * One bad line should not discard fifty thousand good ones — and a feed
+     * that is dropped wholesale is what `on_error: last_known_good` is for,
+     * which is a different failure.
+     */
+    public function testTheRestOfTheSourceIsKept(): void
+    {
+        $this->assertSame(
+            ['203.0.113.7', '198.51.100.0/24'],
+            $this->validator->refuseCatchAll(['0.0.0.0/0', '203.0.113.7', '198.51.100.0/24'], 'test', false)
+        );
+    }
+
+    /**
+     * A source can say it means it.
+     *
+     * A plugin does not know whether it is in the allow bucket or the block
+     * one — `response:` is read by `PluginConfigNormalizer` and never reaches
+     * the instance — so the refusal cannot be conditioned on it. `0.0.0.0/0`
+     * on an allow source is at least arguable, so the source is where the
+     * intent gets declared.
+     */
+    public function testASourceCanDeclareThatItMeansIt(): void
+    {
+        $this->assertSame(
+            ['0.0.0.0/0'],
+            $this->validator->refuseCatchAll(['0.0.0.0/0'], 'test', true)
+        );
+    }
+
+    /**
+     * Addresses that merely look broad are left alone.
+     *
+     * `/1` is half the internet and somebody's decision; the guard is for the
+     * value that cannot be a decision worth honouring.
+     */
+    public function testABroadButDeliberateRangeIsKept(): void
+    {
+        $entries = ['0.0.0.0/1', '10.0.0.0/8', '203.0.113.0-203.0.113.255'];
+
+        $this->assertSame($entries, $this->validator->refuseCatchAll($entries, 'test', false));
+    }
+
+    /**
+     * `validate: cidr` still accepts it, because it is a well-formed CIDR.
+     *
+     * The two checks answer different questions and this pins the separation:
+     * `filter()` is about shape, `refuseCatchAll()` is about effect. Folding
+     * the second into the first broke an existing `cidrProvider` case that was
+     * asserting something true.
+     */
+    public function testShapeValidationStillAcceptsACatchAll(): void
+    {
+        $this->assertSame(['0.0.0.0/0'], $this->validator->filter(['0.0.0.0/0'], 'cidr', 'test'));
+    }
+
+    /**
      * The address validator mirrors what the IpAddress plugin can actually use.
      */
     #[DataProvider('cidrProvider')]

@@ -246,4 +246,45 @@ class SourceDefinitionTest extends AbstractTestCase
             SourceDefinition::fromArray(['upstream' => '/x.txt', 'name' => 'two', 'ttl' => 900])->fingerprint()
         );
     }
+
+    /**
+     * `allow_catch_all` changes the fingerprint, so flipping it refreshes.
+     *
+     * The fingerprint exists to invalidate a cached decode when the
+     * interpretation changes, and this option changes which entries survive —
+     * so without it, turning the guard off reuses entries decoded while it was
+     * on and the change appears to do nothing. Found by running the opt-out
+     * end to end rather than by reading it (#364).
+     *
+     * `ttl`, `on_error`, `required` and `max_delta` are deliberately absent
+     * from the fingerprint: they change when or whether a refresh happens, not
+     * what a body decodes to.
+     */
+    public function testAllowCatchAllIsPartOfTheFingerprint(): void
+    {
+        $guarded = SourceDefinition::fromArray(['name' => 'feed', 'upstream' => 'https://example.org/l.txt']);
+        $permitted = SourceDefinition::fromArray([
+            'name' => 'feed',
+            'upstream' => 'https://example.org/l.txt',
+            'allow_catch_all' => true,
+        ]);
+
+        $this->assertNotSame($guarded->fingerprint(), $permitted->fingerprint());
+    }
+
+    /**
+     * And it is read from the declaration, defaulting to refusing.
+     */
+    public function testAllowCatchAllDefaultsToRefusing(): void
+    {
+        $definition = SourceDefinition::fromArray(['name' => 'feed', 'upstream' => 'https://example.org/l.txt']);
+
+        $this->assertFalse($definition->allowCatchAll);
+        $this->assertTrue(SourceDefinition::fromArray([
+            'name' => 'feed',
+            'upstream' => 'https://example.org/l.txt',
+            'allow_catch_all' => true,
+        ])->allowCatchAll);
+    }
+
 }

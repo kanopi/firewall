@@ -123,7 +123,7 @@ Identity-verifying plugins (User Agent, and any implementing
 `verify_negative_ttl`, `verify_suffixes`, `verify_claim_wait_ms` and
 `verify_slow_threshold_ms` — see [User Agent](../plugins/user-agent.md).
 
-Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option).
+Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option), including `allow_catch_all`, which decides whether a source may contribute an entry matching every address.
 
 ## `metadata:` — edge signal rules
 
