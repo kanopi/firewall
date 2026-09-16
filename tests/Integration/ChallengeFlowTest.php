@@ -520,6 +520,89 @@ class ChallengeFlowTest extends TestCase
     }
 
     /**
+     * A host in a subdirectory gets a form action inside the application.
+     *
+     * `challenge.path` is matched against `getPathInfo()`, which has the base
+     * path stripped, and was also used verbatim as the form action. The two
+     * agree only at the document root. In a subdirectory the form posted to the
+     * web server root instead of the application, so the answer never arrived,
+     * no token was minted, and the visitor was challenged again forever (#358).
+     */
+    public function testSubmitUrlCarriesTheBasePathOnASubdirectoryHost(): void
+    {
+        $firewall = Firewall::create([$this->configWithChallenge()]);
+
+        $request = Request::create('/app/protected', 'GET', [], [], [], [
+            'REMOTE_ADDR' => '10.0.0.50',
+            'SCRIPT_FILENAME' => '/var/www/app/index.php',
+            'SCRIPT_NAME' => '/app/index.php',
+        ]);
+
+        self::assertSame('/app', $request->getBasePath(), 'The request describes a subdirectory host.');
+
+        try {
+            $firewall->evaluate($request);
+            self::fail('The challenge rule should have matched.');
+        } catch (ChallengeRequiredException $exception) {
+            self::assertSame(
+                '/app/_firewall/challenge',
+                $exception->getRenderContext()['submit_url'] ?? null,
+                'The form posts inside the application, not at the web server root.',
+            );
+        }
+    }
+
+    /**
+     * The matched path is unchanged, or the submission stops being recognised.
+     *
+     * The two values are separated precisely so that this one keeps comparing
+     * against path info, which never carries the base path.
+     */
+    public function testSubdirectorySubmissionIsStillRecognised(): void
+    {
+        $firewall = Firewall::create([$this->configWithChallenge()]);
+
+        [$state, $answer] = $this->generateSolvedState($firewall, '10.0.0.50');
+
+        $request = Request::create(
+            '/app/_firewall/challenge',
+            'POST',
+            [
+                MathChallengeProvider::STATE_FIELD => $state,
+                MathChallengeProvider::ANSWER_FIELD => $answer,
+            ],
+            [],
+            [],
+            [
+                'REMOTE_ADDR' => '10.0.0.50',
+                'SCRIPT_FILENAME' => '/var/www/app/index.php',
+                'SCRIPT_NAME' => '/app/index.php',
+            ],
+        );
+
+        $this->expectException(ChallengeSolvedException::class);
+        $firewall->evaluate($request);
+    }
+
+    /**
+     * A host at the document root is left exactly as it was.
+     */
+    public function testSubmitUrlIsUnchangedAtTheDocumentRoot(): void
+    {
+        $firewall = Firewall::create([$this->configWithChallenge()]);
+
+        try {
+            $firewall->evaluate($this->blockedRequest('10.0.0.50', '/protected'));
+            self::fail('The challenge rule should have matched.');
+        } catch (ChallengeRequiredException $exception) {
+            self::assertSame(
+                '/_firewall/challenge',
+                $exception->getRenderContext()['submit_url'] ?? null,
+            );
+        }
+    }
+
+    /**
      * Build a request that the configured challenge plugin will match.
      */
     private function blockedRequest(string $ip, string $path = '/'): Request

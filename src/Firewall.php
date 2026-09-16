@@ -1633,6 +1633,60 @@ final class Firewall
     }
 
     /**
+     * The URL the interstitial's form posts to.
+     *
+     * Not the same value as the one `isChallengeSubmission()` matches, and that
+     * is the whole point of this method existing. `challenge.path` was doing
+     * both jobs, and they need different strings whenever the host application
+     * is not served from the document root:
+     *
+     * - matching compares `$request->getPathInfo()`, which has the base path
+     *   stripped, so it needs `/_firewall/challenge`
+     * - the form action is resolved by the browser against the current URL, so
+     *   on a host at `example.com/app/` it needs `/app/_firewall/challenge`
+     *
+     * At the document root the two are identical, which is why one value served
+     * for both until somebody deployed into a subdirectory. There the form
+     * posted to the web server root instead of the application: the answer
+     * never arrived, no pass token was minted, and the visitor was challenged
+     * again on the next request -- so a challenge rule refused every human who
+     * tried to satisfy it, while presenting as a broken provider (#358).
+     *
+     * The base path comes from the request rather than from configuration,
+     * because the request is the only place it is reliably known and asking a
+     * host to configure something it already told us is how the two values got
+     * out of step in the first place.
+     *
+     * A configured value that is already absolute, or already carries the base
+     * path, is returned untouched: a host that has said exactly what it wants
+     * is not second-guessed.
+     *
+     * @param Request $request
+     *   The request being challenged.
+     *
+     * @return string
+     *   The form action.
+     */
+    protected function challengeSubmitUrl(Request $request): string
+    {
+        $path = (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge');
+
+        // An absolute URL, or anything not rooted at /, is the host's own
+        // choice and is resolved by the browser without our help.
+        if (!str_starts_with($path, '/')) {
+            return $path;
+        }
+
+        $basePath = rtrim($request->getBasePath(), '/');
+
+        if ($basePath === '' || str_starts_with($path, $basePath . '/')) {
+            return $path;
+        }
+
+        return $basePath . $path;
+    }
+
+    /**
      * Verify a posted challenge solution and mint a pass token on success.
      *
      * Always terminates the request — either with `exit()` in production
@@ -1696,7 +1750,7 @@ final class Firewall
                     $challengeProvider,
                     $providerName,
                     [
-                        'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
+                        'submit_url' => $this->challengeSubmitUrl($request),
                         'redirect_to' => $this->sanitizeRedirect($rejectedRedirect === '' ? '/' : $rejectedRedirect),
                         'ttl' => (string) ($rejectedTtl === '' ? 3600 : max(0, (int) $rejectedTtl)),
                         'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
@@ -1958,7 +2012,7 @@ final class Firewall
         // on a final class. A host rendering without it locks the visitor out
         // permanently and silently (#311).
         $renderContext = [
-            'submit_url' => (string) ($this->challengeConfig['path'] ?? '/_firewall/challenge'),
+            'submit_url' => $this->challengeSubmitUrl($request),
             'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
             'ttl' => (string) $ttl,
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
