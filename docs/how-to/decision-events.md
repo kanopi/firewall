@@ -128,6 +128,12 @@ $ composer require symfony/event-dispatcher
 Frameworks generally have one already: Laravel's, Symfony's, and Drupal's container-registered
 dispatcher are all PSR-14.
 
+## Counting them
+
+Turning these into counters is a listener, and one ships: see [Export Metrics](metrics.md) for
+the StatsD and Prometheus exporters, the series they produce, and why no label is ever derived
+from a request.
+
 ## What this is groundwork for
 
 There is an open question about whether the event dispatcher should *replace* `PluginManager`
