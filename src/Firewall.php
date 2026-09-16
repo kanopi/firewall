@@ -2141,7 +2141,13 @@ final class Firewall
             return trim($configured);
         }
 
-        return $request->getBasePath() . ($this->challengeConfig['path'] ?? '/_firewall/challenge');
+        $path = $this->challengeConfig['path'] ?? null;
+
+        // Read as a string or not at all, rather than cast inline: rector
+        // removes a `(string)` in a concatenation as redundant, which turns a
+        // `path` that is not a string into a PHPStan error at level max and,
+        // before that, into whatever PHP makes of concatenating it.
+        return $request->getBasePath() . (is_string($path) && $path !== '' ? $path : '/_firewall/challenge');
     }
 
     protected function sanitizeRedirect(string $target): string
