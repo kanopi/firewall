@@ -14,6 +14,7 @@ namespace Kanopi\Firewall;
 use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
 use Kanopi\Firewall\Challenge\ChallengeProviderRegistry;
+use Kanopi\Firewall\Challenge\PassRevocationList;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
@@ -356,13 +357,19 @@ final class Firewall
             'global_config_keys' => array_keys($config['global']),
         ]);
 
+        // Built before the challenge pieces rather than inline below, because
+        // per-token revocation reads from the same store the block list uses
+        // and there is no reason for a second one (#368).
+        $storage = StorageFactory::create($config['storage']);
+
         [$challengeProvider, $tokenManager, $challengeConfig, $providerRegistry] = self::createChallengePieces(
             $config['challenge'],
-            $partitioned['challenge']
+            $partitioned['challenge'],
+            $storage
         );
 
         $firewall = new self(
-            StorageFactory::create($config['storage']),
+            $storage,
             PluginManager::createFromPluginsArray($partitioned['block']),
             PluginManager::createFromPluginsArray($partitioned['allow']),
             PluginManager::createFromPluginsArray($partitioned['challenge']),
@@ -408,6 +415,9 @@ final class Firewall
      * @param array<int, array<string, mixed>> $challengePlugins
      *   Plugin entries partitioned into the challenge bucket. Read for the
      *   providers they name; empty means the feature is not in use.
+     * @param StorageInterface|null $storage
+     *   The configured store, for the per-token revocation list. Only touched
+     *   when `challenge.revocable` is on.
      *
      * @return array{0: ?ChallengeProviderInterface, 1: ?TokenManager, 2: array<string, mixed>, 3: ?ChallengeProviderRegistry}
      *
@@ -415,8 +425,11 @@ final class Firewall
      *   When challenge plugins exist but no secret is configured, or when
      *   a provider named by the config or by a plugin cannot be resolved.
      */
-    private static function createChallengePieces(array $challengeConfig, array $challengePlugins): array
-    {
+    private static function createChallengePieces(
+        array $challengeConfig,
+        array $challengePlugins,
+        ?StorageInterface $storage = null
+    ): array {
         $hasChallengePlugins = $challengePlugins !== [];
 
         $defaults = [
@@ -428,6 +441,8 @@ final class Firewall
             'provider_options' => [],
             'audience' => '',
             'ttl' => self::CHALLENGE_TTL_FALLBACK,
+            'passes_valid_from' => 0,
+            'revocable' => false,
         ];
 
         $challengeConfig = array_replace($defaults, $challengeConfig);
@@ -457,7 +472,18 @@ final class Firewall
             $audience = $defaultProvider;
         }
 
-        $tokenManager = new TokenManager($secret, $audience, $defaultProvider);
+        $tokenManager = new TokenManager(
+            $secret,
+            $audience,
+            $defaultProvider,
+            self::challengePassCutoff($challengeConfig['passes_valid_from'] ?? null),
+            // NULL unless asked for. A deployment that never revokes anything
+            // should not pay a storage read per verified pass, which is the
+            // whole reason this is opt-in rather than always on.
+            ($challengeConfig['revocable'] ?? false) === true && $storage instanceof StorageInterface
+                ? new PassRevocationList($storage)
+                : null
+        );
 
         $challengeProviderRegistry = new ChallengeProviderRegistry(
             $tokenManager,
@@ -1774,10 +1800,18 @@ final class Firewall
         $rawRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
         $redirect = $this->sanitizeRedirect($rawRedirect === '' ? '/' : $rawRedirect);
 
+        // The nonce and the expiry are here so a pass can be revoked later
+        // without the operator having to get the token itself out of somebody's
+        // browser: this is the line you grep by address when one pass turns out
+        // to need withdrawing (#368).
+        $claims = $this->tokenManager->inspect($token) ?? [];
+
         $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
             'provider' => $challengeProvider->getName(),
             'provider_name' => $providerName,
             'ttl' => $ttl,
+            'pass_nonce' => $claims['nonce'] ?? null,
+            'pass_expires' => $claims['exp'] ?? null,
         ]));
 
         $this->announce(new ChallengeSolved($request, $providerName, $ttl));
@@ -2265,6 +2299,55 @@ final class Firewall
         $ceiling = $this->challengeTtlCeiling();
 
         return $requested > 0 ? min($requested, $ceiling) : $ceiling;
+    }
+
+    /**
+     * Read `challenge.passes_valid_from` as a unix timestamp.
+     *
+     * Takes an epoch or anything `DateTimeImmutable` understands, because the
+     * value an operator reaches for in a hurry is `2026-09-16 12:00:00`, not
+     * a number they had to compute.
+     *
+     * A value that cannot be read is a `ConfigurationException` rather than a
+     * fallback to "off". The operator set this believing outstanding passes
+     * were withdrawn; silently not withdrawing them is the worst of both, and
+     * is exactly the class of quiet-wrong the key exists to fix.
+     *
+     * @param mixed $declared
+     *   The configured value.
+     *
+     * @return int
+     *   A unix timestamp, or 0 when nothing is configured.
+     *
+     * @throws ConfigurationException
+     *   When the value is set and cannot be read as a moment in time.
+     */
+    private static function challengePassCutoff(mixed $declared): int
+    {
+        if (in_array($declared, [null, '', 0], true)) {
+            return 0;
+        }
+
+        if (is_int($declared) || (is_string($declared) && ctype_digit($declared))) {
+            return max(0, (int) $declared);
+        }
+
+        if (is_string($declared)) {
+            try {
+                return (new \DateTimeImmutable($declared))->getTimestamp();
+            } catch (\Exception $exception) {
+                throw new ConfigurationException(sprintf(
+                    'challenge.passes_valid_from is not a moment in time: %s. Give it a unix '
+                    . 'timestamp, or a date this can read such as "2026-09-16 12:00:00 UTC".',
+                    $exception->getMessage()
+                ), 0, $exception);
+            }
+        }
+
+        throw new ConfigurationException(sprintf(
+            'challenge.passes_valid_from must be a unix timestamp or a date string, %s given.',
+            gettype($declared)
+        ));
     }
 
     protected function sanitizeRedirect(string $target): string

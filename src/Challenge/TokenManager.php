@@ -24,12 +24,15 @@ use Symfony\Component\HttpFoundation\Request;
  * it expires (rotating the secret invalidates everything).
  *
  * Wire format: `base64url(payload).base64url(hmac)`
- *   payload = JSON{ip, exp, nonce, aud, prv}
+ *   payload = JSON{ip, iat, exp, nonce, aud, prv}
  *   hmac    = HMAC-SHA256(payload, secret)
  *
  * Token binding (verified on every request):
  *   - `ip`    must equal `$request->getClientIp()` at verify time.
  *   - `exp`   is a unix timestamp; tokens past it are rejected.
+ *   - `iat`   is when the pass was issued, and exists so a cutoff can be
+ *             drawn across everything older than a moment without touching
+ *             the secret. See `challenge.passes_valid_from` (#368).
  *   - `nonce` is 128 random bits to keep two same-second mints distinct in
  *             downstream logs and to prevent precomputed-token attacks.
  *   - `aud`   scopes the token to one challenge configuration. Without it,
@@ -44,6 +47,12 @@ use Symfony\Component\HttpFoundation\Request;
  *             `aud` is identical for both, so without `prv` the math token
  *             would satisfy the reCAPTCHA rule and reintroduce the exact
  *             hole `aud` closes between instances.
+ *
+ * Two levers withdraw a pass before its `exp`, and both are off by default
+ * because the stateless property is the point of the design (#368):
+ * `challenge.passes_valid_from` draws a line in time and costs nothing, and
+ * `challenge.revocable` enables a per-nonce list at the price of one storage
+ * read on an otherwise-valid token.
  *
  * The signature is verified with `hash_equals` so a wrong token reveals
  * nothing through timing. Payload parsing errors return FALSE rather than
@@ -70,6 +79,13 @@ final class TokenManager
      *   for any other. That keeps an upgrade from re-challenging everyone
      *   holding a live token, without letting a legacy token stand in for
      *   a provider it was never earned against.
+     * @param int $passesValidFrom
+     *   Reject every pass issued before this unix timestamp. Zero is off,
+     *   which is the default and costs nothing.
+     * @param PassRevocationList|null $passRevocationList
+     *   Per-token revocation, or NULL for none. NULL means no storage is
+     *   consulted on any verification — a deployment that never revokes
+     *   anything should not pay for the ability.
      *
      * @throws ConfigurationException
      *   When the secret is empty.
@@ -77,7 +93,9 @@ final class TokenManager
     public function __construct(
         private readonly string $secret,
         private readonly string $audience = '',
-        private readonly string $defaultProvider = ''
+        private readonly string $defaultProvider = '',
+        private readonly int $passesValidFrom = 0,
+        private readonly ?PassRevocationList $passRevocationList = null
     ) {
         if ($this->secret === '') {
             throw new ConfigurationException(
@@ -108,9 +126,11 @@ final class TokenManager
     {
         $ttl = $ttl > 0 ? $ttl : 3600;
 
+        $now = time();
         $payload = [
             'ip' => (string) $request->getClientIp(),
-            'exp' => time() + $ttl,
+            'iat' => $now,
+            'exp' => $now + $ttl,
             'nonce' => bin2hex(random_bytes(16)),
             'aud' => $this->audience,
         ];
@@ -176,6 +196,10 @@ final class TokenManager
             return false;
         }
 
+        if ($this->passesValidFrom > 0 && $this->issuedAt($payload) < $this->passesValidFrom) {
+            return false;
+        }
+
         // Fail closed on a missing `aud`: tokens minted before this claim
         // existed are rejected, costing their holders one extra challenge
         // rather than leaving the cross-instance hole open.
@@ -187,7 +211,81 @@ final class TokenManager
             return false;
         }
 
-        return $payload['ip'] === $request->getClientIp();
+        if ($payload['ip'] !== $request->getClientIp()) {
+            return false;
+        }
+
+        // Last, and only on a token that is otherwise entirely good. Every
+        // check above is arithmetic on bytes already in hand; this one is a
+        // round trip to the store, so it is not paid for a token that was
+        // going to be refused anyway -- and not paid at all unless
+        // `challenge.revocable` is on.
+        return !$this->passRevocationList instanceof PassRevocationList
+            || !$this->passRevocationList->isRevoked(is_string($payload['nonce'] ?? null) ? $payload['nonce'] : '');
+    }
+
+    /**
+     * Read a token's claims, without checking them.
+     *
+     * The signature *is* checked -- an unsigned payload is somebody's guess
+     * about a token rather than a token -- but expiry, audience, provider, IP
+     * binding and revocation are not. This is what an operator holding a pass
+     * needs in order to act on it: the `nonce` to revoke and the `exp` to
+     * revoke it until.
+     *
+     * @param string $token
+     *   The candidate token.
+     *
+     * @return array<string, mixed>|null
+     *   The decoded claims, or NULL when the token is not one this manager
+     *   signed.
+     */
+    public function inspect(string $token): ?array
+    {
+        if ($token === '' || substr_count($token, '.') !== 1) {
+            return null;
+        }
+
+        [$payloadEncoded, $signature] = explode('.', $token, 2);
+
+        if ($payloadEncoded === '' || $signature === '') {
+            return null;
+        }
+
+        if (!hash_equals($this->base64UrlEncode(hash_hmac('sha256', $payloadEncoded, $this->secret, true)), $signature)) {
+            return null;
+        }
+
+        $payloadJson = $this->base64UrlDecode($payloadEncoded);
+
+        if ($payloadJson === false) {
+            return null;
+        }
+
+        $payload = json_decode($payloadJson, true);
+
+        return is_array($payload) ? $payload : null;
+    }
+
+    /**
+     * When a pass was issued, for comparison against a cutoff.
+     *
+     * A token carrying no `iat` predates the claim, and cannot be dated. It is
+     * treated as issued at the beginning of time, so **any** cutoff withdraws
+     * it -- which is the right way round: `passes_valid_from` is a revocation
+     * lever, and the passes an operator most wants to withdraw with it are the
+     * ones minted before the firewall was fixed. It is off by default, so no
+     * upgrade re-challenges anybody who does not reach for it.
+     *
+     * @param array<array-key, mixed> $payload
+     *   The decoded claims.
+     *
+     * @return int
+     *   The issue time, or 0 when the token does not carry one.
+     */
+    private function issuedAt(array $payload): int
+    {
+        return is_int($payload['iat'] ?? null) ? $payload['iat'] : 0;
     }
 
     /**
