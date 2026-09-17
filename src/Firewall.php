@@ -30,7 +30,9 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Plugins\ScheduledRuleInterface;
 use Kanopi\Firewall\Storage\StorageFactory;
+use Kanopi\Firewall\Storage\ConcurrencyGaugeInterface;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Tarpit\TarpitGate;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Kanopi\Firewall\Event\ChallengeFailed;
 use Kanopi\Firewall\Event\ChallengeSolved;
@@ -41,6 +43,7 @@ use Kanopi\Firewall\Event\RequestChallenged;
 use Kanopi\Firewall\Event\RequestMarked;
 use Kanopi\Firewall\Event\RequestRecorded;
 use Kanopi\Firewall\Event\RequestRedirected;
+use Kanopi\Firewall\Event\RequestTarpitted;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\PanicSwitch;
@@ -128,6 +131,8 @@ final class Firewall
      * @param PluginManager|null $redirectPluginManager
      *   Rules with `response: redirect`, which send the visitor somewhere
      *   instead of refusing them (#203).
+     * @param PluginManager|null $tarpitPluginManager
+     *   Rules that hold a request still before letting it continue.
      * @param PluginManager|null $markPluginManager
      *   Rules with `response: mark`, which annotate the request and leave the
      *   decision to the application (#203).
@@ -145,7 +150,9 @@ final class Firewall
         private ?EventDispatcherInterface $eventDispatcher = null,
         private ?PluginManager $recordPluginManager = null,
         private ?PluginManager $redirectPluginManager = null,
-        private ?PluginManager $markPluginManager = null
+        private ?PluginManager $markPluginManager = null,
+        private ?PluginManager $tarpitPluginManager = null,
+        private ?TarpitGate $tarpitGate = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -381,7 +388,9 @@ final class Firewall
             $eventDispatcher,
             PluginManager::createFromPluginsArray($partitioned['record']),
             PluginManager::createFromPluginsArray($partitioned['redirect']),
-            PluginManager::createFromPluginsArray($partitioned['mark'])
+            PluginManager::createFromPluginsArray($partitioned['mark']),
+            PluginManager::createFromPluginsArray($partitioned['tarpit']),
+            self::createTarpitGate($config['tarpit'] ?? [], $partitioned['tarpit'], $storage)
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -1211,6 +1220,126 @@ final class Firewall
     }
 
     /**
+     * Hold a request still, if there is room to.
+     *
+     * The delay is the easy part; the counting is the point. See `TarpitGate`
+     * for why a tarpit without a working cap is a self-DoS with a rule that
+     * looks like it is working (#329).
+     *
+     * In `mode: log` nothing is held at all. A dry run that still takes a
+     * worker out of the pool for ten seconds is not a dry run.
+     *
+     * @param Request $request
+     *   The request to delay.
+     * @param PluginInterface $plugin
+     *   The rule that matched.
+     */
+    protected function tarpit(Request $request, PluginInterface $plugin): void
+    {
+        if (!$this->tarpitGate instanceof TarpitGate) {
+            // Unreachable through `create()`, which refuses to start a tarpit
+            // rule with no gauge behind it. Reachable by a caller assembling a
+            // Firewall by hand, and silently sleeping without a cap is the one
+            // behaviour this feature exists to prevent.
+            return;
+        }
+
+        $seconds = $plugin instanceof AbstractPluginBase ? $plugin->getTarpitSeconds() : 0;
+
+        if ($this->firewallMode === FirewallMode::Log) {
+            $this->getLogger()->warning('Request would be held (log mode)', $this->getContext($request, [
+                'mode' => 'log',
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'seconds' => $seconds,
+            ]));
+
+            $this->announce(new RequestTarpitted($request, $plugin, 0, false, $this->tarpitGate->inFlight()));
+
+            return;
+        }
+
+        $result = $this->tarpitGate->hold($seconds);
+
+        // Info rather than warning: a tarpit doing its job is a configuration
+        // working, not a complaint. `TarpitGate` warns about the cases that are
+        // worth reading -- the cap being full, and a rule asking for longer
+        // than it may have.
+        $this->getLogger()->info('Request held', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'seconds' => $result['seconds'],
+            'held' => $result['held'],
+            'in_flight' => $result['in_flight'],
+        ]));
+
+        $this->announce(new RequestTarpitted(
+            $request,
+            $plugin,
+            $result['seconds'],
+            $result['held'],
+            $result['in_flight']
+        ));
+    }
+
+    /**
+     * Build the tarpit's cap, or refuse to start.
+     *
+     * A tarpit rule against a backend that cannot count concurrency atomically
+     * is a self-DoS: the cap admits more holds than it allows, and the rule
+     * looks like it is working right up until the worker pool is gone. So this
+     * is a startup failure rather than a degraded mode, which is the whole
+     * reason the feature was split out of #203 rather than shipped with it.
+     *
+     * @param mixed $tarpitConfig
+     *   The `tarpit:` section.
+     * @param array<int, array<string, mixed>> $tarpitPlugins
+     *   Rules partitioned into the tarpit bucket. Empty means the feature is
+     *   not in use and nothing below applies.
+     * @param StorageInterface $storage
+     *   The configured store, which must be able to count.
+     *
+     * @return TarpitGate|null
+     *   The gate, or NULL when no rule asks for one.
+     *
+     * @throws ConfigurationException
+     *   When a tarpit rule is configured against a backend with no atomic
+     *   concurrency gauge.
+     */
+    private static function createTarpitGate(mixed $tarpitConfig, array $tarpitPlugins, StorageInterface $storage): ?TarpitGate
+    {
+        if ($tarpitPlugins === []) {
+            return null;
+        }
+
+        if (!$storage instanceof ConcurrencyGaugeInterface) {
+            throw new ConfigurationException(sprintf(
+                'response: tarpit rules are configured, but %s cannot count how many holds are in '
+                . 'flight. A tarpit holds a php-fpm worker for its duration, so without an atomic '
+                . 'cap a handful of requests can take the site down -- and the rule looks like it '
+                . 'is working while they do. Use a storage backend implementing '
+                . 'ConcurrencyGaugeInterface (FileStorage counts this host, RedisStorage counts '
+                . 'the fleet), or remove the tarpit rules.',
+                $storage::class
+            ));
+        }
+
+        $tarpitConfig = is_array($tarpitConfig) ? $tarpitConfig : [];
+        $maxConcurrent = $tarpitConfig['max_concurrent'] ?? null;
+        $maxSeconds = $tarpitConfig['max_seconds'] ?? null;
+
+        return new TarpitGate(
+            $storage,
+            is_numeric($maxConcurrent) && (int) $maxConcurrent > 0
+                ? (int) $maxConcurrent
+                : TarpitGate::DEFAULT_MAX_CONCURRENT,
+            is_numeric($maxSeconds) && (int) $maxSeconds > 0
+                ? (int) $maxSeconds
+                : TarpitGate::DEFAULT_MAX_SECONDS
+        );
+    }
+
+    /**
      * Send the visitor somewhere instead of refusing them.
      *
      * Terminal, like a block: nothing after this runs. Unlike a block it records nothing by
@@ -1390,6 +1519,7 @@ final class Firewall
             'allow' => $this->bypassPluginManager,
             'mark' => $this->markPluginManager,
             'record' => $this->recordPluginManager,
+            'tarpit' => $this->tarpitPluginManager,
             'challenge' => $this->challengePluginManager,
             'redirect' => $this->redirectPluginManager,
             'block' => $this->blockingPluginManager,
@@ -1559,6 +1689,19 @@ final class Firewall
         // wired, which is the one thing a honeypot must not do.
         if (($plugin = $this->recordPluginManager?->evaluate($request) ?? false) !== false) {
             $this->record($request, $plugin);
+        }
+
+        // The delay is paid here, and this request keeps going. A tarpit is
+        // non-terminal on purpose: it costs an attacker throughput and then
+        // hands the request to whatever decides its fate, so a tarpit rule and
+        // a block rule matching the same client compose into a slow block
+        // rather than needing a feature of their own (#329).
+        //
+        // After the block list, so a client already blocked is refused rather
+        // than held -- holding a worker on behalf of somebody being refused
+        // anyway is the self-DoS with extra steps.
+        if (($plugin = $this->tarpitPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->tarpit($request, $plugin);
         }
 
         // A held pass token short-circuits the challenge bucket. Block

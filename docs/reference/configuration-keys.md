@@ -22,6 +22,7 @@ Nothing here explains anything; that is deliberate.
 | `storage` | map | Where blocks are persisted. Table below |
 | `logger` | list | Monolog handlers. [Logging](../configuration/logging.md) |
 | `challenge` | map | Challenge flow settings. Table below |
+| `tarpit` | map | `max_concurrent` (default `5`) and `max_seconds` (default `30`) — see [Tarpit](../plugins/tarpit.md) |
 | `plugins` | list | The rules. Table below |
 
 !!! danger "A `configs:` entry naming a file that does not exist empties the whole document"
@@ -96,7 +97,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | Key | Type | Default | |
 |---|---|---|---|
 | `plugin` | class | *required* | The rule class |
-| `response` | string | `block` | `allow`, `block`, `challenge`, `record`, `redirect`, `mark` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
+| `response` | string | `block` | `allow`, `block`, `challenge`, `record`, `redirect`, `mark`, `tarpit` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
 | `weight` | int | `0` | Order **within** its bucket; lower runs first |
 | `enable` | bool | `true` | |
 | `metadata` | map | `[]` | How the rule behaves. Below |
@@ -119,6 +120,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `active` | map | *unset* | `timezone` (default `UTC`), `days`, `hours`, `from`, `until` — when this rule is awake | [Time Windows](../configuration/time-windows.md) |
 | `sources` | list | `[]` | Pull this rule's entries from elsewhere | [Rule Sources](../configuration/sources.md) |
 | `challenge_provider` | string | `challenge.provider` | Per-rule provider override | [Per-plugin providers](../plugins/challenges.md#per-plugin-providers) |
+| `tarpit_seconds` | int | — | Required by `response: tarpit`. Capped by `tarpit.max_seconds` | [Tarpit](../plugins/tarpit.md) |
 | `config` | list | — | Legacy alias for the entry's `config:` | [Legacy format](legacy-format.md) |
 
 Identity-verifying plugins (User Agent, and any implementing

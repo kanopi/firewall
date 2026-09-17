@@ -20,6 +20,7 @@ use Kanopi\Firewall\Event\RequestChallenged;
 use Kanopi\Firewall\Event\RequestMarked;
 use Kanopi\Firewall\Event\RequestRecorded;
 use Kanopi\Firewall\Event\RequestRedirected;
+use Kanopi\Firewall\Event\RequestTarpitted;
 use Kanopi\Firewall\Plugins\PluginInterface;
 
 /**
@@ -99,6 +100,7 @@ final class DecisionMetricsListener
             RequestRecorded::class,
             RequestRedirected::class,
             RequestMarked::class,
+            RequestTarpitted::class,
             ChallengeSolved::class,
             ChallengeFailed::class,
         ];
@@ -134,6 +136,11 @@ final class DecisionMetricsListener
             $decisionEvent instanceof RequestRecorded => 'recorded',
             $decisionEvent instanceof RequestRedirected => 'redirected',
             $decisionEvent instanceof RequestMarked => 'marked',
+            // `held` rather than `tarpitted`, because a tarpit at capacity
+            // serves the request instead of delaying it -- and a dashboard that
+            // could not tell those apart would report a cap doing its job as a
+            // tarpit doing its job.
+            $decisionEvent instanceof RequestTarpitted => $decisionEvent->wasHeld() ? 'held' : 'not_held',
             // A decision event this release does not know about. Counted rather
             // than dropped: a listener that silently ignores a new event type
             // is a dashboard that quietly stops adding up.
@@ -161,6 +168,12 @@ final class DecisionMetricsListener
         // the visitors who came back.
         if ($decisionEvent instanceof RequestChallenged) {
             $this->challenge($decisionEvent->getProvider(), 'issued');
+        }
+
+        // The number the cap is about, and the reason `gauge()` is on the
+        // recorder interface at all (#222, #329).
+        if ($decisionEvent instanceof RequestTarpitted) {
+            $this->metricsRecorder->gauge(Metric::TARPIT_IN_FLIGHT, [], (float) $decisionEvent->getInFlight());
         }
     }
 
