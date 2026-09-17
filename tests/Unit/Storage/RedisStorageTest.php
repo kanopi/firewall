@@ -248,6 +248,12 @@ class RedisStorageTest extends AbstractTestCase
         $this->assertFalse($storage->addToExpire('203.0.113.5', 60));
         $this->assertFalse($storage->reset());
         $this->assertFalse($storage->recordOffense('203.0.113.5'));
+        // Zero rather than a number: the concurrency gauge reserves it for
+        // "could not be counted", and a cap reading it as "nothing in flight"
+        // is the self-DoS the cap exists to prevent (#329).
+        $this->assertSame(0, $storage->enter('tarpit', 60));
+        $this->assertSame(0, $storage->inFlight('tarpit'));
+        $storage->leave('tarpit');
         $this->assertSame(0, $storage->countOffenses('203.0.113.5'));
         $this->assertSame([], $storage->listOffenses('203.0.113.5'));
         $this->assertSame([], $storage->find('203.0.113.5'));
@@ -321,6 +327,12 @@ class RedisStorageTest extends AbstractTestCase
         $this->assertFalse($storage->addToExpire('203.0.113.5', 60));
         $this->assertFalse($storage->reset());
         $this->assertFalse($storage->recordOffense('203.0.113.5'));
+        // Zero rather than a number: the concurrency gauge reserves it for
+        // "could not be counted", and a cap reading it as "nothing in flight"
+        // is the self-DoS the cap exists to prevent (#329).
+        $this->assertSame(0, $storage->enter('tarpit', 60));
+        $this->assertSame(0, $storage->inFlight('tarpit'));
+        $storage->leave('tarpit');
         $this->assertSame(0, $storage->countOffenses('203.0.113.5'));
         $this->assertSame([], $storage->listOffenses('203.0.113.5'));
         $this->assertSame([], $storage->find('203.0.113.5'));
@@ -415,4 +427,122 @@ class RedisStorageTest extends AbstractTestCase
 
         $this->assertSame([], $this->storage($redis)->listOffenses('203.0.113.5'));
     }
+
+    /**
+     * `INCR` is atomic on the server, which is what makes this the backend a
+     * fleet-wide cap can be built on: the increment and the read that decides
+     * whether the cap is exceeded are one operation (#329).
+     */
+    public function testClaimingASlotIncrementsAndSetsATtl(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->expects($this->once())->method('incr')->with('firewall:gauge:tarpit')->willReturn(3);
+        $redis->expects($this->once())->method('expire')->with('firewall:gauge:tarpit', 60)->willReturn(true);
+
+        $this->assertSame(3, $this->storage($redis)->enter('tarpit', 60));
+    }
+
+    public function testATtlOfZeroSetsNoExpiry(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('incr')->willReturn(1);
+        $redis->expects($this->never())->method('expire');
+
+        $this->assertSame(1, $this->storage($redis)->enter('tarpit', 0));
+    }
+
+    public function testReleasingASlotDecrements(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->expects($this->once())->method('decr')->with('firewall:gauge:tarpit')->willReturn(2);
+        $redis->expects($this->never())->method('set');
+
+        $this->storage($redis)->leave('tarpit');
+    }
+
+    /**
+     * `DECR` on a missing key produces -1, which would make the cap admit one
+     * extra hold for every release that outlived its counter.
+     */
+    public function testANegativeCountIsPulledBackToZero(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('decr')->willReturn(-1);
+        $redis->expects($this->once())->method('set')->with('firewall:gauge:tarpit', 0);
+
+        $this->storage($redis)->leave('tarpit');
+    }
+
+    public function testInFlightReadsTheCount(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('get')->with('firewall:gauge:tarpit')->willReturn('4');
+
+        $this->assertSame(4, $this->storage($redis)->inFlight('tarpit'));
+    }
+
+    public function testAnAbsentOrUnreadableCountIsZero(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('get')->willReturn(false);
+
+        $this->assertSame(0, $this->storage($redis)->inFlight('tarpit'));
+    }
+
+    /**
+     * A negative value left behind by an older version, or by something else
+     * writing the key, must not read as a negative concurrency.
+     */
+    public function testANegativeStoredCountReadsAsZero(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('get')->willReturn('-3');
+
+        $this->assertSame(0, $this->storage($redis)->inFlight('tarpit'));
+    }
+
+    /**
+     * Zero is what the interface reserves for "could not be counted", and a
+     * caller must treat it as "do not proceed" rather than "nothing is in
+     * flight". An unreachable server has to produce it rather than a number.
+     */
+    public function testAServerThatThrowsReportsThatItCouldNotCount(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('incr')->willThrowException(new \RedisException('connection lost'));
+        $redis->method('get')->willThrowException(new \RedisException('connection lost'));
+
+        $storage = $this->storage($redis);
+
+        $this->assertSame(0, $storage->enter('tarpit', 60));
+        $this->assertSame(0, $storage->inFlight('tarpit'));
+    }
+
+    /**
+     * And a release that cannot reach the server is swallowed: it is called
+     * from a `finally` and from a shutdown function, where throwing would
+     * replace a metrics problem with a request problem.
+     */
+    public function testAReleaseThatCannotReachTheServerIsSwallowed(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('decr')->willThrowException(new \RedisException('connection lost'));
+
+        $this->storage($redis)->leave('tarpit');
+
+        $this->assertTrue(true, 'leave() must not throw');
+    }
+
+    /**
+     * A non-integer from `INCR` cannot be a count, and reporting it as one
+     * would put an arbitrary number into the cap comparison.
+     */
+    public function testANonIntegerIncrementReadsAsUncounted(): void
+    {
+        $redis = $this->connectedRedis();
+        $redis->method('incr')->willReturn(false);
+
+        $this->assertSame(0, $this->storage($redis)->enter('tarpit', 60));
+    }
+
 }
