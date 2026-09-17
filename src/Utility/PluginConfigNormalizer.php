@@ -126,8 +126,8 @@ final class PluginConfigNormalizer
      *   comparator typed `array` and left as a TypeError (#281). Entries that
      *   are not maps are skipped below.
      *
-     * @return array{allow: array<int, array<string, mixed>>, block: array<int, array<string, mixed>>, challenge: array<int, array<string, mixed>>, record: array<int, array<string, mixed>>, redirect: array<int, array<string, mixed>>, mark: array<int, array<string, mixed>>}
-     *   Partitioned plugins: 'allow', 'block', 'challenge', 'record', 'redirect' and 'mark', each sorted by weight.
+     * @return array{allow: array<int, array<string, mixed>>, block: array<int, array<string, mixed>>, challenge: array<int, array<string, mixed>>, record: array<int, array<string, mixed>>, redirect: array<int, array<string, mixed>>, mark: array<int, array<string, mixed>>, tarpit: array<int, array<string, mixed>>}
+     *   Partitioned plugins: 'allow', 'block', 'challenge', 'record', 'redirect', 'mark' and 'tarpit', each sorted by weight.
      */
     public static function partitionAndSort(array $plugins): array
     {
@@ -137,6 +137,7 @@ final class PluginConfigNormalizer
         $recordPlugins = [];
         $redirectPlugins = [];
         $markPlugins = [];
+        $tarpitPlugins = [];
 
         foreach ($plugins as $plugin) {
             // A stray scalar where a map belongs. `plugins:` is hand-edited
@@ -175,6 +176,9 @@ final class PluginConfigNormalizer
                 case 'mark':
                     $markPlugins[] = $plugin;
                     break;
+                case 'tarpit':
+                    $tarpitPlugins[] = $plugin;
+                    break;
                 default:
                     $blockPlugins[] = $plugin;
             }
@@ -187,6 +191,7 @@ final class PluginConfigNormalizer
         usort($recordPlugins, $byWeight);
         usort($redirectPlugins, $byWeight);
         usort($markPlugins, $byWeight);
+        usort($tarpitPlugins, $byWeight);
 
         return [
             'allow' => $allowPlugins,
@@ -195,6 +200,7 @@ final class PluginConfigNormalizer
             'record' => $recordPlugins,
             'redirect' => $redirectPlugins,
             'mark' => $markPlugins,
+            'tarpit' => $tarpitPlugins,
         ];
     }
 }

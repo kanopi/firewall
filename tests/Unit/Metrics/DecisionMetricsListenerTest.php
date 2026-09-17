@@ -13,6 +13,7 @@ use Kanopi\Firewall\Event\RequestChallenged;
 use Kanopi\Firewall\Event\RequestMarked;
 use Kanopi\Firewall\Event\RequestRecorded;
 use Kanopi\Firewall\Event\RequestRedirected;
+use Kanopi\Firewall\Event\RequestTarpitted;
 use Kanopi\Firewall\Metrics\DecisionMetricsListener;
 use Kanopi\Firewall\Metrics\Metric;
 use Kanopi\Firewall\Metrics\MetricsRecorderInterface;
@@ -62,6 +63,44 @@ class DecisionMetricsListenerTest extends AbstractTestCase
             ['decision' => 'redirected', 'rule' => 'legacy', 'enforced' => 'true'],
             ['decision' => 'marked', 'rule' => 'suspect', 'enforced' => 'false'],
         ], $this->recorder->labelsFor(Metric::REQUESTS));
+    }
+
+    /**
+     * A tarpit at capacity serves the request instead of delaying it, and a
+     * dashboard that could not tell those apart would report a cap doing its
+     * job as a tarpit doing its job.
+     */
+    public function testAHeldRequestIsCountedSeparatelyFromOneTheCapRefused(): void
+    {
+        $listener = new DecisionMetricsListener($this->recorder);
+
+        $listener(new RequestTarpitted($this->request(), $this->rule('slow-them'), 5, true, 3));
+        $listener(new RequestTarpitted($this->request(), $this->rule('slow-them'), 0, false, 5));
+
+        $this->assertSame([
+            ['decision' => 'held', 'rule' => 'slow-them', 'enforced' => 'false'],
+            ['decision' => 'not_held', 'rule' => 'slow-them', 'enforced' => 'false'],
+        ], $this->recorder->labelsFor(Metric::REQUESTS));
+    }
+
+    /**
+     * The number the cap is about, and the reason `gauge()` is on the recorder
+     * interface at all.
+     */
+    public function testTheInFlightGaugeIsSetFromEachTarpitDecision(): void
+    {
+        $listener = new DecisionMetricsListener($this->recorder);
+
+        $listener(new RequestTarpitted($this->request(), $this->rule('slow-them'), 5, true, 3));
+        $listener(new RequestTarpitted($this->request(), $this->rule('slow-them'), 5, true, 4));
+
+        $this->assertSame(
+            [
+                ['metric' => Metric::TARPIT_IN_FLIGHT, 'labels' => [], 'value' => 3.0],
+                ['metric' => Metric::TARPIT_IN_FLIGHT, 'labels' => [], 'value' => 4.0],
+            ],
+            $this->recorder->gauges
+        );
     }
 
     /**

@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Diagnostics;
 
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Tarpit\TarpitGate;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Kanopi\Firewall\Utility\RuleDiagnostics;
@@ -131,6 +132,10 @@ class ConfigLinter
         }
 
         foreach ($this->checkChallengeTtl($config, $plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkTarpit($config, $plugins) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -870,6 +875,97 @@ class ConfigLinter
                 'plugins/challenges.md'
             );
         }
+
+        return $findings;
+    }
+
+    /**
+     * Tarpit rules that would hold more workers than the site has (#329).
+     *
+     * `TarpitGate` caps how many holds run at once, and the number that matters is
+     * `pm.max_children`, which nothing here can see. What it can see is the shape of the
+     * mistake: a cap that is large, a hold that is long, or the two multiplied.
+     *
+     * Reported as warnings rather than errors because none of it is wrong on its own — a
+     * cap of 50 is fine on a pool of 400 — and this cannot know which. What it can do is
+     * make the operator do the arithmetic before the deploy rather than during an incident.
+     *
+     * The unambiguous case is an error: a tarpit rule that names no duration is a rule
+     * that holds a worker and, because a hold of zero is read as the minimum, does the
+     * slowest possible version of nothing.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration, for its `tarpit:` section.
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkTarpit(array $config, array $plugins): array
+    {
+        $tarpits = array_values(array_filter(
+            $plugins,
+            static fn(array $plugin): bool => ($plugin['response'] ?? 'block') === 'tarpit'
+        ));
+
+        if ($tarpits === []) {
+            return [];
+        }
+
+        $findings = [];
+        $tarpit = is_array($config['tarpit'] ?? null) ? $config['tarpit'] : [];
+        $maxConcurrent = is_numeric($tarpit['max_concurrent'] ?? null)
+            ? (int) $tarpit['max_concurrent']
+            : TarpitGate::DEFAULT_MAX_CONCURRENT;
+        $maxSeconds = is_numeric($tarpit['max_seconds'] ?? null)
+            ? (int) $tarpit['max_seconds']
+            : TarpitGate::DEFAULT_MAX_SECONDS;
+
+        foreach ($tarpits as $plugin) {
+            $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+            $seconds = $metadata['tarpit_seconds'] ?? null;
+
+            if (!is_numeric($seconds) || (int) $seconds < 1) {
+                $findings[] = Diagnosis::error(
+                    sprintf('Rule "%s" is a tarpit that names no duration', $this->nameOf($plugin)),
+                    'Give it `metadata.tarpit_seconds`. A hold of zero is read as one second, so the rule '
+                    . 'takes a worker out of the pool to achieve nothing.',
+                    'plugins/tarpit.md'
+                );
+
+                continue;
+            }
+
+            if ((int) $seconds > $maxSeconds) {
+                $findings[] = Diagnosis::warning(
+                    sprintf('Rule "%s" asks for a longer hold than tarpit.max_seconds allows', $this->nameOf($plugin)),
+                    sprintf(
+                        'It sets `tarpit_seconds: %d` and the ceiling is %d, so its holds last %d. Raise '
+                        . '`tarpit.max_seconds`, or lower the rule to match it.',
+                        (int) $seconds,
+                        $maxSeconds,
+                        $maxSeconds
+                    ),
+                    'plugins/tarpit.md'
+                );
+            }
+        }
+
+        // The arithmetic that matters, done once rather than per rule: this many workers can
+        // be held, for this long, and if that number is close to `pm.max_children` the tarpit
+        // is the outage rather than the defence.
+        $findings[] = Diagnosis::warning(
+            sprintf('Tarpit rules can hold %d workers at once', $maxConcurrent),
+            sprintf(
+                'For up to %ds each. Check that against your `pm.max_children` — a cap near the size of '
+                . 'the worker pool means a handful of requests can take the site down, which is the '
+                . 'failure a tarpit is supposed to prevent rather than cause. A tenth of the pool is a '
+                . 'reasonable starting point.',
+                $maxSeconds
+            ),
+            'plugins/tarpit.md'
+        );
 
         return $findings;
     }

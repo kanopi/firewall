@@ -39,7 +39,7 @@ use Redis;
  * JSON rather than `serialize()`, as everywhere else this library writes and reads back --
  * a store an attacker can reach is exactly what should not be deserialised (CWE-502).
  */
-class RedisStorage extends AbstractStorageBase implements QueryableStorageInterface
+class RedisStorage extends AbstractStorageBase implements QueryableStorageInterface, ConcurrencyGaugeInterface
 {
     use AddressMatchTrait;
 
@@ -621,5 +621,98 @@ class RedisStorage extends AbstractStorageBase implements QueryableStorageInterf
     protected function offenseKey(string $key): string
     {
         return $this->redisPrefix . 'offense:' . $key;
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * `INCR` is atomic on the server, which is what makes this the backend a
+     * fleet-wide cap can actually be built on: the increment and the read that
+     * decides whether the cap is exceeded are one operation, so there is no gap
+     * between them for a second worker to slip through.
+     *
+     * The `EXPIRE` is refreshed on every claim. That is deliberate and it is
+     * the weaker half: it clears a count leaked by a worker killed mid-hold,
+     * but only once claims stop arriving. Until then the leak makes the cap
+     * stricter, which is the safe direction to be wrong in.
+     */
+    public function enter(string $key, int $ttl): int
+    {
+        if (!$this->redis instanceof Redis) {
+            return 0;
+        }
+
+        try {
+            $count = $this->redis->incr($this->gaugeKey($key));
+
+            if ($ttl > 0) {
+                $this->redis->expire($this->gaugeKey($key), $ttl);
+            }
+        } catch (\Throwable $throwable) {
+            $this->getLogger()->warning('Could not claim a concurrency slot', [
+                'key' => $key,
+                'error' => $throwable->getMessage(),
+            ]);
+
+            return 0;
+        }
+
+        return is_int($count) ? $count : 0;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function leave(string $key): void
+    {
+        if (!$this->redis instanceof Redis) {
+            return;
+        }
+
+        try {
+            // Never below zero. `DECR` on a missing key produces -1, which
+            // would then make the cap admit one extra hold for every release
+            // that outlived its counter.
+            if ($this->redis->decr($this->gaugeKey($key)) < 0) {
+                $this->redis->set($this->gaugeKey($key), 0);
+            }
+        } catch (\Throwable $throwable) {
+            $this->getLogger()->warning('Could not release a concurrency slot', [
+                'key' => $key,
+                'error' => $throwable->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function inFlight(string $key): int
+    {
+        if (!$this->redis instanceof Redis) {
+            return 0;
+        }
+
+        try {
+            $count = $this->redis->get($this->gaugeKey($key));
+        } catch (\Throwable) {
+            return 0;
+        }
+
+        return is_numeric($count) ? max(0, (int) $count) : 0;
+    }
+
+    /**
+     * The Redis key holding a concurrency count.
+     *
+     * @param string $key
+     *   What is being counted.
+     *
+     * @return string
+     *   Namespaced Redis key.
+     */
+    protected function gaugeKey(string $key): string
+    {
+        return $this->redisPrefix . 'gauge:' . $key;
     }
 }

@@ -244,6 +244,7 @@ nav:
   - Plugins:
       - plugins/index.md
       - Challenge Responses: plugins/challenges.md
+      - Tarpit Responses: plugins/tarpit.md
       - IP Address: plugins/ip-address.md
       - GeoLocation: plugins/geolocation.md
       - URL: plugins/url.md

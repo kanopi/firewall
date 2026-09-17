@@ -66,6 +66,15 @@ final class Metric
     public const CHALLENGE_FAILURES = 'firewall_challenge_failures_total';
 
     /**
+     * Requests being held by a tarpit right now.
+     *
+     * A gauge rather than a counter, and the one number the tarpit's cap is
+     * about: "how many of these are in flight" is meaningful at an instant and
+     * meaningless as a rate (#329).
+     */
+    public const TARPIT_IN_FLIGHT = 'firewall_tarpit_in_flight';
+
+    /**
      * A decision the firewall acted on.
      */
     public const ENFORCED = 'true';

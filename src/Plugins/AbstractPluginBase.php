@@ -764,6 +764,24 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
     }
 
     /**
+     * How long a `response: tarpit` rule asks to hold a request for.
+     *
+     * Read from `metadata.tarpit_seconds`. What comes back is a request rather
+     * than an instruction -- `tarpit.max_seconds` is the ceiling, because a
+     * rule asking for five minutes is asking for a php-fpm worker held for five
+     * minutes and whoever wrote it may not have meant that (#329).
+     *
+     * @return int
+     *   Seconds. Zero means none was named, which `TarpitGate` reads as the
+     *   minimum rather than as no delay: a tarpit rule that does not tarpit is
+     *   a rule doing nothing at all.
+     */
+    public function getTarpitSeconds(): int
+    {
+        return max(0, intval($this->metadata['tarpit_seconds'] ?? 0));
+    }
+
+    /**
      * {@inheritdoc}
      *
      * Read from `metadata.challenge_provider`, alongside the other
