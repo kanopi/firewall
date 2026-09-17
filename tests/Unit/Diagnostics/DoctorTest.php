@@ -726,6 +726,71 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * Redaction happens on write, so records written before the allowlist
+     * existed are unaffected by it — and they are the ones holding session
+     * cookies. An operator upgrading needs to be told they are there (#375).
+     */
+    public function testExistingRecordsHoldingCookiesAreReported(): void
+    {
+        $config = $this->workingConfig();
+        $storage = new \Kanopi\Firewall\Storage\FileStorage([
+            'storage_file' => $config['storage']['config']['storage_file'],
+        ]);
+
+        // Written the way 2.30.0 and earlier wrote them: the payload nests
+        // under `value` once it comes back out of the store.
+        $storage->set('203.0.113.9', [
+            'plugin' => 'bad-ips',
+            'request' => ['path' => '/wp-login.php', 'cookies' => ['PHPSESSID' => 'a-live-session']],
+        ], 600);
+
+        $titles = $this->titles($this->diagnose($config), Diagnosis::WARNING);
+
+        $this->assertContains('1 existing block record still holds cookies or headers', $titles);
+    }
+
+    public function testAStoreOfRedactedRecordsIsNotReported(): void
+    {
+        $config = $this->workingConfig();
+        $storage = new \Kanopi\Firewall\Storage\FileStorage([
+            'storage_file' => $config['storage']['config']['storage_file'],
+        ]);
+
+        $storage->set('203.0.113.9', [
+            'plugin' => 'bad-ips',
+            'request' => ['path' => '/wp-login.php', 'cookies' => [], 'headers' => []],
+        ], 600);
+
+        $this->assertSame([], array_filter(
+            $this->titles($this->diagnose($config)),
+            static fn(string $t): bool => str_contains($t, 'still hold')
+        ));
+    }
+
+    /**
+     * Said rather than left as an absence: somebody who opted back in should be
+     * told they did, and somebody who got it by a typo needs to find out here.
+     */
+    public function testOptingOutOfTheAllowlistIsReported(): void
+    {
+        $config = $this->workingConfig();
+        $config['storage']['config']['record_request'] = ['cookies' => ['*'], 'headers' => ['*'], 'query' => ['*'], 'body' => ['*']];
+
+        $this->assertContains(
+            'Block records keep every cookie and header the visitor sent',
+            $this->titles($this->diagnose($config), Diagnosis::WARNING)
+        );
+    }
+
+    public function testTheDefaultPolicyIsNotReported(): void
+    {
+        $this->assertSame([], array_filter(
+            $this->titles($this->diagnose($this->workingConfig())),
+            static fn(string $t): bool => str_contains($t, 'keep every cookie')
+        ));
+    }
+
+    /**
      * A source declaration that is not valid is an error.
      */
     public function testAnInvalidSourceDeclarationIsAnError(): void

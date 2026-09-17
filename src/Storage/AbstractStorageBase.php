@@ -63,7 +63,35 @@ abstract class AbstractStorageBase implements StorageInterface
     }
 
     /**
+     * What this backend records about a request, built once.
+     */
+    private ?RecordedRequest $recordedRequest = null;
+
+    /**
+     * The policy deciding which request fields a block record keeps.
+     *
+     * Read from `storage.config.record_request`. Before 2.31.0 there was no
+     * policy and the answer was everything, session cookie included (#375).
+     *
+     * @return RecordedRequest
+     *   The policy.
+     */
+    protected function recordedRequest(): RecordedRequest
+    {
+        if (!$this->recordedRequest instanceof RecordedRequest) {
+            $this->recordedRequest = RecordedRequest::fromConfig($this->config['record_request'] ?? null);
+        }
+
+        return $this->recordedRequest;
+    }
+
+    /**
      * Serialize relevant Symfony Request data.
+     *
+     * Filtered on the way *in*, which is the only place it can be. Redacting in
+     * `bin/firewall-block`'s output would leave the credential in the store,
+     * where `SharedStorage` replicates it across the fleet and a database backup
+     * keeps it for as long as backups are kept.
      *
      * @param Request $request
      *   Request Information.
@@ -73,14 +101,9 @@ abstract class AbstractStorageBase implements StorageInterface
      */
     protected function serializeRequest(Request $request): array
     {
-        return [
-            'method' => $request->getMethod(),
-            'uri' => $request->getUri(),
-            'path' => $request->getPathInfo(),
-            'query' => $request->query->all(),
-            'request' => $request->request->all(),
-            'headers' => $request->headers->all(),
-            'cookies' => $request->cookies->all(),
+        return $this->recordedRequest()->serialize($request) + [
+            // Names, types and sizes -- normalised by formatUploadedFiles() and
+            // never content -- so there is nothing here an allowlist protects.
             'files' => $this->formatUploadedFiles($request->files->all()),
             // @todo evaluate as possible debug parameters.
             // 'server' => $request->server->all(),
