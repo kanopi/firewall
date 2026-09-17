@@ -14,7 +14,9 @@ namespace Kanopi\Firewall\Diagnostics;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\FirewallMode;
 use Kanopi\Firewall\Source\SourceCache;
+use Kanopi\Firewall\Storage\RecordedRequest;
 use Kanopi\Firewall\Storage\SharedStorage;
+use Kanopi\Firewall\Utility\BlockList;
 use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DatabaseConsumers;
@@ -92,6 +94,10 @@ class Doctor
         }
 
         foreach ($this->checkStorage($config) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkRecordedRequest($config) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -573,6 +579,102 @@ class Doctor
         }
 
         return $this->checkStoragePaths($settings, null);
+    }
+
+    /**
+     * What a block record keeps, and whether anything old still holds more (#375).
+     *
+     * Two different facts, and an operator upgrading needs both. The policy in force now is
+     * one config value away from being read wrong. What is *already in the store* is not
+     * affected by it at all: redacting on write does nothing about records written before the
+     * upgrade, and they are the ones holding session cookies.
+     *
+     * So this reads the store rather than only the configuration, and says which it found.
+     * There is deliberately no command that rewrites them: a record's remaining ban time
+     * cannot be read back portably, so scrubbing in place would silently reset every ban to
+     * a full term. Clearing is the honest instrument, and it is the operator's call because
+     * it un-blocks whoever is currently blocked.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkRecordedRequest(array $config): array
+    {
+        $storage = is_array($config['storage'] ?? null) ? $config['storage'] : [];
+        $settings = is_array($storage['config'] ?? null) ? $storage['config'] : [];
+        $recordedRequest = RecordedRequest::fromConfig($settings['record_request'] ?? null);
+        $findings = [];
+
+        if ($recordedRequest->keepsEverything()) {
+            // Said rather than left as an absence. Somebody who opted back in
+            // should be told they did; somebody who typed the key wrong and got
+            // this by accident needs to find out here rather than from a ticket.
+            $findings[] = Diagnosis::warning(
+                'Block records keep every cookie and header the visitor sent',
+                "`record_request` opts out of the allowlist, so a blocked visitor's session cookie "
+                . 'and any Authorization header are persisted into the block list — which is the '
+                . 'artifact that gets pasted into tickets and, with SharedStorage, replicated across '
+                . 'the fleet. Narrow it unless you have decided you want that.',
+                'configuration/storage.md#what-a-block-record-keeps'
+            );
+        }
+
+        try {
+            $held = $this->recordsHoldingCredentials();
+        } catch (\Throwable) {
+            // A backend that cannot enumerate, or cannot be reached. Both are
+            // already reported by the checks above; saying it twice would read
+            // as two problems.
+            return $findings;
+        }
+
+        if ($held > 0) {
+            $findings[] = Diagnosis::warning(
+                sprintf('%d existing block record%s still hold%s cookies or headers', $held, $held === 1 ? '' : 's', $held === 1 ? 's' : ''),
+                'Written before the allowlist existed, and unaffected by it — redaction happens on '
+                . 'write. They expire with their bans; `bin/firewall-block --lift` clears them sooner, '
+                . 'at the cost of un-blocking whoever is in them.',
+                'configuration/storage.md#what-a-block-record-keeps'
+            );
+        }
+
+        return $findings;
+    }
+
+    /**
+     * How many stored records still carry a cookie jar or header set.
+     *
+     * @return int
+     *   The count, or 0 when the backend cannot enumerate its own keys.
+     */
+    private function recordsHoldingCredentials(): int
+    {
+        // Through `BlockList` rather than building storage here: it is already
+        // the thing that turns a configuration into a queryable store, and it
+        // answers with an empty list for a backend that cannot enumerate its
+        // own keys rather than needing to be asked first.
+        $blockList = new BlockList($this->configs);
+        $held = 0;
+
+        foreach (['0.0.0.0/0', '::/0'] as $everything) {
+            foreach ($blockList->find($everything) as $record) {
+                // The payload sits under `value`; the keys beside it are the
+                // store's own bookkeeping. Reading `$record['request']` finds
+                // nothing and reports a clean store, which is the worst
+                // possible answer to this particular question.
+                $value = is_array($record['value'] ?? null) ? $record['value'] : [];
+                $request = is_array($value['request'] ?? null) ? $value['request'] : [];
+
+                if (($request['cookies'] ?? []) !== [] || ($request['headers'] ?? []) !== []) {
+                    $held++;
+                }
+            }
+        }
+
+        return $held;
     }
 
     /**

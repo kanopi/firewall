@@ -271,6 +271,70 @@ arrangement exists:
 An unreachable share is reported as a degraded backend, so a status page can see it without
 reading logs — see [Error Handling](../reference/error-handling.md#checking-that-a-backend-can-reach-its-server).
 
+## What a block record keeps
+
+When a rule blocks or records a client, the firewall writes down what the request looked like, so `bin/firewall-block --show` can later answer *why is this address blocked and what did they do*.
+
+Until 2.31.0 that meant **everything**: the visitor's whole cookie jar and header set, verbatim. A blocked visitor's session cookie, their `Authorization` header and their challenge pass were persisted into the block list — and printed back by `--show --json`.
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\FileStorage"
+  config:
+    storage_file: /var/lib/firewall/blocked.data
+    record_request:
+      cookies: []                                      # default: none
+      headers: [user-agent, referer, accept-language]   # default: a short list
+      query: ["*"]                                      # default: everything
+      body: []                                          # default: none
+```
+
+Every backend accepts `record_request`, because every backend records the same thing.
+
+### Why this matters more than it first reads
+
+- **The block list is the artifact you share.** It is what gets pasted into a ticket, read out on a call and, with [a shared list](#a-block-list-shared-across-a-fleet), replicated to every node.
+- **A record outlives the request by design.** It is kept for the ban's duration, which under `blocking_escalation` is days.
+- **The session cookie is not the firewall's to hold.** It belongs to the application in front of it.
+
+### An allowlist, not a denylist
+
+A denylist is a promise to have thought of every header name a framework might invent — `X-Session`, `X-Auth`, the next vendor's. An allowlist is wrong in the direction that loses evidence rather than the one that keeps credentials, and evidence is recoverable by configuration.
+
+`["*"]` keeps everything in a bucket, for a deployment that has decided it wants the forensics and understood what that means.
+
+### The four defaults are not the same, on purpose
+
+They reflect where the risk actually is rather than a wish to look tidy.
+
+| Bucket | Default | Why |
+|---|---|---|
+| `cookies` | none | The session-cookie problem, and it is unambiguous |
+| `headers` | a short list | `Cookie`, `Authorization` and every `X-*-Token` are the hazard; `User-Agent` and `Referer` are most of the value |
+| `query` | everything | For a scanner — the commonest case — the query string **is** the attack |
+| `body` | none | A blocked login attempt has the password in it |
+
+The `query` default is the one to think about for your own site. It is kept because redacting it would gut the record for the thing it is most often read about; the risk is narrower but real — a password reset link, an API key somebody put in a URL. Narrow it with an allowlist if your URLs carry secrets.
+
+!!! note "Narrowing `query` also narrows `uri`"
+
+    `uri` carries the query string, so removing a parameter from one field and leaving it in the field beside it would be a setting that silently does nothing. The recorded `uri` is rebuilt from what survived.
+
+### Two things it deliberately does not do
+
+**It does not touch records already written.** Redaction happens on the way *in* — the only place it can, since redacting in `--show`'s output would leave the credential in the store, where a shared list replicates it and a database backup keeps it. Records written before the upgrade still hold what they held.
+
+`firewall-doctor` counts them, so you know whether there is anything to act on:
+
+```
+  ! 412 existing block records still hold cookies or headers
+      Written before the allowlist existed, and unaffected by it — redaction happens
+      on write. They expire with their bans; `bin/firewall-block --lift` clears them
+      sooner, at the cost of un-blocking whoever is in them.
+```
+
+**There is no command that scrubs them in place.** A record's *remaining* ban time cannot be read back portably across the backends, so rewriting one would silently reset its ban to a full term — turning a privacy fix into a change in how long people are blocked for. Letting them expire, or clearing deliberately, are the honest options.
+
 ## Searching and Un-blocking
 
 `StorageInterface` gives you keyed access — `get()`, `set()`, `delete()` for an address you already know. That covers the firewall's own hot path, but it leaves two operational questions unanswered: *who is currently blocked?*, and *how do I lift a block that should not have been applied?*
