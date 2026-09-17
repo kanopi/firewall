@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Logging;
 
+use Kanopi\Firewall\Logging\Handler\DeferredHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Tests\Logging\NoFormatterHandler;
+use Monolog\Handler\BufferHandler;
+use Monolog\Handler\GroupHandler;
+use Monolog\Handler\StreamHandler;
 use Monolog\Handler\TestHandler;
+use Monolog\Level;
 use Monolog\Formatter\LineFormatter;
 use Monolog\Logger;
 use PHPUnit\Framework\TestCase;
@@ -354,4 +359,103 @@ final class LoggingFactoryTest extends TestCase
         // Defaults are no longer in the list after replacement
         $this->assertFalse(LoggingFactory::shouldRedactVariable('header.cookie'));
     }
+
+    /**
+     * A wrapping handler takes another handler as an argument, and YAML has no
+     * way to say that — so until this, the documentation's answer for wrapping
+     * anything was "write PHP instead" (#379).
+     */
+    public function testAHandlerCanWrapAnotherFromConfiguration(): void
+    {
+        $logger = LoggingFactory::create([
+            [
+                'class' => DeferredHandler::class,
+                'args' => [
+                    ['class' => TestHandler::class, 'args' => []],
+                    0,
+                    'Monolog\\Level::Warning',
+                ],
+            ],
+        ]);
+
+        $handlers = $logger->getHandlers();
+
+        $this->assertCount(1, $handlers);
+        $this->assertInstanceOf(DeferredHandler::class, $handlers[0]);
+        $this->assertInstanceOf(
+            TestHandler::class,
+            (new \ReflectionProperty(BufferHandler::class, 'handler'))->getValue($handlers[0])
+        );
+    }
+
+    /**
+     * The nested path is no less attacker-reachable than a top-level handler,
+     * so it gets the same check. Without it, `args` would be a way to
+     * instantiate an arbitrary class with arbitrary constructor arguments
+     * (CWE-470) through a door the top level had already closed.
+     */
+    public function testANestedClassThatIsNotAHandlerIsNotBuilt(): void
+    {
+        $logger = LoggingFactory::create([
+            [
+                'class' => DeferredHandler::class,
+                'args' => [['class' => \Kanopi\Firewall\Firewall::class, 'args' => [[]]]],
+            ],
+        ]);
+
+        // The outer handler cannot be constructed without a real handler
+        // argument, so nothing is pushed at all — which is the safe outcome.
+        $this->assertSame([], $logger->getHandlers());
+    }
+
+    /**
+     * A handler whose constructor genuinely takes an array must be unaffected.
+     */
+    public function testAnArrayArgumentThatIsNotAHandlerSpecIsLeftAlone(): void
+    {
+        $logger = LoggingFactory::create([
+            ['class' => GroupHandler::class, 'args' => [[new TestHandler()]]],
+        ]);
+
+        $this->assertCount(1, $logger->getHandlers());
+        $this->assertInstanceOf(GroupHandler::class, $logger->getHandlers()[0]);
+    }
+
+    /**
+     * Nothing in a hand-written config nests five wrappers deep, and a
+     * structure that does is either a mistake or worth refusing to build.
+     */
+    public function testWrappingIsBoundedRatherThanTrusted(): void
+    {
+        $spec = ['class' => TestHandler::class, 'args' => []];
+
+        foreach (range(1, 8) as $ignored) {
+            $spec = ['class' => DeferredHandler::class, 'args' => [$spec]];
+        }
+
+        $this->assertSame([], LoggingFactory::create([$spec])->getHandlers());
+    }
+
+    /**
+     * A level inside a nested handler is converted too — it is the same YAML
+     * limitation one level down.
+     */
+    public function testALevelInsideANestedHandlerIsStillConverted(): void
+    {
+        $file = sys_get_temp_dir() . '/fw-nested-' . uniqid() . '.log';
+
+        $logger = LoggingFactory::create([
+            [
+                'class' => DeferredHandler::class,
+                'args' => [['class' => StreamHandler::class, 'args' => [$file, 'Monolog\\Level::Critical']]],
+            ],
+        ]);
+
+        $inner = (new \ReflectionProperty(BufferHandler::class, 'handler'))->getValue($logger->getHandlers()[0]);
+        $this->assertInstanceOf(StreamHandler::class, $inner);
+        $this->assertSame(Level::Critical, $inner->getLevel());
+
+        @unlink($file);
+    }
+
 }

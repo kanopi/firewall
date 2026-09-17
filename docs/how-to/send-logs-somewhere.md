@@ -91,6 +91,99 @@ logger:
 Slack, Pushover, IFTTT and Telegram all need `ext-curl`. Mail handlers may need a transport
 package installed.
 
+!!! danger "Every one of those blocks the request while it sends"
+
+    `SlackWebhookHandler`, `LogglyHandler`, `InsightOpsHandler`, `TelegramBotHandler` and the
+    rest make a **synchronous HTTPS round trip inside `write()`, once per record** — on a
+    component that logs per decision. A log service having a slow afternoon becomes a slow site.
+
+    The firewall catches a handler that *throws* and reports it as a degraded backend. Nothing
+    catches one that *hangs*, and a slow site is harder to diagnose than a failed one.
+
+    Two ways out, below, and the first one is better.
+
+## Better: write lines, let something else ship them
+
+```yaml
+logger:
+  - class: Monolog\Handler\StreamHandler
+    args:
+      - php://stdout
+      - Monolog\Level::Info
+    formatter:
+      class: Monolog\Formatter\JsonFormatter
+```
+
+Then point [Vector](https://vector.dev), [Fluent Bit](https://fluentbit.io), Filebeat or
+promtail at it. Delivery, retries, batching and backpressure are handled by software built for
+exactly that, and the firewall's cost is a `write()` to a local stream.
+
+For a containerised deployment this is simply the right answer, and it needs nothing from this
+package. Reach for the next section only when you cannot do it.
+
+## If you must send HTTP from PHP: defer it
+
+```yaml
+logger:
+  - class: Kanopi\Firewall\Logging\Handler\DeferredHandler
+    args:
+      # The handler to flush into, once the visitor has been served.
+      - class: Monolog\Handler\LogglyHandler
+        args: ["%env(LOGGLY_TOKEN)%", Monolog\Level::Warning]
+      - 0                       # buffer limit; 0 holds everything
+      - Monolog\Level::Warning
+```
+
+```
+handle()   →  buffer in memory, return immediately
+shutdown   →  fastcgi_finish_request()   ← the visitor is served here
+           →  flush the buffer to the wrapped handler
+```
+
+A wrapper rather than a thirteenth HTTP handler: Monolog's are maintained, and reimplementing
+the Datadog, Loki and Splunk payload formats is a treadmill. What was missing is a way to get
+*any* of them off the request path.
+
+It works with any handler, not only the HTTP ones — and on a framework that already closes the
+connection itself (Symfony's `Response::send()` calls `fastcgi_finish_request()`), the call
+here is a harmless no-op.
+
+!!! warning "What deferring does not fix"
+
+    **It cannot bound how long the flush takes.** After the response is sent a hung request is
+    no longer a slow page, but it is still an FPM worker held out of the pool, and enough of
+    them is an outage by another route. Set a timeout on the handler you wrap where it has one
+    — `SocketHandler` has `setConnectionTimeout()` and `setWritingTimeout()`; the curl-based
+    handlers expose none, which is worth knowing before choosing one.
+
+    **Buffering trades durability for latency.** A fatal that kills the process before shutdown
+    loses the buffer. That is the right trade for a firewall log and the wrong one for an audit
+    log.
+
+    **Under CLI there is nothing to release.** `bin/firewall-check` and `firewall-doctor` have
+    no connection to close, so records are flushed at shutdown without the early release rather
+    than dropped.
+
+### Wrapping handlers, generally
+
+A wrapping handler takes another handler as its first argument, and until 2.31.0 YAML had no
+way to say that — so the answer for wrapping anything was "write PHP instead". Any nested
+`{class, args}` block is now built as a handler, which makes Monolog's own wrappers
+configurable too:
+
+```yaml
+logger:
+  # Keep debug records in memory; write them all only if something goes wrong.
+  - class: Monolog\Handler\FingersCrossedHandler
+    args:
+      - class: Monolog\Handler\StreamHandler
+        args: [/var/log/firewall/firewall.log, Monolog\Level::Debug]
+      - Monolog\Level::Error
+```
+
+A nested block that is not a handler class is rejected the same way a top-level one is, and a
+handler whose constructor genuinely takes an array is unaffected.
+
 ## Check it is actually writing
 
 ```console
@@ -106,6 +199,7 @@ is reported there rather than failing silently on the next request.
 |---|---|
 | Every handler and option | [Logging](../configuration/logging.md) |
 | Keep secrets out of the log | [Sensitive value redaction](../configuration/logging.md#sensitive-value-redaction) |
-| Wrap handlers (`FingersCrossed`, `Buffer`, `Filter`) | [Inject your own logger](../configuration/logging.md#injecting-your-own-logger) |
+| Wrap handlers (`FingersCrossed`, `Buffer`, `Filter`) | [Wrapping handlers](#wrapping-handlers-generally), or [inject your own logger](../configuration/logging.md#injecting-your-own-logger) |
+| Stop a remote handler slowing the request | [Defer it](#if-you-must-send-http-from-php-defer-it) |
 | Trim an oversized log table | `firewall-log-prune config.yml` |
 | React to decisions in code instead of reading logs | [React to Decisions](decision-events.md) |

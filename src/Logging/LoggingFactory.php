@@ -25,6 +25,11 @@ class LoggingFactory
     protected static ?Logger $logger = null;
 
     /**
+     * How deep a handler may wrap another handler.
+     */
+    private const MAX_HANDLER_DEPTH = 4;
+
+    /**
      * Variable names whose log values should be replaced with [REDACTED].
      *
      * The list is matched case-insensitively and accepts a trailing `*` as
@@ -74,63 +79,7 @@ class LoggingFactory
                 break;
             }
 
-            $handlerClass = $handlerConfig['class'] ?? '';
-            $handlerArgs = $handlerConfig['args'] ?? [];
-
-            $handler = null;
-            // Reject anything that isn't a Monolog HandlerInterface before
-            // calling `new`. Pre-fix the only guard was a tautological
-            // `in_array(HandlerInterface::class, class_implements(HandlerInterface::class))`
-            // check that only ran when $handlerClass was already an object,
-            // so the string-class branch would happily instantiate arbitrary
-            // classes (CWE-470) with arbitrary constructor args from config.
-            if ($handlerClass instanceof HandlerInterface) {
-                $handler = $handlerClass;
-            } elseif (is_string($handlerClass) && $handlerClass !== '' && class_exists($handlerClass)) {
-                if (!is_a($handlerClass, HandlerInterface::class, true)) {
-                    // Silently reject — the logger we'd warn to has no
-                    // handlers yet, so the warning would be dropped.
-                    // Tests verify rejection by asserting the handler is
-                    // never pushed onto the logger.
-                    continue;
-                }
-
-                // Convert Monolog level string to constant (e.g., "Monolog\Level::Debug")
-                foreach ($handlerArgs as &$handlerArg) {
-                    if (is_string($handlerArg) && str_starts_with($handlerArg, \Monolog\Level::class . '::')) {
-                        $levelName = strtoupper(substr($handlerArg, strlen(\Monolog\Level::class . '::')));
-                        if (!in_array($levelName, $validLevels, true)) {
-                            $levelName = 'INFO';
-                        }
-
-                        $handlerArg = Level::fromName($levelName);
-                    }
-                }
-
-                unset($handlerArg);
-
-                $handler = new $handlerClass(...$handlerArgs);
-
-                // If a formatter is specified
-                if (isset($handlerConfig['formatter'])) {
-                    $formatterClass = $handlerConfig['formatter']['class'] ?? '';
-                    $formatterArgs = $handlerConfig['formatter']['args'] ?? [];
-
-                    $formatterIsValid = is_string($formatterClass)
-                        && $formatterClass !== ''
-                        && class_exists($formatterClass)
-                        && is_a($formatterClass, FormatterInterface::class, true);
-
-                    if ($formatterIsValid) {
-                        $formatter = new $formatterClass(...$formatterArgs);
-                        if (method_exists($handler, 'setFormatter')) {
-                            $handler->setFormatter($formatter);
-                        }
-                    }
-
-                    // else: silently reject — see note on handler rejection above.
-                }
-            }
+            $handler = self::buildHandler($handlerConfig, $validLevels);
 
             if ($handler instanceof HandlerInterface) {
                 $logger->pushHandler($handler);
@@ -168,6 +117,165 @@ class LoggingFactory
         // which is the one that reached a running request.
 
         return $logger;
+    }
+
+    /**
+     * Build one handler from its `{class, args, formatter}` block.
+     *
+     * @param array<array-key, mixed> $handlerConfig
+     *   The handler block.
+     * @param array<int, string> $validLevels
+     *   Level names `Monolog\Level::…` strings may name.
+     * @param int $depth
+     *   Nesting depth, to bound a wrapper that wraps a wrapper.
+     *
+     * @return HandlerInterface|null
+     *   The handler, or NULL when the block does not describe one.
+     */
+    private static function buildHandler(array $handlerConfig, array $validLevels, int $depth = 0): ?HandlerInterface
+    {
+        $handlerClass = $handlerConfig['class'] ?? '';
+
+        // An already-built handler, which is how a host wiring this from PHP
+        // passes one.
+        if ($handlerClass instanceof HandlerInterface) {
+            return $handlerClass;
+        }
+
+        // Reject anything that isn't a Monolog HandlerInterface before calling
+        // `new`. Pre-fix the only guard was a tautological
+        // `in_array(HandlerInterface::class, class_implements(HandlerInterface::class))`
+        // check that only ran when $handlerClass was already an object, so the
+        // string-class branch would happily instantiate arbitrary classes
+        // (CWE-470) with arbitrary constructor args from config.
+        //
+        // The same check guards the nested path below, which is the point: a
+        // wrapper's argument is no less attacker-reachable than a top-level
+        // handler's.
+        if (!is_string($handlerClass) || $handlerClass === '' || !class_exists($handlerClass)) {
+            return null;
+        }
+
+        if (!is_a($handlerClass, HandlerInterface::class, true)) {
+            // Silently reject — the logger we'd warn to has no handlers yet, so
+            // the warning would be dropped. Tests verify rejection by asserting
+            // the handler is never pushed onto the logger.
+            return null;
+        }
+
+        $handlerArgs = is_array($handlerConfig['args'] ?? null) ? $handlerConfig['args'] : [];
+        $preparedArgs = self::handlerArgs($handlerArgs, $validLevels, $depth);
+
+        // An argument that was meant to be a handler and could not be built.
+        // The enclosing handler cannot be built either, and passing the raw
+        // array on is how that became a TypeError -- an `\Error`, which a host
+        // catching `\Exception` never sees (#281), from a class whose whole
+        // design is to reject a bad block silently rather than fatal on it.
+        if ($preparedArgs === null) {
+            return null;
+        }
+
+        $handler = new $handlerClass(...$preparedArgs);
+
+        if (isset($handlerConfig['formatter'])) {
+            self::applyFormatter($handler, $handlerConfig['formatter']);
+        }
+
+        return $handler;
+    }
+
+    /**
+     * Prepare a handler's constructor arguments.
+     *
+     * Two conversions, both because YAML has no way to say them:
+     *
+     * - `"Monolog\Level::Warning"` becomes the enum case.
+     * - A nested `{class: …, args: […]}` becomes a **handler**, so the wrapping
+     *   handlers — `BufferHandler`, `FingersCrossedHandler`, `DeferredHandler`,
+     *   `WhatFailureGroupHandler` — are configurable at all. Until this, the
+     *   documentation's answer for wrapping anything was "write PHP instead",
+     *   because a handler cannot be expressed as a scalar.
+     *
+     * A nested array that is *not* a handler spec is left exactly as it was, so
+     * a handler whose constructor genuinely takes an array — `GroupHandler`, or
+     * any `$options` bag — is unaffected.
+     *
+     * @param array<array-key, mixed> $args
+     *   The declared arguments.
+     * @param array<int, string> $validLevels
+     *   Level names `Monolog\Level::…` strings may name.
+     * @param int $depth
+     *   Nesting depth so far.
+     *
+     * @return array<array-key, mixed>|null
+     *   The arguments, ready to splat, or NULL when one of them was meant to be
+     *   a handler and could not be built.
+     */
+    private static function handlerArgs(array $args, array $validLevels, int $depth): ?array
+    {
+        foreach ($args as &$arg) {
+            if (is_string($arg) && str_starts_with($arg, Level::class . '::')) {
+                $levelName = strtoupper(substr($arg, strlen(Level::class . '::')));
+
+                if (!in_array($levelName, $validLevels, true)) {
+                    $levelName = 'INFO';
+                }
+
+                $arg = Level::fromName($levelName);
+
+                continue;
+            }
+
+            if (!is_array($arg)) {
+                continue;
+            }
+
+            if (!is_string($arg['class'] ?? null)) {
+                continue;
+            }
+
+            // Bounded rather than trusted. Nothing in a hand-written config
+            // nests five wrappers deep, and a structure that does is either a
+            // mistake or something worth refusing to build.
+            $nested = $depth >= self::MAX_HANDLER_DEPTH
+                ? null
+                : self::buildHandler($arg, $validLevels, $depth + 1);
+
+            if (!$nested instanceof HandlerInterface) {
+                return null;
+            }
+
+            $arg = $nested;
+        }
+
+        unset($arg);
+
+        return $args;
+    }
+
+    /**
+     * Give a handler the formatter its block names.
+     *
+     * @param HandlerInterface $handler
+     *   The handler.
+     * @param mixed $declared
+     *   The `formatter` block.
+     */
+    private static function applyFormatter(HandlerInterface $handler, mixed $declared): void
+    {
+        $declared = is_array($declared) ? $declared : [];
+        $formatterClass = $declared['class'] ?? '';
+        $formatterArgs = is_array($declared['args'] ?? null) ? $declared['args'] : [];
+
+        $formatterIsValid = is_string($formatterClass)
+            && $formatterClass !== ''
+            && class_exists($formatterClass)
+            && is_a($formatterClass, FormatterInterface::class, true);
+
+        // else: silently reject — see the note on handler rejection above.
+        if ($formatterIsValid && method_exists($handler, 'setFormatter')) {
+            $handler->setFormatter(new $formatterClass(...$formatterArgs));
+        }
     }
 
     /**
