@@ -14,6 +14,7 @@ namespace Kanopi\Firewall;
 use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
 use Kanopi\Firewall\Challenge\ChallengeProviderRegistry;
+use Kanopi\Firewall\Challenge\PassRevocationList;
 use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
@@ -29,7 +30,9 @@ use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
 use Kanopi\Firewall\Plugins\ScheduledRuleInterface;
 use Kanopi\Firewall\Storage\StorageFactory;
+use Kanopi\Firewall\Storage\ConcurrencyGaugeInterface;
 use Kanopi\Firewall\Storage\StorageInterface;
+use Kanopi\Firewall\Tarpit\TarpitGate;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
 use Kanopi\Firewall\Event\ChallengeFailed;
 use Kanopi\Firewall\Event\ChallengeSolved;
@@ -40,6 +43,7 @@ use Kanopi\Firewall\Event\RequestChallenged;
 use Kanopi\Firewall\Event\RequestMarked;
 use Kanopi\Firewall\Event\RequestRecorded;
 use Kanopi\Firewall\Event\RequestRedirected;
+use Kanopi\Firewall\Event\RequestTarpitted;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\PanicSwitch;
@@ -127,6 +131,8 @@ final class Firewall
      * @param PluginManager|null $redirectPluginManager
      *   Rules with `response: redirect`, which send the visitor somewhere
      *   instead of refusing them (#203).
+     * @param PluginManager|null $tarpitPluginManager
+     *   Rules that hold a request still before letting it continue.
      * @param PluginManager|null $markPluginManager
      *   Rules with `response: mark`, which annotate the request and leave the
      *   decision to the application (#203).
@@ -144,7 +150,9 @@ final class Firewall
         private ?EventDispatcherInterface $eventDispatcher = null,
         private ?PluginManager $recordPluginManager = null,
         private ?PluginManager $redirectPluginManager = null,
-        private ?PluginManager $markPluginManager = null
+        private ?PluginManager $markPluginManager = null,
+        private ?PluginManager $tarpitPluginManager = null,
+        private ?TarpitGate $tarpitGate = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -356,13 +364,19 @@ final class Firewall
             'global_config_keys' => array_keys($config['global']),
         ]);
 
+        // Built before the challenge pieces rather than inline below, because
+        // per-token revocation reads from the same store the block list uses
+        // and there is no reason for a second one (#368).
+        $storage = StorageFactory::create($config['storage']);
+
         [$challengeProvider, $tokenManager, $challengeConfig, $providerRegistry] = self::createChallengePieces(
             $config['challenge'],
-            $partitioned['challenge']
+            $partitioned['challenge'],
+            $storage
         );
 
         $firewall = new self(
-            StorageFactory::create($config['storage']),
+            $storage,
             PluginManager::createFromPluginsArray($partitioned['block']),
             PluginManager::createFromPluginsArray($partitioned['allow']),
             PluginManager::createFromPluginsArray($partitioned['challenge']),
@@ -374,7 +388,9 @@ final class Firewall
             $eventDispatcher,
             PluginManager::createFromPluginsArray($partitioned['record']),
             PluginManager::createFromPluginsArray($partitioned['redirect']),
-            PluginManager::createFromPluginsArray($partitioned['mark'])
+            PluginManager::createFromPluginsArray($partitioned['mark']),
+            PluginManager::createFromPluginsArray($partitioned['tarpit']),
+            self::createTarpitGate($config['tarpit'] ?? [], $partitioned['tarpit'], $storage)
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -408,6 +424,9 @@ final class Firewall
      * @param array<int, array<string, mixed>> $challengePlugins
      *   Plugin entries partitioned into the challenge bucket. Read for the
      *   providers they name; empty means the feature is not in use.
+     * @param StorageInterface|null $storage
+     *   The configured store, for the per-token revocation list. Only touched
+     *   when `challenge.revocable` is on.
      *
      * @return array{0: ?ChallengeProviderInterface, 1: ?TokenManager, 2: array<string, mixed>, 3: ?ChallengeProviderRegistry}
      *
@@ -415,8 +434,11 @@ final class Firewall
      *   When challenge plugins exist but no secret is configured, or when
      *   a provider named by the config or by a plugin cannot be resolved.
      */
-    private static function createChallengePieces(array $challengeConfig, array $challengePlugins): array
-    {
+    private static function createChallengePieces(
+        array $challengeConfig,
+        array $challengePlugins,
+        ?StorageInterface $storage = null
+    ): array {
         $hasChallengePlugins = $challengePlugins !== [];
 
         $defaults = [
@@ -427,6 +449,9 @@ final class Firewall
             'path' => '/_firewall/challenge',
             'provider_options' => [],
             'audience' => '',
+            'ttl' => self::CHALLENGE_TTL_FALLBACK,
+            'passes_valid_from' => 0,
+            'revocable' => false,
         ];
 
         $challengeConfig = array_replace($defaults, $challengeConfig);
@@ -456,7 +481,18 @@ final class Firewall
             $audience = $defaultProvider;
         }
 
-        $tokenManager = new TokenManager($secret, $audience, $defaultProvider);
+        $tokenManager = new TokenManager(
+            $secret,
+            $audience,
+            $defaultProvider,
+            self::challengePassCutoff($challengeConfig['passes_valid_from'] ?? null),
+            // NULL unless asked for. A deployment that never revokes anything
+            // should not pay a storage read per verified pass, which is the
+            // whole reason this is opt-in rather than always on.
+            ($challengeConfig['revocable'] ?? false) === true && $storage instanceof StorageInterface
+                ? new PassRevocationList($storage)
+                : null
+        );
 
         $challengeProviderRegistry = new ChallengeProviderRegistry(
             $tokenManager,
@@ -1184,6 +1220,126 @@ final class Firewall
     }
 
     /**
+     * Hold a request still, if there is room to.
+     *
+     * The delay is the easy part; the counting is the point. See `TarpitGate`
+     * for why a tarpit without a working cap is a self-DoS with a rule that
+     * looks like it is working (#329).
+     *
+     * In `mode: log` nothing is held at all. A dry run that still takes a
+     * worker out of the pool for ten seconds is not a dry run.
+     *
+     * @param Request $request
+     *   The request to delay.
+     * @param PluginInterface $plugin
+     *   The rule that matched.
+     */
+    protected function tarpit(Request $request, PluginInterface $plugin): void
+    {
+        if (!$this->tarpitGate instanceof TarpitGate) {
+            // Unreachable through `create()`, which refuses to start a tarpit
+            // rule with no gauge behind it. Reachable by a caller assembling a
+            // Firewall by hand, and silently sleeping without a cap is the one
+            // behaviour this feature exists to prevent.
+            return;
+        }
+
+        $seconds = $plugin instanceof AbstractPluginBase ? $plugin->getTarpitSeconds() : 0;
+
+        if ($this->firewallMode === FirewallMode::Log) {
+            $this->getLogger()->warning('Request would be held (log mode)', $this->getContext($request, [
+                'mode' => 'log',
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'seconds' => $seconds,
+            ]));
+
+            $this->announce(new RequestTarpitted($request, $plugin, 0, false, $this->tarpitGate->inFlight()));
+
+            return;
+        }
+
+        $result = $this->tarpitGate->hold($seconds);
+
+        // Info rather than warning: a tarpit doing its job is a configuration
+        // working, not a complaint. `TarpitGate` warns about the cases that are
+        // worth reading -- the cap being full, and a rule asking for longer
+        // than it may have.
+        $this->getLogger()->info('Request held', $this->getContext($request, [
+            'plugin_name' => $plugin->getName(),
+            'plugin_type' => $plugin::class,
+            'seconds' => $result['seconds'],
+            'held' => $result['held'],
+            'in_flight' => $result['in_flight'],
+        ]));
+
+        $this->announce(new RequestTarpitted(
+            $request,
+            $plugin,
+            $result['seconds'],
+            $result['held'],
+            $result['in_flight']
+        ));
+    }
+
+    /**
+     * Build the tarpit's cap, or refuse to start.
+     *
+     * A tarpit rule against a backend that cannot count concurrency atomically
+     * is a self-DoS: the cap admits more holds than it allows, and the rule
+     * looks like it is working right up until the worker pool is gone. So this
+     * is a startup failure rather than a degraded mode, which is the whole
+     * reason the feature was split out of #203 rather than shipped with it.
+     *
+     * @param mixed $tarpitConfig
+     *   The `tarpit:` section.
+     * @param array<int, array<string, mixed>> $tarpitPlugins
+     *   Rules partitioned into the tarpit bucket. Empty means the feature is
+     *   not in use and nothing below applies.
+     * @param StorageInterface $storage
+     *   The configured store, which must be able to count.
+     *
+     * @return TarpitGate|null
+     *   The gate, or NULL when no rule asks for one.
+     *
+     * @throws ConfigurationException
+     *   When a tarpit rule is configured against a backend with no atomic
+     *   concurrency gauge.
+     */
+    private static function createTarpitGate(mixed $tarpitConfig, array $tarpitPlugins, StorageInterface $storage): ?TarpitGate
+    {
+        if ($tarpitPlugins === []) {
+            return null;
+        }
+
+        if (!$storage instanceof ConcurrencyGaugeInterface) {
+            throw new ConfigurationException(sprintf(
+                'response: tarpit rules are configured, but %s cannot count how many holds are in '
+                . 'flight. A tarpit holds a php-fpm worker for its duration, so without an atomic '
+                . 'cap a handful of requests can take the site down -- and the rule looks like it '
+                . 'is working while they do. Use a storage backend implementing '
+                . 'ConcurrencyGaugeInterface (FileStorage counts this host, RedisStorage counts '
+                . 'the fleet), or remove the tarpit rules.',
+                $storage::class
+            ));
+        }
+
+        $tarpitConfig = is_array($tarpitConfig) ? $tarpitConfig : [];
+        $maxConcurrent = $tarpitConfig['max_concurrent'] ?? null;
+        $maxSeconds = $tarpitConfig['max_seconds'] ?? null;
+
+        return new TarpitGate(
+            $storage,
+            is_numeric($maxConcurrent) && (int) $maxConcurrent > 0
+                ? (int) $maxConcurrent
+                : TarpitGate::DEFAULT_MAX_CONCURRENT,
+            is_numeric($maxSeconds) && (int) $maxSeconds > 0
+                ? (int) $maxSeconds
+                : TarpitGate::DEFAULT_MAX_SECONDS
+        );
+    }
+
+    /**
      * Send the visitor somewhere instead of refusing them.
      *
      * Terminal, like a block: nothing after this runs. Unlike a block it records nothing by
@@ -1363,6 +1519,7 @@ final class Firewall
             'allow' => $this->bypassPluginManager,
             'mark' => $this->markPluginManager,
             'record' => $this->recordPluginManager,
+            'tarpit' => $this->tarpitPluginManager,
             'challenge' => $this->challengePluginManager,
             'redirect' => $this->redirectPluginManager,
             'block' => $this->blockingPluginManager,
@@ -1532,6 +1689,19 @@ final class Firewall
         // wired, which is the one thing a honeypot must not do.
         if (($plugin = $this->recordPluginManager?->evaluate($request) ?? false) !== false) {
             $this->record($request, $plugin);
+        }
+
+        // The delay is paid here, and this request keeps going. A tarpit is
+        // non-terminal on purpose: it costs an attacker throughput and then
+        // hands the request to whatever decides its fate, so a tarpit rule and
+        // a block rule matching the same client compose into a slow block
+        // rather than needing a feature of their own (#329).
+        //
+        // After the block list, so a client already blocked is refused rather
+        // than held -- holding a worker on behalf of somebody being refused
+        // anyway is the self-DoS with extra steps.
+        if (($plugin = $this->tarpitPluginManager?->evaluate($request) ?? false) !== false) {
+            $this->tarpit($request, $plugin);
         }
 
         // A held pass token short-circuits the challenge bucket. Block
@@ -1714,7 +1884,11 @@ final class Firewall
                     [
                         'submit_url' => $this->challengeSubmitUrl($request),
                         'redirect_to' => $this->sanitizeRedirect($rejectedRedirect === '' ? '/' : $rejectedRedirect),
-                        'ttl' => (string) ($rejectedTtl === '' ? 3600 : max(0, (int) $rejectedTtl)),
+                        // Clamped, not echoed. Re-rendering what was posted
+                        // hands an over-long request straight back to be
+                        // posted again, so the retry asks for the same thing
+                        // the accepting path would have refused (#367).
+                        'ttl' => (string) $this->clampChallengeTtl($rejectedTtl === '' ? 0 : (int) $rejectedTtl),
                         'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
                         'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
                         'provider_token' => $this->signProviderName($providerName),
@@ -1735,11 +1909,31 @@ final class Firewall
         // Both fields ride in on the interstitial's POST, so both are
         // attacker-chosen. Read them off the raw bag — InputBag::get() throws
         // on an array value, and nothing above this frame catches it (#130).
-        // An absent or non-string ttl falls back to the default hour; an
+        // An absent or non-string ttl falls back to `challenge.ttl`; an
         // absent or non-string redirect falls back to the site root, which is
         // what sanitizeRedirect() would have reduced a hostile one to anyway.
         $rawTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
-        $ttl = $rawTtl === '' ? 3600 : max(0, (int) $rawTtl);
+        $requestedTtl = $rawTtl === '' ? 0 : (int) $rawTtl;
+
+        // The lifetime the client asked for is a request, not an instruction.
+        // Before this, `max(0, …)` put a floor under it and nothing put a
+        // ceiling on it: solve one math problem, post `ttl=999999999`, and the
+        // pass token short-circuits every challenge rule this provider serves
+        // for the next thirty-one years — signed, valid, and unrevokable
+        // without rotating the secret (#367).
+        $ttl = $this->clampChallengeTtl($requestedTtl);
+
+        if ($requestedTtl > $ttl) {
+            // Warning, not debug. The interstitial was rendered with a value
+            // this firewall chose, so a larger one arriving back means the
+            // form was edited or the page predates a lowered ceiling. Neither
+            // is visible anywhere else, and the first is worth reading.
+            $this->getLogger()->warning('Challenge pass lifetime clamped to the configured ceiling', $this->getContext($request, [
+                'provider' => $providerName,
+                'requested_ttl' => $requestedTtl,
+                'ttl' => $ttl,
+            ]));
+        }
 
         // Scope the token to what was actually solved. Without this a math
         // pass would satisfy a reCAPTCHA rule, and the cheapest challenge
@@ -1749,10 +1943,18 @@ final class Firewall
         $rawRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
         $redirect = $this->sanitizeRedirect($rawRedirect === '' ? '/' : $rawRedirect);
 
+        // The nonce and the expiry are here so a pass can be revoked later
+        // without the operator having to get the token itself out of somebody's
+        // browser: this is the line you grep by address when one pass turns out
+        // to need withdrawing (#368).
+        $claims = $this->tokenManager->inspect($token) ?? [];
+
         $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
             'provider' => $challengeProvider->getName(),
             'provider_name' => $providerName,
             'ttl' => $ttl,
+            'pass_nonce' => $claims['nonce'] ?? null,
+            'pass_expires' => $claims['exp'] ?? null,
         ]));
 
         $this->announce(new ChallengeSolved($request, $providerName, $ttl));
@@ -1948,9 +2150,24 @@ final class Firewall
             ? $this->challengeProviderRegistry->get($providerName)
             : $this->challengeProvider;
 
-        $ttl = $plugin->getExpirationTime($request);
-        if ($ttl <= 0) {
-            $ttl = 3600;
+        // `metadata.default_expiration_time` → `challenge.ttl` → the built-in
+        // hour. A rule that names nothing inherits the global instead of a
+        // constant nothing points at, which is the ergonomics half of #367.
+        $declaredTtl = $plugin->getExpirationTime($request);
+        $ttl = $this->clampChallengeTtl($declaredTtl);
+
+        if ($declaredTtl > $ttl) {
+            // The ceiling applies to the configuration as well as to the POST.
+            // Clamping here rather than only at submission keeps the number in
+            // the form and the number in the token the same, and names the rule
+            // that has to change — the alternative is a rule that silently
+            // grants less than it says it does.
+            $this->getLogger()->warning('Rule asks for a longer challenge pass than `challenge.ttl` allows', $this->getContext($request, [
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'requested_ttl' => $declaredTtl,
+                'ttl' => $ttl,
+            ]));
         }
 
         $this->getLogger()->notice('Sending challenge response', $this->getContext($request, [
@@ -2171,6 +2388,109 @@ final class Firewall
         }
 
         return $basePath . $path;
+    }
+
+    /**
+     * The pass lifetime used when nothing configures one.
+     *
+     * The hour that was hard-coded in three places before `challenge.ttl`
+     * existed, kept as the value an unconfigured firewall still lands on so
+     * adding the key changes nothing for anybody who does not set it.
+     */
+    private const CHALLENGE_TTL_FALLBACK = 3600;
+
+    /**
+     * The longest a challenge pass is allowed to last, in seconds.
+     *
+     * Read as a number or not at all. `ttl: "one hour"` casting to `0` and
+     * silently becoming the fallback is the same class of quiet wrong this
+     * ticket is about, so a value that is not numeric is treated as absent
+     * rather than as zero.
+     *
+     * @return int
+     *   A positive number of seconds.
+     */
+    private function challengeTtlCeiling(): int
+    {
+        $configured = $this->challengeConfig['ttl'] ?? null;
+        $ceiling = is_numeric($configured) ? (int) $configured : 0;
+
+        return $ceiling > 0 ? $ceiling : self::CHALLENGE_TTL_FALLBACK;
+    }
+
+    /**
+     * Reduce a requested pass lifetime to what the configuration permits.
+     *
+     * One function for both directions, because the two callers have to agree:
+     * the number rendered into the form and the number signed into the token
+     * are the same number, and a visitor holding a cookie the firewall will not
+     * honour has no way to find out why.
+     *
+     * Asking for *less* is honoured — that is asking for less exposure, and
+     * there is nothing to protect against. Asking for nothing, or for a
+     * non-positive value, takes the ceiling: it is the configured default as
+     * well as the limit.
+     *
+     * @param int $requested
+     *   The lifetime asked for, in seconds. Zero or negative means none given.
+     *
+     * @return int
+     *   A positive number of seconds, never above `challenge.ttl`.
+     */
+    private function clampChallengeTtl(int $requested): int
+    {
+        $ceiling = $this->challengeTtlCeiling();
+
+        return $requested > 0 ? min($requested, $ceiling) : $ceiling;
+    }
+
+    /**
+     * Read `challenge.passes_valid_from` as a unix timestamp.
+     *
+     * Takes an epoch or anything `DateTimeImmutable` understands, because the
+     * value an operator reaches for in a hurry is `2026-09-16 12:00:00`, not
+     * a number they had to compute.
+     *
+     * A value that cannot be read is a `ConfigurationException` rather than a
+     * fallback to "off". The operator set this believing outstanding passes
+     * were withdrawn; silently not withdrawing them is the worst of both, and
+     * is exactly the class of quiet-wrong the key exists to fix.
+     *
+     * @param mixed $declared
+     *   The configured value.
+     *
+     * @return int
+     *   A unix timestamp, or 0 when nothing is configured.
+     *
+     * @throws ConfigurationException
+     *   When the value is set and cannot be read as a moment in time.
+     */
+    private static function challengePassCutoff(mixed $declared): int
+    {
+        if (in_array($declared, [null, '', 0], true)) {
+            return 0;
+        }
+
+        if (is_int($declared) || (is_string($declared) && ctype_digit($declared))) {
+            return max(0, (int) $declared);
+        }
+
+        if (is_string($declared)) {
+            try {
+                return (new \DateTimeImmutable($declared))->getTimestamp();
+            } catch (\Exception $exception) {
+                throw new ConfigurationException(sprintf(
+                    'challenge.passes_valid_from is not a moment in time: %s. Give it a unix '
+                    . 'timestamp, or a date this can read such as "2026-09-16 12:00:00 UTC".',
+                    $exception->getMessage()
+                ), 0, $exception);
+            }
+        }
+
+        throw new ConfigurationException(sprintf(
+            'challenge.passes_valid_from must be a unix timestamp or a date string, %s given.',
+            gettype($declared)
+        ));
     }
 
     protected function sanitizeRedirect(string $target): string

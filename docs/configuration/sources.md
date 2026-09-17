@@ -73,9 +73,13 @@ values a plugin wants needs nothing but an `upstream`.
 | `template` | string or map | none | Output shape; records pass through untouched when absent |
 | `validate` | enum | none | `cidr`, `ip`, `regex`, `string` |
 | `max_delta` | float | none | Reject a refresh moving the entry count by more than this fraction |
+| `max_entries` | int | none | Reject a refresh producing more entries than this — see [Ceilings](#max_size-and-max_entries) |
 | `ttl` | int | `KANOPI_FIREWALL_CACHE_TTL`, else 3600 | Seconds before the cached copy is revalidated |
 | `on_error` | enum | `last_known_good` | `last_known_good`, `fail_open`, `abort` |
 | `required` | bool | `false` | Abort rather than degrade when this source fails |
+| `allow_catch_all` | bool | `false` | Permit an entry matching every address — see [Entries that match everybody](#entries-that-match-everybody) |
+| `checksum` | string or map | none | Check the fetched bytes against a published digest — see [Verifying what you fetched](#verifying-what-you-fetched) |
+| `signature` | map | none | Check the fetched bytes against a detached signature and a pinned key — see [Verifying what you fetched](#verifying-what-you-fetched) |
 | `header_row` | bool | `true` | CSV/TSV: treat the first row as column names |
 | `comment` | string | `#` | Text formats: strip from this marker to end of line |
 | `delimiter` | string | `,` for csv, tab for tsv | CSV/TSV field delimiter |
@@ -91,6 +95,7 @@ values a plugin wants needs nothing but an `upstream`.
 | `body` | string | none | Request body, for methods that take one |
 | `timeout` | float | `KANOPI_FIREWALL_CACHE_TIMEOUT`, else 5.0 | Seconds to wait |
 | `max_redirects` | int | `5` | Redirect hops to follow |
+| `max_size` | int or size | `32M` | Refuse a body larger than this. `0` is no limit — see [Ceilings](#max_size-and-max_entries) |
 | `allow_insecure` | bool | `false` | Permit credentials over plain `http://` |
 
 A bare string is shorthand for a source with nothing but an upstream, and an upstream with
@@ -500,6 +505,11 @@ the wrong things, which is worse than one rule fewer.
 These matter most when `upstream` is a URL you do not control. A feed that breaks, or is
 tampered with, otherwise reaches a plugin's rule list intact.
 
+They answer different questions and none substitutes for another: is each entry well formed
+(`validate`), is this the publisher's file ([`checksum`/`signature`](#verifying-what-you-fetched)),
+is it a plausible *size* (`max_size`, `max_entries`), and is it a plausible amount of *change*
+(`max_delta`).
+
 ### `validate`
 
 | Value | Accepts |
@@ -516,6 +526,91 @@ entries are rule maps rather than values, so the scalar validators pass them thr
 A `/0` prefix is accepted but logged as a warning — it covers the entire address space,
 is essentially never intended, and is catastrophic in either an allow or a block list.
 
+### `max_size` and `max_entries`
+
+`upstream.timeout` bounds how long a fetch may take and `max_redirects` bounds where it may go.
+Until 2.30.0 nothing bounded how *much* came back, so an upstream that grew without bound was
+read without bound — and the body and its decoded form are held at once, the decoded form usually
+being the larger of the two.
+
+```yaml
+upstream:
+  url: https://example.org/v1/blocklist.txt
+  max_size: 10M        # bytes, or K/M/G. Default 32M. 0 for no limit
+max_entries: 250000    # refuse a refresh producing more than this
+```
+
+`max_size` **defaults to 32 MiB rather than to nothing**, so *"a list that grows to 4 GB should
+fail, not OOM the refresh job"* needs no configuration to be true. It is far above any published
+list in common use — AWS's `ip-ranges.json`, the largest most deployments meet, is under 3 MB —
+and far below the point at which a refresh job dies.
+
+Both **refuse rather than truncate**. Half a block list is a list whose meaning nobody knows: it
+would load, match fewer things than it should, and look exactly like a list that is simply
+shorter this week.
+
+Both fail the source the way a failed fetch does, so [`on_error`](#failure-policy) applies and
+`last_known_good` keeps the previous artifact.
+
+!!! note "The read is bounded, not just the check"
+
+    `max_size` is enforced while the body is being read, one byte past the ceiling, so an
+    oversized response is *detectable* without ever being *held*. Reading it all and measuring
+    afterwards is the obvious shape and is the exact failure this exists to prevent. A local file
+    is checked by `stat` before it is opened at all.
+
+    The ceiling covers a `checksum:`/`signature:` sidecar too. A digest arriving as four gigabytes
+    is itself worth refusing.
+
+!!! note "It applies after decompression too"
+
+    `max_size` bounds the body *as fetched*, and decompression is where that would stop meaning
+    anything. Ordinary repetitive list data gzips at better than 500:1 — a 105 KB body expanding
+    to 54 MB is unremarkable, not an attack — so a ceiling that stopped at the wire would be a
+    ceiling with `compression: gzip` as a documented bypass. And `.gz` on a URL turns compression
+    on by inference, without anybody choosing it.
+
+    So the same number applies to the decompressed body, which is the useful reading anyway: the
+    ceiling is on the *list*, not on the transfer. A gzipped source that expands past it is
+    refused rather than decompressed, and the refusal happens during inflation rather than after
+    it.
+
+!!! warning "A ceiling bounds what comes *in*, not what is already cached"
+
+    Adding `max_entries` to a source that already has 50,000 entries cached does not reject them;
+    it applies to the next fetch. That is deliberate — the fallback for a refused load is
+    `last_known_good`, which is that same cached list, so failing on the cache path would log an
+    error every load and serve the list anyway. `max_delta` has always worked this way. To apply
+    a new ceiling now, clear the source cache and re-sync.
+
+### An error page where a list should be
+
+The realistic failure is not an attack. A CDN, a captive portal or a misconfigured proxy answers
+with HTML where a text file should be — and it is *small*, so `max_size` says nothing about it. It
+decodes as `txt` without complaint and produces a few dozen lines that are not addresses.
+
+With a `validate:` set, every one of those lines is dropped, and the source is left contributing
+nothing. That used to be silent apart from a warning: the rule simply stopped matching.
+
+A source that decoded to something and validated down to **nothing** now fails:
+
+```
+Source failed to load; using last known good copy
+  source: abusive-ips
+  reason: Source "abusive-ips": every one of its 4 entries failed `validate: cidr`, so it has
+          nothing to contribute. That is usually an error page where a list should be.
+          First: "<html>", "<head><title>404 Not Found</title></head>", "<body>nope</body>"
+  entries: 51204
+```
+
+This is deliberately *not* the same as dropping bad entries. One malformed line in a 9,000-entry
+list still drops that line and keeps the other 8,999 — that is what `validate` is for, and it
+would be a poor trade to lose it. The escalation is about a source that produced nothing at all,
+which is a different claim.
+
+It needs a `validate:`. Without one there is nothing an entry can fail, and an empty result is
+just an empty list — which is a legitimate thing for a feed to publish on a quiet day.
+
 ### `max_delta`
 
 Rejects a refresh whose entry count moved further than a healthy update ever would:
@@ -529,6 +624,157 @@ succeeded once. This is what stops an upstream that starts returning an error pa
 an empty document — from quietly emptying your block list.
 
 ---
+
+## Entries that match everybody
+
+An entry of `0.0.0.0/0`, `::/0` or `*` matches every address there is. On a block rule that
+refuses **every visitor to the site**; the firewall is not down, it is working exactly as
+configured, which is worse to diagnose.
+
+Such entries are **refused from a source** and logged at `error`:
+
+```
+Source entries matching every address were refused
+  source: abusive-ips
+  refused: ["0.0.0.0/0"]
+```
+
+The rest of the source is kept — one bad line should not discard fifty thousand good ones,
+and a source that fails wholesale is what [`on_error`](#failure-policy) is for.
+
+!!! note "Why a source and not a local rule"
+
+    `firewall-check --lint` already refuses these values when **you** write them in `config:`.
+    It cannot see them in a source, because linting deliberately does not fetch — so a feed is
+    the one route by which such an entry reaches a block decision without anybody having typed
+    it. The realistic cause is not an attack: a parsing bug that emits an empty line as a
+    prefix, a placeholder shipped by mistake, a CSV column read by the wrong index.
+
+If a source genuinely means it — an allow list that opens the site to everyone during a
+migration, say — declare it:
+
+```yaml
+sources:
+  - name: everyone-for-now
+    upstream: "{config_dir}/open.txt"
+    allow_catch_all: true
+```
+
+The refusal cannot be decided by the rule's `response:`, because a plugin is never told which
+bucket it is in — so the source is where the intent has to be declared.
+
+Changing this option changes the source's fingerprint, so the next load re-decodes rather than
+reusing entries filtered under the old setting.
+
+## Verifying what you fetched
+
+A list arrives over HTTPS and is used. HTTPS authenticates the *host* and protects the
+transport; it says nothing about a repository that was compromised, a CDN object that was
+replaced, or a publisher who pushed the wrong file. Nothing in the pipeline above notices the
+difference.
+
+```yaml
+sources:
+  - name: abusive-ips
+    upstream: https://example.org/v1/abusive-ips.txt
+    checksum: sha256            # sidecar at <upstream>.sha256
+```
+
+Both keys are **opt-in and stay that way.** Most published lists in this ecosystem ship no
+sidecar at all, so a source that declares neither keeps working exactly as before.
+`firewall-doctor` reports how many of your remote sources are in that position, in one line,
+rather than failing them.
+
+!!! warning "The `body_hash` in the cache is not this"
+
+    The loader already hashes each body, and the word `sha256` appearing there makes this look
+    handled. That hash compares *this* fetch against the *previous* one so an unchanged body
+    can skip the decode. It has never been compared against anything a publisher asserted.
+
+### The two tiers, and the gap between them
+
+| | Checks | Defeated by |
+|---|---|---|
+| `checksum:` with a sidecar | The bytes are the bytes the sidecar names | Anyone who can replace the list can replace the sidecar |
+| `checksum:` with a pinned `value:` | The bytes are the bytes *you* named | Nothing — but every publish of the list is a commit here |
+| `signature:` with a pinned key | The bytes were signed by the key you pinned | Compromise of the publisher's signing key |
+
+A sidecar from the same host raises the bar without clearing it. It is worth having as the
+cheap tier, and it is exactly why a pinned-key signature is the one that means something.
+
+### `checksum:`
+
+```yaml
+checksum: sha256                        # shorthand: sidecar at <upstream>.sha256
+
+checksum:
+  algorithm: sha512                     # sha256 (default), sha384, sha512
+  url: https://example.org/SHA256SUMS   # a publisher who keeps every digest in one file
+
+checksum:
+  value: "9f86d081884c7d65…"            # pinned here; nothing is fetched
+```
+
+md5 and sha1 are deliberately not offered. A digest a forger can collide is a digest that says
+nothing, and listing it would invite matching whatever a publisher happens to emit.
+
+The sidecar is read in whichever shape it was published — a bare digest, `coreutils` text or
+binary mode, or a multi-file `SHA256SUMS`, in which case the line naming this file is the one
+used. A sidecar with exactly one line whose file name does not match is accepted: a publisher
+renaming their own file is not a reason to refuse a digest that is right there.
+
+### `signature:`
+
+```yaml
+signature:
+  algorithm: ed25519
+  public_key: "%env(FIREWALL_FEED_KEY)%"   # required — base64, hex, or raw
+  url: https://example.org/v1/list.txt.sig # default: <upstream>.sig
+```
+
+`public_key` is required. A signature with no pinned key verifies that the file was signed by
+whoever signed it, which is not a fact about anything.
+
+Needs `ext-sodium`. A source declaring `signature:` on a host without it **fails** rather than
+running unverified — that source has been marked as one that matters, and quietly skipping the
+check is the one outcome nobody asked for.
+
+### What happens when it does not match
+
+The body is refused and the source takes its ordinary [failure policy](#failure-policy), which
+is why `last_known_good` — the default — means the last **verified** copy keeps serving and
+the refused bytes are never used:
+
+```
+Source failed to load; using last known good copy
+  source: abusive-ips
+  reason: Source "abusive-ips": sha256 checksum mismatch. Expected 9f86d081884c7d65…,
+          got 2c26b46b68ffc68f…
+  entries: 51204
+```
+
+Mark the source `required: true` where serving a stale copy is the wrong direction — an allow
+list, typically — and the mismatch stops the bootstrap instead.
+
+A missing, empty or unreadable sidecar is the same kind of failure. It is not a reason to use
+the body: a source that cannot be checked has not been checked.
+
+Three details worth knowing:
+
+- **The digest covers the artifact as distributed.** A `.gz` list is hashed gzipped, before
+  the pipeline decompresses it, because that is the file the publisher hashed.
+- **The sidecar is fetched the way the list is**, with the same credential and headers — a
+  private feed's digest lives behind the same door — but always as a `GET`, and never with the
+  list's request body.
+- **Adding verification invalidates the cache.** Entries cached before a source was given a
+  `checksum:` came from bytes nothing checked, so they are re-fetched and re-verified rather
+  than reused.
+
+### What it is not
+
+`max_delta` is the neighbouring guardrail and answers a different question. "Is this the
+publisher's file" and "is this a plausible amount of change" are independent, and neither
+substitutes for the other — a signed file can still be a signed mistake.
 
 ## Failure policy
 

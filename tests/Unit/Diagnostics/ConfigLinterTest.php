@@ -948,4 +948,106 @@ class ConfigLinterTest extends AbstractTestCase
 
         $this->assertSame($before, \Kanopi\Firewall\Logging\LoggingFactory::logger());
     }
+
+    /**
+     * The arithmetic that matters, done before the deploy rather than during
+     * an incident: this many workers can be held, for this long (#329).
+     */
+    public function testATarpitConfigurationReportsWhatItCanHold(): void
+    {
+        $findings = $this->lint($this->tarpitConfig(['max_concurrent' => 40, 'max_seconds' => 20], 20));
+
+        $this->assertContains('Tarpit rules can hold 40 workers at once', $this->titles($findings, Diagnosis::WARNING));
+        $this->assertStringContainsString(
+            'pm.max_children',
+            (string) $this->findingFor($findings, 'can hold 40 workers')
+        );
+    }
+
+    /**
+     * A tarpit rule that does not tarpit takes a worker out of the pool to
+     * achieve nothing, which is unambiguous enough to be an error.
+     */
+    public function testATarpitRuleWithNoDurationIsAnError(): void
+    {
+        $findings = $this->lint($this->tarpitConfig([], null));
+
+        $this->assertContains(
+            'Rule "slow-them-down" is a tarpit that names no duration',
+            $this->titles($findings, Diagnosis::ERROR)
+        );
+    }
+
+    public function testATarpitRuleAboveTheCeilingIsReported(): void
+    {
+        $findings = $this->lint($this->tarpitConfig(['max_seconds' => 10], 60));
+
+        $this->assertContains(
+            'Rule "slow-them-down" asks for a longer hold than tarpit.max_seconds allows',
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    public function testATarpitRuleWithinTheCeilingIsNotReported(): void
+    {
+        $findings = $this->lint($this->tarpitConfig(['max_seconds' => 30], 5));
+
+        $this->assertSame([], array_filter(
+            $this->titles($findings, Diagnosis::WARNING),
+            static fn(string $title): bool => str_contains($title, 'longer hold')
+        ));
+    }
+
+    /**
+     * None of it applies to a configuration with no tarpit rule, which is
+     * almost all of them.
+     */
+    public function testAConfigurationWithNoTarpitRuleIsSilentAboutTarpits(): void
+    {
+        $this->assertSame([], array_filter(
+            $this->titles($this->lint($this->goodConfig())),
+            static fn(string $title): bool => str_contains(strtolower($title), 'tarpit')
+        ));
+    }
+
+    /**
+     * @param array<int, Diagnosis> $findings
+     */
+    private function findingFor(array $findings, string $needle): ?string
+    {
+        foreach ($findings as $finding) {
+            if (str_contains($finding->title, $needle)) {
+                return (string) $finding->detail;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $tarpit
+     *
+     * @return array<string, mixed>
+     */
+    private function tarpitConfig(array $tarpit, ?int $seconds): array
+    {
+        $metadata = ['name' => 'slow-them-down'];
+
+        if ($seconds !== null) {
+            $metadata['tarpit_seconds'] = $seconds;
+        }
+
+        return [
+            'global' => ['mode' => 'block'],
+            'tarpit' => $tarpit,
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\IpAddress',
+                'response' => 'tarpit',
+                'enable' => true,
+                'metadata' => $metadata,
+                'config' => ['10.0.0.50'],
+            ]],
+        ];
+    }
+
 }

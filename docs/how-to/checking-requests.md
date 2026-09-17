@@ -105,6 +105,7 @@ vendor/bin/firewall-check --config=firewall.yml --lint
 | Rules ordered after an allow-all | `0.0.0.0/0` in an allow rule makes everything after it dead |
 | Two rules with the same name | Nothing breaks, but a log line naming the rule stops being useful |
 | An empty rule list | `config: []` with no `metadata.sources` can never match |
+| A challenge rule wanting a longer pass than `challenge.ttl` allows | It is clamped at runtime, so the rule does not do what it says — see [How long a pass lasts](../plugins/challenges.md#how-long-a-pass-lasts) |
 
 ### What it deliberately does not do
 

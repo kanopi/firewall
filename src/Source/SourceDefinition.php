@@ -64,6 +64,8 @@ final class SourceDefinition
      *   One of self::VALIDATORS, asserted per entry.
      * @param float|null $maxDelta
      *   Reject a refresh moving the entry count by more than this fraction.
+     * @param int|null $maxEntries
+     *   Reject a refresh contributing more entries than this. Null is no limit.
      * @param int|null $ttl
      *   Seconds before a cached fetch is revalidated. Null uses the global default.
      * @param string $onError
@@ -74,8 +76,16 @@ final class SourceDefinition
      *   CSV/TSV only: treat the first row as column names.
      * @param string $comment
      *   Text formats only: strip from this marker to end of line.
+     * @param bool $allowCatchAll
+     *   Whether this source may contribute an entry matching every address.
+     *   Refused by default: a feed containing `0.0.0.0/0` blocks every visitor,
+     *   and a plugin cannot tell whether it is in the allow bucket or the block
+     *   one, so the source is where the intent has to be declared (#364).
      * @param string|null $delimiter
      *   CSV/TSV only: field delimiter. Null picks the format default.
+     * @param SourceVerification|null $verification
+     *   What the fetched bytes are asserted to be, or NULL to use them
+     *   unverified — which is what most published lists allow for (#365).
      */
     public function __construct(
         public readonly string $name,
@@ -93,6 +103,9 @@ final class SourceDefinition
         public readonly bool $headerRow = true,
         public readonly string $comment = '#',
         public readonly ?string $delimiter = null,
+        public readonly bool $allowCatchAll = false,
+        public readonly ?SourceVerification $verification = null,
+        public readonly ?int $maxEntries = null,
     ) {
     }
 
@@ -173,6 +186,17 @@ final class SourceDefinition
             $maxDelta = (float) $maxDelta;
         }
 
+        $maxEntries = $declaration['max_entries'] ?? null;
+        if ($maxEntries !== null) {
+            if (!is_numeric($maxEntries) || (int) $maxEntries < 1) {
+                throw new SourceException(
+                    sprintf('Source "%s": "max_entries" must be a positive integer.', $name)
+                );
+            }
+
+            $maxEntries = (int) $maxEntries;
+        }
+
         $ttl = $declaration['ttl'] ?? null;
         if ($ttl !== null) {
             if (!is_numeric($ttl) || (int) $ttl < 0) {
@@ -207,6 +231,9 @@ final class SourceDefinition
             headerRow: (bool) ($declaration['header_row'] ?? true),
             comment: is_string($declaration['comment'] ?? null) ? $declaration['comment'] : '#',
             delimiter: is_string($declaration['delimiter'] ?? null) ? $declaration['delimiter'] : null,
+            allowCatchAll: (bool) ($declaration['allow_catch_all'] ?? false),
+            verification: SourceVerification::fromDeclaration($declaration, $name, $sourceUpstream->url),
+            maxEntries: $maxEntries,
         );
     }
 
@@ -235,6 +262,30 @@ final class SourceDefinition
     public function isRemote(): bool
     {
         return $this->upstream->isRemote();
+    }
+
+    /**
+     * Whether this source checks what it fetches.
+     *
+     * @return bool
+     *   TRUE when a checksum or signature is declared.
+     */
+    public function isVerified(): bool
+    {
+        return $this->verification instanceof SourceVerification;
+    }
+
+    /**
+     * The list's file name, for picking a line out of a multi-file sidecar.
+     *
+     * @return string
+     *   The basename of the upstream path, or an empty string.
+     */
+    public function fileName(): string
+    {
+        $path = parse_url($this->upstream->url, PHP_URL_PATH);
+
+        return basename(is_string($path) ? $path : $this->upstream->url);
     }
 
     /**
@@ -273,6 +324,22 @@ final class SourceDefinition
             $this->headerRow,
             $this->comment,
             $this->delimiter,
+            // Changes which entries survive, so it belongs here for the same
+            // reason `validate` does. `ttl`, `on_error`, `required`,
+            // `max_delta` and `max_entries` deliberately do not: they change
+            // when or whether a refresh happens, not what a body decodes to
+            // (#364, #366).
+            $this->allowCatchAll,
+            // Not because it changes the decode -- it does not -- but because
+            // entries cached before a source was given a `checksum:` came from
+            // bytes nothing checked. Adding verification has to invalidate
+            // them, or the first thing the new setting does is serve the
+            // unverified copy it was added to stop trusting (#365).
+            $this->verification?->mode,
+            $this->verification?->algorithm,
+            $this->verification?->url,
+            $this->verification?->value,
+            $this->verification?->publicKey,
         ]));
     }
 

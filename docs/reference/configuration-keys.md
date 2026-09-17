@@ -22,6 +22,7 @@ Nothing here explains anything; that is deliberate.
 | `storage` | map | Where blocks are persisted. Table below |
 | `logger` | list | Monolog handlers. [Logging](../configuration/logging.md) |
 | `challenge` | map | Challenge flow settings. Table below |
+| `tarpit` | map | `max_concurrent` (default `5`) and `max_seconds` (default `30`) — see [Tarpit](../plugins/tarpit.md) |
 | `plugins` | list | The rules. Table below |
 
 !!! danger "A `configs:` entry naming a file that does not exist empties the whole document"
@@ -85,7 +86,10 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `submit_url` | string | `path`, prefixed with the request's base path | Where the interstitial's form POSTs to. Only set it if a proxy rewrites paths | [Add a Challenge](../how-to/add-a-challenge.md#a-host-served-from-a-subdirectory) |
 | `cookie_name` | string | `''` | Pass-token cookie; empty disables cookie delivery | [Challenges](../plugins/challenges.md) |
 | `header_name` | string | `''` | Header an SPA can send the token in | [Challenges](../plugins/challenges.md) |
+| `ttl` | int | `3600` | How long a pass lasts: the default for rules naming none, **and the ceiling for every rule and every submission** | [How long a pass lasts](../plugins/challenges.md#how-long-a-pass-lasts) |
 | `audience` | string | provider name | `aud` claim, to scope tokens between instances | [Scoping tokens](../plugins/challenges.md#scoping-tokens-across-instances) |
+| `passes_valid_from` | int or date | *unset* | Refuse every pass issued before this moment. One value, no storage | [Withdrawing a pass](../plugins/challenges.md#a-line-in-time-challengepasses_valid_from) |
+| `revocable` | bool | `false` | Consult the per-nonce revocation list, at one storage read per valid pass | [Withdrawing a pass](../plugins/challenges.md#one-pass-challengerevocable) |
 | `provider_options` | map | `[]` | Per-provider settings, keyed by provider name | [Challenges](../plugins/challenges.md) |
 
 ## `plugins:` — one entry
@@ -93,7 +97,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | Key | Type | Default | |
 |---|---|---|---|
 | `plugin` | class | *required* | The rule class |
-| `response` | string | `block` | `allow`, `block`, `challenge`, `record`, `redirect`, `mark` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
+| `response` | string | `block` | `allow`, `block`, `challenge`, `record`, `redirect`, `mark`, `tarpit` — decides the bucket, and [buckets beat weights](evaluation-order.md) |
 | `weight` | int | `0` | Order **within** its bucket; lower runs first |
 | `enable` | bool | `true` | |
 | `metadata` | map | `[]` | How the rule behaves. Below |
@@ -106,7 +110,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `name` | string | class name | What the log calls it. Name every rule | [Plugins](../plugins/index.md) |
 | `mode` | string | *enforce* | `log` observes this one rule without enforcing it | [Observe mode](../configuration/global.md#observing-one-rule-while-the-rest-enforce) |
 | `status_code` | int | `banning_status_code` | Per-rule override | [Status Code](../configuration/global.md#status-code) |
-| `default_expiration_time` | int | `3600` | Ban length, or pass-token TTL on a challenge rule | [Global](../configuration/global.md) |
+| `default_expiration_time` | int | `challenge.ttl` on a challenge rule, else `3600` | Ban length, or pass-token TTL. On a challenge rule it is capped by `challenge.ttl` | [Global](../configuration/global.md) |
 | `record` | bool | `true` | `false` refuses without writing to the block list. On a `redirect` rule the default is `false` and `true` opts in | [Evaluation Order](evaluation-order.md#refusing-and-recording-are-separate) |
 | `mark_as` | string | the rule's name | The signal `response: mark` raises, so several rules can raise one |
 | `mark_header` | string | — | Also set this header on the request when marking |
@@ -116,6 +120,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `active` | map | *unset* | `timezone` (default `UTC`), `days`, `hours`, `from`, `until` — when this rule is awake | [Time Windows](../configuration/time-windows.md) |
 | `sources` | list | `[]` | Pull this rule's entries from elsewhere | [Rule Sources](../configuration/sources.md) |
 | `challenge_provider` | string | `challenge.provider` | Per-rule provider override | [Per-plugin providers](../plugins/challenges.md#per-plugin-providers) |
+| `tarpit_seconds` | int | — | Required by `response: tarpit`. Capped by `tarpit.max_seconds` | [Tarpit](../plugins/tarpit.md) |
 | `config` | list | — | Legacy alias for the entry's `config:` | [Legacy format](legacy-format.md) |
 
 Identity-verifying plugins (User Agent, and any implementing
@@ -123,7 +128,7 @@ Identity-verifying plugins (User Agent, and any implementing
 `verify_negative_ttl`, `verify_suffixes`, `verify_claim_wait_ms` and
 `verify_slow_threshold_ms` — see [User Agent](../plugins/user-agent.md).
 
-Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option).
+Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option), including `allow_catch_all`, which decides whether a source may contribute an entry matching every address, `max_size` / `max_entries`, which bound how much a refresh may bring in, and `checksum` / `signature`, which decide whether the fetched bytes are [checked against what the publisher asserted](../configuration/sources.md#verifying-what-you-fetched).
 
 ## `metadata:` — edge signal rules
 

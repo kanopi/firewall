@@ -17,7 +17,7 @@ use Kanopi\Firewall\Traits\FileTrait;
  * File-based key-value store with in-memory caching.
  * Persists data to disk using PHP serialization.
  */
-class FileStorage extends InMemoryStorage
+class FileStorage extends InMemoryStorage implements ConcurrencyGaugeInterface
 {
     use FileTrait;
 
@@ -422,5 +422,180 @@ class FileStorage extends InMemoryStorage
 
                 return $deleted;
             }));
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * A separate file from the block list, and a stricter lock than the rest of
+     * this class uses.
+     *
+     * `withExclusiveLock()` falls back to running the action *unlocked* when it
+     * cannot take the lock, which is right for a block-list write -- recording
+     * a block without the lock beats not recording it. It is wrong here. An
+     * increment that is not atomic under-counts, the cap admits more tarpits
+     * than it allows, and that is the self-DoS the cap exists to prevent. So
+     * this refuses instead, and reports it as the zero the interface reserves
+     * for "could not be counted".
+     */
+    public function enter(string $key, int $ttl): int
+    {
+        return $this->withGaugeLock($key, function ($handle) use ($ttl): int {
+            $count = $this->readGauge($handle, $ttl) + 1;
+            $this->writeGauge($handle, $count);
+
+            return $count;
+        }, 0);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function leave(string $key): void
+    {
+        $this->withGaugeLock($key, function ($handle): int {
+            // Never below zero. A caller releasing in a `finally` cannot always
+            // know whether its claim succeeded, and the alternative to
+            // tolerating that is a leak on every error path.
+            $count = max(0, $this->readGauge($handle, 0) - 1);
+            $this->writeGauge($handle, $count);
+
+            return $count;
+        }, 0);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function inFlight(string $key): int
+    {
+        return $this->withGaugeLock($key, fn($handle): int => $this->readGauge($handle, 0), 0);
+    }
+
+    /**
+     * Run an action holding an exclusive lock on the gauge file, or give up.
+     *
+     * @param string $key
+     *   What is being counted.
+     * @param callable(resource): int $action
+     *   The action, given the open handle.
+     * @param int $onFailure
+     *   Returned when the lock could not be taken.
+     *
+     * @return int
+     *   The action's result, or $onFailure.
+     */
+    private function withGaugeLock(string $key, callable $action, int $onFailure): int
+    {
+        $path = $this->gaugeFilePath($key);
+        $handle = @fopen($path, 'c+');
+
+        if ($handle === false) {
+            return $onFailure;
+        }
+
+        @chmod($path, 0600);
+
+        if (!$this->lockGauge($handle)) {
+            @fclose($handle);
+
+            return $onFailure;
+        }
+
+        try {
+            return $action($handle);
+        } finally {
+            @flock($handle, LOCK_UN);
+            @fclose($handle);
+        }
+    }
+
+    /**
+     * Take an exclusive lock on an open gauge file.
+     *
+     * Blocking, not `LOCK_NB`. The hold is a read, a small write and a close;
+     * waiting microseconds for it is correct, and giving up would report a
+     * failure that is really contention.
+     *
+     * A seam, for the same reason `LocalFetcher::readFile()` is one: `flock()`
+     * failing on a handle that opened is real -- a filesystem without locking,
+     * an NFS mount without a lock daemon -- and is not something a test can
+     * provoke against a working one. What happens next matters enough to be
+     * exercised: the caller must refuse rather than proceed unlocked, because
+     * an increment that is not atomic under-counts and the cap stops holding.
+     *
+     * @param resource $handle
+     *   The open handle.
+     *
+     * @return bool
+     *   TRUE when the lock was taken.
+     */
+    protected function lockGauge($handle): bool
+    {
+        return @flock($handle, LOCK_EX);
+    }
+
+    /**
+     * Read the count from an open, locked gauge file.
+     *
+     * @param resource $handle
+     *   The open handle.
+     * @param int $ttl
+     *   When positive, a count older than this reads as zero. The backstop for
+     *   a worker killed between `enter()` and `leave()`: the leak makes the cap
+     *   stricter until it clears, which is the safe direction.
+     *
+     * @return int
+     *   The count.
+     */
+    private function readGauge($handle, int $ttl): int
+    {
+        rewind($handle);
+        $contents = (string) stream_get_contents($handle);
+
+        if (preg_match('/^(\d+):(\d+)$/', trim($contents), $match) !== 1) {
+            return 0;
+        }
+
+        if ($ttl > 0 && time() - (int) $match[2] > $ttl) {
+            return 0;
+        }
+
+        return (int) $match[1];
+    }
+
+    /**
+     * Write the count to an open, locked gauge file.
+     *
+     * @param resource $handle
+     *   The open handle.
+     * @param int $count
+     *   The count.
+     */
+    private function writeGauge($handle, int $count): void
+    {
+        rewind($handle);
+        ftruncate($handle, 0);
+        fwrite($handle, $count . ':' . time());
+        fflush($handle);
+    }
+
+    /**
+     * Where a gauge's counter lives.
+     *
+     * Beside the block list rather than inside it: the block list is read and
+     * rewritten wholesale, and a counter touched on every tarpit has no
+     * business in a file whose write amplification is the size of the block
+     * list.
+     *
+     * @param string $key
+     *   What is being counted.
+     *
+     * @return string
+     *   The file path.
+     */
+    private function gaugeFilePath(string $key): string
+    {
+        return $this->filePath . '.gauge.' . hash('sha256', $key) . '.txt';
     }
 }

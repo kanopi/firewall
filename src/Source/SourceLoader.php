@@ -35,6 +35,14 @@ final class SourceLoader
     use LoggingTrait;
 
     /**
+     * The two bytes every gzip member starts with.
+     *
+     * Used only to tell "this is not gzip" from "this is gzip I will not
+     * decompress", which are different problems with different fixes.
+     */
+    private const GZIP_MAGIC = "\x1f\x8b";
+
+    /**
      * Fetchers tried in order.
      *
      * @var array<int, FetcherInterface>
@@ -57,6 +65,8 @@ final class SourceLoader
      *   `where` evaluator, or NULL for the default.
      * @param EntryValidator|null $entryValidator
      *   Entry validator, or NULL for the default.
+     * @param SourceVerifier|null $sourceVerifier
+     *   Checksum/signature verifier, or NULL for the default.
      * @param array<int, FetcherInterface>|null $fetchers
      *   Fetchers to try, or NULL for local plus HTTP.
      * @param bool|null $offline
@@ -74,6 +84,7 @@ final class SourceLoader
         private readonly ?EntryValidator $entryValidator = null,
         ?array $fetchers = null,
         ?bool $offline = null,
+        private readonly ?SourceVerifier $sourceVerifier = null,
     ) {
         $this->fetchers = $fetchers ?? [new LocalFetcher(), new HttpFetcher()];
         $this->offline = $offline ?? (defined('KANOPI_FIREWALL_SOURCES_OFFLINE') && (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE'));
@@ -145,6 +156,14 @@ final class SourceLoader
             ));
         }
 
+        // Before the body-hash short-circuit below, not after. That hash
+        // compares this fetch against the previous one; it is a cache
+        // fingerprint and has never said anything about authenticity. Checking
+        // first also means a source given a `checksum:` after its cache was
+        // warmed gets verified on the next refresh rather than on the next
+        // change (#365).
+        $this->verify($sourceDefinition, $body);
+
         $hash = hash('sha256', $body);
 
         if ($cached !== null && ($meta['body_hash'] ?? null) === $hash) {
@@ -160,6 +179,15 @@ final class SourceLoader
         }
 
         $entries = $this->pipeline($sourceDefinition, $body);
+
+        // Before the delta check, because a ceiling is an absolute statement
+        // and a delta is a relative one: on a first load there is nothing to
+        // compare against, and "how big may this be" still has an answer.
+        $this->validator()->assertEntryCount(
+            count($entries),
+            $sourceDefinition->maxEntries,
+            $sourceDefinition->name
+        );
 
         $this->validator()->assertDelta(
             count($entries),
@@ -181,6 +209,103 @@ final class SourceLoader
         ]);
 
         return $entries;
+    }
+
+    /**
+     * Check a fetched body against what the source asserts about it.
+     *
+     * Runs on the raw body, before decompression: a digest is published over
+     * the artifact as it is distributed, so `ranges.json.gz` is hashed gzipped.
+     *
+     * @param SourceDefinition $sourceDefinition
+     *   The source being loaded.
+     * @param string $body
+     *   The fetched bytes.
+     *
+     * @throws SourceException
+     *   When the body does not verify, or the sidecar cannot be fetched.
+     *   `SourceManager` turns that into this source's `on_error` policy, which
+     *   is what keeps the last known good copy rather than taking the bytes.
+     */
+    private function verify(SourceDefinition $sourceDefinition, string $body): void
+    {
+        $verification = $sourceDefinition->verification;
+
+        if (!$verification instanceof SourceVerification) {
+            return;
+        }
+
+        $sidecar = $verification->needsSidecar()
+            ? $this->fetchSidecar($sourceDefinition, $verification)
+            : null;
+
+        $this->verifier()->assert(
+            $verification,
+            $body,
+            $sidecar,
+            $sourceDefinition->name,
+            $sourceDefinition->fileName()
+        );
+
+        $this->getLogger()->debug('Source body verified', [
+            'source' => $sourceDefinition->name,
+            'verification' => $verification->describe(),
+        ]);
+    }
+
+    /**
+     * Fetch the sidecar that carries the assertion.
+     *
+     * Goes through the same fetcher the list does, so a local file's checksum
+     * is read from disk and a private feed's is fetched with the same
+     * credential.
+     *
+     * @param SourceDefinition $sourceDefinition
+     *   The source being loaded.
+     * @param SourceVerification $sourceVerification
+     *   What it asserts, for the sidecar's location.
+     *
+     * @return string
+     *   The sidecar body.
+     *
+     * @throws SourceException
+     *   When the sidecar cannot be read, or comes back empty.
+     */
+    private function fetchSidecar(SourceDefinition $sourceDefinition, SourceVerification $sourceVerification): string
+    {
+        // A definition rather than a bare URL, because the fetchers take one
+        // and because `supports()` has to pick local-vs-HTTP for the sidecar
+        // the same way it did for the list. Conditional validators are
+        // deliberately not passed: a 304 here would leave nothing to compare
+        // against, and a sidecar is a few dozen bytes.
+        $sidecarDefinition = new SourceDefinition(
+            name: $sourceDefinition->name . ' (' . $sourceVerification->describe() . ')',
+            upstream: $sourceDefinition->upstream->sidecar($sourceVerification->url ?? ''),
+        );
+
+        $body = $this->fetcher($sidecarDefinition)->fetch($sidecarDefinition)->body;
+
+        if ($body === null || $body === '') {
+            throw new SourceException(sprintf(
+                'Source "%s": the %s sidecar at %s came back empty, so the body cannot be checked.',
+                $sourceDefinition->name,
+                $sourceVerification->algorithm,
+                $sidecarDefinition->displayUpstream()
+            ));
+        }
+
+        return $body;
+    }
+
+    /**
+     * The body verifier, built on first use.
+     *
+     * @return SourceVerifier
+     *   The verifier.
+     */
+    private function verifier(): SourceVerifier
+    {
+        return $this->sourceVerifier ?? new SourceVerifier();
     }
 
     /**
@@ -229,7 +354,28 @@ final class SourceLoader
             ]);
         }
 
-        return $this->validator()->filter($entries, $sourceDefinition->validate, $sourceDefinition->name);
+        // Two questions, asked separately: is the entry well formed, and would
+        // it match everybody. `0.0.0.0/0` passes the first and fails the
+        // second (#364).
+        $entries = $this->validator()->refuseCatchAll(
+            $entries,
+            $sourceDefinition->name,
+            $sourceDefinition->allowCatchAll
+        );
+
+        $validated = $this->validator()->filter($entries, $sourceDefinition->validate, $sourceDefinition->name);
+
+        // A third question, asked of the source rather than of an entry: it
+        // decoded to something and none of it survived, which is an error page
+        // where a list should be rather than a list with problems (#366).
+        $this->validator()->assertNotEmptied(
+            $entries,
+            $validated,
+            $sourceDefinition->validate,
+            $sourceDefinition->name
+        );
+
+        return $validated;
     }
 
     /**
@@ -283,16 +429,42 @@ final class SourceLoader
             ));
         }
 
-        $decoded = @gzdecode($body);
+        // `max_size` bounds the body *as fetched*, and decompression is where
+        // that stops meaning anything: ordinary repetitive list data gzips at
+        // better than 500:1, so a body comfortably inside the ceiling expands
+        // to tens of times it, and a deliberately crafted one does far worse.
+        // A ceiling with `compression: gzip` as a documented bypass is not a
+        // ceiling -- and `.gz` on a URL turns this on without anybody asking
+        // for it (#366).
+        //
+        // gzdecode()'s own limit refuses rather than truncating, and stops
+        // inflating rather than inflating and then trimming, so the ceiling
+        // holds for memory as well as for what is accepted.
+        $limit = $sourceDefinition->upstream->maxSize;
+        $decoded = $limit > 0 ? @gzdecode($body, $limit + 1) : @gzdecode($body);
 
-        if ($decoded === false) {
+        if ($decoded !== false) {
+            return $decoded;
+        }
+
+        // False means "did not decode", which covers both a body that is not
+        // gzip and one that would not fit. The magic bytes separate the first
+        // from the rest; what is left is a body that expands past the ceiling
+        // or is damaged after its header, and the message says both rather
+        // than picking one and being confidently wrong.
+        if ($limit > 0 && str_starts_with($body, self::GZIP_MAGIC)) {
             throw new SourceException(sprintf(
-                'Source "%s": body is not valid gzip data.',
-                $sourceDefinition->name
+                'Source "%s": gzip body expands beyond upstream.max_size (%s), or is damaged past '
+                . 'its header. Refusing it rather than decompressing without a ceiling.',
+                $sourceDefinition->name,
+                $sourceDefinition->upstream->describeMaxSize()
             ));
         }
 
-        return $decoded;
+        throw new SourceException(sprintf(
+            'Source "%s": body is not valid gzip data.',
+            $sourceDefinition->name
+        ));
     }
 
     /**

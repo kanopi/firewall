@@ -9,13 +9,115 @@ The pass token is:
 - **Audience-bound** — the token carries an `aud` claim and only verifies against the instance that issued it. See [Scoping tokens across instances](#scoping-tokens-across-instances).
 - **Provider-bound** — the token carries a `prv` claim and only satisfies rules served by the provider that issued it. See [Per-plugin providers](#per-plugin-providers).
 - **Delivered two ways** — as an `HttpOnly; Secure; SameSite=Strict` cookie *and* as a value the interstitial JS writes to `localStorage` so SPA callers can attach it to XHRs via a custom header (defaults to `X-Firewall-Challenge`).
-- **Expires** after `metadata.default_expiration_time` seconds for the matched plugin (default `3600`).
+- **Expires** after `metadata.default_expiration_time` seconds for the matched plugin, falling back to `challenge.ttl` and then to `3600`. See [How long a pass lasts](#how-long-a-pass-lasts).
 
 !!! tip "Setting one up for the first time?"
 
     This page is the reference — how the pass token works, what each provider costs you,
     and the interface to write your own. To just get a challenge running, start with
     [Add a Challenge](../how-to/add-a-challenge.md).
+
+## How long a pass lasts
+
+```yaml
+challenge:
+  provider: math
+  secret: '%env(FIREWALL_CHALLENGE_SECRET)%'
+  ttl: 3600     # the default for rules that name no lifetime, and the ceiling for every rule
+```
+
+| | |
+|---|---|
+| Where the number comes from | `metadata.default_expiration_time` → `challenge.ttl` → `3600` |
+| A rule asking for more than `challenge.ttl` | Clamped to it, and logged at `warning` when the rule fires |
+| A lifetime posted back by the interstitial | Clamped to the same ceiling |
+| A lifetime *below* the ceiling | Honoured — asking for less is asking for less exposure |
+
+The cookie and the token always carry the same lifetime. A cookie outliving its token means a visitor sending something the firewall rejects with no way to tell why.
+
+### Why it is a ceiling and not just a default
+
+The lifetime is not known when a solution is verified. The submission arrives at `challenge.path`, not at the protected URL, so the rule that matched — and therefore its `default_expiration_time` — is long gone by then. That is why the value rides in the interstitial's form.
+
+Which means it is posted by the client. Before `challenge.ttl` there was a floor under that value and no ceiling on it: solve one challenge, post `ttl=999999999`, and the pass token short-circuits every `response: challenge` rule served by that provider for the next thirty-one years. The token is HMAC-signed, so it is *valid* — the signature covers the lifetime the client asked for.
+
+Two things follow that are worth knowing:
+
+- **Raising `challenge.ttl` raises the ceiling for everything.** A single rule needing a long pass sets the limit every other rule is measured against, because verification cannot tell them apart. If one route genuinely needs a day-long pass and the rest should not, give it its own instance with its own `audience`.
+- **Tokens already issued are not revoked by lowering it.** They are stateless and signed, so an outstanding long-lived pass stays valid until it expires — see [Withdrawing a pass](#withdrawing-a-pass) for the two levers that take one away without rotating the secret.
+
+`firewall-check --lint` reports a challenge rule whose `default_expiration_time` exceeds `challenge.ttl`, so a rule that does not do what it says shows up in CI rather than one request at a time in a log.
+
+## Withdrawing a pass
+
+A pass token is stateless and HMAC-signed, so once issued it is accepted until its own `exp`. That is the property the design is built on — no shared session store, horizontal scaling for free — and it means rotating `challenge.secret` was, until 2.30.0, the only way to stop one being accepted. It re-challenges **every** legitimate visitor holding a pass in order to withdraw one.
+
+Two levers, both off by default. A deployment that never revokes anything should pay nothing for the ability.
+
+### A line in time: `challenge.passes_valid_from`
+
+```yaml
+challenge:
+  passes_valid_from: "2026-09-16 12:00:00 UTC"   # or a unix timestamp
+```
+
+Every pass issued before that moment stops being accepted. One config value, no storage, nothing per token — which makes it the blunt-but-not-nuclear middle, and the right reach for the likeliest case: *a long TTL was configured by mistake and noticed a week later.*
+
+It is compared against the token's `iat` claim, added in 2.30.0. **A pass minted before that claim existed is withdrawn by any cutoff**, because it cannot be dated — which is the right way round: the passes most worth withdrawing this way are exactly the ones issued before the firewall was fixed. Nothing changes for a deployment that never sets the key.
+
+A value that cannot be read as a moment in time is a startup failure rather than a silent fallback to "off". An operator who set this believes outstanding passes were withdrawn.
+
+### One pass: `challenge.revocable`
+
+```yaml
+challenge:
+  revocable: true      # consult the revocation list on an otherwise-valid pass
+```
+
+```console
+$ bin/firewall-challenge firewall.yml --inspect=eyJpcCI6...
+Pass token:
+  address:  203.0.113.9
+  provider: math
+  issued:   2026-09-16 12:04:11 UTC
+  expires:  2026-09-16 13:04:11 UTC
+  nonce:    af2f100884fa35c3281b6d1db727b8fd
+
+$ bin/firewall-challenge firewall.yml --revoke-nonce=af2f1008… --reason="abusing the pass"
+Revoked af2f100884fa35c3281b6d1db727b8fd until 2026-09-16 13:04:11 UTC.
+```
+
+Keyed by the token's `nonce`, which the payload has always carried, so this reaches passes already in the wild. Records are written with the token's remaining lifetime and disappear when it would have expired anyway, so the list trims itself and is bounded by the longest TTL in play.
+
+| | |
+|---|---|
+| Cost when off | Nothing. The store is never consulted |
+| Cost when on | One storage read, and only on a token that has already passed every other check |
+| Where it is stored | The same backend as the block list, under `fw_challenge_revoked:`, hashed |
+| Getting the nonce | `--inspect` a token, or read `pass_nonce` off the `Challenge solution accepted` log line |
+
+The `Challenge solution accepted` line carries `pass_nonce` and `pass_expires` for exactly this: grep it by address and you have what a revocation needs, without retrieving a token out of somebody's browser.
+
+!!! warning "Revoking is not blocking"
+
+    Blocking an address refuses a client. Revoking withdraws an *exemption* a client earned, which is the opposite direction and does not follow from it. `bin/firewall-block` is the other tool, and both read the real store.
+
+```console
+$ bin/firewall-challenge firewall.yml [action] [options]
+
+  --inspect=TOKEN    Decode a pass: address, provider, issued, expires, nonce
+  --revoke=TOKEN     Withdraw that pass, until its own expiry
+  --revoke-nonce=N   Withdraw by nonce, for when the log is what you have
+  --restore=NONCE    Put a revoked pass back
+  --status=NONCE     Whether a nonce is currently revoked, and why
+
+  --expires=EPOCH    With --revoke-nonce: when the token expires. Defaults to
+                     now plus `challenge.ttl`, which no live pass outlasts
+  --reason=TEXT      Recorded alongside a revocation
+  --json             Machine-readable output
+```
+
+Restoring is possible because the token was never changed — only the record saying to refuse it. That is also why `--revoke` cannot outlive the pass: a revocation is held for the token's remaining lifetime and no longer.
 
 ## Single-use solutions
 

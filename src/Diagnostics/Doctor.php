@@ -723,6 +723,8 @@ class Doctor
         $sourceManager = new SourceManager();
         $fresh = 0;
         $findings = [];
+        $unverified = [];
+        $verified = 0;
         $global = is_array($config['global'] ?? null) ? $config['global'] : [];
         $errorAfter = $this->staleSourceErrorAfter($global);
 
@@ -767,6 +769,17 @@ class Doctor
             foreach ($definitions as $definition) {
                 $url = $definition->upstream->url;
                 $meta = $sourceCache->meta($definition);
+
+                // Remote only. A local file is whatever the pipeline that put
+                // it there put there, and reporting it as unverified says
+                // something about that pipeline rather than about this config.
+                if ($definition->isRemote()) {
+                    if ($definition->isVerified()) {
+                        $verified++;
+                    } else {
+                        $unverified[] = $definition->name;
+                    }
+                }
 
                 if ($meta === []) {
                     $findings[] = Diagnosis::warning(
@@ -835,6 +848,32 @@ class Doctor
 
         if ($fresh > 0) {
             $findings[] = Diagnosis::ok(sprintf('%d rule source%s cached and fresh', $fresh, $fresh === 1 ? '' : 's'));
+        }
+
+        if ($verified > 0) {
+            $findings[] = Diagnosis::ok(sprintf(
+                '%d rule source%s verified against a published checksum or signature',
+                $verified,
+                $verified === 1 ? '' : 's'
+            ));
+        }
+
+        if ($unverified !== []) {
+            // One line for all of them, not one per source. Most published
+            // lists in this ecosystem ship no sidecar at all, so per-source
+            // warnings would be a wall of noise about something the operator
+            // frequently cannot fix -- and a wall of noise is read as
+            // background rather than as a finding (#365).
+            $findings[] = Diagnosis::warning(
+                sprintf('%d remote rule source%s fetched without verification', count($unverified), count($unverified) === 1 ? '' : 's'),
+                sprintf(
+                    '%s — HTTPS authenticates the host and protects the transport; it says nothing about a '
+                    . 'repository that was compromised or a CDN object that was replaced. Add `checksum: sha256` '
+                    . 'where the publisher ships a sidecar, or `signature:` with a pinned key where they sign.',
+                    implode(', ', $unverified)
+                ),
+                'configuration/sources.md#verifying-what-you-fetched'
+            );
         }
 
         return $findings;

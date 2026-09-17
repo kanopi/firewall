@@ -77,6 +77,31 @@ by its class, and two rules of the same class are indistinguishable.
 
 ---
 
+## "One visitor's challenge pass has to go"
+
+A pass is stateless and signed, so it is accepted until it expires. Rotating `challenge.secret`
+withdraws it — along with everybody else's.
+
+**Find it.** The `Challenge solution accepted` log line carries `pass_nonce` and `pass_expires`,
+so grep it by address rather than trying to get the token out of somebody's browser.
+
+**Take it away:**
+
+```console
+$ firewall-challenge firewall.yml --revoke-nonce=af2f1008… --reason="abusing the pass"
+$ firewall-challenge firewall.yml --status=af2f1008…
+```
+
+This needs `challenge.revocable: true`; without it the record is written and never read, and the
+command says so. To withdraw *every* pass issued before a moment — a long TTL configured by
+mistake and noticed a week later — set `challenge.passes_valid_from` instead, which costs no
+storage at all. See [Withdrawing a pass](../plugins/challenges.md#withdrawing-a-pass).
+
+Revoking a pass is not blocking an address: it withdraws an exemption rather than refusing a
+client. If the visitor should be refused outright, that is `firewall-block`.
+
+---
+
 ## "I locked myself out"
 
 **Confirm it:**
