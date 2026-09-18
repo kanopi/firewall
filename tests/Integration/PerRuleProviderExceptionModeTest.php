@@ -100,14 +100,23 @@ class PerRuleProviderExceptionModeTest extends TestCase
 
             $this->assertSame('/_firewall/challenge', $context['submit_url']);
 
-            // name.signature — the half a host cannot reproduce, because the
-            // signed prefix is private and the signer is protected on a final
-            // class.
-            $this->assertStringStartsWith(self::SECONDARY . '.', $context['provider_token']);
-            $this->assertGreaterThan(
-                strlen(self::SECONDARY) + 1,
-                strlen($context['provider_token']),
-                'The provider token carries no signature.'
+            // name|ttl.signature — the half a host cannot reproduce, because
+            // the signed prefix is private and the signer is protected on a
+            // final class.
+            //
+            // The lifetime joined the payload in 2.32.0 so the client never
+            // proposes it (#369); this assertion said `name.` before that, and
+            // caught the format change when it landed.
+            $this->assertStringStartsWith(self::SECONDARY . '|', $context['provider_token']);
+            $this->assertMatchesRegularExpression(
+                '/^' . preg_quote(self::SECONDARY, '/') . '\|\d+\.\S+$/',
+                $context['provider_token'],
+                'The provider token carries no signed lifetime, or no signature.'
+            );
+            $this->assertSame(
+                $context['ttl'],
+                explode('.', explode('|', $context['provider_token'])[1], 2)[0],
+                'The signed lifetime and the rendered one must be the same number.'
             );
         }
     }
