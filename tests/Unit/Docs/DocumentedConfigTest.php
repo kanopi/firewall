@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Docs;
 
+use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
+use Kanopi\Firewall\Storage\StorageInterface;
+
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Yaml\Exception\ParseException;
 use Symfony\Component\Yaml\Yaml;
@@ -38,11 +41,11 @@ class DocumentedConfigTest extends TestCase
      * @var array<class-string|string, list<string>>
      */
     private const STORAGE_KEYS = [
-        'Kanopi\\Firewall\\Storage\\FileStorage' => ['storage_file', 'offense_file'],
-        'Kanopi\\Firewall\\Storage\\DatabaseStorage' => ['connection', 'storage_table', 'offenses_table', 'schema_check_probability'],
-        'Kanopi\\Firewall\\Storage\\InMemoryStorage' => [],
-        'Kanopi\\Firewall\\Storage\\RedisStorage' => ['redis', 'instance'],
-        'Kanopi\\Firewall\\Storage\\SharedStorage' => ['shared', 'local'],
+        'Kanopi\\Firewall\\Storage\\FileStorage' => ['storage_file', 'offense_file', 'record_request'],
+        'Kanopi\\Firewall\\Storage\\DatabaseStorage' => ['connection', 'storage_table', 'offenses_table', 'schema_check_probability', 'record_request'],
+        'Kanopi\\Firewall\\Storage\\InMemoryStorage' => ['record_request'],
+        'Kanopi\\Firewall\\Storage\\RedisStorage' => ['redis', 'instance', 'record_request'],
+        'Kanopi\\Firewall\\Storage\\SharedStorage' => ['shared', 'local', 'record_request'],
         'Kanopi\\Firewall\\RateLimitStorage\\FileRateLimitStorage' => ['file'],
         'Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage' => ['connection', 'storage_table', 'schema_check_probability'],
         'Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage' => ['redis', 'ttl', 'instance'],
@@ -181,14 +184,20 @@ class DocumentedConfigTest extends TestCase
 
         foreach (['Storage', 'RateLimitStorage'] as $directory) {
             foreach (glob(dirname(__DIR__, 3) . '/src/' . $directory . '/*.php') ?: [] as $file) {
-                $short = basename($file, '.php');
+                $class = 'Kanopi\\Firewall\\' . $directory . '\\' . basename($file, '.php');
 
-                // Interfaces, factories and the abstract bases are not backends.
-                if (str_contains($short, 'Interface') || str_contains($short, 'Factory') || str_starts_with($short, 'Abstract')) {
+                // Asked of the class rather than of its name. Matching on
+                // `Interface`, `Factory` and `Abstract` worked until something
+                // in these directories was none of those and not a backend
+                // either -- `RecordedRequest` is a policy object, and the name
+                // filter had no opinion about it (#375).
+                $contract = $directory === 'Storage'
+                    ? StorageInterface::class
+                    : RateLimitStorageInterface::class;
+
+                if (!is_a($class, $contract, true) || (new \ReflectionClass($class))->isAbstract()) {
                     continue;
                 }
-
-                $class = 'Kanopi\\Firewall\\' . $directory . '\\' . $short;
 
                 if (!array_key_exists($class, self::STORAGE_KEYS)) {
                     $undeclared[] = $class;
