@@ -11,7 +11,7 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
-## [2.31.0](https://github.com/kanopi/firewall/releases/tag/v2.31.0) — 2026-09-17
+## [2.31.0](https://github.com/kanopi/firewall/releases/tag/v2.31.0) — 2026-09-18
 
 What the firewall writes down, in both directions: a block record kept the visitor's whole cookie jar and header set — session cookie, `Authorization`, challenge pass — in the one artifact operators paste into tickets and replicate across a fleet, and every remote log handler shipped its records over a blocking HTTPS round trip inside the request, which is the hazard 2.30.0 deliberately refused for metrics with nothing stopping it one directory over. Both were found by reviewing the previous release's own work rather than by planning, and the second turned up a third thing on the way past: wrapping any Monolog handler was impossible from YAML, which is why the documented answer for `FingersCrossed` and `Buffer` had always been to write PHP instead.
 
