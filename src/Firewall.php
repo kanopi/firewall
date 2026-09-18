@@ -1839,7 +1839,7 @@ final class Firewall
             return;
         }
 
-        [$providerName, $challengeProvider] = $this->resolveSubmissionProvider($request);
+        [$providerName, $challengeProvider, $signedTtl] = $this->resolveSubmissionProvider($request);
 
         // An unresolvable provider claim is refused outright rather than
         // quietly verified by the default provider: the field is signed, so
@@ -1874,6 +1874,9 @@ final class Firewall
                 // and every value here is read the same way the accepting path
                 // reads it rather than invented for the occasion (#311).
                 $rejectedTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
+                $rejectedTtlSeconds = $this->clampChallengeTtl(
+                    $signedTtl ?? ($rejectedTtl === '' ? 0 : (int) $rejectedTtl)
+                );
                 $rejectedRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
 
                 throw new ChallengeRequiredException(
@@ -1888,10 +1891,17 @@ final class Firewall
                         // hands an over-long request straight back to be
                         // posted again, so the retry asks for the same thing
                         // the accepting path would have refused (#367).
-                        'ttl' => (string) $this->clampChallengeTtl($rejectedTtl === '' ? 0 : (int) $rejectedTtl),
+                        //
+                        // A refused submission carries whatever lifetime it
+                        // arrived with, signed or posted, because the rule that
+                        // originally matched is no more knowable here than it
+                        // was the first time. The retry is signed either way,
+                        // so a visitor who fails once does not drop back to
+                        // proposing their own (#369).
+                        'ttl' => (string) $rejectedTtlSeconds,
                         'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
                         'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
-                        'provider_token' => $this->signProviderName($providerName),
+                        'provider_token' => $this->signProviderName($providerName, $rejectedTtlSeconds),
                     ]
                 );
             }
@@ -1906,21 +1916,52 @@ final class Firewall
             // @codeCoverageIgnoreEnd
         }
 
-        // Both fields ride in on the interstitial's POST, so both are
-        // attacker-chosen. Read them off the raw bag — InputBag::get() throws
-        // on an array value, and nothing above this frame catches it (#130).
-        // An absent or non-string ttl falls back to `challenge.ttl`; an
-        // absent or non-string redirect falls back to the site root, which is
-        // what sanitizeRedirect() would have reduced a hostile one to anyway.
+        $this->mintPassToken(
+            $request,
+            $this->tokenManager,
+            $challengeProvider,
+            $providerName,
+            $this->solvedTtl($request, $providerName, $signedTtl)
+        );
+    }
+
+    /**
+     * How long the pass this submission earned should last.
+     *
+     * @param Request $request
+     *   The submission.
+     * @param string $providerName
+     *   The provider that was solved, for the log line.
+     * @param int|null $signedTtl
+     *   The lifetime the firewall signed into `provider_token`, or NULL when
+     *   the field carries none.
+     *
+     * @return int
+     *   Seconds, clamped by `challenge.ttl`.
+     */
+    private function solvedTtl(Request $request, string $providerName, ?int $signedTtl): int
+    {
+        // The lifetime the firewall itself resolved, carried back signed, so
+        // there is nothing here for the client to propose (#369).
+        //
+        // Still clamped rather than trusted outright: `challenge.ttl` may have
+        // been lowered while this page was open, and a ceiling that applied
+        // only to values the client sent would be a ceiling with a gap in it.
+        if ($signedTtl !== null) {
+            return $this->clampChallengeTtl($signedTtl);
+        }
+
+        // No signed lifetime, so this interstitial was rendered before 2.32.0,
+        // or by a custom provider that builds `provider_token` itself. The
+        // client's proposal is all there is, and #367's ceiling is what stands
+        // between it and a pass valid for thirty-one years — which is exactly
+        // the defence in depth that issue was written to be, and the reason it
+        // shipped a release earlier rather than being folded into this one.
+        //
+        // Read off the raw bag: InputBag::get() throws on an array value, and
+        // nothing above this frame catches it (#130).
         $rawTtl = $this->postedString($request, ChallengeProviderInterface::TTL_FIELD);
         $requestedTtl = $rawTtl === '' ? 0 : (int) $rawTtl;
-
-        // The lifetime the client asked for is a request, not an instruction.
-        // Before this, `max(0, …)` put a floor under it and nothing put a
-        // ceiling on it: solve one math problem, post `ttl=999999999`, and the
-        // pass token short-circuits every challenge rule this provider serves
-        // for the next thirty-one years — signed, valid, and unrevokable
-        // without rotating the secret (#367).
         $ttl = $this->clampChallengeTtl($requestedTtl);
 
         if ($requestedTtl > $ttl) {
@@ -1935,11 +1976,42 @@ final class Firewall
             ]));
         }
 
+        return $ttl;
+    }
+
+    /**
+     * Mint the pass, tell everybody, and end the request.
+     *
+     * @param Request $request
+     *   The submission.
+     * @param TokenManager $tokenManager
+     *   The signer. Taken as an argument rather than read off the property,
+     *   because `handleChallengeSubmission()` has already established it is
+     *   there -- re-checking here would be a branch no test could reach.
+     * @param ChallengeProviderInterface $challengeProvider
+     *   The provider that was solved.
+     * @param string $providerName
+     *   Its configured name.
+     * @param int $ttl
+     *   How long the pass lasts.
+     *
+     * @throws ChallengeSolvedException
+     *   In Exception mode. Carries the token and the redirect target.
+     */
+    private function mintPassToken(
+        Request $request,
+        TokenManager $tokenManager,
+        ChallengeProviderInterface $challengeProvider,
+        string $providerName,
+        int $ttl
+    ): void {
         // Scope the token to what was actually solved. Without this a math
         // pass would satisfy a reCAPTCHA rule, and the cheapest challenge
         // in the config would set the price of every other one.
-        $token = $this->tokenManager->mint($request, $ttl, $providerName);
+        $token = $tokenManager->mint($request, $ttl, $providerName);
 
+        // An absent or non-string redirect falls back to the site root, which
+        // is what sanitizeRedirect() would have reduced a hostile one to anyway.
         $rawRedirect = $this->postedString($request, ChallengeProviderInterface::REDIRECT_FIELD, false);
         $redirect = $this->sanitizeRedirect($rawRedirect === '' ? '/' : $rawRedirect);
 
@@ -1947,7 +2019,7 @@ final class Firewall
         // without the operator having to get the token itself out of somebody's
         // browser: this is the line you grep by address when one pass turns out
         // to need withdrawing (#368).
-        $claims = $this->tokenManager->inspect($token) ?? [];
+        $claims = $tokenManager->inspect($token) ?? [];
 
         $this->getLogger()->info('Challenge solution accepted', $this->getContext($request, [
             'provider' => $challengeProvider->getName(),
@@ -1985,19 +2057,61 @@ final class Firewall
     private const PROVIDER_SIGNATURE_PREFIX = 'challenge-provider:';
 
     /**
-     * Sign a provider name for the interstitial to carry back.
+     * Separates the provider name from the pass lifetime inside the signature.
      *
-     * Produces `name.signature`. The name is not a secret; the signature
-     * is what stops the field being rewritten to name a provider the
-     * firewall never chose for this visitor.
+     * A pipe because a provider name may be a FQCN, which carries backslashes,
+     * and may be a custom short name, which may carry a dot -- the reason the
+     * signature is split on the *last* dot below. Neither form carries a pipe.
      */
-    protected function signProviderName(string $provider): string
+    private const PROVIDER_SIGNATURE_SEPARATOR = '|';
+
+    /**
+     * Sign the provider name and pass lifetime for the interstitial to carry back.
+     *
+     * Produces `name|ttl.signature`. Neither value is a secret; the signature is
+     * what stops the field being rewritten -- to name a provider the firewall
+     * never chose for this visitor, or to ask for a longer pass than the rule
+     * that matched was granted.
+     *
+     * ## Why the lifetime rides here rather than in a form field
+     *
+     * The submission arrives at `challenge.path`, not at the protected URL, so
+     * by then the rule that matched -- and its `default_expiration_time` -- is
+     * not known: nothing in the request says which rule sent the visitor. That
+     * is why the value had to travel with the visitor, and why the fix is not
+     * "stop reading it" (#369).
+     *
+     * #367 clamped what the client proposed. This removes the proposal: the
+     * server's own decision survives the round trip **signed**, so the
+     * submission handler reads a number the client cannot alter.
+     *
+     * The **resolved TTL** rather than the rule's identity, deliberately.
+     * `metadata.name` is optional and the `RateLimit:2` fallback moves when
+     * somebody reorders `plugins:`, so carrying identity would make a stable
+     * signature depend on an unstable value -- and the submission handler does
+     * not need to know which rule matched, only how long the pass should last.
+     *
+     * @param string $provider
+     *   The provider serving this challenge.
+     * @param int $ttl
+     *   The lifetime the firewall resolved for it, already clamped by
+     *   `challenge.ttl`.
+     *
+     * @return string
+     *   The signed field, or an empty string when there is no token manager to
+     *   sign with.
+     */
+    protected function signProviderName(string $provider, int $ttl = 0): string
     {
         if (!$this->tokenManager instanceof TokenManager || $provider === '') {
             return '';
         }
 
-        return $provider . '.' . $this->tokenManager->sign(self::PROVIDER_SIGNATURE_PREFIX . $provider);
+        $payload = $ttl > 0
+            ? $provider . self::PROVIDER_SIGNATURE_SEPARATOR . $ttl
+            : $provider;
+
+        return $payload . '.' . $this->tokenManager->sign(self::PROVIDER_SIGNATURE_PREFIX . $payload);
     }
 
     /**
@@ -2018,9 +2132,11 @@ final class Firewall
      *     longer resolves. Returns no provider, and the caller refuses the
      *     submission.
      *
-     * @return array{0: string,1: ?ChallengeProviderInterface}
-     *   The provider name and its instance, or NULL for the instance when
-     *   the claim could not be honoured.
+     * @return array{0: string,1: ?ChallengeProviderInterface,2: ?int}
+     *   The provider name, its instance, and the pass lifetime the firewall
+     *   signed into the field. The instance is NULL when the claim could not be
+     *   honoured; the lifetime is NULL when the field carries none, which is an
+     *   interstitial rendered before 2.32.0 (#369).
      */
     protected function resolveSubmissionProvider(Request $request): array
     {
@@ -2028,33 +2144,41 @@ final class Firewall
 
         $posted = $this->postedString($request, ChallengeProviderInterface::PROVIDER_FIELD, false);
         if ($posted === '') {
-            return [$default, $this->challengeProvider];
+            return [$default, $this->challengeProvider, null];
         }
 
         // Split on the LAST dot: the signature is base64url and carries
         // none, but a provider named by FQCN or by a custom short name may.
         $separator = strrpos($posted, '.');
         if ($separator === false || $separator === 0) {
-            return ['', null];
+            return ['', null, null];
         }
 
-        $name = substr($posted, 0, $separator);
+        $payload = substr($posted, 0, $separator);
         $signature = substr($posted, $separator + 1);
 
         if ($signature === '' || !$this->tokenManager instanceof TokenManager) {
-            return ['', null];
+            return ['', null, null];
         }
 
-        if (!$this->tokenManager->verifySignature(self::PROVIDER_SIGNATURE_PREFIX . $name, $signature)) {
-            return ['', null];
+        if (!$this->tokenManager->verifySignature(self::PROVIDER_SIGNATURE_PREFIX . $payload, $signature)) {
+            return ['', null, null];
         }
+
+        // Signed, so what comes out of here is the firewall's own value coming
+        // back. The lifetime is optional because an interstitial rendered
+        // before 2.32.0 carries the name alone, and rejecting those would
+        // re-challenge every visitor who happened to be mid-solve when the
+        // deploy landed (#369). Those fall back to #367's ceiling, which is
+        // exactly the defence in depth it was written to be.
+        [$name, $ttl] = $this->splitSignedProvider($payload);
 
         if (!$this->challengeProviderRegistry instanceof ChallengeProviderRegistry) {
-            return [$name, $this->challengeProvider];
+            return [$name, $this->challengeProvider, $ttl];
         }
 
         try {
-            return [$name, $this->challengeProviderRegistry->get($name)];
+            return [$name, $this->challengeProviderRegistry->get($name), $ttl];
         } catch (ConfigurationException $configurationException) {
             // Signed, so this is the firewall's own name coming back — the
             // config must have changed while the page was open. Log it:
@@ -2064,8 +2188,41 @@ final class Firewall
                 'error' => $configurationException->getMessage(),
             ]));
 
-            return [$name, null];
+            return [$name, null, $ttl];
         }
+    }
+
+    /**
+     * Read a verified `provider_token` payload.
+     *
+     * Two shapes, and both verify: `name|ttl` from 2.32.0 onward, and `name`
+     * alone from before it. The separator is only meaningful in the signed
+     * payload, so a provider name that somehow contained one could not have
+     * been signed with a lifetime in the first place -- the split takes the
+     * *last* pipe and requires what follows to be a positive integer, so a name
+     * carrying a pipe reads as a name rather than as a malformed lifetime.
+     *
+     * @param string $payload
+     *   The verified payload.
+     *
+     * @return array{0: string, 1: int|null}
+     *   The provider name, and the signed lifetime when it carries one.
+     */
+    private function splitSignedProvider(string $payload): array
+    {
+        $separator = strrpos($payload, self::PROVIDER_SIGNATURE_SEPARATOR);
+
+        if ($separator === false || $separator === 0) {
+            return [$payload, null];
+        }
+
+        $ttl = substr($payload, $separator + 1);
+
+        if (!ctype_digit($ttl) || (int) $ttl <= 0) {
+            return [$payload, null];
+        }
+
+        return [substr($payload, 0, $separator), (int) $ttl];
     }
 
     /**
@@ -2193,10 +2350,15 @@ final class Firewall
         $renderContext = [
             'submit_url' => $this->challengeSubmitUrl($request),
             'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
+            // Still rendered into the form, and still public API on
+            // `getRenderContext()`, because custom providers are documented to
+            // echo it and hosts in `mode: exception` render from it. What
+            // changed in 2.32.0 is that the value coming *back* is no longer
+            // what decides -- the signed one beside it is (#369).
             'ttl' => (string) $ttl,
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
             'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
-            'provider_token' => $this->signProviderName($providerName),
+            'provider_token' => $this->signProviderName($providerName, $ttl),
         ];
 
         if ($this->firewallMode === FirewallMode::Exception) {

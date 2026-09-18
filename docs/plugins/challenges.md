@@ -35,6 +35,27 @@ challenge:
 
 The cookie and the token always carry the same lifetime. A cookie outliving its token means a visitor sending something the firewall rejects with no way to tell why.
 
+### The client does not choose it
+
+The lifetime has to travel with the visitor, because the submission arrives at `challenge.path` rather than at the protected URL — by then nothing in the request says which rule sent them, so `metadata.default_expiration_time` is not knowable. That is why it rides in the interstitial, and why the fix was never "stop reading it".
+
+As of 2.32.0 it rides in the **signed** `provider_token` instead of the form field beside it:
+
+```
+challenge_provider = math|900.k8Hs3...        ← signed; this is what decides
+ttl                = 900                       ← still rendered, no longer believed
+```
+
+So the number the firewall resolved survives the round trip without the client being asked for it. `challenge.ttl` still clamps what comes back, because the ceiling may have been lowered while the page was open — a ceiling that applied only to values the client sent would be a ceiling with a gap in it.
+
+!!! note "An interstitial rendered before 2.32.0 still works"
+
+    Those carry the provider name alone, and are accepted for one minor: the posted `ttl` is used, clamped by `challenge.ttl` exactly as in 2.30.0 and 2.31.0. Without that, every visitor who happened to be mid-solve when the deploy landed would be refused.
+
+    The same fallback covers a custom provider that builds `provider_token` itself rather than echoing the one it was handed.
+
+`getRenderContext()['ttl']` is unchanged and still means what it meant — hosts rendering their own page in `mode: exception` read it.
+
 ### Why it is a ceiling and not just a default
 
 The lifetime is not known when a solution is verified. The submission arrives at `challenge.path`, not at the protected URL, so the rule that matched — and therefore its `default_expiration_time` — is long gone by then. That is why the value rides in the interstitial's form.
@@ -468,8 +489,8 @@ For a fuller worked example of this shape — widget rendering, server-side veri
 Requirements and gotchas:
 
 - **Escape everything you interpolate.** `redirect_to` originates from the request URI. The built-in providers run every substitution through `InterstitialRenderer::escapeHtml()`; do the same. Values landing inside a `<script>` block need `escapeJs()` instead — HTML entities are not decoded there.
-- **Echo back `redirect_to` and `ttl`** as form fields named exactly that. The Firewall reads them from the POST to decide where to send the visitor and how long to mint the pass token for. Omit them and you get `/` and 3600s.
-- **Echo back `provider_token`** too, in a hidden field named `challenge_provider` (`ChallengeProviderInterface::PROVIDER_FIELD`). It is a signed `name.signature` pair telling the submission handler which provider to verify with — the matched plugin is long gone by then. `InterstitialRenderer::render()` emits it for you from the `provider_token` part. **Omitting it locks the visitor out** if any rule names its own provider: the submission is verified by `challenge.provider` instead, and the pass token is scoped to that — so the rule that demanded the challenge refuses it and serves the same interstitial again, forever. It is safe to omit *only* when the global provider is the only one in play.
+- **Echo back `redirect_to` and `ttl`** as form fields named exactly that. `redirect_to` is read from the POST to decide where to send the visitor. `ttl` is **no longer read** from it as of 2.32.0 — see below — but keep emitting it: it is still the value to render if your page shows a visitor how long their pass will last, and omitting it is one less thing to change if you ever build `provider_token` yourself.
+- **Echo back `provider_token`** too, in a hidden field named `challenge_provider` (`ChallengeProviderInterface::PROVIDER_FIELD`). It is a signed `name|ttl.signature` triple telling the submission handler which provider to verify with, and how long the pass it mints should last — the matched plugin is long gone by then. `InterstitialRenderer::render()` emits it for you from the `provider_token` part. **Omitting it locks the visitor out** if any rule names its own provider: the submission is verified by `challenge.provider` instead, and the pass token is scoped to that — so the rule that demanded the challenge refuses it and serves the same interstitial again, forever. It is safe to omit *only* when the global provider is the only one in play.
 - **`verifySolution()` must never throw.** It runs on attacker-controlled input; return `false` for anything you don't like. Note that `$request->request->get()` raises `BadRequestException` on an array value, so read hostile fields off `->all()` instead.
 - **Register via FQCN**, not a short name. `challenge.provider` resolves `math`, `altcha`, `turnstile` and `recaptcha` as built-ins; everything else must be a loadable class implementing the interface, or `create()` throws `ConfigurationException`.
 - **Declare the collaborators you want.** `ChallengeProviderFactory` matches constructor parameters by declared type — a `TokenManager` parameter gets the shared manager, an `array` parameter gets `challenge.provider_options`, and a provider needing neither can declare no constructor at all. Untyped parameters receive the `TokenManager`, so providers written against the older fixed `new $class($tokenManager)` signature keep working unchanged.
