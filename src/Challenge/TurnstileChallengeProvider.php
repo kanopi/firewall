@@ -290,6 +290,10 @@ FAILURE,
             'ttl_field' => self::TTL_FIELD,
             'provider_field' => self::PROVIDER_FIELD,
             'provider_token' => $context['provider_token'] ?? '',
+            // Forwarded rather than invented here: the firewall decides whether
+            // there is a discarded submission to mention, and a provider that
+            // does not pass this simply shows no notice (#376).
+            'notice' => $context['notice'] ?? '',
         ]);
     }
 

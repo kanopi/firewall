@@ -139,6 +139,10 @@ class ConfigLinter
             $findings[] = $diagnosi;
         }
 
+        foreach ($this->checkChallengedPosts($plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
         if (array_filter($findings, static fn(Diagnosis $diagnosis): bool => $diagnosis->status !== Diagnosis::OK) === []) {
             $findings[] = Diagnosis::ok(
                 sprintf('%d rule%s inspected', count($plugins), count($plugins) === 1 ? '' : 's'),
@@ -968,5 +972,86 @@ class ConfigLinter
         );
 
         return $findings;
+    }
+
+    /**
+     * Challenge rules that match on a POST (#376).
+     *
+     * A challenged POST cannot be replayed: the interstitial is served in place of the
+     * submission, and after solving the visitor is sent to a **GET** of the same address with
+     * everything they typed gone. The firewall now says so on the page, but a rule written
+     * this way is the mistake itself rather than a case to handle gracefully.
+     *
+     * This cannot know which of your routes are POST-only — most challenge rules match on
+     * address or user agent and never see the method at all. What it can see is a rule that
+     * *names* the method, which is unambiguous: `response: challenge` on `method:POST` is a
+     * rule whose every match discards a submission.
+     *
+     * A warning rather than an error, because it is a real if unusual thing to want: a rule
+     * that challenges an API endpoint whose callers retry is not wrong, and that caller now
+     * gets a 428 with JSON rather than a page it cannot solve.
+     *
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkChallengedPosts(array $plugins): array
+    {
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            if (($plugin['response'] ?? 'block') !== 'challenge') {
+                continue;
+            }
+
+            foreach (is_array($plugin['config'] ?? null) ? $plugin['config'] : [] as $rule) {
+                if (!is_string($rule)) {
+                    continue;
+                }
+
+                if (!$this->matchesUnsafeMethod($rule)) {
+                    continue;
+                }
+
+                $findings[] = Diagnosis::warning(
+                    sprintf('Rule "%s" challenges a request that carries a submission', $this->nameOf($plugin)),
+                    sprintf(
+                        'It matches on `%s`, and a challenged POST cannot be replayed — the visitor '
+                        . 'solves the interstitial and lands on a GET of the same URL with their '
+                        . 'submission gone. Challenge the GET that renders the form instead.',
+                        $rule
+                    ),
+                    'plugins/challenges.md#a-challenged-post-loses-the-submission'
+                );
+
+                break;
+            }
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Whether a rule matches on a method that carries a body.
+     *
+     * Deliberately literal. `method:POST` and `method@equals:PUT` are the shapes somebody
+     * writes; anything cleverer would be guessing about a rule this cannot evaluate, and a
+     * confident warning about a rule that is fine is worse than saying nothing.
+     *
+     * @param string $rule
+     *   The rule string.
+     *
+     * @return bool
+     *   TRUE when it names POST, PUT, PATCH or DELETE.
+     */
+    private function matchesUnsafeMethod(string $rule): bool
+    {
+        if (preg_match('/^method(@[a-z_]+)?:(.+)$/i', trim($rule), $match) !== 1) {
+            return false;
+        }
+
+        return in_array(strtoupper(trim($match[2])), ['POST', 'PUT', 'PATCH', 'DELETE'], true);
     }
 }
