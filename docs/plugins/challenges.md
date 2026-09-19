@@ -69,6 +69,67 @@ Two things follow that are worth knowing:
 
 `firewall-check --lint` reports a challenge rule whose `default_expiration_time` exceeds `challenge.ttl`, so a rule that does not do what it says shows up in CI rather than one request at a time in a log.
 
+## A challenged POST loses the submission
+
+A visitor whose **POST** is challenged solves the interstitial and is then sent to a **GET** of the same URL. Their submission is gone.
+
+```
+POST /checkout?step=payment     →  interstitial
+  (solves)                      →  GET /checkout?step=payment
+```
+
+Everything they typed is discarded, and until 2.32.0 nothing said so — they landed on a 405, or an empty form, depending on the application.
+
+!!! tip "Challenge the GET that renders a form, not the POST that submits it"
+
+    This is the whole answer for most deployments. A rule matching on address, ASN or user agent challenges the visitor on their way *in*, before they have typed anything, and none of this applies.
+
+    `firewall-check --lint` warns about a `response: challenge` rule that matches on `method:POST`, because that rule's every match discards a submission.
+
+### Why the body is not kept
+
+It would be the obvious fix and it is the wrong one. Rendering the original fields as hidden inputs would put whatever was submitted into an HTML page — card details, a password, a private message — and re-submitting a payment POST from a stored copy is a hazard of its own. **Nothing stashes the request body**, and nothing is planned to.
+
+What was wrong is the silence, not the discarding. So the interstitial now says it:
+
+> Your submission was not kept. After verifying, you will need to fill the form in again.
+
+Only on a request that carried something to lose — a safe method renders exactly as before.
+
+### An API caller gets JSON, not a page
+
+A request that would rather have JSON is answered with **`428 Precondition Required`** instead of an HTML page it cannot solve:
+
+```json
+{
+  "error": "challenge_required",
+  "message": "This request must solve a challenge before it can be served. The submitted body was not kept.",
+  "provider": "math",
+  "challenge": {
+    "submit_url": "/_firewall/challenge",
+    "redirect_to": "/api/orders",
+    "ttl": "900",
+    "cookie_name": "fw_challenge_pass",
+    "header_name": "X-Firewall-Challenge",
+    "provider_token": "math|900.k8Hs3…"
+  },
+  "html": "<!doctype html>…"
+}
+```
+
+Before this, an XHR got the interstitial as **HTML with a `200`** — so a caller checking only the status recorded a challenge as success.
+
+`html` carries the interstitial itself, so a browser-based caller can put it on the page without a second round trip; the provider's own script rides in it and does the rest. A caller that wants to build its own UI has everything it needs in `challenge`.
+
+| Asked for | Gets |
+|---|---|
+| `X-Requested-With: XMLHttpRequest` | JSON |
+| `Accept: application/json` | JSON |
+| `Accept: text/html,*/*` | The page |
+| `Accept: */*` | The page |
+
+`*/*` means *anything will do*, and a page satisfies it — otherwise every `curl` default would get JSON.
+
 ## Withdrawing a pass
 
 A pass token is stateless and HMAC-signed, so once issued it is accepted until its own `exp`. That is the property the design is built on — no shared session store, horizontal scaling for free — and it means rotating `challenge.secret` was, until 2.30.0, the only way to stop one being accepted. It re-challenges **every** legitimate visitor holding a pass in order to withdraw one.
@@ -504,5 +565,5 @@ Requirements and gotchas:
 | Matched by an `allow` plugin           | Allowed (challenge skipped).                 |
 | Holds a pass token earned against the matched rule's provider | Allowed. |
 | Holds a pass token from a *different* provider | Challenged again — a token is worth only the challenge it was earned on. |
-| No token, matches a `challenge` plugin | Interstitial served; original URL is remembered for the post-success redirect. |
+| No token, matches a `challenge` plugin | Interstitial served; the original **URL** is remembered for the post-success redirect. The request itself is not — see [A challenged POST loses the submission](#a-challenged-post-loses-the-submission). |
 | Matches a `block` plugin               | Blocked, even if a valid pass token is held. |

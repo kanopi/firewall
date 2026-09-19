@@ -6,6 +6,7 @@ namespace Kanopi\Firewall\Tests\Unit\Diagnostics;
 
 use Kanopi\Firewall\Diagnostics\ConfigLinter;
 use Kanopi\Firewall\Diagnostics\Diagnosis;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 
 /**
@@ -1046,6 +1047,114 @@ class ConfigLinterTest extends AbstractTestCase
                 'enable' => true,
                 'metadata' => $metadata,
                 'config' => ['10.0.0.50'],
+            ]],
+        ];
+    }
+
+
+    /**
+     * A `response: challenge` rule that names POST is unambiguously the mistake
+     * #376 is about: every match discards a submission.
+     */
+    public function testAChallengeRuleMatchingAPostIsReported(): void
+    {
+        $findings = $this->lint($this->methodRule('challenge', 'method:POST'));
+
+        $this->assertContains(
+            'Rule "gate" challenges a request that carries a submission',
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * @param string $rule
+     */
+    #[DataProvider('unsafeMethodRuleProvider')]
+    public function testEveryMethodThatCarriesABodyIsReported(string $rule): void
+    {
+        $this->assertNotSame([], array_filter(
+            $this->titles($this->lint($this->methodRule('challenge', $rule)), Diagnosis::WARNING),
+            static fn(string $t): bool => str_contains($t, 'carries a submission')
+        ), $rule . ' was not reported');
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function unsafeMethodRuleProvider(): array
+    {
+        return [
+            'post' => ['method:POST'],
+            'lowercase' => ['method:post'],
+            'put' => ['method:PUT'],
+            'patch' => ['method:PATCH'],
+            'delete' => ['method:DELETE'],
+            'with an operator' => ['method@equals:POST'],
+            'spaced' => ['method: POST '],
+        ];
+    }
+
+    /**
+     * Anything that is not a challenge rule naming a body-carrying method is
+     * left alone. A confident warning about a rule that is fine is worse than
+     * saying nothing.
+     *
+     * @param string $response
+     * @param string $rule
+     */
+    #[DataProvider('leaveAloneProvider')]
+    public function testRulesThatAreNotThisMistakeAreLeftAlone(string $response, string $rule): void
+    {
+        $this->assertSame([], array_filter(
+            $this->titles($this->lint($this->methodRule($response, $rule))),
+            static fn(string $t): bool => str_contains($t, 'carries a submission')
+        ));
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function leaveAloneProvider(): array
+    {
+        return [
+            'blocking a POST is fine' => ['block', 'method:POST'],
+            'challenging a GET is the right way round' => ['challenge', 'method:GET'],
+            'a safe method' => ['challenge', 'method:HEAD'],
+            'not a method rule at all' => ['challenge', 'path:/wp-admin'],
+            'a path that mentions post' => ['challenge', 'path@contains:/post'],
+        ];
+    }
+
+    /**
+     * A rule list may hold structured entries as well as strings — a template
+     * renders them, and a source can contribute them. Those carry no method to
+     * read, and must not trip anything.
+     */
+    public function testAStructuredRuleEntryIsNotMistakenForAMethodRule(): void
+    {
+        $config = $this->methodRule('challenge', 'method:GET');
+        $config['plugins'][0]['config'] = [['variable' => 'method', 'value' => 'POST'], 'path:/a'];
+
+        $this->assertSame([], array_filter(
+            $this->titles($this->lint($config)),
+            static fn(string $t): bool => str_contains($t, 'carries a submission')
+        ));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function methodRule(string $response, string $rule): array
+    {
+        return [
+            'global' => ['mode' => 'block'],
+            'challenge' => ['provider' => 'math', 'secret' => 'a-long-random-linter-secret'],
+            'plugins' => [[
+                'plugin' => 'Kanopi\\Firewall\\Plugins\\Url',
+                'response' => $response,
+                'enable' => true,
+                'metadata' => ['name' => 'gate'],
+                'config' => [$rule],
             ]],
         ];
     }

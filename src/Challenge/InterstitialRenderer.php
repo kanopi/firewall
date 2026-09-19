@@ -87,11 +87,12 @@ final class InterstitialRenderer
      *   ttl_field: string|int,
      *   submit_failure?: string,
      *   provider_field?: string|int,
-     *   provider_token?: string|int
+     *   provider_token?: string|int,
+     *   notice?: string|int
      * } $parts
      *   Provider-supplied document pieces. `submit_failure`,
-     *   `provider_field` and `provider_token` are optional, so providers
-     *   written before they existed are unaffected.
+     *   `provider_field`, `provider_token` and `notice` are optional, so
+     *   providers written before they existed are unaffected.
      */
     public static function render(array $parts): string
     {
@@ -106,6 +107,12 @@ final class InterstitialRenderer
         $redirectToJs = self::escapeJs($parts['redirect_to']);
 
         $intro = $parts['intro'];
+
+        // Escaped, not injected verbatim like the provider-owned pieces above:
+        // the firewall writes this, but it is rendered beside values that come
+        // from a request and there is no reason for it to be the one exception.
+        $notice = self::escapeHtml($parts['notice'] ?? '');
+        $noticeBlock = $notice === '' ? '' : "\n      <p class=\"notice\">{$notice}</p>";
         $extraStyles = $parts['extra_styles'];
         $extraHead = $parts['extra_head'];
         $formFields = $parts['form_fields'];
@@ -155,13 +162,15 @@ final class InterstitialRenderer
     button:not(:disabled):hover { background: #1858c4; }
     .error { color: #b42318; margin-top: 0.75rem; font-size: 0.9rem; display: none; }
     .error.visible { display: block; }
+    .notice { color: #9a3412; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 4px;
+              padding: 0.6rem 0.75rem; margin: 0 0 1rem; font-size: 0.9rem; text-align: left; }
 {$extraStyles}
   </style>
 {$extraHead}
 </head>
 <body>
   <main class="card">
-    <h1>Quick verification</h1>
+    <h1>Quick verification</h1>{$noticeBlock}
     <p>{$intro}</p>
     <form id="challenge-form" method="post" action="{$submitUrl}">
 {$formFields}

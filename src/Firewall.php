@@ -2359,6 +2359,11 @@ final class Firewall
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
             'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
             'provider_token' => $this->signProviderName($providerName, $ttl),
+            // Only on a request that carried one, so the ordinary case renders
+            // exactly as before. A visitor whose form submission is about to be
+            // discarded should be told here rather than discovering it from an
+            // empty form afterwards (#376).
+            'notice' => $this->discardedSubmissionNotice($request),
         ];
 
         if ($this->firewallMode === FirewallMode::Exception) {
@@ -2372,6 +2377,31 @@ final class Firewall
         }
 
         // @codeCoverageIgnoreStart
+        // A caller that asked for JSON gets JSON. Serving an HTML interstitial
+        // to an XHR is a page a machine cannot solve, arriving where a result
+        // was expected -- and with a 200, so a caller checking only the status
+        // records it as success (#376).
+        if ($this->prefersJson($request)) {
+            http_response_code(428);
+
+            if (!headers_sent()) {
+                header('Content-Type: application/json; charset=utf-8');
+                header('Cache-Control: no-store');
+            }
+
+            exit((string) json_encode([
+                'error' => 'challenge_required',
+                'message' => 'This request must solve a challenge before it can be served.'
+                    . ($request->isMethodSafe() ? '' : ' The submitted body was not kept.'),
+                'provider' => $providerName,
+                'challenge' => $renderContext,
+                // The interstitial itself, so a browser-based caller can put it
+                // on the page without a second round trip -- the provider's own
+                // script rides in it and does the rest.
+                'html' => $challengeProvider->renderInterstitial($request, $renderContext),
+            ]));
+        }
+
         $body = $challengeProvider->renderInterstitial($request, $renderContext);
 
         http_response_code(200);
@@ -2382,6 +2412,79 @@ final class Firewall
 
         exit($body);
         // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * What to tell a visitor whose submission is about to be discarded (#376).
+     *
+     * A challenged POST cannot be replayed. The submission arrives at the
+     * protected URL, the interstitial is served in its place, and after solving
+     * the visitor is sent to a **GET** of the same address -- so everything they
+     * typed is gone.
+     *
+     * The body is deliberately **not** kept anywhere. Rendering the original
+     * fields as hidden inputs would put whatever was submitted into an HTML
+     * page -- card details, a password, a private message -- and re-submitting a
+     * payment POST from a stored copy is its own hazard. A fix that did that by
+     * default would be worse than the bug.
+     *
+     * What is wrong is the silence, not the discarding. So this says it.
+     *
+     * @param Request $request
+     *   The request being challenged.
+     *
+     * @return string
+     *   The notice, or an empty string for a request with nothing to lose.
+     */
+    private function discardedSubmissionNotice(Request $request): string
+    {
+        // Safe methods carry nothing to discard, which covers almost every
+        // challenged request -- so almost every interstitial is unchanged.
+        if ($request->isMethodSafe()) {
+            return '';
+        }
+
+        return 'Your submission was not kept. After verifying, you will need to fill the form in '
+            . 'again.';
+    }
+
+    /**
+     * Would this caller rather have JSON than a page?
+     *
+     * Two signals, and both are worth taking. `X-Requested-With` is what a
+     * jQuery-era XHR sends and a great deal of CMS admin traffic still is one.
+     * The `Accept` header is the correct answer and the one a modern client
+     * sends -- but a browser navigating asks for `text/html` *and* a wildcard,
+     * so this looks for JSON being preferred rather than merely acceptable.
+     *
+     * @param Request $request
+     *   The request being challenged.
+     *
+     * @return bool
+     *   TRUE when a JSON answer is more use than a page.
+     */
+    protected function prefersJson(Request $request): bool
+    {
+        if (strtolower((string) $request->headers->get('X-Requested-With')) === 'xmlhttprequest') {
+            return true;
+        }
+
+        foreach ($request->getAcceptableContentTypes() as $contentType) {
+            $contentType = strtolower(trim($contentType));
+
+            // In order of preference, so the first of these two that appears is
+            // the answer. `*/*` counts as "anything will do", which a page
+            // satisfies -- otherwise every curl default would get JSON.
+            if ($contentType === 'text/html' || $contentType === '*/*') {
+                return false;
+            }
+
+            if ($contentType === 'application/json' || str_ends_with($contentType, '+json')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
