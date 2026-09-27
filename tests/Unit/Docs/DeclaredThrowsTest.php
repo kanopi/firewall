@@ -134,7 +134,10 @@ final class DeclaredThrowsTest extends TestCase
      */
     public function testEvaluateDeclaresWhatItsHelpersDeclare(): void
     {
-        $body = self::body('evaluate');
+        // Both halves: evaluate() applies the trusted proxies and hands the rest
+        // to evaluateRequest() inside a try/finally (#397). Neither catches, so
+        // everything the second raises leaves through the first.
+        $body = self::body('evaluate') . self::body('evaluateRequest');
 
         $this->assertStringNotContainsString(
             'catch (',

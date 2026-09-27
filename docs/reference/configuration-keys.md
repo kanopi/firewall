@@ -45,7 +45,9 @@ Nothing here explains anything; that is deliberate.
 | `add_to_expire` | int | `3600` | Seconds added to a ban on each repeat hit | [Global](../configuration/global.md) |
 | `blocking_escalation` | list | `[]` | Window/offense/duration rules that lengthen bans | [Multiple Offenses](../configuration/global.md#multiple-offenses-defense) |
 | `behind_proxy` | bool | *unset* | Assert whether a proxy sits in front | [Trusted Proxies](../configuration/global.md#trusted-proxies) |
-| `require_trusted_proxies` | bool | `false` | Refuse to start without `setTrustedProxies()` | [Trusted Proxies](../configuration/global.md#trusted-proxies) |
+| `require_trusted_proxies` | bool | `false` | Refuse to start without trusted proxies, from either source | [Trusted Proxies](../configuration/global.md#trusted-proxies) |
+| `trusted_proxies` | list | *unset* | Proxies to trust during evaluation; ranges, `REMOTE_ADDR`, `PRIVATE_SUBNETS`. Ignored when the host sets its own | [Trusted proxies from YAML](../configuration/global.md#trusted-proxies-from-yaml) |
+| `trusted_headers` | list | `x-forwarded-for`, `-proto`, `-port` | Which forwarding headers to believe from them | [Trusted proxies from YAML](../configuration/global.md#trusted-proxies-from-yaml) |
 | `require_config` | bool | `false` | Refuse to start if any config input failed to load | [Loading](../configuration/loading-and-includes.md) |
 | `lockdown` | bool | `false` | Refuse everyone but `lockdown_allow` | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_allow` | list | *(empty)* | Addresses and CIDRs still served. Empty serves nobody | [Lockdown](../configuration/global.md#lockdown) |
