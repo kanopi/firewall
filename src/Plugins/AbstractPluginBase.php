@@ -124,12 +124,13 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
                 $this->identityCachePool(),
                 is_numeric($ttl) ? (int) $ttl : 3600,
                 is_numeric($negativeTtl) ? (int) $negativeTtl : 86400,
-                // The same switch that keeps rule sources and remote configs off
-                // the request path (#228). An operator who set it meant "make no
-                // network calls while serving a request", and two DNS lookups are
-                // exactly that.
-                defined('KANOPI_FIREWALL_SOURCES_OFFLINE')
-                    && (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE'),
+                // `metadata.verify_offline` when it is set, and otherwise the
+                // switch that keeps rule sources and remote configs off the
+                // request path (#228). They were one switch until #391, which
+                // left verified crawler rules unreachable on any host that
+                // keeps rule sources offline -- as drupal/basic_firewall does by
+                // default.
+                self::verificationOffline($this->metadata)['offline'],
                 is_numeric($threshold) ? (float) $threshold : 250.0,
                 300,
                 // Off unless asked for. It trades latency for a verdict on a
@@ -316,6 +317,76 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
     }
 
     /**
+     * Whether this rule's identity verification makes network calls, and who decided.
+     *
+     * `metadata.verify_offline` wins when it is set. Otherwise it follows
+     * `KANOPI_FIREWALL_SOURCES_OFFLINE`, which is what it always did, so no host changes
+     * behaviour on upgrade (#391).
+     *
+     * Static and public so that `firewall-doctor` answers the question from the same
+     * place the rule does, rather than from a copy of this logic.
+     *
+     * @param array<string, mixed> $metadata
+     *   A rule's `metadata:`.
+     *
+     * @return array{offline: bool, source: string}
+     *   `source` is `metadata`, `constant`, or `default` when neither is set.
+     */
+    public static function verificationOffline(array $metadata): array
+    {
+        $configured = $metadata['verify_offline'] ?? null;
+
+        if ($configured !== null) {
+            $parsed = is_bool($configured) ? $configured : filter_var($configured, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+            if (is_bool($parsed)) {
+                return ['offline' => $parsed, 'source' => 'metadata'];
+            }
+        }
+
+        if (defined('KANOPI_FIREWALL_SOURCES_OFFLINE')) {
+            return ['offline' => (bool) constant('KANOPI_FIREWALL_SOURCES_OFFLINE'), 'source' => 'constant'];
+        }
+
+        return ['offline' => false, 'source' => 'default'];
+    }
+
+    /**
+     * Say so when a rule's verification has been switched off by another feature's switch.
+     *
+     * Offline, verification never resolves, and nothing else writes the verdict cache --
+     * so unless a shared `verify_cache` holds verdicts another node wrote, a rule that
+     * asks for verification matches nobody, a genuine crawler included. That is the
+     * right direction to fail for an allow rule, and it was silent: a `debug` line per
+     * request was the only trace (#391).
+     *
+     * Only when the constant decided. An explicit `verify_offline: true` is the operator
+     * choosing, and saying so on every request would be noise about a decision.
+     *
+     * Once per construction, because it is a configuration problem.
+     */
+    protected function reportOfflineVerification(): void
+    {
+        if (($this->metadata['verify'] ?? null) === null) {
+            return;
+        }
+
+        $offline = self::verificationOffline($this->metadata);
+
+        if (!$offline['offline'] || $offline['source'] !== 'constant') {
+            return;
+        }
+
+        $this->getLogger()->warning('Plugin verify is switched off by KANOPI_FIREWALL_SOURCES_OFFLINE - the rule will not verify anyone new', [
+            'plugin' => $this->getName(),
+            'detail' => 'That constant keeps rule sources off the request path, and verification follows it '
+                . 'unless told otherwise. Set metadata.verify_offline: false to verify while sources stay '
+                . 'offline, or verify_offline: true to keep it off deliberately and stop this warning. '
+                . 'Offline, only verdicts already in a shared verify_cache are honoured.',
+        ]);
+    }
+
+    /**
      * Tell the operator when `metadata.mode` says something unrecognised.
      *
      * A typo here fails in the dangerous direction: `mode: lgo` or `mode: observe` is not
@@ -498,6 +569,7 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
         $this->config = $this->mergeSourceEntries($entries, $this->config);
         $this->reportUnusableRules();
         $this->reportUnrecognisedMode();
+        $this->reportOfflineVerification();
 
         // Last, and allowed to throw. A schedule nobody can read is a rule
         // nobody can reason about, so it takes the rule out rather than

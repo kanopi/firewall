@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Diagnostics;
 
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\FirewallMode;
+use Kanopi\Firewall\Plugins\AbstractPluginBase;
 use Kanopi\Firewall\Source\SourceCache;
 use Kanopi\Firewall\Storage\RecordedRequest;
 use Kanopi\Firewall\Storage\SharedStorage;
@@ -86,6 +87,10 @@ class Doctor
         }
 
         foreach ($this->checkRules() as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkOfflineVerification($config) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -713,6 +718,77 @@ class Doctor
         }
 
         return $held;
+    }
+
+    /**
+     * Rules asking for identity verification on a host where it cannot run (#391).
+     *
+     * `KANOPI_FIREWALL_SOURCES_OFFLINE` switches verification off unless a rule says
+     * otherwise, and a verified allow rule on such a host matches nobody new -- a genuine
+     * crawler included. The plugin warns at construction; this puts it in the report an
+     * operator reads before a deploy.
+     *
+     * Answered for *this* process. A host that defines the constant in its web bootstrap
+     * and not on the command line will not see this from a terminal, which is the same
+     * limit the trusted-proxies check states.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration.
+     *
+     * @return array<int, Diagnosis>
+     *   One warning per affected rule.
+     */
+    private function checkOfflineVerification(array $config): array
+    {
+        $plugins = is_array($config['plugins'] ?? null) ? $config['plugins'] : [];
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            $metadata = is_array($plugin) && is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+
+            if (($metadata['verify'] ?? null) === null) {
+                continue;
+            }
+
+            $offline = AbstractPluginBase::verificationOffline($metadata);
+            if (!$offline['offline']) {
+                continue;
+            }
+
+            if ($offline['source'] !== 'constant') {
+                continue;
+            }
+
+            $findings[] = Diagnosis::warning(
+                sprintf('Rule %s asks for verification, and verification is switched off', $this->ruleName($plugin)),
+                'KANOPI_FIREWALL_SOURCES_OFFLINE is set, and verification follows it unless the rule '
+                . 'says otherwise, so this rule verifies nobody new. Set metadata.verify_offline: false '
+                . 'to verify while rule sources stay offline, or true to keep it off deliberately.',
+                'plugins/user-agent.md#offline-switches-it-off-unless-the-rule-says-otherwise'
+            );
+        }
+
+        return $findings;
+    }
+
+    /**
+     * A rule's name for a report: `metadata.name`, else its plugin class's short name.
+     *
+     * @param mixed $plugin
+     *   One `plugins:` entry.
+     */
+    private function ruleName(mixed $plugin): string
+    {
+        $metadata = is_array($plugin) && is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+
+        if (is_string($metadata['name'] ?? null) && $metadata['name'] !== '') {
+            return $metadata['name'];
+        }
+
+        $class = is_array($plugin) && is_string($plugin['plugin'] ?? null) ? $plugin['plugin'] : '';
+        $short = strrchr($class, '\\');
+
+        return $class === '' ? 'an unnamed rule' : ($short === false ? $class : substr($short, 1));
     }
 
     /**

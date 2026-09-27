@@ -241,6 +241,7 @@ Five things keep that off the request path:
 | `verify_negative_ttl` | `86400` | Seconds a refusal stays good |
 | `verify_slow_threshold_ms` | `250` | A lookup slower than this trips the breaker |
 | `verify_claim_wait_ms` | `0` | Wait this long for another worker's verdict instead of refusing — see [below](#waiting-for-the-other-workers-verdict) |
+| `verify_offline` | the constant | `false` to verify even with `KANOPI_FIREWALL_SOURCES_OFFLINE` set; `true` to keep it off — see [below](#offline-switches-it-off-unless-the-rule-says-otherwise) |
 | `verify_cache` | filesystem | Any PSR-6 pool; falls back to `KANOPI_FIREWALL_CACHE_DIR` |
 
 ### Run a local caching resolver
@@ -326,15 +327,49 @@ Default `0`, which is what every release before 2.23.0 did. Turn it on when a wr
 refused crawler costs more than the added latency — and if that is true, **warming the cache
 removes the situation entirely** rather than mitigating it.
 
-### Offline switches it off
+### Offline switches it off, unless the rule says otherwise
 
-`KANOPI_FIREWALL_SOURCES_OFFLINE` covers this too, exactly as it covers
-[rule sources](../configuration/sources.md) and remote `configs:` includes. An operator who
-set it meant *make no network calls while serving a request*, and two DNS lookups are
-precisely that.
+By default, `KANOPI_FIREWALL_SOURCES_OFFLINE` covers this too, as it covers
+[rule sources](../configuration/sources.md) and remote `configs:` includes. `verify_offline`
+decides it per rule instead:
 
-Offline, a verdict already in the cache is still honoured — reading it costs no network.
-An address with no cached verdict simply does not verify, so the rule does not match.
+```yaml
+  metadata:
+    verify: reverse-dns
+    verify_suffixes: [.googlebot.com, .google.com]
+    verify_offline: false     # verify, even though rule sources stay offline
+```
+
+| `verify_offline` | Verification |
+|---|---|
+| *unset* | Follows `KANOPI_FIREWALL_SOURCES_OFFLINE` — off when it is set, on when it is not |
+| `false` | On, whatever the constant says |
+| `true` | Off, whatever the constant says |
+
+**Why they are separate.** The constant exists because a rule-list fetch on the request path
+makes a visitor wait on someone else's HTTP server, with nothing bounding it. Verification is
+not that: it already has a verdict cache, a negative cache, a
+[circuit breaker](#the-cost-and-what-bounds-it), single-flight claims and a slow threshold.
+Before 2.33.0 the two were one switch, so a host that keeps rule sources offline — as
+`drupal/basic_firewall` does by default — could not offer verified crawler rules at all
+([#391](https://github.com/kanopi/firewall/issues/391)).
+
+Offline, a verdict already in the cache is still honoured — reading it costs no network. An
+address with no cached verdict does not verify, so the rule does not match. Unless a
+[shared `verify_cache`](#using-a-different-backend) holds verdicts another node wrote, that
+means the rule verifies **nobody new**.
+
+!!! warning "Switched off by the constant, it says so"
+
+    A rule with `verify` whose verification was switched off by the constant, not by its own
+    `verify_offline`, logs this when it is built:
+
+    ```
+    Plugin verify is switched off by KANOPI_FIREWALL_SOURCES_OFFLINE - the rule will not verify anyone new
+    ```
+
+    `firewall-doctor` reports it too. Set `verify_offline: false` to verify, or
+    `verify_offline: true` to keep it off deliberately — either one stops the warning.
 
 !!! warning "A mistyped `verify` does not match"
 

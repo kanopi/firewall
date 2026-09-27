@@ -128,8 +128,8 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 
 Identity-verifying plugins (User Agent, and any implementing
 `IdentityVerificationInterface`) add `verify`, `verify_cache`, `verify_ttl`,
-`verify_negative_ttl`, `verify_suffixes`, `verify_claim_wait_ms` and
-`verify_slow_threshold_ms` — see [User Agent](../plugins/user-agent.md).
+`verify_negative_ttl`, `verify_suffixes`, `verify_claim_wait_ms`,
+`verify_slow_threshold_ms` and `verify_offline` — see [User Agent](../plugins/user-agent.md).
 
 Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option), including `allow_catch_all`, which decides whether a source may contribute an entry matching every address, `max_size` / `max_entries`, which bound how much a refresh may bring in, and `checksum` / `signature`, which decide whether the fetched bytes are [checked against what the publisher asserted](../configuration/sources.md#verifying-what-you-fetched).
 
@@ -188,7 +188,7 @@ is parsed.
 | `KANOPI_FIREWALL_CACHE_MAX_STALE` | — | How long a stale cached source may still be served |
 | `KANOPI_FIREWALL_CACHE_TIMEOUT` | — | Fetch timeout for remote sources |
 | `KANOPI_FIREWALL_REQUIRE_CONFIG` | `false` | Same as `global.require_config` |
-| `KANOPI_FIREWALL_SOURCES_OFFLINE` | `false` | Never fetch on the request path | 
+| `KANOPI_FIREWALL_SOURCES_OFFLINE` | `false` | Never fetch on the request path. Also switches off reverse-DNS verification for rules that do not set [`verify_offline`](../plugins/user-agent.md#offline-switches-it-off-unless-the-rule-says-otherwise) | 
 
 [Environment Variables](../configuration/environment-variables.md) covers `%env(...)%`
 substitution, which works in any value above.
