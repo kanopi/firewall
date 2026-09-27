@@ -10,6 +10,7 @@ global:
   banning_message: '{{request.id}} Request Banned'
   behind_proxy: false
   require_trusted_proxies: false
+  # trusted_proxies: ["10.0.0.0/8"]       # see Trusted Proxies below
   require_config: false
   # panic_file: /var/run/firewall/panic   # no default — see Panic Switch below
   # stale_source_error_after: 604800      # off by default — see Stale Rule Sources
@@ -32,6 +33,51 @@ global:
 Every plugin reads `$request->getClientIp()`, and Symfony only honours proxy headers (`X-Forwarded-For`, `Forwarded`, …) once you have called `Request::setTrustedProxies(...)`. If the application sits behind a proxy and you have not, a client can spoof its source IP and walk past IP allowlists and per-IP rate limits.
 
 The library cannot detect whether a proxy is actually in front of it, so two settings cover the two separate questions.
+
+### Trusted proxies from YAML
+
+The proxies can be declared in configuration, not only in your bootstrap:
+
+```yaml
+global:
+  trusted_proxies: ["10.0.0.0/8", "173.245.48.0/20"]      # your proxies' own ranges
+  trusted_headers: [x-forwarded-for, x-forwarded-proto]  # optional
+```
+
+| Entry | Trusts |
+|---|---|
+| An address or CIDR range, IPv4 or IPv6 | That proxy, or that range of them |
+| `REMOTE_ADDR` | Whatever connected, for a load balancer whose address you do not know in advance. Resolved from the request being evaluated |
+| `PRIVATE_SUBNETS` | Every private and loopback range, as Symfony defines them |
+
+`trusted_headers` takes `forwarded`, `x-forwarded-for`, `x-forwarded-host`,
+`x-forwarded-proto`, `x-forwarded-port` and `x-forwarded-prefix`. It defaults to
+`x-forwarded-for`, `x-forwarded-proto` and `x-forwarded-port`: enough for the client
+address and scheme. `x-forwarded-host` is left out unless you name it, because trusting it
+changes what the request reports as its host.
+
+**It applies to the firewall's own reads, and only while it evaluates.** Symfony keeps
+trusted proxies in process-wide static state, so setting them for good would change what
+your application sees as well. They are applied at the start of each `evaluate()` and put
+back afterwards, including when a decision leaves as an exception. In `mode: block` the
+firewall sends its response and exits, and PHP skips `finally` on `exit()`. The process
+ends there, so only a shutdown function could still see them.
+
+**Your bootstrap wins.** If the application has already called
+`Request::setTrustedProxies()`, its proxies are used and `trusted_proxies` is ignored, with a
+warning the first time. The host knows its infrastructure; use one source or the other.
+
+**Refused at startup:**
+
+- a range that trusts every address — `0.0.0.0/0`, `::/0`. That trusts every client's own
+  `X-Forwarded-For`, which is the spoofing hole this setting exists to close;
+- an entry that is not an address, a range or a keyword;
+- a header name that is not a forwarding header. A header silently not trusted is a quiet
+  version of the same problem.
+
+`require_trusted_proxies: true` is satisfied by either source. And `firewall-doctor` can
+check this form from a terminal, which the bootstrap form it cannot: it reports the proxies
+and headers in force, or why they were refused.
 
 ### `behind_proxy` — asserting the deployment fact
 

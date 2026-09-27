@@ -48,6 +48,7 @@ use Kanopi\Firewall\Event\RequestTarpitted;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Utility\DegradedBackends;
+use Kanopi\Firewall\Utility\TrustedProxies;
 use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
@@ -155,7 +156,8 @@ final class Firewall
         private ?PluginManager $markPluginManager = null,
         private ?PluginManager $tarpitPluginManager = null,
         private ?TarpitGate $tarpitGate = null,
-        private ?ConfiguredListeners $configuredListeners = null
+        private ?ConfiguredListeners $configuredListeners = null,
+        private ?TrustedProxies $trustedProxies = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -404,7 +406,10 @@ final class Firewall
             // `events.listeners` and `metrics.statsd` (#396). Built here, so a
             // listener that cannot be built is a ConfigurationException from
             // create() rather than an error on the first blocked visitor.
-            self::configuredListeners($config)
+            self::configuredListeners($config),
+            // Validated here, so a range that trusts every client or a header
+            // that is not one stops the firewall starting (#397).
+            TrustedProxies::fromGlobal($config['global'])
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -813,7 +818,9 @@ final class Firewall
      */
     protected static function checkTrustedProxiesPosture(array $globalConfig, ?bool $behindProxy = null): void
     {
-        if (Request::getTrustedProxies() !== []) {
+        // Either source answers it: the host's own call, or global.trusted_proxies,
+        // which is applied for each evaluation (#397).
+        if (Request::getTrustedProxies() !== [] || !empty($globalConfig['trusted_proxies'])) {
             return;
         }
 
@@ -829,7 +836,8 @@ final class Firewall
         $message = 'Symfony Request::getTrustedProxies() is empty. If this '
             . 'application sits behind a proxy / load balancer, the firewall '
             . 'cannot trust the client IP and IP-based block / allow / rate-'
-            . 'limit rules can be bypassed via X-Forwarded-For. Call '
+            . 'limit rules can be bypassed via X-Forwarded-For. List the proxy '
+            . 'CIDRs in global.trusted_proxies, or call '
             . 'Request::setTrustedProxies(...) before Firewall::create() with '
             . 'the proxy CIDRs and the header bitmask you trust. If nothing '
             . 'is in front of this deployment, set global.behind_proxy=false '
@@ -842,7 +850,8 @@ final class Firewall
                 . 'Request::getTrustedProxies() is empty, so the firewall '
                 . 'cannot trust the client IP behind the proxy you have '
                 . 'declared: IP-based block / allow / rate-limit rules can be '
-                . 'bypassed via X-Forwarded-For. Call '
+                . 'bypassed via X-Forwarded-For. List the proxy CIDRs in '
+                . 'global.trusted_proxies, or call '
                 . 'Request::setTrustedProxies(...) before Firewall::create() '
                 . 'with the proxy CIDRs and the header bitmask you trust.';
         }
@@ -1667,6 +1676,36 @@ final class Firewall
             $request = Request::createFromGlobals();
         }
 
+        // `global.trusted_proxies` (#397), applied for this evaluation only and
+        // put back afterwards -- including when a decision leaves as an
+        // exception. Setting it for good would change what the host application
+        // sees as well as what the firewall sees, since Symfony keeps it in a
+        // static. Null when there are none, or when the host has set its own.
+        $restoreTrustedProxies = $this->trustedProxies?->apply($request);
+
+        try {
+            return $this->evaluateRequest($request);
+        } finally {
+            if ($restoreTrustedProxies !== null) {
+                $restoreTrustedProxies();
+            }
+        }
+    }
+
+    /**
+     * Evaluate a request, with trusted proxies already in place.
+     *
+     * The body of `evaluate()`, which wraps it so the proxies are applied and restored
+     * around every path out of it.
+     *
+     * @param Request $request
+     *   The request to evaluate.
+     *
+     * @return bool
+     *   As `evaluate()`.
+     */
+    private function evaluateRequest(Request $request): bool
+    {
         if (!$request->attributes->has('x-request-id')) {
             $requestId = $this->generateId($request);
             $request->attributes->set('x-request-id', $requestId);

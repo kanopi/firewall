@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Diagnostics;
 
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\FirewallMode;
 use Kanopi\Firewall\Plugins\AbstractPluginBase;
@@ -23,6 +24,7 @@ use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Utility\DatabaseConsumers;
 use Kanopi\Firewall\Utility\PanicSwitch;
+use Kanopi\Firewall\Utility\TrustedProxies;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -212,6 +214,29 @@ class Doctor
      */
     private function checkTrustedProxies(array $global): Diagnosis
     {
+        // Declared in YAML, it can be read and checked from anywhere -- the
+        // one form of this a terminal *can* verify (#397).
+        if (!empty($global['trusted_proxies'])) {
+            try {
+                $declared = TrustedProxies::fromGlobal($global);
+            } catch (ConfigurationException $configurationException) {
+                return Diagnosis::error(
+                    'global.trusted_proxies is refused',
+                    $configurationException->getMessage(),
+                    'configuration/global.md#trusted-proxies-from-yaml'
+                );
+            }
+
+            return Diagnosis::ok(
+                'Trusted proxies configured in YAML',
+                sprintf(
+                    '%s. Applied for each evaluation. If the application bootstrap also calls '
+                    . 'Request::setTrustedProxies(), its proxies are used instead and this is ignored.',
+                    $declared instanceof TrustedProxies ? $declared->describe() : 'none'
+                )
+            );
+        }
+
         $trusted = Request::getTrustedProxies();
 
         if ($trusted !== []) {
