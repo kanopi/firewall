@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Utility;
 
 use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Logging\LoggingFactory;
+use Symfony\Component\HttpFoundation\IpUtils;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -152,10 +153,30 @@ final class TrustedProxies
         $previousHeaders = Request::getTrustedHeaderSet();
         $peer = $request->server->get('REMOTE_ADDR');
 
-        $proxies = array_values(array_filter(array_map(
-            static fn (string $proxy): ?string => $proxy === 'REMOTE_ADDR' ? (is_string($peer) && $peer !== '' ? $peer : null) : $proxy,
-            $this->proxies
-        )));
+        $proxies = [];
+
+        foreach ($this->proxies as $proxy) {
+            // Both keywords expanded here rather than left to Symfony. REMOTE_ADDR
+            // because Symfony reads $_SERVER, not the request being evaluated;
+            // PRIVATE_SUBNETS because Symfony 6.4 does not know it, and would
+            // store the word as a "proxy" matching nothing -- so the setting
+            // would trust no proxy at all, and say nothing.
+            if ($proxy === 'REMOTE_ADDR') {
+                if (is_string($peer) && $peer !== '') {
+                    $proxies[] = $peer;
+                }
+
+                continue;
+            }
+
+            if ($proxy === 'PRIVATE_SUBNETS') {
+                array_push($proxies, ...IpUtils::PRIVATE_SUBNETS);
+
+                continue;
+            }
+
+            $proxies[] = $proxy;
+        }
 
         Request::setTrustedProxies($proxies, $this->headerSet);
 

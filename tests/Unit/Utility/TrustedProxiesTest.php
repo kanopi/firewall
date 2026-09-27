@@ -212,11 +212,21 @@ final class TrustedProxiesTest extends TestCase
         $this->assertSame([], Request::getTrustedProxies());
     }
 
+    /**
+     * Expanded here rather than left to Symfony, whose 6.4 line does not know the keyword
+     * and would trust nothing -- found by CI on PHP 8.1, which resolves 6.4.
+     */
     public function testPrivateSubnetsIsAccepted(): void
     {
         $firewall = $this->firewall(['trusted_proxies' => ['PRIVATE_SUBNETS']]);
 
         $this->assertTrue($this->isBlocked($firewall, $this->request('192.168.4.4', '203.0.113.9')));
+
+        $restore = TrustedProxies::fromGlobal(['trusted_proxies' => ['PRIVATE_SUBNETS']])?->apply($this->request('192.168.4.4'));
+        $this->assertNotContains('PRIVATE_SUBNETS', Request::getTrustedProxies(), 'The keyword itself never reaches Symfony');
+        $this->assertContains('192.168.0.0/16', Request::getTrustedProxies());
+        $this->assertIsCallable($restore);
+        $restore();
     }
 
     /**
