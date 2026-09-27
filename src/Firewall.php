@@ -95,6 +95,11 @@ final class Firewall
     private FirewallMode $configuredMode;
 
     /**
+     * Whether a request with no client address has already been reported (#403).
+     */
+    private bool $reportedNoClientKey = false;
+
+    /**
      * Create a new Firewall Object.
      *
      * @param StorageInterface $storage
@@ -1485,7 +1490,15 @@ final class Firewall
      */
     protected function record(Request $request, PluginInterface $plugin): bool
     {
-        $key = $this->storage->getKey($request);
+        $key = $this->clientKey($request);
+
+        if ($key === null) {
+            // Nothing to attribute it to (#403). Recording under an empty key
+            // would put every address-less visitor on one entry.
+            $this->announce(new RequestRecorded($request, $plugin, false));
+
+            return false;
+        }
 
         $success = $this->storage->set(
             $key,
@@ -1508,6 +1521,46 @@ final class Firewall
         $this->announce(new RequestRecorded($request, $plugin, $success));
 
         return $success;
+    }
+
+    /**
+     * The block-list key for this request's client, or null when it has none.
+     *
+     * `StorageInterface::getKey()` is the client address for every shipped backend, and
+     * a request without one -- built by a long-running runtime's bridge, a queue worker,
+     * a test -- produces `''`. Treated as "cannot identify the client" rather than as a
+     * key, because every such request produces the same one: a block written under it
+     * refuses every address-less visitor on every path (#403). Checked on the key rather
+     * than on the address, so a custom backend keying on something else is judged by its
+     * own answer.
+     *
+     * Said once per firewall, since a runtime that lacks the address lacks it on every
+     * request.
+     *
+     * @param Request $request
+     *   The request.
+     *
+     * @return string|null
+     *   The key, or null when there is nothing to attribute a block to.
+     */
+    private function clientKey(Request $request): ?string
+    {
+        $key = $this->storage->getKey($request);
+
+        if ($key !== '') {
+            return $key;
+        }
+
+        if (!$this->reportedNoClientKey) {
+            $this->reportedNoClientKey = true;
+
+            $this->getLogger()->warning('A request has no client address - address rules cannot match it, and it is not written to the block list', [
+                'detail' => 'REMOTE_ADDR is not set on the request. Under PHP-FPM that does not happen; '
+                    . 'where the host builds the request itself, set REMOTE_ADDR from the connection.',
+            ]);
+        }
+
+        return null;
     }
 
     /**
@@ -2760,7 +2813,15 @@ final class Firewall
      */
     protected function enforceStorageBlocklist(Request $request): void
     {
-        $data = $this->storage->isBlocked($this->storage->getKey($request));
+        $key = $this->clientKey($request);
+
+        // No client to look up (#403). Every address-less request shares the
+        // empty key, so reading it would refuse all of them for one's offence.
+        if ($key === null) {
+            return;
+        }
+
+        $data = $this->storage->isBlocked($key);
         if ($data === false) {
             return;
         }
@@ -3034,12 +3095,26 @@ final class Firewall
             return true;
         }
 
+        $key = $this->clientKey($request);
+
+        // Refused, and not banned: a durable ban needs a client to attach to,
+        // and without an address every such request would share one (#403).
+        // Checked before the expiry, which reads offense history by the same key.
+        if ($key === null) {
+            $this->getLogger()->info('Request blocked without recording - it has no client address', $this->getContext($request, [
+                'plugin_name' => $plugin->getName(),
+                'plugin_type' => $plugin::class,
+                'recorded' => false,
+            ]));
+
+            return true;
+        }
+
         $expirationTime = $this->determineExpirationTime(
             $request,
             $plugin->getExpirationTime($request)
         );
 
-        $key = $this->storage->getKey($request);
         $value = $this->storage->getStorageData($request, $plugin);
         $success = $this->storage->set(
             $key,

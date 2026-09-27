@@ -347,6 +347,20 @@ class RateLimit extends AbstractPluginBase
             return false;
         }
 
+        // Counted by an address the request does not have: every such request
+        // would share one bucket, so one client could exhaust it for all of
+        // them (#403). Skipped rather than pooled. A rule counting something
+        // else -- `post.username`, a header -- still counts.
+        $clientIp = $request->getClientIp();
+
+        if (($clientIp === null || $clientIp === '') && in_array('client_ip', $this->keyComponents($matchedRule), true)) {
+            $this->getLogger()->debug('Rate limit rule counts by address and the request has none, skipping', $this->getContext($request, [
+                'matched_rule' => $matchedRule['path'],
+            ]));
+
+            return false;
+        }
+
         $this->matchedRule = $matchedRule;
         $key = $this->buildRateKey($request, $matchedRule);
         $now = time();

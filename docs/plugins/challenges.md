@@ -5,7 +5,7 @@
 The pass token is:
 
 - **Signed** with the configured `challenge.secret` (HMAC-SHA256) so it cannot be forged.
-- **IP-bound** — the token only verifies for the same client IP that solved the challenge.
+- **IP-bound** — the token only verifies for the same client IP that solved the challenge. A request with no client address therefore cannot pass a challenge: its pass never verifies. That fails closed on purpose — see [a request with no client address](ip-address.md#a-request-with-no-client-address).
 - **Audience-bound** — the token carries an `aud` claim and only verifies against the instance that issued it. See [Scoping tokens across instances](#scoping-tokens-across-instances).
 - **Provider-bound** — the token carries a `prv` claim and only satisfies rules served by the provider that issued it. See [Per-plugin providers](#per-plugin-providers).
 - **Delivered two ways** — as an `HttpOnly; Secure; SameSite=Strict` cookie *and* as a value the interstitial JS writes to `localStorage` so SPA callers can attach it to XHRs via a custom header (defaults to `X-Firewall-Challenge`).

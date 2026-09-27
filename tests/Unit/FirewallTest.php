@@ -84,6 +84,8 @@ class FirewallTest extends AbstractTestCase
 
         $this->bypassManager->method('evaluate')->willReturn(false);
         $this->storage->method('isBlocked')->willReturn(['event_id' => 'mock-blocked']);
+        // A mocked getKey() answers '' by default, which now means "no client" (#403).
+        $this->storage->method('getKey')->willReturn('1.2.3.4');
 
         $firewall = $this->createFirewall(['mode' => 'exception']);
         $this->expectException(FirewallBlockedException::class);
@@ -102,6 +104,8 @@ class FirewallTest extends AbstractTestCase
 
         $this->bypassManager->method('evaluate')->willReturn(false);
         $this->storage->method('isBlocked')->willReturn([]);
+        // A mocked getKey() answers '' by default, which now means "no client" (#403).
+        $this->storage->method('getKey')->willReturn('1.2.3.4');
 
         $firewall = $this->createFirewall(['mode' => 'exception', 'banning_status_code' => 429, 'banning_message' => 'You are banned']);
         $this->expectException(FirewallBlockedException::class);

@@ -40,6 +40,16 @@ class IpAddress extends AbstractPluginBase
     public function evaluate(Request $request): bool
     {
         $clientIp = $request->getClientIp();
+
+        // No address, no match -- for an allow rule and a block rule alike.
+        // It used to reach inList(string) as null and leave as a TypeError: a
+        // 500 for every request a host built without REMOTE_ADDR (#403).
+        if ($clientIp === null || $clientIp === '') {
+            $this->getLogger()->debug('IP Address evaluation skipped - the request has no client address', $this->getContext($request));
+
+            return false;
+        }
+
         $result = $this->inList($clientIp, $this->config);
 
         $this->getLogger()->debug('IP Address evaluation started', $this->getContext($request, [
