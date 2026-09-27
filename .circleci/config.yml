@@ -105,7 +105,9 @@ jobs:
           - POSTGRES_PASSWORD=password
       - image: redis:6
         name: redis
-      - image: memcached:1.6
+      # Pinned, with ext-memcached below, so a new upstream release cannot
+      # change results without a change here. Bump both deliberately.
+      - image: memcached:1.6.41
         name: memcached
     steps:
       - checkout
@@ -138,7 +140,7 @@ jobs:
             # rather than `yes`: steps run with pipefail, and `yes` is killed by
             # SIGPIPE when pecl exits, which fails the step after a successful
             # install (exit 141).
-            printf '\n\n\n\n\n\n\n\n\n\n\n\n' | sudo pecl install memcached
+            printf '\n\n\n\n\n\n\n\n\n\n\n\n' | sudo pecl install memcached-3.4.0
             sudo docker-php-ext-install pdo_mysql mysqli pdo_pgsql
             #sudo cp .circleci/config/*.ini /etc/php.d/
             cp .circleci/phpunit.env ./.env
