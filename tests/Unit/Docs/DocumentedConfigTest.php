@@ -45,6 +45,7 @@ class DocumentedConfigTest extends TestCase
         'Kanopi\\Firewall\\Storage\\DatabaseStorage' => ['connection', 'storage_table', 'offenses_table', 'schema_check_probability', 'record_request'],
         'Kanopi\\Firewall\\Storage\\InMemoryStorage' => ['record_request'],
         'Kanopi\\Firewall\\Storage\\RedisStorage' => ['redis', 'instance', 'record_request'],
+        'Kanopi\\Firewall\\Storage\\MemcachedStorage' => ['memcached', 'instance', 'record_request'],
         'Kanopi\\Firewall\\Storage\\SharedStorage' => ['shared', 'local', 'record_request'],
         'Kanopi\\Firewall\\RateLimitStorage\\FileRateLimitStorage' => ['file'],
         'Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage' => ['connection', 'storage_table', 'schema_check_probability'],

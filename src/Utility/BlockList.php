@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Utility;
 
+use Kanopi\Firewall\Storage\BestEffortEnumerationInterface;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Storage\QueryableStorageInterface;
 use Kanopi\Firewall\Storage\StorageFactory;
@@ -77,12 +78,14 @@ class BlockList
     /**
      * What the backend is, and whether it can answer at all.
      *
-     * @return array{class: string, queryable: bool, durable: bool}
+     * @return array{class: string, queryable: bool, durable: bool, gap: string|null}
      *   `queryable` is false for a backend that cannot enumerate its own keys --
      *   the Memcached example in the custom-storage guide cannot, which is why
      *   enumeration is a separate interface. `durable` is false for a store that
      *   dies with the process, where every answer here is truthfully empty and
-     *   completely misleading.
+     *   completely misleading. `gap` says why a range search may currently be
+     *   missing records, for a backend that enumerates from an index it can
+     *   lose (#392); null when there is nothing to say.
      */
     public function backend(): array
     {
@@ -94,6 +97,7 @@ class BlockList
             // The exact class, not `instanceof`: FileStorage extends
             // InMemoryStorage and is perfectly durable.
             'durable' => $storage::class !== InMemoryStorage::class,
+            'gap' => $storage instanceof BestEffortEnumerationInterface ? $storage->enumerationGap() : null,
         ];
     }
 

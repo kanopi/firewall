@@ -97,6 +97,12 @@ class Doctor
             $findings[] = $diagnosi;
         }
 
+        $enumeration = $this->checkEnumeration();
+
+        if ($enumeration instanceof Diagnosis) {
+            $findings[] = $enumeration;
+        }
+
         foreach ($this->checkRecordedRequest($config) as $diagnosi) {
             $findings[] = $diagnosi;
         }
@@ -579,6 +585,38 @@ class Doctor
         }
 
         return $this->checkStoragePaths($settings, null);
+    }
+
+    /**
+     * Whether a range search of the block list can currently be trusted (#392).
+     *
+     * Only a backend that enumerates from an index it can lose has anything to say, so
+     * every other backend produces no finding at all rather than an "ok" about a problem
+     * it cannot have.
+     *
+     * @return Diagnosis|null
+     *   A warning, or null when there is nothing to report.
+     */
+    private function checkEnumeration(): ?Diagnosis
+    {
+        try {
+            $gap = (new BlockList($this->configs))->backend()['gap'];
+        } catch (\Throwable) {
+            // A backend that could not be built is reported by the checks
+            // around this one; a second finding would read as a second problem.
+            return null;
+        }
+
+        if ($gap === null) {
+            return null;
+        }
+
+        return Diagnosis::warning(
+            'Block list searches may be incomplete',
+            ucfirst($gap) . '. Blocks are still enforced, and a single address is still found; '
+            . '`firewall-block --find` and `--list` may miss some.',
+            'configuration/storage.md#the-index-is-best-effort'
+        );
     }
 
     /**

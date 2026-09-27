@@ -55,7 +55,7 @@ Nothing here explains anything; that is deliberate.
 
 | Key | Type | |
 |---|---|---|
-| `type` | class | `FileStorage`, `DatabaseStorage`, `RedisStorage`, `InMemoryStorage` |
+| `type` | class | `FileStorage`, `DatabaseStorage`, `RedisStorage`, `MemcachedStorage`, `InMemoryStorage` |
 | `config` | map | Backend-specific, below |
 
 | Backend | `config` keys | |
@@ -63,10 +63,11 @@ Nothing here explains anything; that is deliberate.
 | `FileStorage` | **`storage_file`**, `offense_file` | Paths; relative resolves against the YAML file |
 | `DatabaseStorage` | `connection`, `storage_table`, `offenses_table`, `schema_check_probability` | [Storage](../configuration/storage.md) |
 | `RedisStorage` | `redis`, `instance` | Requires `ext-redis` |
-
-Every block-list backend also accepts `record_request`, which decides [what a block record keeps](../configuration/storage.md#what-a-block-record-keeps) of the visitor's cookies, headers, query and body. It defaults to an allowlist rather than everything.
+| `MemcachedStorage` | `memcached`, `instance` | Requires `ext-memcached`. Range searches are [best effort](../configuration/storage.md#the-index-is-best-effort) |
 | `InMemoryStorage` | — | Per-process; nothing survives the request |
 | `SharedStorage` | **`shared`**, **`local`** | A fleet-wide list with a local copy underneath. Each is a `{type, config}` block — [Storage](../configuration/storage.md#a-block-list-shared-across-a-fleet) |
+
+Every block-list backend also accepts `record_request`, which decides [what a block record keeps](../configuration/storage.md#what-a-block-record-keeps) of the visitor's cookies, headers, query and body. It defaults to an allowlist rather than everything.
 
 Rate-limit counters are stored separately, under the RateLimit plugin's own metadata:
 

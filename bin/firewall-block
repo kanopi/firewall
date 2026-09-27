@@ -218,6 +218,13 @@ $warning = $backend['durable']
         $backend['class']
     );
 
+// A store that enumerates from an index it can lose answers truthfully and
+// incompletely. "Not in this range" then means "not in the part of the index
+// that survived", which is a different sentence (#392).
+if ($warning === null && $backend['gap'] !== null) {
+    $warning = sprintf('Results may be incomplete: %s.', $backend['gap']);
+}
+
 if ($lifts !== []) {
     $matched = [];
 

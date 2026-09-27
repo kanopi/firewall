@@ -46,3 +46,8 @@ services:
     image: redis:6
     ports:
       - 6370:6379
+
+  memcached:
+    image: memcached:1.6
+    ports:
+      - 11210:11211

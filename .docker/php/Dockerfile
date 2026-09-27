@@ -3,7 +3,7 @@ FROM php:${PHP_VERSION}-fpm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    libzip-dev zip unzip git curl
+    libzip-dev zip unzip git curl libmemcached-dev zlib1g-dev
 
 # Install PHP extensions
 RUN docker-php-ext-install pdo pdo_mysql mysqli
@@ -11,6 +11,10 @@ RUN docker-php-ext-install pdo pdo_mysql mysqli
 # Install and enable Redis extension
 RUN pecl install redis \
     && docker-php-ext-enable redis
+
+# Install and enable Memcached extension
+RUN yes "" | pecl install memcached \
+    && docker-php-ext-enable memcached
 
 # Install and configure Xdebug
 RUN pecl install xdebug \
