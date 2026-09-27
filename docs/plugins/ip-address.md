@@ -34,3 +34,18 @@ plugins:
       - 192.168.1.50
       - 10.10.10.0/24
 ```
+
+## A request with no client address
+
+A request with no `REMOTE_ADDR` has no address to compare, so an `IpAddress` rule does not
+match it. That is true for an `allow` rule and a `block` rule alike. PHP-FPM behind a web
+server always sets the address; a request built by a long-running runtime's bridge, a queue
+worker or a test may not.
+
+Other rules can still refuse such a request, but it is **not written to the block list**.
+Every address-less request would share one entry, so one client's offence would refuse all
+of them. A rate limit counting by `client_ip` skips it for the same reason, while one keyed
+on something else — `post.name`, a header — still counts. The firewall logs a warning once
+when it sees one. Before 2.33.0 an `IpAddress` rule failed with a `TypeError` here
+([#403](https://github.com/kanopi/firewall/issues/403)).
+
