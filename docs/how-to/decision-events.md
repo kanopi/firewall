@@ -29,6 +29,37 @@ $dispatcher->addListener(RequestBlocked::class, function (RequestBlocked $event)
 Without a dispatcher nothing changes and nothing is dispatched. The parameter is optional and
 trailing, so existing `Firewall::create()` calls are untouched.
 
+## Listeners from YAML
+
+A site whose only integration point is a config file can register listeners there instead:
+
+```yaml
+events:
+  listeners:
+    - class: "App\\Firewall\\NotifyOnPermanentBan"
+      args: ["%env(SLACK_WEBHOOK)%"]
+      events: [RequestBlocked]            # optional; every decision when omitted
+    - "App\\Firewall\\AuditTrail"        # the class alone, for no arguments
+```
+
+A listener is any class with `__invoke(DecisionEvent $event)` — the same callable a PHP
+dispatcher would be given, and receiving the same events. `events:` takes short names
+(`RequestBlocked`) or full class names; `args` are spread into the constructor, and may use
+`%env()%` and `%config()%`.
+
+- **A dispatcher passed to `create()` still works, and both are told** — the dispatcher first,
+  then these. PSR-14 has no way to add a listener to somebody else's dispatcher, so these are
+  not attached to yours; they are called alongside it.
+- **Refused at startup, not on the first blocked visitor:** a class that does not exist, one
+  that is not callable, a constructor that throws, or an event name that is not an event is a
+  `ConfigurationException` from `Firewall::create()`.
+- **Isolated from each other.** One that throws is logged at `error`, recorded in
+  `Firewall::getDegradedBackends()` as `decision listener`, and the next one still runs. The
+  verdict is untouched, as for a PHP listener.
+- `firewall-doctor` lists what is registered.
+
+The [StatsD exporter](metrics.md#from-yaml) is one of these, under `metrics.statsd`.
+
 ## The events
 
 | Event | Dispatched when |

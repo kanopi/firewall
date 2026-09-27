@@ -22,6 +22,8 @@ Nothing here explains anything; that is deliberate.
 | `storage` | map | Where blocks are persisted. Table below |
 | `connections` | map | Connections declared once and referred to as `%connection(name)%`. [Named Connections](../configuration/connections.md) |
 | `logger` | list | Monolog handlers. [Logging](../configuration/logging.md) |
+| `events` | map | `listeners`: decision listeners, each `{class, args, events}`. [Reacting to Decisions](../how-to/decision-events.md#listeners-from-yaml) |
+| `metrics` | map | `statsd`: `host`, `port`, `prefix`, `tags`, `rule_limit`, or `true` for the defaults. [Export Metrics](../how-to/metrics.md#from-yaml) |
 | `challenge` | map | Challenge flow settings. Table below |
 | `tarpit` | map | `max_concurrent` (default `5`) and `max_seconds` (default `30`) — see [Tarpit](../plugins/tarpit.md) |
 | `plugins` | list | The rules. Table below |
