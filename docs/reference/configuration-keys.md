@@ -20,6 +20,7 @@ Nothing here explains anything; that is deliberate.
 | `configs` | list | Other files to merge in — paths, globs, URLs, `{config_dir}` / `{presets_dir}` tokens. [Loading & Includes](../configuration/loading-and-includes.md) |
 | `global` | map | Site-wide behaviour. Table below |
 | `storage` | map | Where blocks are persisted. Table below |
+| `connections` | map | Connections declared once and referred to as `%connection(name)%`. [Named Connections](../configuration/connections.md) |
 | `logger` | list | Monolog handlers. [Logging](../configuration/logging.md) |
 | `challenge` | map | Challenge flow settings. Table below |
 | `tarpit` | map | `max_concurrent` (default `5`) and `max_seconds` (default `30`) — see [Tarpit](../plugins/tarpit.md) |

@@ -112,7 +112,14 @@ foreach ($files as $file) {
 }
 
 Config::clearLoadErrors();
-$config = Config::load($files);
+
+try {
+    // A handler may name its connection (#395).
+    $config = \Kanopi\Firewall\Utility\Connections::resolveIn(Config::load($files));
+} catch (\Kanopi\Firewall\Exception\ConfigurationException $configurationException) {
+    fwrite(STDERR, $configurationException->getMessage() . "\n");
+    exit(2);
+}
 
 foreach (Config::getLoadErrors() as $error) {
     fwrite(STDERR, sprintf("Could not load %s: %s\n", $error['file'], $error['message']));

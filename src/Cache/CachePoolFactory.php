@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Cache;
 
+use Kanopi\Firewall\Utility\Connections;
 use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Component\Cache\Adapter\MemcachedAdapter;
 use Symfony\Component\Cache\Adapter\RedisAdapter;
@@ -48,36 +49,6 @@ final class CachePoolFactory
      * The DSN schemes a pool can be built from.
      */
     public const SCHEMES = ['memcached', 'redis', 'rediss'];
-
-    /**
-     * Connection defaults for a Memcached DSN, in libmemcached's own units.
-     *
-     * Bounded for the reason every connection in this library is (#273, #312): the case
-     * that hangs is not a refused connection, which answers at once, but a dropped one --
-     * a firewalled port, a wrong subnet -- which would otherwise wait as long as the
-     * extension's default allows. Milliseconds for the connect and poll timeouts,
-     * microseconds for send and receive.
-     *
-     * A server that fails is taken out of the ring for the rest of the request, so its
-     * keys move to the servers still up rather than every lookup paying the timeout --
-     * and so the probe below can reach a live server on its second attempt.
-     */
-    private const MEMCACHED_DEFAULTS = [
-        'connect_timeout' => 1500,
-        'poll_timeout' => 1500,
-        'send_timeout' => 1500000,
-        'recv_timeout' => 1500000,
-        'remove_failed_servers' => true,
-        'server_failure_limit' => 1,
-    ];
-
-    /**
-     * Connection defaults for a Redis DSN, in seconds.
-     */
-    private const REDIS_DEFAULTS = [
-        'timeout' => 1.5,
-        'read_timeout' => 1.5,
-    ];
 
     /**
      * Build the pool a setting describes.
@@ -122,17 +93,24 @@ final class CachePoolFactory
             return $adaptor;
         }
 
+        $name = is_string($configured['namespace'] ?? null) && $configured['namespace'] !== ''
+            ? $configured['namespace']
+            : $namespace;
+
+        // A client, not a pool: what `%connection(name)%` resolves to (#395), so a
+        // cache can share the connection a storage or a log handler already uses.
+        if ($adaptor instanceof \Memcached || $adaptor instanceof \Redis) {
+            return self::fromClient($adaptor, $name, $defaultLifetime);
+        }
+
         if (!is_string($adaptor)) {
             throw CachePoolException::notAPool(sprintf(
-                'adaptor must be a pool class name or a DSN, not %s',
+                'adaptor must be a pool class name, a DSN or a named connection, not %s',
                 get_debug_type($adaptor)
             ));
         }
 
         if (self::isDsn($adaptor)) {
-            $name = is_string($configured['namespace'] ?? null) && $configured['namespace'] !== ''
-                ? $configured['namespace']
-                : $namespace;
             $options = is_array($configured['options'] ?? null) ? $configured['options'] : [];
 
             return self::fromDsn($adaptor, $name, $defaultLifetime, $options);
@@ -239,23 +217,11 @@ final class CachePoolFactory
         $extension = $scheme === 'memcached' ? 'memcached' : 'redis';
 
         try {
-            if ($scheme === 'memcached') {
-                $client = MemcachedAdapter::createConnection($dsn, $options + self::MEMCACHED_DEFAULTS);
-
-                // Creating a client opens nothing. Without asking for something,
-                // a server that is down is only found on the first lookup -- and
-                // then on every one after it.
-                if (!self::memcachedAnswers($client)) {
-                    throw new \RuntimeException(sprintf('no Memcached server answered (%s)', $client->getResultMessage()));
-                }
-
-                return new MemcachedAdapter($client, $namespace, $defaultLifetime, new NoObjectsMarshaller());
-            }
-
-            // Connects here, and throws when it cannot.
-            $client = RedisAdapter::createConnection($dsn, $options + self::REDIS_DEFAULTS);
-
-            return new RedisAdapter($client, $namespace, $defaultLifetime, new NoObjectsMarshaller());
+            // Built the way a named connection is, with the same bounded
+            // defaults. Redis connects here, and throws when it cannot.
+            return self::fromClient(Connections::client($dsn, $options), $namespace, $defaultLifetime);
+        } catch (CachePoolException $cachePoolException) {
+            throw $cachePoolException;
         } catch (\Throwable $throwable) {
             // Named plainly when it is the extension, which is a different fix from
             // a server that is down. Symfony's exceptions carry no DSN -- it marks
@@ -265,6 +231,28 @@ final class CachePoolFactory
                 $throwable
             );
         }
+    }
+
+    /**
+     * Wrap a client in a pool, with the marshaller that refuses objects.
+     *
+     * @throws CachePoolException
+     *   When no Memcached server answers.
+     */
+    private static function fromClient(\Memcached|\Redis $client, string $namespace, int $defaultLifetime): CacheItemPoolInterface
+    {
+        if ($client instanceof \Redis) {
+            return new RedisAdapter($client, $namespace, $defaultLifetime, new NoObjectsMarshaller());
+        }
+
+        // Creating a client opens nothing. Without asking for something, a
+        // server that is down is only found on the first lookup -- and then on
+        // every one after it.
+        if (!self::memcachedAnswers($client)) {
+            throw CachePoolException::unusable(sprintf('no Memcached server answered (%s)', $client->getResultMessage()));
+        }
+
+        return new MemcachedAdapter($client, $namespace, $defaultLifetime, new NoObjectsMarshaller());
     }
 
     /**

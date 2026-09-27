@@ -13,6 +13,7 @@ namespace Kanopi\Firewall\Diagnostics;
 
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Tarpit\TarpitGate;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
@@ -84,6 +85,18 @@ class ConfigLinter
                 'Config file failed to load: ' . $error['file'],
                 $error['message'],
                 'configuration/loading-and-includes.md'
+            );
+        }
+
+        // Before the rules, and whether or not there are any: a storage or a
+        // logger can name a connection as well. Checked without building one --
+        // a lint should not open connections (#395).
+        foreach (Connections::undeclaredReferences($config) as $name) {
+            $findings[] = Diagnosis::error(
+                sprintf('Connection "%s" is referenced but not declared', $name),
+                'A %connection(name)% reference names an entry under connections:. The firewall '
+                . 'refuses to start with an undeclared one.',
+                'configuration/connections.md'
             );
         }
 

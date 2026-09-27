@@ -236,6 +236,7 @@ nav:
       - Environment Variables: configuration/environment-variables.md
       - Global Settings: configuration/global.md
       - Storage: configuration/storage.md
+      - Named Connections: configuration/connections.md
       - Conditional Logic: configuration/conditional-logic.md
       - Time Windows: configuration/time-windows.md
       - Rule Sources: configuration/sources.md

@@ -69,7 +69,7 @@ class ChallengePasses
     public function storage(): StorageInterface
     {
         if (!$this->storage instanceof StorageInterface) {
-            $config = Config::load($this->configs);
+            $config = Connections::resolveIn(Config::load($this->configs));
             $this->storage = StorageFactory::create(is_array($config['storage'] ?? null) ? $config['storage'] : []);
         }
 
