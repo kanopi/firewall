@@ -812,6 +812,51 @@ class PluginManagerTest extends AbstractTestCase
     }
 
     /**
+     * `verify_cache` takes the same shapes as every other cache setting (#394). Before,
+     * it took only an already-built pool, so YAML could not choose a backend at all.
+     */
+    public function testVerifyCacheAcceptsAClassName(): void
+    {
+        $this->assertInstanceOf(
+            \Symfony\Component\Cache\Adapter\ArrayAdapter::class,
+            $this->identityCachePool(['verify_cache' => ['adaptor' => \Symfony\Component\Cache\Adapter\ArrayAdapter::class]])
+        );
+    }
+
+    /**
+     * One that cannot be built falls back to the file cache, not to none: without a
+     * cache every request pays a DNS round trip.
+     */
+    public function testAVerifyCacheThatCannotBeBuiltFallsBackToTheFileCache(): void
+    {
+        $handler = new \Kanopi\Firewall\Tests\Logging\TestLogHandler(\Monolog\Level::Debug);
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(new \Monolog\Logger('test', [$handler]));
+
+        $pool = $this->identityCachePool(['verify_cache' => 'mongodb://firewall:s3cret@cache:27017']);
+
+        $this->assertInstanceOf(\Symfony\Component\Cache\Adapter\FilesystemAdapter::class, $pool);
+        $this->assertTrue($handler->hasWarningContaining('using the file cache'));
+        $this->assertFalse($handler->hasWarningContaining('s3cret'));
+    }
+
+    public function testWithNoVerifyCacheTheFileCacheIsUsed(): void
+    {
+        $this->assertInstanceOf(\Symfony\Component\Cache\Adapter\FilesystemAdapter::class, $this->identityCachePool([]));
+    }
+
+    /**
+     * The pool a plugin's verifier would be built with.
+     *
+     * @param array<string, mixed> $metadata
+     */
+    private function identityCachePool(array $metadata): ?\Psr\Cache\CacheItemPoolInterface
+    {
+        $plugin = new TestObservablePlugin($metadata, []);
+
+        return (new \ReflectionMethod($plugin, 'identityCachePool'))->invoke($plugin);
+    }
+
+    /**
      * The verifier is built once per plugin, not once per request it handles.
      */
     public function testTheVerifierIsReusedAcrossRequests(): void

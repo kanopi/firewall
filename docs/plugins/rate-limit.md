@@ -50,10 +50,11 @@ plugins:
         # Option 4: PSR-6 cache pool
         # type: "Kanopi\\Firewall\\RateLimitStorage\\CacheRateLimitStorage"
         # config:
-        #   # Class implementing Psr\Cache\CacheItemPoolInterface
-        #   adaptor: "Symfony\\Component\\Cache\\Adapter\\FilesystemAdapter"
-        #   # Constructor arguments, spread in order
-        #   args: ['firewall', 0, '/var/cache/firewall']
+        #   # A memcached:// or redis:// DSN, or a class implementing
+        #   # Psr\Cache\CacheItemPoolInterface with its constructor arguments
+        #   adaptor: "memcached://cache.internal:11211"
+        #   # adaptor: "Symfony\\Component\\Cache\\Adapter\\FilesystemAdapter"
+        #   # args: ['firewall', 0, '/var/cache/firewall']
         #   ttl: 3600
 
         # Option 5: In-memory (testing only)

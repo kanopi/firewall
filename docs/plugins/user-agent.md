@@ -241,7 +241,7 @@ Five things keep that off the request path:
 | `verify_negative_ttl` | `86400` | Seconds a refusal stays good |
 | `verify_slow_threshold_ms` | `250` | A lookup slower than this trips the breaker |
 | `verify_claim_wait_ms` | `0` | Wait this long for another worker's verdict instead of refusing — see [below](#waiting-for-the-other-workers-verdict) |
-| `verify_cache` | filesystem | Any PSR-6 pool; falls back to `KANOPI_FIREWALL_CACHE_DIR` |
+| `verify_cache` | filesystem | A pool class, a `memcached://` or `redis://` DSN, or an injected pool — the same shapes as [`cache`](#using-a-different-backend). Falls back to the file cache under `KANOPI_FIREWALL_CACHE_DIR` if it cannot be built |
 
 ### Run a local caching resolver
 
@@ -377,7 +377,18 @@ No configuration is needed. The cache is written to `KANOPI_FIREWALL_CACHE_DIR` 
 
 ### Using a different backend
 
-Any PSR-6 pool works. The shape matches the one [rate limiting](rate-limit.md) already accepts, so there is a single convention to learn:
+Name a Memcached or Redis server with a DSN, and the pool is built for you:
+
+```yaml
+    metadata:
+      cache:
+        adaptor: "memcached://cache.internal:11211"   # or redis://, rediss://
+        namespace: device-detector                     # the default
+        options: { connect_timeout: 500 }              # over the bounded defaults
+```
+
+`cache: "memcached://cache.internal:11211"` on its own is shorthand for the same thing. Any
+other PSR-6 pool is named by its class, with its constructor arguments:
 
 ```yaml
     metadata:
@@ -386,7 +397,25 @@ Any PSR-6 pool works. The shape matches the one [rate limiting](rate-limit.md) a
         args: ['device-detector', 0]
 ```
 
-An already-constructed pool can be injected through [configuration overrides](../configuration/overrides.md), since YAML cannot carry an object:
+The same shapes work for every cache setting in the firewall: this one, the
+[GeoIP cache](geolocation.md#caching-lookups-across-requests), `verify_cache`, and
+[`CacheRateLimitStorage`](rate-limit.md). A DSN pool connects with 1.5-second timeouts, and a
+server that does not answer is found when the plugin starts, not on every lookup after.
+
+A server that cannot be reached, or a missing `ext-memcached` or `ext-redis`, leaves
+detection running uncached with a warning that names which it was. It does not fall back to
+the file cache, because that is not what you asked for.
+
+!!! warning "On Memcached, keep compression on"
+
+    The largest corpus entry is about **1.5 MB** before compression, over Memcached's
+    default 1 MB item limit. It fits because `ext-memcached` compresses by default. With
+    compression off, or a smaller `-I`, that write is refused, and every request pays the
+    full parse — about 250 ms rather than 15. The plugin logs
+    `User Agent regex cache refused a write` the first time, so it is not silent. Keep
+    compression on and the item limit at 2 MB or more, or use Redis or the file cache.
+
+A pool your framework already has can be injected through [configuration overrides](../configuration/overrides.md), since YAML cannot carry an object:
 
 ```php
 Firewall::create([__DIR__ . '/firewall.yml'], [

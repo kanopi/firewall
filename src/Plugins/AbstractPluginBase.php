@@ -21,6 +21,8 @@ use Kanopi\Firewall\Utility\RuleDiagnostics;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\Path;
 use Kanopi\Firewall\Utility\ReverseDnsVerifier;
+use Kanopi\Firewall\Cache\CachePoolException;
+use Kanopi\Firewall\Cache\CachePoolFactory;
 use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\HttpFoundation\Request;
@@ -143,7 +145,12 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
     }
 
     /**
-     * A filesystem pool for verification verdicts.
+     * The pool for verification verdicts.
+     *
+     * `metadata.verify_cache` takes the same shapes as every other cache setting -- a
+     * pool, a class name with `args`, or a DSN -- and a filesystem pool when it names
+     * none. Before #394 it took only an already-built pool, so YAML could not choose a
+     * backend here at all.
      *
      * Its own namespace rather than sharing whatever a plugin uses for other things, so
      * clearing one cache cannot quietly widen an allow rule by discarding verdicts.
@@ -155,8 +162,23 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
     {
         $configured = $this->metadata['verify_cache'] ?? null;
 
-        if ($configured instanceof CacheItemPoolInterface) {
-            return $configured;
+        try {
+            $pool = CachePoolFactory::create($configured, 'kanopi_firewall_rdns', 3600);
+        } catch (CachePoolException $cachePoolException) {
+            // Falls back to the file cache rather than to none. Without a cache
+            // every request pays a DNS round trip; a local cache is still far
+            // better than that, and it is what an unconfigured plugin uses.
+            $this->getLogger()->warning('Reverse DNS cache could not be built from verify_cache - using the file cache', [
+                'plugin' => $this->getName(),
+                'adaptor' => CachePoolFactory::describe(is_array($configured) ? ($configured['adaptor'] ?? null) : $configured),
+                'error' => $cachePoolException->getMessage(),
+            ]);
+
+            $pool = null;
+        }
+
+        if ($pool instanceof CacheItemPoolInterface) {
+            return $pool;
         }
 
         try {

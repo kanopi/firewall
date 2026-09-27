@@ -13,6 +13,8 @@ namespace Kanopi\Firewall\Traits;
 
 use GeoIp2\Database\Reader;
 use GeoIp2\WebService\Client;
+use Kanopi\Firewall\Cache\CachePoolException;
+use Kanopi\Firewall\Cache\CachePoolFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Psr\Cache\CacheItemPoolInterface;
 use MaxMind\Db\Reader\InvalidDatabaseException;
@@ -154,46 +156,36 @@ trait GeoLocationTrait
             return $this->valueCache = null;
         }
 
-        if ($configured instanceof CacheItemPoolInterface) {
-            return $this->valueCache = $configured;
-        }
-
-        $adaptor = is_array($configured) ? ($configured['adaptor'] ?? null) : null;
-
-        if ($adaptor instanceof CacheItemPoolInterface) {
-            return $this->valueCache = $adaptor;
-        }
-
-        if (!is_string($adaptor) || $adaptor === '') {
-            $this->getLogger()->warning('GeoIP cache is configured without an adaptor - caching is off', [
-                'hint' => 'Set metadata.cache.adaptor to a PSR-6 pool class, or remove metadata.cache.',
-            ]);
-
-            return $this->valueCache = null;
-        }
-
-        if (!class_exists($adaptor) || !is_subclass_of($adaptor, CacheItemPoolInterface::class)) {
-            $this->getLogger()->warning('GeoIP cache adaptor is not a PSR-6 pool - caching is off', [
-                'adaptor' => $adaptor,
-            ]);
-
-            return $this->valueCache = null;
-        }
+        $adaptor = CachePoolFactory::describe(is_array($configured) ? ($configured['adaptor'] ?? null) : $configured);
 
         try {
-            $args = is_array($configured['args'] ?? null) ? $configured['args'] : [];
-
-            return $this->valueCache = new $adaptor(...$args);
-        } catch (\Throwable $throwable) {
+            $pool = CachePoolFactory::create($configured, 'kanopi_firewall_geoip');
+        } catch (CachePoolException $cachePoolException) {
             // Slower, not broken. Losing the cache costs a database read per
             // variable; losing the rule would cost enforcement.
-            $this->getLogger()->warning('GeoIP cache could not be created - lookups will not be cached', [
-                'adaptor' => $adaptor,
-                'error' => $throwable->getMessage(),
+            $this->getLogger()->warning(
+                $cachePoolException->isNotAPool()
+                    ? 'GeoIP cache adaptor is not a PSR-6 pool - caching is off'
+                    : 'GeoIP cache could not be created - lookups will not be cached',
+                [
+                    'adaptor' => $adaptor,
+                    'error' => $cachePoolException->getMessage(),
+                ]
+            );
+
+            return $this->valueCache = null;
+        }
+
+        if (!$pool instanceof CacheItemPoolInterface) {
+            $this->getLogger()->warning('GeoIP cache is configured without an adaptor - caching is off', [
+                'hint' => 'Set metadata.cache.adaptor to a PSR-6 pool class or a memcached:// or redis:// DSN, '
+                    . 'or remove metadata.cache.',
             ]);
 
             return $this->valueCache = null;
         }
+
+        return $this->valueCache = $pool;
     }
 
     /**

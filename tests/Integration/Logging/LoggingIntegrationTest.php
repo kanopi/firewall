@@ -431,7 +431,14 @@ class LoggingIntegrationTest extends IntegrationTestCase
         $this->assertLessThan(5, $duration, "Logging $iterations events should take less than 5 seconds");
         $this->assertLessThan(50 * 1024 * 1024, $memoryUsed, 'Memory usage should be under 50MB');
         
-        // Verify log file size is reasonable
+        // Verify log file size is reasonable. clearstatcache() first: PHP caches
+        // the last stat() it made, and a write through an open stream does not
+        // clear it. When the log file had been stat'ed while still empty, and
+        // nothing stat'ed another file since, filesize() answered 0 for a file
+        // holding 88 KB. Whether anything intervened depended on which classes
+        // earlier tests had already autoloaded -- each autoload stats a file --
+        // so this failed or passed by test order, on PHP 8.1 and 8.2 (#398).
+        clearstatcache(true, $logFile);
         $fileSize = filesize($logFile);
         $this->assertGreaterThan(0, $fileSize, 'Log file should have content');
         $this->assertLessThan(100 * 1024 * 1024, $fileSize, 'Log file should be under 100MB');

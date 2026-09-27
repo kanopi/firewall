@@ -12,10 +12,12 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Plugins;
 
 use DeviceDetector\Cache\CacheInterface;
-use DeviceDetector\Cache\PSR6Bridge;
 use DeviceDetector\ClientHints;
 use DeviceDetector\DeviceDetector;
 use DeviceDetector\Parser\Device\AbstractDeviceParser;
+use Kanopi\Firewall\Cache\CachePoolException;
+use Kanopi\Firewall\Cache\CachePoolFactory;
+use Kanopi\Firewall\Cache\ReportingCacheBridge;
 use Kanopi\Firewall\Traits\EvaluateTrait;
 use Kanopi\Firewall\Utility\SelectiveDeviceDetector;
 use Psr\Cache\CacheItemPoolInterface;
@@ -547,7 +549,9 @@ class UserAgent extends AbstractPluginBase
             'pool' => $pool::class,
         ]);
 
-        return new PSR6Bridge($pool);
+        // Reporting, because the probe above proves a pool with a few bytes and
+        // the corpus is written in entries of up to 1.5 MB (#394).
+        return new ReportingCacheBridge($pool);
     }
 
     /**
@@ -596,31 +600,24 @@ class UserAgent extends AbstractPluginBase
      */
     protected function cachePool(mixed $configured): ?CacheItemPoolInterface
     {
-        if ($configured instanceof CacheItemPoolInterface) {
-            return $configured;
-        }
-
-        $adaptor = is_array($configured) ? ($configured['adaptor'] ?? null) : null;
-
-        if ($adaptor instanceof CacheItemPoolInterface) {
-            return $adaptor;
-        }
-
-        if (is_string($adaptor) && $adaptor !== '') {
-            if (!class_exists($adaptor) || !is_subclass_of($adaptor, CacheItemPoolInterface::class)) {
-                $this->getLogger()->warning('User Agent cache adaptor is not a PSR-6 pool - falling back to the default', [
-                    'adaptor' => $adaptor,
-                ]);
-
-                return $this->defaultPool();
+        try {
+            return CachePoolFactory::create($configured, 'device-detector') ?? $this->defaultPool();
+        } catch (CachePoolException $cachePoolException) {
+            // A pool that was named and could not be built -- a server that is
+            // down, an extension that is missing -- is reported by buildCache()
+            // and runs uncached. Only a setting that names no pool at all falls
+            // back to the default, since the default is what was meant.
+            if (!$cachePoolException->isNotAPool()) {
+                throw $cachePoolException;
             }
 
-            $args = is_array($configured['args'] ?? null) ? $configured['args'] : [];
+            $this->getLogger()->warning('User Agent cache adaptor is not a PSR-6 pool - falling back to the default', [
+                'adaptor' => CachePoolFactory::describe(is_array($configured) ? ($configured['adaptor'] ?? null) : $configured),
+                'error' => $cachePoolException->getMessage(),
+            ]);
 
-            return new $adaptor(...$args);
+            return $this->defaultPool();
         }
-
-        return $this->defaultPool();
     }
 
     /**

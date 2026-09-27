@@ -248,4 +248,49 @@ class GeoLocationLookupMemoTest extends AbstractTestCase
             $this->assertSame(2, $calls);
         }
     }
+    /**
+     * Each way a cache setting can be unusable turns caching off, and says which (#394).
+     *
+     * @return array<string, array{0: mixed, 1: string}>
+     */
+    public static function provideUnusableCaches(): array
+    {
+        return [
+            'not a pool' => [['adaptor' => \ArrayObject::class], 'is not a PSR-6 pool'],
+            'unsupported DSN' => [['adaptor' => 'mongodb://cache:27017'], 'could not be created'],
+            'no adaptor' => [['ttl' => 60], 'configured without an adaptor'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('provideUnusableCaches')]
+    public function testAnUnusableCacheIsOffAndSaysWhy(mixed $cache, string $warning): void
+    {
+        $handler = new \Kanopi\Firewall\Tests\Logging\TestLogHandler(\Monolog\Level::Debug);
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(new \Monolog\Logger('test', [$handler]));
+
+        $subject = $this->subject(null, $cache);
+
+        $this->assertSame('FR', $subject->cached('198.51.100.9', 'country', fn(): string => 'FR'));
+        $this->assertTrue($handler->hasWarningContaining($warning));
+    }
+
+    /**
+     * The adaptor on its own is shorthand for `{adaptor: ...}`.
+     */
+    public function testTheAdaptorAloneIsShorthand(): void
+    {
+        $subject = $this->subject(null, \Symfony\Component\Cache\Adapter\ArrayAdapter::class);
+
+        $calls = 0;
+        $resolve = function () use (&$calls): string {
+            $calls++;
+
+            return 'DE';
+        };
+
+        $subject->cached('198.51.100.10', 'country', $resolve);
+        $subject->cached('198.51.100.10', 'country', $resolve);
+
+        $this->assertSame(1, $calls, 'The second read is a hit');
+    }
 }

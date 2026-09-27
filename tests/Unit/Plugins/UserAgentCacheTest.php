@@ -407,6 +407,33 @@ final class UserAgentCacheTest extends AbstractTestCase
     }
 
     /**
+     * A DSN that names a server this cannot reach runs uncached, rather than quietly
+     * substituting the file cache for the Memcached the operator asked for (#394).
+     */
+    public function testADsnThatCannotBeUsedRunsUncachedAndWarns(): void
+    {
+        $handler = new TestLogHandler(\Monolog\Level::Debug);
+        LoggingFactory::setLogger(new Logger('test', [$handler]));
+
+        $plugin = $this->plugin(['cache' => ['adaptor' => 'mongodb://cache.internal:27017']], ['bot:true']);
+
+        $this->assertNull($plugin->resolvedCache());
+        $this->assertTrue($handler->hasWarningContaining('cache could not be created'));
+        $this->assertTrue($plugin->evaluate($this->request(self::GOOGLEBOT)));
+    }
+
+    /**
+     * The adaptor on its own is shorthand for `{adaptor: ...}`, and the cache it builds
+     * reports a write its pool refuses.
+     */
+    public function testTheAdaptorAloneIsShorthand(): void
+    {
+        $plugin = $this->plugin(['cache' => ArrayAdapter::class], ['bot:true']);
+
+        $this->assertInstanceOf(\Kanopi\Firewall\Cache\ReportingCacheBridge::class, $plugin->resolvedCache());
+    }
+
+    /**
      * A pool whose save() reports failure is treated as unusable.
      *
      * `FilesystemAdapter` constructs happily against an unwritable directory
