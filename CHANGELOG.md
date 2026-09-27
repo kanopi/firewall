@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.33.0](https://github.com/kanopi/firewall/releases/tag/v2.33.0) — 2026-09-27
+
+Everything in YAML: four things a site could only set up from PHP now have a key — a Memcached or Redis cache named by a DSN, a connection declared once and handed to anything that takes a client, decision listeners and the StatsD exporter, and trusted proxies — each scoped so it cannot reach past the firewall: trusted proxies apply for one evaluation and the host's own call still wins, and a cache read back from a shared server refuses to hand over an object. Memcached ships as a block list too, answering range searches from a sharded index that says when it has lost part of itself. Plus two things the firewall had been getting quietly wrong: the rule-sources offline flag switched reverse-DNS verification off with no way back and no warning, and a request with no client address crashed `IpAddress` and put every such visitor on one shared ban.
+
 ## [2.32.0](https://github.com/kanopi/firewall/releases/tag/v2.32.0) — 2026-09-19
 
 The last thing the client chose: how long a challenge pass lasted was still a number the visitor's own browser proposed and the firewall clamped, because the submission arrives at the challenge path rather than at the protected URL and by then nothing says which rule sent them — it now rides in the signed token the interstitial already carries, so there is nothing left to propose. A page rendered before the upgrade still verifies and falls back to the ceiling 2.30.0 added, which is exactly what that ceiling was written to be. One item, because the other one in this milestone turned out to need a design decision rather than a fix and moved to 3.x.
