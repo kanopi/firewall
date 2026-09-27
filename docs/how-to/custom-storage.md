@@ -4,6 +4,13 @@
 
 `storage.type` accepts **any** fully-qualified class name that implements `Kanopi\Firewall\Storage\StorageInterface`, so you can persist blocks anywhere — DynamoDB, Memcached, a platform-specific KV store, your app's ORM. Extend `AbstractStorageBase` and you only have to implement the persistence methods; the base class already provides `getKey()`, `isBlocked()`, and `getStorageData()` (request serialization).
 
+!!! note "Memcached ships as a backend"
+
+    The example below is a teaching example: the smallest honest backend. For Memcached in
+    production, use the shipped [`MemcachedStorage`](../configuration/storage.md#5-memcached-storage),
+    which adds what this leaves out — JSON rather than PHP serialisation, bans longer than
+    30 days, bounded timeouts, and an index so ranges can be searched and lifted.
+
 ```php
 <?php
 

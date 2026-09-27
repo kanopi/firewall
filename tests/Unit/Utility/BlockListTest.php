@@ -6,6 +6,7 @@ namespace Kanopi\Firewall\Tests\Unit\Utility;
 
 use Kanopi\Firewall\Storage\FileStorage;
 use Kanopi\Firewall\Storage\InMemoryStorage;
+use Kanopi\Firewall\Tests\Storage\GappyStorage;
 use Kanopi\Firewall\Tests\Storage\NonQueryableStorage;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\BlockList;
@@ -227,6 +228,33 @@ class BlockListTest extends AbstractTestCase
     public function testFileStorageIsNotMistakenForAnInMemoryOne(): void
     {
         $this->assertTrue((new BlockList([$this->fileConfig()]))->backend()['durable']);
+    }
+
+    /**
+     * Nothing to report is reported as nothing, for every backend that cannot have a gap.
+     */
+    public function testABackendWithoutAnIndexHasNoGap(): void
+    {
+        $this->assertNull((new BlockList([$this->fileConfig()]))->backend()['gap']);
+    }
+
+    /**
+     * A backend that enumerates from an index it can lose says when it has (#392).
+     *
+     * Its answers are then true and incomplete, and "nothing matched" stops meaning
+     * "nothing is blocked" -- so the gap travels with the description of the backend,
+     * which is what `bin/firewall-block` and the doctor read.
+     */
+    public function testABackendReportingAGapPassesItOn(): void
+    {
+        $config = $this->fileConfig();
+        $config['storage'] = ['type' => GappyStorage::class, 'config' => ['gap' => 'shard 3 was evicted']];
+
+        $backend = (new BlockList([$config]))->backend();
+
+        $this->assertSame('shard 3 was evicted', $backend['gap']);
+        $this->assertTrue($backend['queryable']);
+        $this->assertTrue($backend['durable']);
     }
 
     /**

@@ -202,6 +202,33 @@ final class FirewallBlockCommandTest extends AbstractTestCase
     }
 
     /**
+     * A backend whose index has lost entries says so beside its answer (#392).
+     *
+     * "Not in this range" then means "not in the part of the index that survived", which
+     * is a different sentence -- and the one an operator deciding whether to lift a range
+     * needs. Warned on stderr, so `--json` on stdout stays parseable.
+     */
+    public function testAGapInTheIndexIsWarnedAbout(): void
+    {
+        $path = $this->dir . '/config.yml';
+        file_put_contents($path, "global: { mode: block }\nplugins: []\nstorage:\n  type: '"
+            . \Kanopi\Firewall\Tests\Storage\GappyStorage::class
+            . "'\n  config: { gap: 'index shard 3 was evicted' }\n");
+
+        $text = $this->runBlock([$path, '--find=203.0.113.0/24']);
+
+        $this->assertSame(self::EXIT_OK, $text['code']);
+        $this->assertStringContainsString('Results may be incomplete: index shard 3 was evicted.', $text['stderr']);
+
+        $json = $this->runBlock([$path, '--list', '--json']);
+        $decoded = json_decode($json['stdout'], true);
+
+        $this->assertIsArray($decoded, 'stdout stays parseable: ' . $json['stdout']);
+        $this->assertSame('index shard 3 was evicted', $decoded['backend']['gap']);
+        $this->assertStringContainsString('may be incomplete', (string) $decoded['warning']);
+    }
+
+    /**
      * `--json` is parseable and carries the records.
      */
     public function testJsonOutputIsParseable(): void

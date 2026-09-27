@@ -28,7 +28,9 @@ namespace Kanopi\Firewall\Storage;
  * every implementor — including that documented example — to supply something
  * they cannot implement correctly, and the honest implementation would be a
  * lie that returns an empty set. Enumeration is a capability, so it is modelled
- * as one.
+ * as one. (The shipped `MemcachedStorage` does implement it, by keeping an index
+ * of its own -- and, because that index can be evicted, also implements
+ * `BestEffortEnumerationInterface` to say when its answers are incomplete.)
  *
  * It also keeps the addition non-breaking: `storage.type` accepts any class
  * implementing `StorageInterface`, and adding methods to that interface would
@@ -44,7 +46,7 @@ namespace Kanopi\Firewall\Storage;
  * }
  * ```
  *
- * All three shipped storages implement this. `FileStorage` inherits it from
+ * Every shipped storage but `SharedStorage` implements this. `FileStorage` inherits it from
  * `InMemoryStorage`.
  */
 interface QueryableStorageInterface

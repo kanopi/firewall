@@ -77,6 +77,13 @@ jobs:
           - REDIS_HOST=redis
           - REDIS_PORT=6379
           - TEST_SKIP_REDIS=false
+          # The same for the Memcached block list (#392). Its unit tests run
+          # against an in-process fake; only a real server proves that an
+          # expiry past 30 days is read as a timestamp and that CAS refuses a
+          # stale token across processes.
+          - MEMCACHED_HOST=memcached
+          - MEMCACHED_PORT=11211
+          - TEST_SKIP_MEMCACHED=false
       - image: cimg/mariadb:10.6
         auth:
           username: $DOCKERHUB_USER
@@ -98,6 +105,10 @@ jobs:
           - POSTGRES_PASSWORD=password
       - image: redis:6
         name: redis
+      # Pinned, with ext-memcached below, so a new upstream release cannot
+      # change results without a change here. Bump both deliberately.
+      - image: memcached:1.6.41
+        name: memcached
     steps:
       - checkout
       - run:
@@ -111,6 +122,8 @@ jobs:
             # Database CLI clients
             sudo apt update
             sudo apt install mariadb-client postgresql-client
+            # libmemcached for ext-memcached, built below.
+            sudo apt install -y libmemcached-dev zlib1g-dev
             # InterstitialRendererTest parse-checks the generated inline
             # scripts with `node --check`, and fails rather than skips when
             # CI is set. Conditional because the cimg images may already
@@ -123,6 +136,11 @@ jobs:
             sudo pecl update-channels
             sudo pecl install xdebug
             printf "no\nno\n" | sudo pecl install redis
+            # Every configure prompt at its default. A fixed number of answers
+            # rather than `yes`: steps run with pipefail, and `yes` is killed by
+            # SIGPIPE when pecl exits, which fails the step after a successful
+            # install (exit 141).
+            printf '\n\n\n\n\n\n\n\n\n\n\n\n' | sudo pecl install memcached-3.4.0
             sudo docker-php-ext-install pdo_mysql mysqli pdo_pgsql
             #sudo cp .circleci/config/*.ini /etc/php.d/
             cp .circleci/phpunit.env ./.env
@@ -172,12 +190,13 @@ jobs:
             # point -- the annotation forces the argument to be written down
             # where a reviewer sees it.
             #
-            # Verified at 100.00% for lines and methods with ext-redis present
-            # and a Redis server reachable. A developer machine usually has
-            # neither, so a local run reports about 95.7% with RedisStorage,
-            # RedisRateLimitStorage and RedisConnections uncovered; that is the
-            # environment, not a regression. CI installs the extension and runs
-            # the service.
+            # Verified at 100.00% for lines and methods with ext-redis and
+            # ext-memcached present and both servers reachable. A developer
+            # machine usually has none of that, so a local run reports lower
+            # with RedisStorage, RedisRateLimitStorage, RedisConnections and
+            # MemcachedStorage uncovered; that is the environment, not a
+            # regression. CI installs the extensions and runs the services, and
+            # so does `docker compose` locally.
             #
             # The figure moves as Redis-backed code is added -- it was ~98.9%
             # when only RedisRateLimitStorage existed, before 2.22.0 added a

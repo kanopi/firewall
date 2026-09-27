@@ -183,6 +183,96 @@ storage:
       readTimeout: 5
 ```
 
+### 5. Memcached Storage
+
+Stores blocked clients in Memcached, shared across every server that points at it. For a
+host that has Memcached provisioned and not Redis.
+
+Requires `ext-memcached`, which is a Composer `suggest` rather than a `require`.
+
+```yaml
+storage:
+  type: "Kanopi\\Firewall\\Storage\\MemcachedStorage"
+  config:
+    memcached:
+      host: 127.0.0.1
+      port: 11211
+      prefix: "firewall:"     # namespaces every key this backend owns
+      # servers: ["cache-1.internal:11211", "cache-2.internal:11211"]
+      # username: "firewall"  # SASL; switches to the binary protocol
+      # password: "secret"
+      # connectTimeout: 1.5
+      # readTimeout: 1.5
+```
+
+`servers` takes `host:port` strings or `{host, port}` maps, and wins over `host` and `port`.
+Keys are placed with consistent hashing, and a server that fails is dropped for the rest of
+the request so its keys land on the servers still up. `connectTimeout` and `readTimeout`
+default to 1.5 seconds, for [the reason Redis's do](#connections-are-given-a-bounded-timeout).
+An unreachable Memcached [degrades rather than fails](#a-redis-it-cannot-reach-degrades-rather-than-fails),
+exactly as an unreachable Redis does.
+
+**Prefer Redis when you have the choice.** Memcached is a cache: it evicts under memory
+pressure and forgets everything on restart. Losing a block record is losing the block, the
+same as a Redis without persistence, and nothing in this backend can change that.
+
+#### Keeping the block list searchable
+
+Memcached cannot list its own keys, and `firewall-block --find`, `--list` and `--lift` with a
+range all need to. So this backend keeps an index of what it has written, split across 64
+shards by a hash of the key, and answers range searches from it.
+
+| Key | Holds |
+|---|---|
+| `{prefix}block:{address}` | The block record and its expiry, as JSON, with the ban's lifetime as the item's expiry |
+| `{prefix}offense:{address}` | The most recent 1,000 offence timestamps, with no expiry |
+| `{prefix}index:0` … `{prefix}index:63` | Which keys exist, and until when |
+| `{prefix}index:meta` | When the index began, the latest expiry it has held, and whether any of it was lost |
+
+Every index write is a compare-and-swap, so two workers blocking at the same moment cannot
+overwrite each other's entry. A write that loses the race eight times running gives up, logs
+it, and reports it through `Firewall::getDegradedBackends()`. The block is still written and
+still enforced; only a range search would miss it.
+
+#### The index is best effort
+
+An index shard can be evicted like any other item. When one is, the blocks it listed are
+still enforced, but a range search no longer finds them. The backend notices the next time
+that shard is written or read, records the loss, and then **says so**:
+
+- `firewall-block` prints a warning with its results, and adds it to the `--json` output.
+- `firewall-doctor` reports *Block list searches may be incomplete*.
+- `BlockList::backend()` returns it as `gap`, and the storage itself answers
+  `enumerationGap()`, from `Kanopi\Firewall\Storage\BestEffortEnumerationInterface`.
+
+The warning clears on its own once every block the lost shard could have held has expired,
+which the index knows from the latest expiry it has recorded. A permanent ban has no expiry,
+so once one has been written, a loss is reported until the store is reset.
+
+**A single address is never affected.** `--show=203.0.113.5`, `--find=203.0.113.5` and
+`--lift=203.0.113.5` read and delete the record directly, without the index, so the question
+an operator is usually asking, *why is this customer blocked?*, gets a correct answer even
+when the index is damaged.
+
+One loss cannot be detected: Memcached evicting the meta key and every shard, while leaving
+some block records in place. It is unlikely, because the meta key is read on every block
+written and least-recently-used eviction takes it last. It is not impossible. If you need
+un-blocking by range to be exact, use Redis or the database.
+
+#### What does not change
+
+Rate limiting on Memcached needs no backend of its own: point
+[`CacheRateLimitStorage`](../plugins/rate-limit.md) at Symfony's `MemcachedAdapter`. That
+adapter takes a connected client, which a YAML value cannot hold, so it is passed through
+the overrides argument, as described in [PSR-6 Cache](../presets/usage.md#psr-6-cache).
+
+!!! warning "Keep Memcached private"
+
+    This backend only ever stores JSON strings, so nothing it writes is PHP-serialised.
+    `ext-memcached` will still unserialise an item that another writer flagged as serialised,
+    before this library sees it. Memcached has no authentication unless SASL is configured,
+    so it must not be reachable from anything you do not trust.
+
 ## A block list shared across a fleet
 
 Ten nodes behind a load balancer each learn about the same attacker independently. An
@@ -367,7 +457,7 @@ Storages that can answer those implement `Kanopi\Firewall\Storage\QueryableStora
 | `find(string $pattern): array` | Records matching a single address or a CIDR range, keyed by address |
 | `deleteMatching(array $patterns): int` | Delete everything matching any of the given addresses / ranges; returns the count |
 
-All three shipped storages implement it. `FileStorage` inherits the behaviour from `InMemoryStorage`.
+Every shipped storage except `SharedStorage` implements it. `FileStorage` inherits the behaviour from `InMemoryStorage`, and `MemcachedStorage` answers from an index it keeps for the purpose — see [The index is best effort](#the-index-is-best-effort).
 
 ```php
 use Kanopi\Firewall\Storage\QueryableStorageInterface;
@@ -393,7 +483,7 @@ if ($storage instanceof QueryableStorageInterface) {
 
 ### Why a separate interface
 
-Not every backend can enumerate its own keys — Memcached, the worked example in [Custom Storage Backends](../how-to/custom-storage.md), cannot list keys at all. Folding these methods into `StorageInterface` would oblige every implementation to supply something it may be unable to implement honestly, and would break existing custom storages on upgrade. Enumeration is a capability, so it is modelled as one, and callers check with `instanceof` before using it.
+Not every backend can enumerate its own keys — the Memcached example in [Custom Storage Backends](../how-to/custom-storage.md) cannot list keys at all, and the shipped `MemcachedStorage` can only because it keeps an index of its own. Folding these methods into `StorageInterface` would oblige every implementation to supply something it may be unable to implement honestly, and would break existing custom storages on upgrade. Enumeration is a capability, so it is modelled as one, and callers check with `instanceof` before using it.
 
 ### Behaviour worth knowing
 

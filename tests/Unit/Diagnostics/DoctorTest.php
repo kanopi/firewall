@@ -585,6 +585,50 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * A block list whose range searches may be missing records is a warning (#392).
+     */
+    public function testAGapInTheBlockListIndexIsAWarning(): void
+    {
+        $config = $this->workingConfig();
+        $config['storage'] = [
+            'type' => \Kanopi\Firewall\Tests\Storage\GappyStorage::class,
+            'config' => ['gap' => 'index shard 3 was evicted'],
+        ];
+
+        $findings = $this->diagnose($config);
+        $warning = array_values(array_filter(
+            $findings,
+            static fn(Diagnosis $d): bool => $d->title === 'Block list searches may be incomplete'
+        ));
+
+        $this->assertCount(1, $warning);
+        $this->assertSame(Diagnosis::WARNING, $warning[0]->status);
+        $this->assertStringStartsWith('Index shard 3 was evicted.', (string) $warning[0]->detail);
+    }
+
+    /**
+     * Every backend that cannot have a gap says nothing about one, rather than "ok".
+     */
+    public function testNoGapIsNoFinding(): void
+    {
+        $this->assertNotContains('Block list searches may be incomplete', $this->titles($this->diagnose($this->workingConfig())));
+    }
+
+    /**
+     * A backend that cannot be built is reported by the checks around this one, not twice.
+     */
+    public function testABackendThatCannotBeBuiltProducesNoGapFinding(): void
+    {
+        $config = $this->workingConfig();
+        $config['storage'] = [
+            'type' => \Kanopi\Firewall\Tests\Storage\GappyStorage::class,
+            'config' => ['throw' => true],
+        ];
+
+        $this->assertNotContains('Block list searches may be incomplete', $this->titles((new Doctor([$config]))->run()));
+    }
+
+    /**
      * A database that cannot be reached is reported, not thrown.
      */
     public function testAnUnreachableDatabaseIsReported(): void

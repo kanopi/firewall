@@ -165,6 +165,17 @@ abstract class IntegrationTestCase extends TestCase
     }
     
     /**
+     * Get Memcached configuration from environment.
+     */
+    protected static function getMemcachedConfig(): array
+    {
+        return [
+            'host' => self::getEnv('MEMCACHED_HOST', '127.0.0.1'),
+            'port' => (int) self::getEnv('MEMCACHED_PORT', 11211),
+        ];
+    }
+
+    /**
      * Get MaxMind database paths from environment.
      */
     protected static function getMaxMindDatabases(): array
