@@ -284,7 +284,21 @@ plugins:
 
 **Benefits**: Integrates with existing cache infrastructure
 
-Any PSR-6 pool works — `RedisAdapter`, `MemcachedAdapter`, `ApcuAdapter`, or your framework's own pool. To hand over an **already-constructed** pool (for example your framework's `cache.app` service) pass it through the overrides argument instead of YAML, since a YAML scalar cannot carry an object. The index (`0` here) is the plugin's position in your `plugins:` list:
+Memcached and Redis are named with a DSN, which builds the pool and its connection for you:
+
+```yaml
+        config:
+          adaptor: "memcached://cache.internal:11211"   # or redis://, rediss://
+          namespace: kanopi_firewall_ratelimit           # the default
+          options: { connect_timeout: 500 }              # over the bounded defaults
+          ttl: 3600
+```
+
+A DSN pool connects with 1.5-second timeouts, and one that cannot reach its server is
+reported when the firewall starts — logged, and in `Firewall::getDegradedBackends()` —
+since without it nothing is counted.
+
+Any other PSR-6 pool works by class name — `ApcuAdapter`, `FilesystemAdapter`, or your own. To hand over an **already-constructed** pool (for example your framework's `cache.app` service) pass it through the overrides argument instead of YAML, since a YAML scalar cannot carry an object. The index (`0` here) is the plugin's position in your `plugins:` list:
 
 ```php
 Firewall::create([__DIR__ . '/firewall.yml'], [
@@ -294,7 +308,7 @@ Firewall::create([__DIR__ . '/firewall.yml'], [
 
 See [Dynamic Configuration Overrides](../configuration/overrides.md) for the full path syntax.
 
-**Note**: if `adaptor` is missing or cannot be resolved to a PSR-6 pool, the backend logs a warning and silently records nothing — rate limits will never trigger. Check for `Cache rate limit storage failed to initialize` in your logs.
+**Note**: if `adaptor` is missing, the backend records nothing and rate limits never trigger. If it names something that cannot be built — a class that is not a PSR-6 pool, a server that does not answer, a missing extension — the backend logs `Cache rate limit storage failed to initialize` and reports itself through `Firewall::getDegradedBackends()`, so a status page can say so rather than a log scraper.
 
 ## Customizing Rate Limits
 

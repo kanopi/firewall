@@ -262,9 +262,10 @@ un-blocking by range to be exact, use Redis or the database.
 #### What does not change
 
 Rate limiting on Memcached needs no backend of its own: point
-[`CacheRateLimitStorage`](../plugins/rate-limit.md) at Symfony's `MemcachedAdapter`. That
-adapter takes a connected client, which a YAML value cannot hold, so it is passed through
-the overrides argument, as described in [PSR-6 Cache](../presets/usage.md#psr-6-cache).
+[`CacheRateLimitStorage`](../plugins/rate-limit.md) at the same server with
+`adaptor: "memcached://cache.internal:11211"`, as described in
+[PSR-6 Cache](../presets/usage.md#psr-6-cache). The user-agent and GeoIP caches take the
+same DSN.
 
 !!! warning "Keep Memcached private"
 

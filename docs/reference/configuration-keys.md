@@ -76,7 +76,7 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `FileRateLimitStorage` | **`file`** |
 | `DatabaseRateLimitStorage` | `connection`, `schema_check_probability` |
 | `RedisRateLimitStorage` | `redis`, `instance`, `ttl` |
-| `CacheRateLimitStorage` | `adaptor`, `args`, `ttl` |
+| `CacheRateLimitStorage` | `adaptor` (a pool class or a `memcached://` / `redis://` DSN), `args`, `namespace`, `options`, `ttl` |
 | `InMemoryRateLimitStorage` | — |
 
 ## `challenge:`

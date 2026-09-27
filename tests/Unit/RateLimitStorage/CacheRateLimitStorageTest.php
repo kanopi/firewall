@@ -122,4 +122,47 @@ class CacheRateLimitStorageTest extends AbstractTestCase
         // Should not throw
         $this->assertSame(0, $storage->countRequests('x', 0, time()));
     }
+    /**
+     * A class that exists and is not a pool was constructed anyway before #394, and then
+     * failed on the first request. It is refused now, and reported.
+     */
+    public function testAClassThatIsNotAPoolIsRefusedAndReported(): void
+    {
+        \Kanopi\Firewall\Utility\DegradedBackends::reset();
+
+        $storage = new CacheRateLimitStorage(['adaptor' => \ArrayObject::class]);
+        $storage->recordRequest('x', time());
+
+        $this->assertSame(0, $storage->countRequests('x', 0, time()));
+
+        // Recorded, not only logged: without its cache this backend counts
+        // nothing, so the rate limit it serves is not enforced.
+        $degraded = \Kanopi\Firewall\Utility\DegradedBackends::all();
+        $this->assertCount(1, $degraded);
+        $this->assertSame('rate limit', $degraded[0]['component']);
+        $this->assertStringContainsString('is not a PSR-6 pool', $degraded[0]['error']);
+
+        \Kanopi\Firewall\Utility\DegradedBackends::reset();
+    }
+
+    /**
+     * A DSN's password never reaches a log line or a status page.
+     */
+    public function testAFailedDsnDoesNotLeakItsPassword(): void
+    {
+        \Kanopi\Firewall\Utility\DegradedBackends::reset();
+        $handler = new \Kanopi\Firewall\Tests\Logging\TestLogHandler(\Monolog\Level::Debug);
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(new \Monolog\Logger('test', [$handler]));
+
+        new CacheRateLimitStorage(['adaptor' => 'mongodb://firewall:s3cret@cache:27017']);
+
+        foreach ($handler->records as $record) {
+            $this->assertStringNotContainsString('s3cret', json_encode($record->context) . $record->message);
+        }
+
+        $this->assertStringNotContainsString('s3cret', json_encode(\Kanopi\Firewall\Utility\DegradedBackends::all()));
+        $this->assertTrue($handler->hasWarningContaining('failed to initialize'));
+
+        \Kanopi\Firewall\Utility\DegradedBackends::reset();
+    }
 }

@@ -90,8 +90,8 @@ plugins:
     response: block
     metadata:
       cache:
-        adaptor: "Symfony\\Component\\Cache\\Adapter\\RedisAdapter"
-        args: ["redis://127.0.0.1:6379", "geoip", 86400]
+        adaptor: "redis://127.0.0.1:6379"     # or memcached://, or a pool class with args
+        namespace: geoip
         ttl: 86400
       reader:
         type: reader
@@ -135,6 +135,11 @@ The GeoIP2 model is never stored — only the resolved value, which is a string,
 null. A cache is a shared store, and an object in a shared store is an object somebody may
 deserialise. This library keeps PHP deserialisation out of everything it writes and reads
 back, and a country code is safe wherever it is kept.
+
+A pool built from a `memcached://` or `redis://` DSN holds that line on the way back in as
+well. It reads values with a marshaller that refuses objects, so a value planted by anything
+else that can reach the server comes back as a miss, not as an instance of whatever class
+the writer chose. A pool you build yourself uses whatever marshaller you gave it.
 
 A resolved `null` is cached like any other answer: an address with no record will not
 acquire one, and re-asking costs the same read that produced the null.

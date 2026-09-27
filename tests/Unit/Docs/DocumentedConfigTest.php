@@ -50,7 +50,7 @@ class DocumentedConfigTest extends TestCase
         'Kanopi\\Firewall\\RateLimitStorage\\FileRateLimitStorage' => ['file'],
         'Kanopi\\Firewall\\RateLimitStorage\\DatabaseRateLimitStorage' => ['connection', 'storage_table', 'schema_check_probability'],
         'Kanopi\\Firewall\\RateLimitStorage\\RedisRateLimitStorage' => ['redis', 'ttl', 'instance'],
-        'Kanopi\\Firewall\\RateLimitStorage\\CacheRateLimitStorage' => ['adaptor', 'args', 'ttl'],
+        'Kanopi\\Firewall\\RateLimitStorage\\CacheRateLimitStorage' => ['adaptor', 'args', 'namespace', 'options', 'ttl'],
         'Kanopi\\Firewall\\RateLimitStorage\\InMemoryRateLimitStorage' => [],
     ];
 

@@ -11,6 +11,9 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\RateLimitStorage;
 
+use Kanopi\Firewall\Cache\CachePoolException;
+use Kanopi\Firewall\Cache\CachePoolFactory;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use Psr\Cache\CacheItemPoolInterface;
 
 /**
@@ -32,44 +35,58 @@ class CacheRateLimitStorage extends AbstractRateLimitStorage implements Prunable
      * Constructor.
      *
      * @param array $config
-     *   Configuration array with nested structure. Must include:
-     *   - ['adaptor' => class-string<CacheInterface>|CacheInterface, optional 'ttl' => int, 'args' => array]
+     *   Configuration array with nested structure:
+     *   - `adaptor`: a PSR-6 pool, a pool class name, or a `memcached://`,
+     *     `redis://` or `rediss://` DSN (#394).
+     *   - `args`: constructor arguments for a class name, spread in order.
+     *   - `namespace`, `options`: for a DSN -- the key namespace, and connection
+     *     options over the bounded defaults.
+     *   - `ttl`: how long each key survives, in seconds (default 3600).
      */
     public function __construct(array $config = [])
     {
         parent::__construct($config);
 
-        $cache = $config['adaptor'] ?? null;
-        $args = $config['args'] ?? [];
+        // Set before anything can return, so a storage with no cache still has
+        // a lifetime to report rather than an uninitialised property.
+        $this->ttl = intval($config['ttl'] ?? 3600);
 
         // If there are no cache adaptors end this.
-        if ($cache === null) {
+        if (($config['adaptor'] ?? null) === null) {
             return;
         }
 
-        $instance = null;
-        if (is_object($cache) && in_array(CacheItemPoolInterface::class, class_implements($cache), true)) {
-            $instance = $cache;
-        } elseif (class_exists($cache)) {
-            /** @var CacheItemPoolInterface $instance */
-            $instance = new $cache(...$args);
-        }
-
-        if ($instance !== null) {
-            /** @phpstan-ignore assign.propertyType */
-            $this->cache = $instance;
-            $this->getLogger()->info('Cache rate limit storage initialized', [
-                'cache_type' => $instance::class,
-                'ttl' => intval($config['ttl'] ?? 3600),
-            ]);
-        } else {
+        try {
+            // Its own keys read here, by name, rather than the whole config handed
+            // over: this is where the configuration reference says they are read,
+            // and DocumentedKeysTest holds it to that.
+            $this->cache = CachePoolFactory::create([
+                'adaptor' => $config['adaptor'],
+                'args' => $config['args'] ?? [],
+                'namespace' => $config['namespace'] ?? null,
+                'options' => $config['options'] ?? [],
+            ], 'kanopi_firewall_ratelimit');
+        } catch (CachePoolException $cachePoolException) {
             $this->getLogger()->warning('Cache rate limit storage failed to initialize', [
-                /** @phpstan-ignore classConstant.nonObject */
-                'adaptor' => is_string($cache) ? $cache : $cache::class,
+                'adaptor' => CachePoolFactory::describe($config['adaptor']),
+                'error' => $cachePoolException->getMessage(),
             ]);
+
+            // Recorded as well as logged, as every other rate limit backend
+            // does when it cannot reach its store. Unlike the other caches this
+            // one is not an optimisation: without it nothing is counted, and
+            // the limit is not enforced.
+            DegradedBackends::record('rate limit', self::class, $cachePoolException->getMessage());
+
+            return;
         }
 
-        $this->ttl = intval($config['ttl'] ?? 3600); // Default TTL: 1 hour
+        if ($this->cache instanceof CacheItemPoolInterface) {
+            $this->getLogger()->info('Cache rate limit storage initialized', [
+                'cache_type' => $this->cache::class,
+                'ttl' => $this->ttl,
+            ]);
+        }
     }
 
     /**
