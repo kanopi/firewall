@@ -34,6 +34,7 @@ use Kanopi\Firewall\Storage\ConcurrencyGaugeInterface;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Tarpit\TarpitGate;
 use Kanopi\Firewall\Traits\RequestFieldTrait;
+use Kanopi\Firewall\Event\ConfiguredListeners;
 use Kanopi\Firewall\Event\ChallengeFailed;
 use Kanopi\Firewall\Event\ChallengeSolved;
 use Kanopi\Firewall\Event\DecisionEvent;
@@ -153,7 +154,8 @@ final class Firewall
         private ?PluginManager $redirectPluginManager = null,
         private ?PluginManager $markPluginManager = null,
         private ?PluginManager $tarpitPluginManager = null,
-        private ?TarpitGate $tarpitGate = null
+        private ?TarpitGate $tarpitGate = null,
+        private ?ConfiguredListeners $configuredListeners = null
     ) {
         $this->firewallMode = FirewallMode::tryFrom($config['mode'] ?? 'block') ?? FirewallMode::Block;
         $this->configuredMode = $this->firewallMode;
@@ -398,7 +400,11 @@ final class Firewall
             PluginManager::createFromPluginsArray($partitioned['redirect']),
             PluginManager::createFromPluginsArray($partitioned['mark']),
             PluginManager::createFromPluginsArray($partitioned['tarpit']),
-            self::createTarpitGate($config['tarpit'] ?? [], $partitioned['tarpit'], $storage)
+            self::createTarpitGate($config['tarpit'] ?? [], $partitioned['tarpit'], $storage),
+            // `events.listeners` and `metrics.statsd` (#396). Built here, so a
+            // listener that cannot be built is a ConfigurationException from
+            // create() rather than an error on the first blocked visitor.
+            self::configuredListeners($config)
         );
 
         LoggingFactory::logger()->debug('Firewall initialized', [
@@ -984,19 +990,52 @@ final class Firewall
      */
     private function announce(DecisionEvent $decisionEvent): void
     {
-        if (!$this->eventDispatcher instanceof EventDispatcherInterface) {
-            return;
+        if ($this->eventDispatcher instanceof EventDispatcherInterface) {
+            try {
+                $this->eventDispatcher->dispatch($decisionEvent);
+            } catch (\Throwable $throwable) {
+                $this->getLogger()->error('A decision listener threw, and was ignored', [
+                    'event' => $decisionEvent::class,
+                    'listener_error' => $throwable->getMessage(),
+                    'listener_error_type' => $throwable::class,
+                ]);
+            }
         }
 
-        try {
-            $this->eventDispatcher->dispatch($decisionEvent);
-        } catch (\Throwable $throwable) {
-            $this->getLogger()->error('A decision listener threw, and was ignored', [
-                'event' => $decisionEvent::class,
-                'listener_error' => $throwable->getMessage(),
-                'listener_error_type' => $throwable::class,
-            ]);
-        }
+        // Then the listeners the configuration declares (#396). After the
+        // host's, in a fixed order, so a host passing a dispatcher and
+        // configuring listeners gets both -- PSR-14 has no addListener(), so
+        // these cannot be attached to the host's own. Each is isolated inside
+        // dispatch(), so a failing host dispatcher does not silence them.
+        $this->configuredListeners?->dispatch($decisionEvent);
+    }
+
+    /**
+     * The configuration's listeners, or null when it declares none -- so a firewall with
+     * none does no work per decision to find that out.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration.
+     */
+    private static function configuredListeners(array $config): ?ConfiguredListeners
+    {
+        $configuredListeners = ConfiguredListeners::fromConfig($config);
+
+        return $configuredListeners->isEmpty() ? null : $configuredListeners;
+    }
+
+    /**
+     * The decision listeners declared in the configuration.
+     *
+     * A dispatcher passed to `create()` is not listed: it is the host's, and what is
+     * attached to it is the host's to report.
+     *
+     * @return array<int, string>
+     *   One line per listener, naming it and the events it asked for.
+     */
+    public function getConfiguredListeners(): array
+    {
+        return $this->configuredListeners?->describe() ?? [];
     }
 
     /**

@@ -473,6 +473,17 @@ class Doctor
             $findings[] = Diagnosis::ok('Every configured rule is running');
         }
 
+        // Said when there are any, and not otherwise: a firewall with no
+        // listeners is the default, not something to report (#396).
+        $listeners = $firewall->getConfiguredListeners();
+
+        if ($listeners !== []) {
+            $findings[] = Diagnosis::ok(
+                sprintf('%d decision listener%s registered', count($listeners), count($listeners) === 1 ? '' : 's'),
+                implode('; ', $listeners)
+            );
+        }
+
         // Reported as OK, deliberately. A rule outside its window is doing
         // exactly what it was configured to do, and a warning for that would
         // fire every night on a correct configuration until nobody read the

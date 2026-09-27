@@ -29,6 +29,30 @@ a shared store. If you are on FPM, StatsD is the honest answer.
 
 ## 2. Wire the listener
 
+### From YAML
+
+StatsD needs nothing but configuration:
+
+```yaml
+metrics:
+  statsd:
+    host: 127.0.0.1
+    port: 8125
+    prefix: "site1."     # prepended as written, so give it its own separator
+    tags: true           # DogStatsD tags; false folds labels into the name
+    rule_limit: 200      # distinct rule names before the rest are bucketed
+```
+
+`metrics: { statsd: true }` takes every default. It is the same listener as the PHP below,
+counting every decision event, and it works with or without a dispatcher passed to
+`Firewall::create()`. A setting of the wrong type — a port that is not a port — stops the
+firewall starting instead of silently counting nothing.
+
+Prometheus stays PHP: its recorder has to outlive the request and its scrape endpoint has to be
+served by your application, and neither is something a configuration file can set up.
+
+### From PHP
+
 PSR-14 dispatchers match on the **concrete** event class, so registering for `DecisionEvent`
 catches nothing. `eventClasses()` is the list to loop over — and it is tested against the
 shipped events, so a new event type cannot quietly go uncounted:
