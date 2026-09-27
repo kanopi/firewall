@@ -239,9 +239,9 @@ Five things keep that off the request path:
 |---|---|---|
 | `verify_ttl` | `3600` | Seconds an acceptance stays good |
 | `verify_negative_ttl` | `86400` | Seconds a refusal stays good |
+| `verify_offline` | the constant | `false` to verify even with `KANOPI_FIREWALL_SOURCES_OFFLINE` set; `true` to keep it off — see [below](#offline-switches-it-off-unless-the-rule-says-otherwise) |
 | `verify_slow_threshold_ms` | `250` | A lookup slower than this trips the breaker |
 | `verify_claim_wait_ms` | `0` | Wait this long for another worker's verdict instead of refusing — see [below](#waiting-for-the-other-workers-verdict) |
-| `verify_offline` | the constant | `false` to verify even with `KANOPI_FIREWALL_SOURCES_OFFLINE` set; `true` to keep it off — see [below](#offline-switches-it-off-unless-the-rule-says-otherwise) |
 | `verify_cache` | filesystem | Any PSR-6 pool; falls back to `KANOPI_FIREWALL_CACHE_DIR` |
 
 ### Run a local caching resolver
