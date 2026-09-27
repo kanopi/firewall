@@ -289,7 +289,14 @@ final class MemcachedStorageIntegrationTest extends IntegrationTestCase
 
         try {
             for ($worker = 0; $worker < $workers; $worker++) {
-                $process = proc_open([PHP_BINARY, $script, (string) $worker], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                // display_errors=stderr, as FirewallBlockCommandTest does: the CI
+                // image prints "Module ... is already loaded" to stdout on every
+                // PHP start, which would otherwise arrive ahead of the count.
+                $process = proc_open(
+                    [PHP_BINARY, '-d', 'display_errors=stderr', $script, (string) $worker],
+                    [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                    $pipes
+                );
                 $this->assertIsResource($process);
                 $processes[] = [$process, $pipes];
             }
