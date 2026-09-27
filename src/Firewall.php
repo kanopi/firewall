@@ -45,6 +45,7 @@ use Kanopi\Firewall\Event\RequestRecorded;
 use Kanopi\Firewall\Event\RequestRedirected;
 use Kanopi\Firewall\Event\RequestTarpitted;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\Schedule;
@@ -286,6 +287,13 @@ final class Firewall
         Config::clearLoadErrors();
         $config = Config::load(array_merge([__DIR__ . '/../config/config.yml'], $configs), $overrides);
         $configLoadErrors = Config::getLoadErrors();
+
+        // Named connections, resolved here rather than in Config::load(): loading
+        // a configuration to lint it should not open connections, and the compiled
+        // config cache cannot hold an object (#395). A reference to a name that is
+        // not declared is a ConfigurationException, as any wiring the firewall
+        // refuses to start with is.
+        $config = Connections::resolveIn($config);
         $configLoadWarnings = Config::getLoadWarnings();
 
         // Read the flag before the array_filter() below strips an explicit

@@ -49,6 +49,9 @@ class DatabaseConsumers
      */
     public static function fromConfig(array $config): array
     {
+        // A backend or handler may name its connection (#395). Resolved here
+        // because this is where they are built, for firewall-migrate.
+        $config = Connections::resolveIn($config);
         $consumers = [];
         $failures = [];
 

@@ -66,7 +66,7 @@ class BlockList
     public function storage(): StorageInterface
     {
         if (!$this->storage instanceof StorageInterface) {
-            $config = Config::load($this->configs);
+            $config = Connections::resolveIn(Config::load($this->configs));
             $storage = is_array($config['storage'] ?? null) ? $config['storage'] : [];
 
             $this->storage = StorageFactory::create($storage);

@@ -77,7 +77,7 @@ final class CachePoolFactoryTest extends TestCase
         return [
             'a class that does not exist' => [['adaptor' => 'App\\NoSuchPool'], 'is not a PSR-6 pool'],
             'a class that is not a pool' => [['adaptor' => \ArrayObject::class], 'is not a PSR-6 pool'],
-            'a number' => [['adaptor' => 42], 'must be a pool class name or a DSN'],
+            'a number' => [['adaptor' => 42], 'must be a pool class name, a DSN or a named connection'],
         ];
     }
 

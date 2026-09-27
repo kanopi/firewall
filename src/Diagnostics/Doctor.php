@@ -19,6 +19,7 @@ use Kanopi\Firewall\Storage\SharedStorage;
 use Kanopi\Firewall\Utility\BlockList;
 use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
+use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Utility\DatabaseConsumers;
 use Kanopi\Firewall\Utility\PanicSwitch;
 use Symfony\Component\HttpFoundation\Request;
@@ -94,6 +95,10 @@ class Doctor
         }
 
         foreach ($this->checkStorage($config) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkConnections($config) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -617,6 +622,40 @@ class Doctor
             . '`firewall-block --find` and `--list` may miss some.',
             'configuration/storage.md#the-index-is-best-effort'
         );
+    }
+
+    /**
+     * Whether each declared connection can reach its server (#395).
+     *
+     * Every declared connection, referenced or not: one declared and never used is
+     * harmless, but one declared *to be* used and misspelled where it is referenced is the
+     * common mistake, and the report showing it answering is half of finding that out. The
+     * target is named without its credentials.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration.
+     *
+     * @return array<int, Diagnosis>
+     *   One finding per connection.
+     */
+    private function checkConnections(array $config): array
+    {
+        $connections = Connections::fromConfig($config);
+        $findings = [];
+
+        foreach ($connections->names() as $name) {
+            $problem = $connections->probe($name);
+
+            $findings[] = $problem === null
+                ? Diagnosis::ok(sprintf('Connection %s answers', $name), $connections->describe($name))
+                : Diagnosis::error(
+                    sprintf('Connection %s could not be reached', $name),
+                    sprintf('%s: %s', $connections->describe($name), $problem),
+                    'configuration/connections.md'
+                );
+        }
+
+        return $findings;
     }
 
     /**
