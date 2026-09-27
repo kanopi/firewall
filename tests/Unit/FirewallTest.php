@@ -141,6 +141,60 @@ class FirewallTest extends AbstractTestCase
     }
 
     /**
+     * A block the storage refuses to write is still a refusal, and says the write failed.
+     *
+     * Reached before #403 only through a mocked getKey() answering '' -- which now means
+     * "no client", and returns before the write -- so it has a test of its own.
+     */
+    public function testAFailedBlockWriteIsLoggedAndStillRefuses(): void
+    {
+        $handler = $this->captureLogger();
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(new \Monolog\Logger('test', [$handler]));
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Blocker');
+        $plugin->method('getStatusCode')->willReturn(403);
+
+        $this->bypassManager->method('evaluate')->willReturn(false);
+        $this->storage->method('isBlocked')->willReturn(false);
+        $this->storage->method('getKey')->willReturn('5.6.7.8');
+        $this->storage->method('set')->willReturn(false);
+        $this->blockManager->method('evaluate')->willReturn($plugin);
+
+        try {
+            $this->createFirewall(['mode' => 'exception'])->evaluate($request);
+            $this->fail('The request should still be refused');
+        } catch (FirewallBlockedException) {
+            $this->assertTrue($handler->hasErrorContaining('Failed to block IP'));
+        }
+    }
+
+    public function testASuccessfulBlockWriteIsLogged(): void
+    {
+        $handler = $this->captureLogger();
+        \Kanopi\Firewall\Logging\LoggingFactory::setLogger(new \Monolog\Logger('test', [$handler]));
+        $request = Request::create('/', 'GET', [], [], [], ['REMOTE_ADDR' => '5.6.7.8']);
+
+        $plugin = $this->createMock(PluginInterface::class);
+        $plugin->method('getName')->willReturn('Blocker');
+        $plugin->method('getStatusCode')->willReturn(403);
+
+        $this->bypassManager->method('evaluate')->willReturn(false);
+        $this->storage->method('isBlocked')->willReturn(false);
+        $this->storage->method('getKey')->willReturn('5.6.7.8');
+        $this->storage->method('set')->willReturn(true);
+        $this->blockManager->method('evaluate')->willReturn($plugin);
+
+        try {
+            $this->createFirewall(['mode' => 'exception'])->evaluate($request);
+            $this->fail('The request should be refused');
+        } catch (FirewallBlockedException) {
+            $this->assertFalse($handler->hasErrorContaining('Failed to block IP'));
+        }
+    }
+
+    /**
      * Test Status Code when the value is 0.
      */
     public function testEvaluateBlockingPluginBlocksStatusCode(): void
