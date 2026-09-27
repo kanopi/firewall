@@ -13,7 +13,7 @@ RUN pecl install redis \
     && docker-php-ext-enable redis
 
 # Install and enable Memcached extension
-RUN yes "" | pecl install memcached \
+RUN printf '\n\n\n\n\n\n\n\n\n\n\n\n' | pecl install memcached \
     && docker-php-ext-enable memcached
 
 # Install and configure Xdebug
