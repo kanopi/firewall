@@ -11,7 +11,7 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
-## [2.33.1](https://github.com/kanopi/firewall/releases/tag/v2.33.1) — 2026-09-27
+## [2.33.1](https://github.com/kanopi/firewall/releases/tag/v2.33.1) — 2026-09-28
 
 Three fixes, and each is something the library accepted in one place and quietly failed on in another.
 
