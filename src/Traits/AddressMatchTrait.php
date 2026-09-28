@@ -171,7 +171,7 @@ trait AddressMatchTrait
             return null;
         }
 
-        [$start, $end] = array_map('trim', explode('-', $range, 2));
+        [$start, $end] = array_map(trim(...), explode('-', $range, 2));
 
         if (filter_var($start, FILTER_VALIDATE_IP) === false || filter_var($end, FILTER_VALIDATE_IP) === false) {
             return null;

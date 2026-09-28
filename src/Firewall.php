@@ -1145,7 +1145,11 @@ final class Firewall
         }
 
         foreach ($allowed as $pattern) {
-            if (!is_string($pattern) || $pattern === '') {
+            if (!is_string($pattern)) {
+                continue;
+            }
+
+            if ($pattern === '') {
                 continue;
             }
 
