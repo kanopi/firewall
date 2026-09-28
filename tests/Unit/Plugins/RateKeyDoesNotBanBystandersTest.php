@@ -186,6 +186,21 @@ class RateKeyDoesNotBanBystandersTest extends AbstractTestCase
     }
 
     /**
+     * `client_ip` is recognised whatever its case, so normalising the rest of
+     * the key more carefully does not stop an address key from banning (#412).
+     */
+    public function testACapitalisedAddressComponentStillBans(): void
+    {
+        $firewall = $this->firewall([' Client_IP ', 'post.name']);
+
+        foreach (range(1, 4) as $ignored) {
+            $this->attempt($firewall, '203.0.113.9');
+        }
+
+        $this->assertTrue($this->isBanned($firewall, '203.0.113.9'));
+    }
+
+    /**
      * An operator who knows the counted identity and the address are the same
      * thing can opt back in.
      */

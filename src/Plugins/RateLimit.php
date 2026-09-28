@@ -270,11 +270,45 @@ class RateLimit extends AbstractPluginBase
             ));
 
             if ($components !== []) {
-                return array_map(static fn(string $c): string => strtolower(trim($c)), $components);
+                return array_map($this->normaliseComponent(...), $components);
             }
         }
 
         return self::DEFAULT_KEY;
+    }
+
+    /**
+     * Normalise a component name without changing what it reads.
+     *
+     * The prefix is forgiven its case, and so are header names, which HTTP makes
+     * case-insensitive and Symfony lower-cases on the way in. POST, cookie and
+     * query names are not: they are case-sensitive everywhere that reads them,
+     * so `post.userName` lower-cased is a field that is never there. Every
+     * request then resolves to the same empty value and shares one counter,
+     * and the limit refuses everybody at once (#412).
+     *
+     * Lower-casing the prefix and header names rather than nothing at all
+     * keeps every key that already worked hashing to the same counter.
+     *
+     * @param string $component
+     *   The declared component.
+     *
+     * @return string
+     *   The name the key is built from.
+     */
+    private function normaliseComponent(string $component): string
+    {
+        $component = trim($component);
+        $dot = strpos($component, '.');
+
+        if ($dot === false) {
+            return strtolower($component);
+        }
+
+        $prefix = strtolower(substr($component, 0, $dot));
+        $name = substr($component, $dot + 1);
+
+        return $prefix . '.' . ($prefix === 'header' ? strtolower($name) : $name);
     }
 
     /**

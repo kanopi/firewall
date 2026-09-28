@@ -112,6 +112,12 @@ config:
 | `method`, `host`, `query`, `scheme`, `port` | As the [URL plugin](url.md) reads them |
 | `header.x`, `post.x`, `cookie.x`, `query.x` | Same vocabulary, same nesting |
 
+**`post`, `cookie` and `query` names are case-sensitive; header names are not.** Write the
+field exactly as the form or client sends it: `post.userName` reads `userName`, and would
+never find `username`. A name that matches nothing resolves to the empty string for every
+request, so they all share one counter and the limit trips for everybody at once. The prefix
+(`post`, `Header`) and header names can be written in any case.
+
 `metadata.default_key` sets it for every rule that declares none. A rule's own `key:` wins.
 
 ### Why the default is often wrong

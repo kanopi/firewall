@@ -317,4 +317,128 @@ class ComposableRateKeyTest extends AbstractTestCase
             $plugin->key($this->request(), ['path' => '/x', 'key' => ['  CLIENT_IP ', 'Path']])
         );
     }
+
+    /**
+     * POST, cookie and query names keep their case, because the request does
+     * (#412).
+     *
+     * They were lower-cased with everything else, so `post.userName` read a
+     * field that is never there: every request resolved to the same empty value
+     * and shared one counter, and the limit refused everybody at once.
+     *
+     * @param string $component
+     *   The declared component.
+     * @param \Closure(string): Request $request
+     *   Builds a request carrying the given value under that name.
+     */
+    #[DataProvider('caseSensitiveComponents')]
+    public function testCaseSensitiveNamesResolve(string $component, \Closure $request): void
+    {
+        $plugin = $this->plugin();
+        $rule = ['path' => '/login', 'key' => [$component]];
+
+        $this->assertNotSame(
+            $plugin->key($request('alice'), $rule),
+            $plugin->key($request('bob'), $rule),
+            sprintf('Two values of %s must not share a counter.', $component)
+        );
+
+        $this->assertNotSame(
+            $plugin->key($request('alice'), $rule),
+            $plugin->key($this->request(), $rule),
+            sprintf('A request carrying %s must not share a counter with one that does not.', $component)
+        );
+    }
+
+    /**
+     * @return array<string, array{string, \Closure(string): Request}>
+     */
+    public static function caseSensitiveComponents(): array
+    {
+        return [
+            'post' => [
+                'post.userName',
+                static fn(string $v): Request => Request::create(
+                    '/login',
+                    'POST',
+                    ['userName' => $v],
+                    [],
+                    [],
+                    ['REMOTE_ADDR' => '203.0.113.1']
+                ),
+            ],
+            'cookie' => [
+                'cookie.sessionId',
+                static fn(string $v): Request => Request::create(
+                    '/login',
+                    'GET',
+                    [],
+                    ['sessionId' => $v],
+                    [],
+                    ['REMOTE_ADDR' => '203.0.113.1']
+                ),
+            ],
+            'query' => [
+                'query.userId',
+                static fn(string $v): Request => Request::create(
+                    '/login?userId=' . $v,
+                    'GET',
+                    [],
+                    [],
+                    [],
+                    ['REMOTE_ADDR' => '203.0.113.1']
+                ),
+            ],
+            'the prefix is still forgiven' => [
+                'POST.userName',
+                static fn(string $v): Request => Request::create(
+                    '/login',
+                    'POST',
+                    ['userName' => $v],
+                    [],
+                    [],
+                    ['REMOTE_ADDR' => '203.0.113.1']
+                ),
+            ],
+        ];
+    }
+
+    /**
+     * Header names are still case-insensitive, and a key that worked before
+     * this change hashes to the same counter after it.
+     *
+     * The component name is part of the hashed material, so preserving the
+     * case of `header.User-Agent` would have reset that counter on upgrade for
+     * no gain.
+     */
+    public function testHeaderNamesStayCaseInsensitive(): void
+    {
+        $plugin = $this->plugin();
+        $request = $this->request(server: ['HTTP_USER_AGENT' => 'curl/8.0']);
+
+        $this->assertSame(
+            $plugin->key($request, ['path' => '/login', 'key' => ['header.user-agent']]),
+            $plugin->key($request, ['path' => '/login', 'key' => ['Header.User-Agent']])
+        );
+
+        $this->assertSame(
+            'rate:' . hash('xxh128', 'header.user-agent=curl/8.0'),
+            $plugin->key($request, ['path' => '/login', 'key' => ['Header.User-Agent']]),
+            'The stored key for a header must be the one earlier releases wrote.'
+        );
+    }
+
+    /**
+     * A lower-case key that worked before hashes exactly as it did.
+     */
+    public function testAnUnaffectedKeyHashesAsBefore(): void
+    {
+        $this->assertSame(
+            'rate:' . hash('xxh128', "client_ip=203.0.113.1\0post.name=alice"),
+            $this->plugin()->key(
+                $this->request(post: ['name' => 'alice']),
+                ['path' => '/login', 'key' => [' Client_IP ', 'post.name']]
+            )
+        );
+    }
 }
