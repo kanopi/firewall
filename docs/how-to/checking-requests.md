@@ -41,6 +41,7 @@ Designed to compose in scripts and CI, so the verdict *is* the exit status:
 | `0` | allowed |
 | `1` | blocked |
 | `2` | challenged |
+| `3` | redirected — a `response: redirect` rule matched; the output names the `location` and redirect status |
 | `64` | usage error |
 | `70` | internal error |
 
