@@ -18,6 +18,7 @@ use Kanopi\Firewall\Plugins\AbstractPluginBase;
 use Kanopi\Firewall\Source\SourceCache;
 use Kanopi\Firewall\Storage\RecordedRequest;
 use Kanopi\Firewall\Storage\SharedStorage;
+use Kanopi\Firewall\Traits\AddressMatchTrait;
 use Kanopi\Firewall\Utility\BlockList;
 use Kanopi\Firewall\Source\SourceManager;
 use Kanopi\Firewall\Utility\Config;
@@ -50,6 +51,8 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class Doctor
 {
+    use AddressMatchTrait;
+
     /**
      * @param array<int, string|array<string, mixed>|null> $configs
      *   Configuration sources, as `Firewall::create()` takes them.
@@ -294,6 +297,10 @@ class Doctor
      * Reported even when the mode is not currently `lockdown`, because the point is to find
      * out *before* relying on it.
      *
+     * An entry the firewall cannot read matches nobody, so it is reported by name rather
+     * than counted as coverage: a list of one unreadable range is an empty list that says
+     * "1 entry" (#407).
+     *
      * @param array<string, mixed> $global
      *   The `global:` block.
      *
@@ -306,7 +313,14 @@ class Doctor
         $entries = is_array($allowed)
             ? array_values(array_filter($allowed, static fn(mixed $v): bool => is_string($v) && trim($v) !== ''))
             : [];
-        $inLockdown = ($global['mode'] ?? null) === 'lockdown';
+        // Both spellings: the `lockdown: true` flag is the one a host using
+        // `mode: exception` has to use, and reading only the shorthand reported
+        // an active lockdown as "not currently in lockdown".
+        $inLockdown = ($global['mode'] ?? null) === 'lockdown' || ($global['lockdown'] ?? false) === true;
+        $unusable = array_values(array_filter(
+            $entries,
+            fn(string $entry): bool => !$this->isValidPattern($entry) && !$this->isValidRange($entry)
+        ));
 
         if ($entries === []) {
             $detail = 'global.lockdown_allow lists nobody, so lockdown would refuse every visitor '
@@ -319,10 +333,31 @@ class Doctor
                 : Diagnosis::warning('Lockdown would allow nobody', $detail, 'configuration/global.md#lockdown');
         }
 
+        if ($unusable !== []) {
+            $title = sprintf(
+                '%s allowlist has %d entr%s that can never match',
+                $inLockdown ? 'Lockdown is ACTIVE and its' : 'Lockdown',
+                count($unusable),
+                count($unusable) === 1 ? 'y' : 'ies'
+            );
+            $detail = sprintf(
+                '%s %s not an address, a CIDR block or a start-end range, so %s nobody. '
+                . 'A lockdown refuses everyone the list does not name.',
+                implode(', ', array_map(static fn(string $e): string => '"' . $e . '"', $unusable)),
+                count($unusable) === 1 ? 'is' : 'are',
+                count($unusable) === 1 ? 'it serves' : 'they serve'
+            );
+
+            return $inLockdown
+                ? Diagnosis::error($title, $detail, 'configuration/global.md#lockdown')
+                : Diagnosis::warning($title, $detail, 'configuration/global.md#lockdown');
+        }
+
         if ($inLockdown) {
             return Diagnosis::warning(
                 sprintf('Lockdown is ACTIVE — only %d address range%s is served', count($entries), count($entries) === 1 ? '' : 's'),
-                'Everyone else receives a 503. Change global.mode to restore normal service.',
+                'Everyone else receives a 503. Set global.lockdown to false, or change global.mode off lockdown, '
+                . 'to restore normal service.',
                 'configuration/global.md#lockdown'
             );
         }

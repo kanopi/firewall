@@ -413,6 +413,21 @@ class DoctorTest extends AbstractTestCase
      * @param string $fragment
      *   Part of the title.
      */
+    public function testAnUnmatchableEntryIsNamed(): void
+    {
+        $config = $this->workingConfig();
+        $config['global']['lockdown_allow'] = ['198.51.100.0/24', 'office-vpn'];
+
+        $matching = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_contains(strtolower($d->title), 'lockdown')
+        ));
+
+        $this->assertCount(1, $matching);
+        $this->assertStringContainsString('"office-vpn"', (string) $matching[0]->detail);
+        $this->assertStringNotContainsString('198.51.100.0/24', (string) $matching[0]->detail);
+    }
+
     #[DataProvider('lockdownConfigurations')]
     public function testLockdownIsReported(array $global, string $status, string $fragment): void
     {
@@ -454,6 +469,40 @@ class DoctorTest extends AbstractTestCase
                 ['lockdown_allow' => ['198.51.100.0/24', '203.0.113.0/24']],
                 Diagnosis::OK,
                 'allowlist has 2 entries',
+            ],
+            // A range is an entry the firewall can match (#407).
+            'a range counts' => [
+                ['lockdown_allow' => ['203.0.113.10-203.0.113.20']],
+                Diagnosis::OK,
+                'has 1 entry',
+            ],
+            // One it cannot is named, not counted as coverage.
+            'an unmatchable entry, not active' => [
+                ['lockdown_allow' => ['198.51.100.0/24', 'office-vpn']],
+                Diagnosis::WARNING,
+                'has 1 entry that can never match',
+            ],
+            'an unmatchable entry, active' => [
+                ['mode' => 'lockdown', 'lockdown_allow' => ['203.0.113.20-203.0.113.10']],
+                Diagnosis::ERROR,
+                'ACTIVE and its allowlist has 1 entry that can never match',
+            ],
+            'two unmatchable entries' => [
+                ['lockdown_allow' => ['198.51.100.0/33', 'office-vpn']],
+                Diagnosis::WARNING,
+                'has 2 entries that can never match',
+            ],
+            // The flag is how a `mode: exception` host locks down, and it was
+            // reported as "not currently in lockdown".
+            'active through the flag' => [
+                ['lockdown' => true, 'lockdown_allow' => ['198.51.100.0/24']],
+                Diagnosis::WARNING,
+                'ACTIVE',
+            ],
+            'active through the flag and empty' => [
+                ['lockdown' => true, 'lockdown_allow' => []],
+                Diagnosis::ERROR,
+                'active and allows nobody',
             ],
             'one entry reads as singular' => [
                 ['lockdown_allow' => ['198.51.100.0/24']],
