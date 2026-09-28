@@ -13,7 +13,11 @@ works; anything needing a new key waits for a minor.
 
 ## [2.33.1](https://github.com/kanopi/firewall/releases/tag/v2.33.1) — 2026-09-27
 
+Two fixes, and both are notation the library accepted in one place and quietly failed on in another.
+
 `firewall-check` now reports a request that matches a `response: redirect` rule as **REDIRECTED**, exit `3`, and names where the visitor is sent and with which status. Before, the redirect was never caught, so the tool said "evaluation threw unexpectedly" and exited `70`, the internal-error code, and a CI gate asserting that a redirect rule works could not pass.
+
+`global.lockdown_allow` now honours a `start-end` range, the notation the `IpAddress` rule has always taken. Before, a range matched nobody, with no error at startup and no log line, so an office listed as `203.0.113.10-203.0.113.20` was locked out by the lockdown meant to keep it in. `firewall-doctor` now names every allowlist entry that can never match, an error while lockdown is on, and recognises `lockdown: true` as active rather than only the `mode: lockdown` shorthand.
 
 ## [2.33.0](https://github.com/kanopi/firewall/releases/tag/v2.33.0) — 2026-09-27
 

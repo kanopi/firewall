@@ -101,6 +101,93 @@ trait AddressMatchTrait
     }
 
     /**
+     * Is this address inside a `start-end` range?
+     *
+     * The notation the `IpAddress` plugin has always accepted, and the natural
+     * way to describe an office. Kept apart from addressMatches() on purpose:
+     * the storage backends query by address or CIDR only, and widening what
+     * an un-block accepts is not this method's business (#407).
+     *
+     * @param string $address
+     *   The client address.
+     * @param string $range
+     *   Two addresses of the same family joined by `-`, lowest first.
+     *
+     * @return bool
+     *   TRUE when the address falls within the range, bounds included.
+     */
+    protected function addressInRange(string $address, string $range): bool
+    {
+        $bounds = $this->rangeBounds($range);
+
+        if ($bounds === null) {
+            return false;
+        }
+
+        $packed = filter_var($address, FILTER_VALIDATE_IP) !== false ? inet_pton($address) : false;
+
+        // A different family is outside the range rather than an error: an
+        // IPv6 visitor is simply not in an IPv4 office's range.
+        if ($packed === false || strlen($packed) !== strlen($bounds[0])) {
+            return false;
+        }
+
+        // Packed addresses of one family are fixed-width big-endian strings, so
+        // a byte comparison orders them numerically -- for IPv6 too, which
+        // ip2long() cannot do.
+        return strcmp($packed, $bounds[0]) >= 0 && strcmp($packed, $bounds[1]) <= 0;
+    }
+
+    /**
+     * Is the range something addressInRange() can match against?
+     *
+     * @param string $range
+     *   The range to check.
+     *
+     * @return bool
+     *   TRUE for two addresses of one family, lowest first.
+     */
+    protected function isValidRange(string $range): bool
+    {
+        return $this->rangeBounds($range) !== null;
+    }
+
+    /**
+     * The packed bounds of a `start-end` range, or NULL when it is not one.
+     *
+     * Backwards bounds are refused rather than swapped. `.20-.10` matches
+     * nothing if read literally, and guessing what the operator meant is how an
+     * allowlist ends up covering more than they wrote.
+     *
+     * @param string $range
+     *   The range to parse.
+     *
+     * @return array{0: string, 1: string}|null
+     *   The packed start and end.
+     */
+    private function rangeBounds(string $range): ?array
+    {
+        if (substr_count($range, '-') !== 1) {
+            return null;
+        }
+
+        [$start, $end] = array_map(trim(...), explode('-', $range, 2));
+
+        if (filter_var($start, FILTER_VALIDATE_IP) === false || filter_var($end, FILTER_VALIDATE_IP) === false) {
+            return null;
+        }
+
+        $start = (string) inet_pton($start);
+        $end = (string) inet_pton($end);
+
+        if (strlen($start) !== strlen($end) || strcmp($start, $end) > 0) {
+            return null;
+        }
+
+        return [$start, $end];
+    }
+
+    /**
      * Drop unusable patterns, logging each one.
      *
      * Skipping rather than throwing is deliberate: a typo in one of twenty

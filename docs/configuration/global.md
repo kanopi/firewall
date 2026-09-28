@@ -309,16 +309,31 @@ global:
   lockdown: true
   lockdown_allow:
     - 198.51.100.0/24      # the office
+    - 203.0.113.10-203.0.113.20
     - 2001:db8::/32
 ```
 
 | Key | Default | |
 |---|---|---|
 | `lockdown` | `false` | Turns it on |
-| `lockdown_allow` | *(empty)* | Addresses and CIDRs still served. **Empty serves nobody** |
+| `lockdown_allow` | *(empty)* | Addresses, CIDRs and `start-end` ranges still served, the same notations the [`IpAddress`](../plugins/ip-address.md) rule takes. **Empty serves nobody** |
 | `lockdown_status` | `503` | |
 | `lockdown_retry_after` | `300` | Seconds in `Retry-After`; `0` omits the header |
 | `lockdown_message` | built-in | Supports `{{request.id}}` |
+
+### An entry it cannot read serves nobody
+
+An entry that is not an address, a CIDR block or a `start-end` range (a hostname, a
+typo, a range whose bounds are backwards or from different families) matches nobody.
+The firewall does not guess what was meant. `firewall-doctor` names every such entry,
+and reports it as an error when the lockdown is already on:
+
+```console
+  ✗ Lockdown is ACTIVE and its allowlist has 1 entry that can never match
+      "203.0.113.20-203.0.113.10" is not an address, a CIDR block or a start-end range, so it serves nobody. …
+```
+
+Run it before you flip the switch, not after.
 
 ### It is a flag, not a mode
 

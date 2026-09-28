@@ -50,7 +50,7 @@ Nothing here explains anything; that is deliberate.
 | `trusted_headers` | list | `x-forwarded-for`, `-proto`, `-port` | Which forwarding headers to believe from them | [Trusted proxies from YAML](../configuration/global.md#trusted-proxies-from-yaml) |
 | `require_config` | bool | `false` | Refuse to start if any config input failed to load | [Loading](../configuration/loading-and-includes.md) |
 | `lockdown` | bool | `false` | Refuse everyone but `lockdown_allow` | [Lockdown](../configuration/global.md#lockdown) |
-| `lockdown_allow` | list | *(empty)* | Addresses and CIDRs still served. Empty serves nobody | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_allow` | list | *(empty)* | Addresses, CIDRs and `start-end` ranges still served. Empty serves nobody | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_status` | int | `503` | | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_retry_after` | int | `300` | Seconds in `Retry-After`; `0` omits it | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_message` | string | built-in | Supports `{{request.id}}` | [Lockdown](../configuration/global.md#lockdown) |

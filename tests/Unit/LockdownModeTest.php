@@ -381,4 +381,74 @@ class LockdownModeTest extends AbstractTestCase
 
         $this->assertTrue($firewall->evaluate($this->request('198.51.100.7')));
     }
+
+    /**
+     * A `start-end` range is honoured, as the IpAddress plugin honours it.
+     *
+     * Before this, the same notation an operator used successfully on an IP rule
+     * matched nobody on the allowlist, silently -- and locked out the office it
+     * named (#407).
+     *
+     * @param string $range
+     *   The allowlist entry.
+     * @param string $inside
+     *   An address the range covers.
+     * @param string $outside
+     *   An address it does not.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('ranges')]
+    public function testARangeIsHonoured(string $range, string $inside, string $outside): void
+    {
+        $firewall = $this->firewall(['lockdown_allow' => [$range]]);
+
+        $this->assertTrue($firewall->evaluate($this->request($inside)));
+
+        $this->expectException(FirewallLockdownException::class);
+        $firewall->evaluate($this->request($outside));
+    }
+
+    /**
+     * @return array<string, array{string, string, string}>
+     */
+    public static function ranges(): array
+    {
+        return [
+            'ipv4, inside' => ['203.0.113.10-203.0.113.20', '203.0.113.15', '203.0.113.21'],
+            'ipv4, lower bound' => ['203.0.113.10-203.0.113.20', '203.0.113.10', '203.0.113.9'],
+            'ipv4, upper bound' => ['203.0.113.10-203.0.113.20', '203.0.113.20', '203.0.114.15'],
+            'spaces around the dash' => ['203.0.113.10 - 203.0.113.20', '203.0.113.15', '203.0.113.30'],
+            'ipv6' => ['2001:db8::10-2001:db8::20', '2001:db8::1a', '2001:db8::21'],
+            'the other family is outside' => ['203.0.113.10-203.0.113.20', '203.0.113.11', '::ffff:1'],
+        ];
+    }
+
+    /**
+     * A range that is not one matches nobody rather than guessing.
+     *
+     * Backwards bounds in particular are not swapped: guessing what the operator
+     * meant is how an allowlist ends up covering more than they wrote.
+     *
+     * @param string $range
+     *   The unusable entry.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('unusableRanges')]
+    public function testAnUnusableRangeMatchesNobody(string $range): void
+    {
+        $this->expectException(FirewallLockdownException::class);
+        $this->firewall(['lockdown_allow' => [$range]])->evaluate($this->request('203.0.113.15'));
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function unusableRanges(): array
+    {
+        return [
+            'backwards' => ['203.0.113.20-203.0.113.10'],
+            'mixed families' => ['203.0.113.10-2001:db8::20'],
+            'open-ended' => ['203.0.113.10-'],
+            'not addresses' => ['office-vpn'],
+            'three bounds' => ['203.0.113.10-203.0.113.15-203.0.113.20'],
+        ];
+    }
 }

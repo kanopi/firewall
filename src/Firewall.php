@@ -1116,6 +1116,9 @@ final class Firewall
      *
      * `global.lockdown_allow` only. Deliberately not the allow bucket -- see the call site.
      *
+     * Entries are addresses, CIDR blocks or `start-end` ranges -- the notations `IpAddress`
+     * accepts. An entry that is none of those matches nobody; `firewall-doctor` names it.
+     *
      * An unset or empty list serves nobody, which is what "deny by default" means and is the
      * honest reading of a mode called lockdown. `firewall-doctor` reports the empty case
      * before you are relying on it, because the alternative is finding out by locking
@@ -1142,7 +1145,19 @@ final class Firewall
         }
 
         foreach ($allowed as $pattern) {
-            if (is_string($pattern) && $pattern !== '' && $this->addressMatches($address, $pattern)) {
+            if (!is_string($pattern)) {
+                continue;
+            }
+
+            if ($pattern === '') {
+                continue;
+            }
+
+            // A `start-end` range as well as an address or CIDR, because the
+            // IpAddress plugin takes all three. An allowlist that silently
+            // ignored the notation an IP rule accepts would lock out the office
+            // it names (#407).
+            if ($this->addressMatches($address, $pattern) || $this->addressInRange($address, $pattern)) {
                 return true;
             }
         }
