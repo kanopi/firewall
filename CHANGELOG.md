@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.33.2](https://github.com/kanopi/firewall/releases/tag/v2.33.2) — 2026-09-28
+
+A rate-limit `key:` naming a `post`, `cookie` or `query` field with a capital in it, `post.userName` for instance, now counts that field. Before, every component was lower-cased, so the key read a field that was never there, every request resolved to the same empty value, and the limit shared one counter across all visitors, refusing everybody at once once it tripped. Header names are still case-insensitive, and every key that already worked hashes to the same counter after the upgrade.
+
 ## [2.33.1](https://github.com/kanopi/firewall/releases/tag/v2.33.1) — 2026-09-28
 
 Three fixes, and each is something the library accepted in one place and quietly failed on in another.
