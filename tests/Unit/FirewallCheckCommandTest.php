@@ -19,6 +19,7 @@ final class FirewallCheckCommandTest extends AbstractTestCase
     private const EXIT_ALLOWED = 0;
     private const EXIT_BLOCKED = 1;
     private const EXIT_CHALLENGED = 2;
+    private const EXIT_REDIRECTED = 3;
     private const EXIT_USAGE = 64;
 
     /**
@@ -440,6 +441,76 @@ final class FirewallCheckCommandTest extends AbstractTestCase
 
         $this->assertSame(self::EXIT_CHALLENGED, $result['code']);
         $this->assertStringContainsString('CHALLENGED', $result['stdout']);
+    }
+
+    /**
+     * A redirect is its own verdict, not an internal error (#406).
+     *
+     * `FirewallRedirectException` was not caught, so it fell through to the
+     * catch-all and exited 70 -- which made a CI gate asserting that a
+     * redirect rule works impossible to pass.
+     */
+    public function testRedirectedRequestExitsThreeAndNamesTheTarget(): void
+    {
+        $result = $this->runCheck(['--config=' . $this->redirectConfig(), '--ip=1.1.1.1', '--url=/old-admin']);
+
+        $this->assertSame(self::EXIT_REDIRECTED, $result['code'], $result['stdout'] . $result['stderr']);
+        $this->assertStringContainsString('REDIRECTED', $result['stdout']);
+        $this->assertStringContainsString('https://example.com/notice', $result['stdout']);
+        $this->assertStringContainsString('301', $result['stdout']);
+        $this->assertMatchesRegularExpression('/redirected by\s+Old admin/', $result['stdout']);
+        $this->assertStringNotContainsString('threw unexpectedly', $result['stderr']);
+    }
+
+    public function testRedirectedRequestJsonCarriesTheLocation(): void
+    {
+        $result = $this->runCheck([
+            '--config=' . $this->redirectConfig(),
+            '--ip=1.1.1.1',
+            '--url=/old-admin',
+            '--json',
+        ]);
+
+        $this->assertSame(self::EXIT_REDIRECTED, $result['code'], $result['stdout'] . $result['stderr']);
+
+        $decoded = json_decode($result['stdout'], true);
+        $this->assertIsArray($decoded);
+        $this->assertSame('redirected', $decoded['verdict']);
+        $this->assertSame('https://example.com/notice', $decoded['location']);
+        $this->assertSame(301, $decoded['status']);
+        $this->assertSame('Old admin', $decoded['plugin']);
+    }
+
+    public function testAllowedRequestReportsNoLocation(): void
+    {
+        $result = $this->runCheck(['--config=' . $this->redirectConfig(), '--ip=1.1.1.1', '--url=/', '--json']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code'], $result['stdout'] . $result['stderr']);
+
+        $decoded = json_decode($result['stdout'], true);
+        $this->assertIsArray($decoded);
+        $this->assertArrayHasKey('location', $decoded);
+        $this->assertNull($decoded['location']);
+    }
+
+    private function redirectConfig(): string
+    {
+        return $this->writeConfig(<<<'YML'
+        global:
+          mode: block
+        storage:
+          type: 'Kanopi\Firewall\Storage\InMemoryStorage'
+        plugins:
+          - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+            response: redirect
+            enable: true
+            metadata:
+              name: "Old admin"
+              redirect_to: "https://example.com/notice"
+              redirect_status: 301
+            config:
+              - "path@starts_with:/old-admin"
+        YML);
     }
 
     // -----------------------------------------------------------------------

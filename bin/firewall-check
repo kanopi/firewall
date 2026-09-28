@@ -39,6 +39,7 @@ declare(strict_types=1);
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Utility\Config;
@@ -53,6 +54,7 @@ use Symfony\Component\HttpFoundation\Request;
 const EXIT_ALLOWED = 0;
 const EXIT_BLOCKED = 1;
 const EXIT_CHALLENGED = 2;
+const EXIT_REDIRECTED = 3;
 const EXIT_USAGE = 64;
 const EXIT_INTERNAL = 70;
 
@@ -150,6 +152,7 @@ function usage(): void
       0  allowed          64  usage error
       1  blocked          70  internal error
       2  challenged
+      3  redirected
 
     EXAMPLES
       {$script} --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/
@@ -385,6 +388,7 @@ $request = Request::create($url, $method, [], [], [], $server, $body);
 $verdict = 'allowed';
 $status = null;
 $reason = null;
+$location = null;
 
 try {
     $firewall->evaluate($request);
@@ -392,6 +396,14 @@ try {
     $verdict = 'blocked';
     $status = $exception->getCode();
     $reason = $exception->getMessage();
+} catch (FirewallRedirectException $exception) {
+    // Its own verdict, not a block: the visitor is sent somewhere rather than
+    // refused, and a CI gate asserting a redirect rule works needs to be able to
+    // tell the two apart (#406). Before this was caught it fell through to the
+    // Throwable arm below and reported an internal error.
+    $verdict = 'redirected';
+    $status = $exception->getStatusCode();
+    $location = $exception->getLocation();
 } catch (ChallengeRequiredException $exception) {
     $verdict = 'challenged';
     $reason = $exception->getMessage();
@@ -433,6 +445,7 @@ foreach ($handler->getRecords() as $record) {
     $decision = match (true) {
         str_contains($record->message, 'Request blocked by plugin') => 'blocked by',
         str_contains($record->message, 'Request bypassed') => 'allowed by',
+        str_contains($record->message, 'Sending redirect response') => 'redirected by',
         str_contains($record->message, 'would be blocked') => 'would be blocked by',
         str_contains($record->message, 'would be challenged') => 'would be challenged by',
         default => null,
@@ -488,7 +501,11 @@ foreach ($handler->getRecords() as $record) {
 // to the last confirmed plugin match rather than reporting no attribution.
 if ($plugin === null && $verdict !== 'allowed' && $lastMatched !== null) {
     $plugin = $lastMatched;
-    $pluginRole = $verdict === 'challenged' ? 'challenged by' : 'blocked by';
+    $pluginRole = match ($verdict) {
+        'challenged' => 'challenged by',
+        'redirected' => 'redirected by',
+        default => 'blocked by',
+    };
 }
 
 // Configured inventory, so --explain can also show what never ran.
@@ -551,6 +568,7 @@ $result = [
     'marks' => array_values(array_unique($marks)),
     'status' => $status,
     'reason' => $reason,
+    'location' => $location,
     'request' => [
         'ip' => $ip,
         'method' => $request->getMethod(),
@@ -594,6 +612,7 @@ if (isset($options['json'])) {
         'allowed' => 'ALLOWED',
         'blocked' => 'BLOCKED',
         'challenged' => 'CHALLENGED',
+        'redirected' => 'REDIRECTED',
         'recorded' => 'RECORDED',
     ][$verdict];
 
@@ -606,6 +625,10 @@ if (isset($options['json'])) {
 
     if ($status !== null) {
         printf("  status            %d\n", $status);
+    }
+
+    if ($location !== null) {
+        printf("  location          %s\n", $location);
     }
 
     if ($reason !== null && $reason !== '') {
@@ -709,5 +732,6 @@ if (isset($options['json'])) {
 exit(match ($verdict) {
     'blocked' => EXIT_BLOCKED,
     'challenged' => EXIT_CHALLENGED,
+    'redirected' => EXIT_REDIRECTED,
     default => EXIT_ALLOWED,
 });

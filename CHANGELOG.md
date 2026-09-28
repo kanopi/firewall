@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.33.1](https://github.com/kanopi/firewall/releases/tag/v2.33.1) — 2026-09-27
+
+`firewall-check` now reports a request that matches a `response: redirect` rule as **REDIRECTED**, exit `3`, and names where the visitor is sent and with which status. Before, the redirect was never caught, so the tool said "evaluation threw unexpectedly" and exited `70`, the internal-error code, and a CI gate asserting that a redirect rule works could not pass.
+
 ## [2.33.0](https://github.com/kanopi/firewall/releases/tag/v2.33.0) — 2026-09-27
 
 Everything in YAML: four things a site could only set up from PHP now have a key — a Memcached or Redis cache named by a DSN, a connection declared once and handed to anything that takes a client, decision listeners and the StatsD exporter, and trusted proxies — each scoped so it cannot reach past the firewall: trusted proxies apply for one evaluation and the host's own call still wins, and a cache read back from a shared server refuses to hand over an object. Memcached ships as a block list too, answering range searches from a sharded index that says when it has lost part of itself. Plus two things the firewall had been getting quietly wrong: the rule-sources offline flag switched reverse-DNS verification off with no way back and no warning, and a request with no client address crashed `IpAddress` and put every such visitor on one shared ban.
