@@ -513,6 +513,79 @@ final class FirewallCheckCommandTest extends AbstractTestCase
         YML);
     }
 
+    /**
+     * Lockdown is set aside for the check and reported beside the verdict,
+     * however it is switched on (#409).
+     *
+     * The `mode` override removed only the `mode: lockdown` shorthand, so with
+     * the `lockdown: true` flag every request came back BLOCKED by the
+     * lockdown itself and said nothing about which rule would match.
+     *
+     * @param string $switch
+     *   The YAML lines that turn lockdown on.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('lockdownSwitches')]
+    public function testLockdownDoesNotReplaceTheRulesVerdict(string $switch): void
+    {
+        $config = $this->writeConfig(<<<YML
+        global:
+        {$switch}
+          lockdown_allow:
+            - 198.51.100.0/24
+        storage:
+          type: 'Kanopi\\Firewall\\Storage\\InMemoryStorage'
+        plugins:
+          - plugin: "Kanopi\\\\Firewall\\\\Plugins\\\\Url"
+            response: block
+            enable: true
+            config:
+              - "path@starts_with:/wp-admin"
+        YML);
+
+        $allowed = $this->runCheck(['--config=' . $config, '--ip=203.0.113.9', '--url=/']);
+        $blocked = $this->runCheck(['--config=' . $config, '--ip=203.0.113.9', '--url=/wp-admin/']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $allowed['code'], $allowed['stdout'] . $allowed['stderr']);
+        $this->assertStringContainsString('lockdown          ACTIVE', $allowed['stdout']);
+        $this->assertStringContainsString('198.51.100.0/24', $allowed['stdout']);
+
+        $this->assertSame(self::EXIT_BLOCKED, $blocked['code'], $blocked['stdout'] . $blocked['stderr']);
+        $this->assertMatchesRegularExpression('/blocked by\s+URL/', $blocked['stdout']);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function lockdownSwitches(): array
+    {
+        return [
+            'the flag, with exception delivery' => ["  mode: exception\n  lockdown: true"],
+            'the mode shorthand' => ['  mode: lockdown'],
+        ];
+    }
+
+    public function testLockdownIsReportedInJson(): void
+    {
+        $config = $this->writeConfig(<<<'YML'
+        global:
+          mode: exception
+          lockdown: true
+          lockdown_allow:
+            - 198.51.100.0/24
+        storage:
+          type: 'Kanopi\Firewall\Storage\InMemoryStorage'
+        YML);
+
+        $result = $this->runCheck(['--config=' . $config, '--ip=203.0.113.9', '--json']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code'], $result['stdout'] . $result['stderr']);
+
+        $decoded = json_decode($result['stdout'], true);
+        $this->assertIsArray($decoded);
+        $this->assertSame('allowed', $decoded['verdict']);
+        $this->assertSame(['active' => true, 'allowed' => ['198.51.100.0/24']], $decoded['lockdown']);
+    }
+
     // -----------------------------------------------------------------------
     // Request construction
     // -----------------------------------------------------------------------
