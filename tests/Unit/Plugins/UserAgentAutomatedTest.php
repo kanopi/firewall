@@ -14,8 +14,12 @@ use Symfony\Component\HttpFoundation\Request;
  * The `automated:` rule variable (#109).
  *
  * `bot:true` is device-detector's curated bot database, and it misses sqlmap,
- * nikto, curl, python-requests and Go-http-client. `automated:true` is the
- * union of that database and a broader crawler list which catches them.
+ * curl, python-requests and Go-http-client. `automated:true` is the union of
+ * that database and a broader crawler list which catches them.
+ *
+ * Nikto used to be on that list. device-detector 6.5.2 added it to the curated
+ * database, and 6.5.2 is the minimum this package requires, so `bot:true`
+ * catches it on every supported install.
  *
  * A separate variable rather than a redefinition of `bot:`, because the wider
  * list counts generic HTTP client libraries as automated. Changing what
@@ -73,10 +77,11 @@ final class UserAgentAutomatedTest extends AbstractTestCase
         return [
             // In device-detector's database.
             'masscan' => [self::MASSCAN, true],
+            // Since device-detector 6.5.2, the required minimum.
+            'nikto' => [self::NIKTO, true],
             'googlebot' => [self::GOOGLEBOT, true],
             // The gap `automated:` exists to cover — still open for `bot:`.
             'sqlmap' => [self::SQLMAP, false],
-            'nikto' => [self::NIKTO, false],
             'curl' => [self::CURL, false],
             'python-requests' => [self::PYTHON, false],
             'go-http-client' => [self::GO, false],
@@ -110,7 +115,6 @@ final class UserAgentAutomatedTest extends AbstractTestCase
     {
         return [
             'sqlmap' => [self::SQLMAP],
-            'nikto' => [self::NIKTO],
             'curl' => [self::CURL],
             'python-requests' => [self::PYTHON],
             'go-http-client' => [self::GO],
@@ -131,7 +135,7 @@ final class UserAgentAutomatedTest extends AbstractTestCase
      */
     public static function provideKnownBots(): array
     {
-        return ['masscan' => [self::MASSCAN], 'googlebot' => [self::GOOGLEBOT]];
+        return ['masscan' => [self::MASSCAN], 'nikto' => [self::NIKTO], 'googlebot' => [self::GOOGLEBOT]];
     }
 
     /**

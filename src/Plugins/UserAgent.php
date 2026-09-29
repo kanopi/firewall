@@ -79,9 +79,11 @@ class UserAgent extends AbstractPluginBase
      * `bot:true` is device-detector's curated bot database, and it does not
      * classify a good deal of the tooling a firewall exists to stop:
      *
-     *   missed:  sqlmap, nikto, curl, python-requests, Go-http-client
-     *   caught:  masscan, nmap, zgrab, wpscan, nuclei, dirbuster,
+     *   missed:  sqlmap, curl, python-requests, Go-http-client
+     *   caught:  masscan, nikto, nmap, zgrab, wpscan, nuclei, dirbuster,
      *            googlebot, bingbot, ahrefs, gptbot
+     *
+     * Nikto is caught from device-detector 6.5.2, the required minimum.
      *
      * `automated:true` is the union of that database and a broader crawler
      * list which does catch them.
@@ -107,7 +109,7 @@ class UserAgent extends AbstractPluginBase
      *
      * `bot:true` is one of the first rules people reach for, and backed by
      * device-detector alone it misses roughly half the tooling a firewall
-     * exists to stop — sqlmap and Nikto among them (#109). The wider crawler
+     * exists to stop — sqlmap among them (#109). The wider crawler
      * list catches those, but also counts generic HTTP client libraries as
      * bots, which would start blocking a partner integration built on
      * python-requests.
@@ -787,7 +789,7 @@ class UserAgent extends AbstractPluginBase
         }
 
         $this->getLogger()->notice(
-            'bot: does not match sqlmap, nikto, curl, python-requests or Go-http-client — '
+            'bot: does not match sqlmap, curl, python-requests or Go-http-client — '
             . 'automated: does. Add "automated:true" alongside it, or set '
             . 'metadata.bot_detector to choose a source explicitly and silence this.',
             [

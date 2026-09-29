@@ -62,6 +62,8 @@ class BotDetectionCorpusTest extends AbstractTestCase
             // Scanners the bot database does know — the second row of the
             // table in docs/plugins/user-agent.md.
             'masscan/1.3',
+            // Since device-detector 6.5.2, the required minimum.
+            'Mozilla/5.00 (Nikto/2.1.6) (Evasions:None) (Test:Port Check)',
             'Mozilla/5.0 (compatible; Nmap Scripting Engine; https://nmap.org/book/nse.html)',
             'Mozilla/5.0 zgrab/0.x',
             'WPScan v3.8.22 (https://wpscan.com/wordpress-security-scanner)',
@@ -102,7 +104,6 @@ class BotDetectionCorpusTest extends AbstractTestCase
     {
         return array_map(static fn (string $agent): array => [$agent], [
             'sqlmap/1.7.2#stable (https://sqlmap.org)',
-            'Mozilla/5.00 (Nikto/2.1.6) (Evasions:None) (Test:Port Check)',
             'curl/8.4.0',
             'python-requests/2.31.0',
             'Go-http-client/1.1',
