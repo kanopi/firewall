@@ -27,6 +27,7 @@ BLOCKED  GET /wp-admin/
 | `--method=VERB` | HTTP method. Default `GET`, or `POST` when `--body` is given |
 | `--header=NAME:VAL` | Request header. **Repeatable** |
 | `--body=STRING` | Request body |
+| `--script-name=FILE` | The PHP file the web server runs for this URL. Set it to check a file served directly, as WordPress serves `/wp-login.php`. See [Path Source](../configuration/global.md#path-source) |
 | `--explain` | Show every plugin that evaluated, plus the ones that never ran |
 | `--json` | Machine-readable output |
 | `--lint` | Report what is wrong with the rules and exit, without evaluating a request — see [Linting a config](#linting-a-config) |

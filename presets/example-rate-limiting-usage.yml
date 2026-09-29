@@ -184,7 +184,8 @@ plugins:
 #             host: redis
 #             port: 6379
 #     config:
-#       # Very strict on login
+#       # Very strict on login. WordPress serves these files directly, so
+#       # they only match with global.path_source: script_name (#414).
 #       - path: /wp-login.php
 #         rate: 3
 #         sample: 600  # 3 attempts per 10 minutes

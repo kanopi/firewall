@@ -513,6 +513,58 @@ class DoctorTest extends AbstractTestCase
     }
 
     /**
+     * `path_source` and `base_path` are reported, and loudly when they are not understood,
+     * because a typo there leaves path rules not matching while the config reads as fixed
+     * (#414).
+     *
+     * @param array<string, mixed> $global
+     *   The `global:` block under test.
+     * @param string $status
+     *   The status the finding must carry.
+     * @param string $fragment
+     *   Part of the title or detail.
+     */
+    #[DataProvider('pathSources')]
+    public function testPathSourceIsReported(array $global, string $status, string $fragment): void
+    {
+        $config = $this->workingConfig();
+        $config['global'] = $global + $config['global'];
+
+        $matching = array_values(array_filter(
+            $this->diagnose($config),
+            static fn(Diagnosis $d): bool => str_starts_with($d->title, 'Path ') || str_starts_with($d->title, 'Base path')
+        ));
+
+        $this->assertCount(1, $matching);
+        $this->assertSame($status, $matching[0]->status);
+        $this->assertStringContainsString($fragment, $matching[0]->title . ' ' . $matching[0]->detail);
+    }
+
+    /**
+     * @return array<string, array{array<string, mixed>, string, string}>
+     */
+    public static function pathSources(): array
+    {
+        return [
+            'the default' => [[], Diagnosis::OK, 'front-controller path (pathinfo)'],
+            'script_name' => [['path_source' => 'script_name'], Diagnosis::OK, 'file the server ran (script_name)'],
+            'with a base path' => [
+                ['path_source' => 'script_name', 'base_path' => '/blog/'],
+                Diagnosis::OK,
+                'front controller is /blog/index.php',
+            ],
+            'a base path that does nothing' => [['base_path' => '/blog'], Diagnosis::OK, 'does nothing'],
+            'a typo' => [['path_source' => 'requesturi'], Diagnosis::ERROR, '"requesturi"'],
+            'the wrong case' => [['path_source' => 'REQUEST_URI'], Diagnosis::ERROR, 'not understood'],
+            'an unusable base path' => [
+                ['path_source' => 'script_name', 'base_path' => '/blog?x=1'],
+                Diagnosis::ERROR,
+                'Base path is not usable',
+            ],
+        ];
+    }
+
+    /**
      * A storage directory that does not exist is an error, naming the path.
      */
     public function testAMissingStorageDirectoryIsReported(): void

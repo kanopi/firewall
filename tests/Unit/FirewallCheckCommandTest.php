@@ -587,6 +587,95 @@ final class FirewallCheckCommandTest extends AbstractTestCase
     }
 
     // -----------------------------------------------------------------------
+    // Files served directly (#414)
+    // -----------------------------------------------------------------------
+
+    private function wordpressLoginConfig(string $global = ''): string
+    {
+        return $this->writeConfig(<<<YML
+        global:
+          mode: block
+        {$global}
+        storage:
+          type: 'Kanopi\\Firewall\\Storage\\InMemoryStorage'
+        plugins:
+          - plugin: "Kanopi\\\\Firewall\\\\Plugins\\\\Url"
+            response: block
+            enable: true
+            config:
+              - "path:/wp-login.php"
+        YML);
+    }
+
+    /**
+     * The false confidence the issue is about: without a script, the check matched the
+     * path as typed and said a rule worked that never fires on the site.
+     */
+    public function testScriptNameShowsWhatTheSiteSees(): void
+    {
+        $config = $this->wordpressLoginConfig();
+
+        $typed = $this->runCheck(['--config=' . $config, '--url=/wp-login.php']);
+        $direct = $this->runCheck(['--config=' . $config, '--url=/wp-login.php', '--script-name=/wp-login.php']);
+
+        $this->assertSame(self::EXIT_BLOCKED, $typed['code']);
+        $this->assertSame(self::EXIT_ALLOWED, $direct['code'], $direct['stdout'] . $direct['stderr']);
+        $this->assertMatchesRegularExpression('#matched as path\s+/\n#', $direct['stdout']);
+    }
+
+    public function testRequestUriMatchesADirectFile(): void
+    {
+        $result = $this->runCheck([
+            '--config=' . $this->wordpressLoginConfig('  path_source: script_name'),
+            '--url=/wp-login.php',
+            '--script-name=/wp-login.php',
+            '--json',
+        ]);
+
+        $this->assertSame(self::EXIT_BLOCKED, $result['code'], $result['stdout'] . $result['stderr']);
+
+        $decoded = json_decode($result['stdout'], true);
+        $this->assertIsArray($decoded);
+        $this->assertSame('/wp-login.php', $decoded['request']['path']);
+    }
+
+    /**
+     * A `.php` URL checked without a script is warned about, on stderr so `--json` still
+     * parses, and only when the check would otherwise mislead.
+     */
+    public function testAPhpUrlWithoutAScriptIsWarnedAbout(): void
+    {
+        $config = $this->wordpressLoginConfig();
+
+        $warned = $this->runCheck(['--config=' . $config, '--url=/wp-login.php', '--json']);
+        $this->assertStringContainsString('--script-name=/wp-login.php', $warned['stderr']);
+        $this->assertIsArray(json_decode($warned['stdout'], true), 'The warning must not reach stdout.');
+
+        foreach ([
+            ['--url=/wp-login.php', '--script-name=/wp-login.php'],
+            ['--url=/index.php'],
+            ['--url=/wp-admin/'],
+        ] as $args) {
+            $quiet = $this->runCheck(array_merge(['--config=' . $config], $args));
+            $this->assertStringNotContainsString('--script-name', $quiet['stderr'], implode(' ', $args));
+        }
+
+        $requestUri = $this->runCheck([
+            '--config=' . $this->wordpressLoginConfig('  path_source: script_name'),
+            '--url=/wp-login.php',
+        ]);
+        $this->assertStringNotContainsString('--script-name', $requestUri['stderr'], 'script_name needs no script.');
+    }
+
+    public function testAScriptNameMustBeAPhpPath(): void
+    {
+        foreach (['wp-login.php', '/wp-login', '/wp-login.html'] as $script) {
+            $result = $this->runCheck(['--config=' . $this->wordpressLoginConfig(), '--script-name=' . $script]);
+            $this->assertSame(self::EXIT_USAGE, $result['code'], $script);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Request construction
     // -----------------------------------------------------------------------
 

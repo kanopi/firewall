@@ -15,6 +15,7 @@ use Kanopi\Firewall\RateLimitStorage\PrunableRateLimitStorageInterface;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageFactory;
 use Kanopi\Firewall\RateLimitStorage\RateLimitStorageInterface;
 use Kanopi\Firewall\Traits\RequestValueTrait;
+use Kanopi\Firewall\Utility\RequestPath;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -358,7 +359,7 @@ class RateLimit extends AbstractPluginBase
      */
     public function evaluate(Request $request): bool
     {
-        $path = $request->getPathInfo();
+        $path = RequestPath::of($request);
         $matchedRule = $this->matchRule($path);
 
         if (($matchedRule['catch_all'] ?? false) && !$this->limitsUnlistedPaths()) {

@@ -50,6 +50,7 @@ use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\TrustedProxies;
 use Kanopi\Firewall\Utility\PanicSwitch;
+use Kanopi\Firewall\Utility\RequestPath;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Psr\EventDispatcher\EventDispatcherInterface;
@@ -94,6 +95,16 @@ final class Firewall
      * The mode the configuration asked for, before any panic file overrode it.
      */
     private FirewallMode $configuredMode;
+
+    /**
+     * Where `path` comes from: `pathinfo` or `script_name` (#414).
+     */
+    private string $pathSource = RequestPath::PATHINFO;
+
+    /**
+     * Where the application starts, for `script_name`, normalised; `''` for the root.
+     */
+    private string $basePath = '';
 
     /**
      * Whether a request with no client address has already been reported (#403).
@@ -184,6 +195,8 @@ final class Firewall
         if (($config['lockdown'] ?? false) === true) {
             $this->lockdown = true;
         }
+
+        $this->configurePathSource($config);
 
         $this->panicSwitch = PanicSwitch::read($config['panic_file'] ?? null);
 
@@ -1112,6 +1125,41 @@ final class Firewall
     }
 
     /**
+     * Read `global.path_source` and `global.base_path` (#414).
+     *
+     * A value this does not understand falls back to `pathinfo`, the behaviour of every
+     * release before the key existed, and says so -- the same way an unknown `mode` falls
+     * back to `block` -- rather than refusing to start. `firewall-doctor` reports it as an
+     * error, which is where a deploy gate finds it.
+     *
+     * @param array<string, mixed> $config
+     *   The `global:` block.
+     */
+    private function configurePathSource(array $config): void
+    {
+        $source = $config['path_source'] ?? RequestPath::PATHINFO;
+
+        if (!RequestPath::isValidSource($source)) {
+            $this->getLogger()->warning('Unknown global.path_source, matching against pathinfo', [
+                'path_source' => is_scalar($source) ? (string) $source : gettype($source),
+            ]);
+            $source = RequestPath::PATHINFO;
+        }
+
+        $basePath = RequestPath::normaliseBasePath($config['base_path'] ?? null);
+
+        if ($basePath === null) {
+            $this->getLogger()->warning('Unusable global.base_path, stripping nothing', [
+                'base_path' => is_scalar($config['base_path']) ? (string) $config['base_path'] : gettype($config['base_path']),
+            ]);
+            $basePath = '';
+        }
+
+        $this->pathSource = (string) $source;
+        $this->basePath = $basePath;
+    }
+
+    /**
      * Whether this client is on the lockdown allowlist.
      *
      * `global.lockdown_allow` only. Deliberately not the allow bucket -- see the call site.
@@ -1774,6 +1822,10 @@ final class Firewall
      */
     private function evaluateRequest(Request $request): bool
     {
+        // First, so the first log line already carries the path every rule
+        // below will match against (#414).
+        RequestPath::attach($request, $this->pathSource, $this->basePath);
+
         if (!$request->attributes->has('x-request-id')) {
             $requestId = $this->generateId($request);
             $request->attributes->set('x-request-id', $requestId);
@@ -3065,7 +3117,7 @@ final class Firewall
                     case 'request.host':
                         return $sanitize($request->getHost());
                     case 'request.path':
-                        return $sanitize($request->getPathInfo());
+                        return $sanitize(RequestPath::of($request));
                     case 'request.ip':
                         return $sanitize($request->getClientIp());
                     case 'request.id':

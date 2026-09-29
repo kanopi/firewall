@@ -52,6 +52,9 @@ plugins:
       # Reachable on a running site more often than anyone expects, and each
       # one is a takeover if it answers. `/core/*` covers Drupal 8+; the
       # unprefixed forms are Drupal 7.
+      #
+      # These are files Drupal serves directly rather than routes, so they
+      # match only with `global.path_source: script_name` (#414).
       # =====================================================================
       - path:/core/install.php
       - path:/core/update.php

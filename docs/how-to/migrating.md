@@ -199,6 +199,12 @@ plugins:
         sample: 300            # and the address, much looser
 ```
 
+!!! warning "WordPress serves `wp-login.php` directly"
+
+    Set `global.path_source: script_name`, or these rules never count. Under the default,
+    a file the web server runs directly is matched as `/`. See
+    [Path Source](../configuration/global.md#path-source).
+
 !!! danger "Keep both rules"
 
     An account key gives every account its own budget, so one address working through a
@@ -224,8 +230,10 @@ block:   BLOCKED  GET /search?q=1%27+UNION+SELECT
 supposed to catch:
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --url='/wp-login.php' --ip=203.0.113.5 --explain
+vendor/bin/firewall-check --config=firewall.yml --url='/wp-login.php' --script-name=/wp-login.php --ip=203.0.113.5 --explain
 ```
+
+`--script-name` makes the check a direct-file request, which is how the site receives it.
 
 `--explain` lists every rule that evaluated and every rule that never ran, which is usually
 the answer to "why didn't my rule fire".

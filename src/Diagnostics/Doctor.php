@@ -25,6 +25,7 @@ use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Utility\DatabaseConsumers;
 use Kanopi\Firewall\Utility\PanicSwitch;
+use Kanopi\Firewall\Utility\RequestPath;
 use Kanopi\Firewall\Utility\TrustedProxies;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -83,6 +84,7 @@ class Doctor
 
         $findings[] = $this->checkPanicSwitch($global);
         $findings[] = $this->checkLockdown($global);
+        $findings[] = $this->checkPathSource($global);
 
         // Before `checkRules()`, and that ordering is load-bearing. Building a
         // rule is what fetches its sources, so asking afterwards would report
@@ -365,6 +367,65 @@ class Doctor
         return Diagnosis::ok(
             sprintf('Lockdown allowlist has %d entr%s', count($entries), count($entries) === 1 ? 'y' : 'ies'),
             'Not currently in lockdown.'
+        );
+    }
+
+    /**
+     * What `path` means for every rule, and whether the setting was understood (#414).
+     *
+     * An unknown `path_source` falls back to `pathinfo` at runtime rather than refusing to
+     * start, so this is the one place it is loud. That matters here more than for most
+     * keys: the reason to set it is that path rules were not matching, and a typo in it
+     * leaves them not matching while the configuration reads as fixed.
+     *
+     * @param array<string, mixed> $global
+     *   The `global:` block.
+     *
+     * @return Diagnosis
+     *   The finding.
+     */
+    private function checkPathSource(array $global): Diagnosis
+    {
+        $source = $global['path_source'] ?? RequestPath::PATHINFO;
+
+        if (!RequestPath::isValidSource($source)) {
+            return Diagnosis::error(
+                'Path source is not understood, so rules match the front-controller path',
+                sprintf(
+                    'global.path_source is %s; it takes pathinfo or script_name. Until it is fixed '
+                    . 'the firewall uses pathinfo, which is "/" for a file served directly, such as '
+                    . "WordPress's wp-login.php.",
+                    is_scalar($source) ? '"' . $source . '"' : gettype($source)
+                ),
+                'configuration/global.md#path-source'
+            );
+        }
+
+        $basePath = RequestPath::normaliseBasePath($global['base_path'] ?? null);
+
+        if ($basePath === null) {
+            return Diagnosis::error(
+                'Base path is not usable, so nothing is stripped from the path',
+                'global.base_path must be a path such as /blog, with no query or fragment.',
+                'configuration/global.md#path-source'
+            );
+        }
+
+        if ($source === RequestPath::PATHINFO) {
+            return Diagnosis::ok(
+                'Path rules match the front-controller path (pathinfo)',
+                $basePath === ''
+                    ? 'A file served directly, such as WordPress\'s wp-login.php, is matched as "/". '
+                    . 'Set path_source: script_name if the site serves pages that way.'
+                    : 'base_path is set but only applies to path_source: script_name, so it does nothing.'
+            );
+        }
+
+        return Diagnosis::ok(
+            'Path rules match the file the server ran (script_name)',
+            $basePath === ''
+                ? 'The front controller is /index.php.'
+                : sprintf('The front controller is %1$s/index.php, and %1$s is stripped from the front of any other file.', $basePath)
         );
     }
 
