@@ -40,7 +40,7 @@
         "geoip2/geoip2": "~2 || ^3",
         "jaybizzle/crawler-detect": "^1.4",
         "kanopi/crs-engine": "^1.0",
-        "matomo/device-detector": "^6.4",
+        "matomo/device-detector": "^6.5.2",
         "monolog/monolog": "^3.9",
         "psr/event-dispatcher": "^1.0",
         "symfony/cache": "~6.4 || ~7.3 || ~8.1",

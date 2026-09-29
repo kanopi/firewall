@@ -50,9 +50,9 @@ plugins:
 
 | | `bot:true` | `automated:true` |
 |---|---|---|
-| sqlmap, nikto | — | **matched** |
+| sqlmap | — | **matched** |
 | curl, python-requests, Go-http-client | — | **matched** |
-| masscan, nmap, zgrab, wpscan, nuclei, dirbuster | matched | matched |
+| masscan, Nikto, nmap, zgrab, wpscan, nuclei, dirbuster | matched | matched |
 | Googlebot, bingbot, AhrefsBot, GPTBot | matched | matched |
 | real browsers | — | — |
 
@@ -114,7 +114,7 @@ plugins:
 | `bot_detector` | `bot:true` matches |
 |---|---|
 | `device-detector` *(default)* | The curated bot database — crawlers and the scanners it knows |
-| `crawler-detect` | The wider crawler list — adds sqlmap, nikto, curl, python-requests, Go-http-client |
+| `crawler-detect` | The wider crawler list — adds sqlmap, curl, python-requests, Go-http-client |
 | `both` | Either signal |
 
 !!! warning "The wider list counts HTTP client libraries as bots"
@@ -131,7 +131,7 @@ A plugin configured with `bot:` and no `automated:`, and no explicit `bot_detect
 this once when it is constructed:
 
 ```
-firewall.NOTICE: bot: does not match sqlmap, nikto, curl, python-requests or Go-http-client —
+firewall.NOTICE: bot: does not match sqlmap, curl, python-requests or Go-http-client —
                  automated: does. Add "automated:true" alongside it, or set
                  metadata.bot_detector to choose a source explicitly and silence this.
 ```
