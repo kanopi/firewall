@@ -176,6 +176,18 @@ class RequestPathTest extends TestCase
     }
 
     /**
+     * A script with no leading slash, which a hand-built bridge request can carry, still
+     * resolves to a path rules can match.
+     */
+    public function testAScriptWithoutALeadingSlashIsRooted(): void
+    {
+        $this->assertSame(
+            '/wp-login.php',
+            RequestPath::resolve($this->request('/wp-login.php', 'wp-login.php'), RequestPath::SCRIPT_NAME)
+        );
+    }
+
+    /**
      * Read from the Request, never from `$_SERVER`.
      *
      * Under Octane, RoadRunner or Swoole one worker serves many requests and `$_SERVER` is
