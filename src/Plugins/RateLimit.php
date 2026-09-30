@@ -524,16 +524,45 @@ class RateLimit extends AbstractPluginBase
      */
     protected function wildcardToRegex(string $pattern): string
     {
-        // Check if this already looks like a regex (starts and ends with the same non-alphanumeric delimiter)
-        if (strlen($pattern) >= 3 && preg_match('/^([^a-zA-Z0-9\s\\\]).+\1[imsxuADSUXJ]*$/', $pattern)) {
-            return $pattern; // Already a regex, return as-is
+        return self::patternToRegex($pattern);
+    }
+
+    /**
+     * The regex a rule's `path` pattern is matched with.
+     *
+     * Public and static so `ConfigLinter` asks the same question the runtime does when it
+     * works out which entry a path reaches first, and the two cannot drift apart (#437).
+     *
+     * @param string $pattern
+     *   The rule's `path`.
+     *
+     * @return string
+     *   The regex.
+     */
+    public static function patternToRegex(string $pattern): string
+    {
+        if (self::isRegexPattern($pattern)) {
+            return $pattern;
         }
 
-        // Otherwise, treat as wildcard and convert
         $escaped = preg_quote($pattern, '/');
         $regex = str_replace('\*', '.*', $escaped);
 
         return '/^' . $regex . '$/i';
+    }
+
+    /**
+     * Whether a `path` pattern is written as a regex, with its own delimiters and flags.
+     *
+     * @param string $pattern
+     *   The rule's `path`.
+     *
+     * @return bool
+     *   TRUE when it starts and ends with the same non-alphanumeric delimiter.
+     */
+    public static function isRegexPattern(string $pattern): bool
+    {
+        return strlen($pattern) >= 3 && preg_match('/^([^a-zA-Z0-9\s\\\]).+\1[imsxuADSUXJ]*$/', $pattern) === 1;
     }
 
     /**
