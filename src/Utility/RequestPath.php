@@ -107,6 +107,24 @@ final class RequestPath
      */
     public static function resolve(Request $request, string $source, string $basePath = ''): string
     {
+        return self::normalise(self::unnormalised($request, $source, $basePath));
+    }
+
+    /**
+     * The path as the source gives it, before normalise().
+     *
+     * @param Request $request
+     *   The request.
+     * @param string $source
+     *   A valid `path_source`.
+     * @param string $basePath
+     *   A normalised `base_path`.
+     *
+     * @return string
+     *   The path.
+     */
+    private static function unnormalised(Request $request, string $source, string $basePath): string
+    {
         if ($source !== self::SCRIPT_NAME) {
             return $request->getPathInfo();
         }
@@ -174,6 +192,67 @@ final class RequestPath
         $query = $request->getQueryString();
 
         return self::urlWithoutQuery($request) . ($query === null ? '' : '?' . $query);
+    }
+
+    /**
+     * Put a path in the one spelling every rule is written against (#425).
+     *
+     * `getPathInfo()` comes from the raw request URI, and the web server normalises the URL
+     * before it routes to the front controller, so different spellings of one route reach
+     * the rules with different paths. `//wp-json/wp/v2/users` is served by WordPress as the
+     * REST route -- `WP::parse_request()` trims every leading slash -- while missing a rule
+     * on `path@starts_with:/wp-json/`. The same goes for `/./wp-json`, `/x/../wp-json` and
+     * `/%77p-json` wherever the application accepts them. So, the way RFC 3986 and the
+     * servers do it:
+     *
+     * - percent-encoded unreserved characters (`A-Z a-z 0-9 - . _ ~`) are decoded, and any
+     *   other percent-encoding keeps its meaning, with its hex digits upper-cased. `%2F`
+     *   stays `%2F`: decoding it would change where the segments are;
+     * - `;params` are dropped from each segment;
+     * - repeated slashes are collapsed;
+     * - `.` and `..` segments are resolved, never above the root.
+     *
+     * A trailing slash is kept, because `/wp-admin` and `/wp-admin/` are different rules.
+     *
+     * @param string $path
+     *   A path starting with `/`.
+     *
+     * @return string
+     *   The same path in its one spelling.
+     */
+    public static function normalise(string $path): string
+    {
+        $path = (string) preg_replace_callback(
+            '/%([0-9A-Fa-f]{2})/',
+            static function (array $match): string {
+                $char = chr((int) hexdec($match[1]));
+
+                return preg_match('/^[A-Za-z0-9\-._~]$/', $char) === 1 ? $char : '%' . strtoupper($match[1]);
+            },
+            $path
+        );
+
+        $segments = [];
+        // Whether the path ends by naming a directory: a trailing slash, or a
+        // last segment of `.` or `..`.
+        $directory = false;
+
+        foreach (explode('/', $path) as $segment) {
+            $segment = explode(';', $segment, 2)[0];
+            $directory = in_array($segment, ['', '.', '..'], true);
+
+            if ($segment === '..') {
+                array_pop($segments);
+            } elseif (!$directory) {
+                $segments[] = $segment;
+            }
+        }
+
+        if ($segments === []) {
+            return '/';
+        }
+
+        return '/' . implode('/', $segments) . ($directory ? '/' : '');
     }
 
     /**

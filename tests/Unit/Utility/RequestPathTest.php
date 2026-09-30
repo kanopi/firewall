@@ -289,4 +289,61 @@ class RequestPathTest extends TestCase
         $front = Request::create('http://example.com/learning/');
         $this->assertSame($front->getUri(), RequestPath::url($front), 'Through a front controller the two agree.');
     }
+
+    /**
+     * One spelling for every path (#425).
+     *
+     * @param string $path
+     *   A path as the client might spell it.
+     * @param string $expected
+     *   Its one spelling.
+     */
+    #[DataProvider('spellings')]
+    public function testNormalise(string $path, string $expected): void
+    {
+        $this->assertSame($expected, RequestPath::normalise($path));
+    }
+
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function spellings(): array
+    {
+        return [
+            'already normal' => ['/wp-json/wp/v2/users', '/wp-json/wp/v2/users'],
+            'a dot segment' => ['/./wp-json/wp/v2/users', '/wp-json/wp/v2/users'],
+            'a doubled slash' => ['//wp-json/wp/v2/users', '/wp-json/wp/v2/users'],
+            'slashes inside' => ['/a//b///c', '/a/b/c'],
+            'a dot-dot segment' => ['/x/../wp-json/wp/v2/users', '/wp-json/wp/v2/users'],
+            'dot-dot never climbs above the root' => ['/../../etc/passwd', '/etc/passwd'],
+            'encoded unreserved' => ['/%77p-json/wp/v2/users', '/wp-json/wp/v2/users'],
+            'encoded tilde' => ['/%7Euser', '/~user'],
+            'encoded slash keeps its meaning' => ['/a%2Fb', '/a%2Fb'],
+            'reserved hex is upper-cased' => ['/a%2fb', '/a%2Fb'],
+            'encoded space stays encoded' => ['/a%20b', '/a%20b'],
+            'utf-8 stays encoded' => ['/caf%c3%a9', '/caf%C3%A9'],
+            'a segment parameter' => ['/user/login;jsessionid=1', '/user/login'],
+            'a parameter mid-path' => ['/wp-json;x/wp/v2/users', '/wp-json/wp/v2/users'],
+            'the trailing slash is kept' => ['/wp-admin/', '/wp-admin/'],
+            'and its absence' => ['/wp-admin', '/wp-admin'],
+            'ending on dot-dot names a directory' => ['/a/b/..', '/a/'],
+            'ending on dot names a directory' => ['/a/b/.', '/a/b/'],
+            'the root' => ['/', '/'],
+            'only slashes' => ['///', '/'],
+        ];
+    }
+
+    /**
+     * Both sources are normalised, so they agree whichever one a site runs.
+     */
+    public function testBothSourcesAreNormalised(): void
+    {
+        $front = $this->request('//wp-json/wp/v2/users', '/index.php');
+
+        $this->assertSame('/wp-json/wp/v2/users', RequestPath::resolve($front, RequestPath::PATHINFO));
+        $this->assertSame('/wp-json/wp/v2/users', RequestPath::resolve($front, RequestPath::SCRIPT_NAME));
+
+        $direct = $this->request('/wp-login.php', '/wp-login.php', '/./extra');
+        $this->assertSame('/wp-login.php/extra', RequestPath::resolve($direct, RequestPath::SCRIPT_NAME));
+    }
 }

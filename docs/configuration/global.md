@@ -426,6 +426,27 @@ The web server decodes and normalises the URL before it chooses a file. `/./wp-l
 
 It's read from the request the firewall evaluates, never from `$_SERVER`, so it's also right under Octane, RoadRunner or Swoole, where `$_SERVER` belongs to the worker.
 
+### One spelling for every path
+
+Whichever source you use, the path is normalised before any rule sees it, the way the web
+server normalises a URL before routing it (#425):
+
+| Request | Matched as |
+|---|---|
+| `//wp-json/wp/v2/users` | `/wp-json/wp/v2/users` |
+| `/./wp-json/…`, `/x/../wp-json/…` | `/wp-json/…` |
+| `/%77p-json/…` | `/wp-json/…` |
+| `/user/login;jsessionid=1` | `/user/login` |
+
+- Percent-encoded **unreserved** characters (`A-Z a-z 0-9 - . _ ~`) are decoded. Other
+  encodings keep their meaning, upper-cased: `%2F` stays `%2F`, because decoding it would
+  move a segment boundary.
+- A trailing slash is kept, so `/wp-admin` and `/wp-admin/` are still different paths.
+- The normalised path is also what logs and block records show.
+
+Without this, `//wp-json/wp/v2/users` reached WordPress as the REST route, because
+WordPress trims every leading slash, while missing a rule on `/wp-json/`.
+
 ### Subdirectory installs
 
 On a direct-file request, nothing in the request says where the application starts. `getBasePath()` for `/wp-admin/edit.php` is `/wp-admin`. So name it:
