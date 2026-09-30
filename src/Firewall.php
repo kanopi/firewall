@@ -49,6 +49,7 @@ use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\Connections;
 use Kanopi\Firewall\Utility\DegradedBackends;
 use Kanopi\Firewall\Utility\TrustedProxies;
+use Kanopi\Firewall\Utility\NoStore;
 use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\RequestPath;
 use Kanopi\Firewall\Utility\Schedule;
@@ -1273,7 +1274,7 @@ final class Firewall
         if (!headers_sent()) {
             header('Content-Type: text/plain; charset=utf-8');
             header('X-Content-Type-Options: nosniff');
-            header('Cache-Control: no-store');
+            NoStore::send();
 
             if ($retryAfter > 0) {
                 header('Retry-After: ' . $retryAfter);
@@ -1534,7 +1535,7 @@ final class Firewall
 
         if (!headers_sent()) {
             header('Location: ' . $location, true, $status);
-            header('Cache-Control: no-store');
+            NoStore::send();
         }
 
         exit;
@@ -2116,6 +2117,7 @@ final class Firewall
             http_response_code(400);
             if (!headers_sent()) {
                 header('Content-Type: application/json; charset=utf-8');
+                NoStore::send();
             }
 
             exit((string) json_encode(['error' => 'invalid_solution']));
@@ -2244,8 +2246,11 @@ final class Firewall
         // @codeCoverageIgnoreStart
         $this->setPassTokenCookie($token, $ttl);
 
+        // Carries a pass token and its cookie, which a cache must never hand
+        // to anybody else.
         if (!headers_sent()) {
             header('Content-Type: application/json; charset=utf-8');
+            NoStore::send();
         }
 
         exit((string) json_encode(['token' => $token, 'redirect' => $redirect]));
@@ -2471,17 +2476,61 @@ final class Firewall
 
         // Hashed so the raw challenge value never lands in the store.
         $key = 'fw_challenge_solution:' . hash('sha256', $receipt['id']);
+        // Who spent it, hashed for the same reason, so a replay can be told
+        // apart from a cached page (#417).
+        $client = hash('sha256', (string) $request->getClientIp());
 
-        if ($this->storage->get($key) !== null) {
+        $spent = $this->storage->get($key);
+
+        if ($spent !== null) {
+            $this->reportSharedSolution($request, $spent, $client);
+
             return false;
         }
 
         // Storage treats the third argument as a lifetime in seconds. Keep
         // the record only until the solution would expire on its own.
         $ttl = max(1, $receipt['expires'] - time());
-        $this->storage->set($key, ['consumed_at' => time()], $ttl);
+        $this->storage->set($key, ['consumed_at' => time(), 'client' => $client], $ttl);
 
         return true;
+    }
+
+    /**
+     * Say so when a spent solution comes back from somebody else (#417).
+     *
+     * The same client posting a solution twice is a double click, or a replay, and the
+     * rejection's `info` line covers it. A *different* client posting it is the signature
+     * of an interstitial served from a cache: everybody who loaded that cached page got the
+     * same single-use challenge, and every one of them after the first is refused. That is
+     * a misconfiguration somebody has to fix at the CDN, and it would otherwise look like
+     * nothing more than visitors failing a challenge.
+     *
+     * A record written before the spending client was kept has no `client`, and says
+     * nothing either way.
+     *
+     * @param Request $request
+     *   The refused submission.
+     * @param mixed $spent
+     *   The stored record of the first submission.
+     * @param string $client
+     *   The hashed address of this one.
+     */
+    private function reportSharedSolution(Request $request, mixed $spent, string $client): void
+    {
+        $first = is_array($spent) && is_string($spent['client'] ?? null) ? $spent['client'] : null;
+
+        if ($first === null || hash_equals($first, $client)) {
+            return;
+        }
+
+        $this->getLogger()->warning(
+            'A spent challenge solution came back from a different client; the challenge page is '
+            . 'probably being cached by a CDN or proxy, so visitors share one single-use challenge',
+            $this->getContext($request, [
+                'spent_at' => is_int($spent['consumed_at'] ?? null) ? $spent['consumed_at'] : null,
+            ])
+        );
     }
 
     /**
@@ -2583,7 +2632,10 @@ final class Firewall
         http_response_code(200);
         if (!headers_sent()) {
             header('Content-Type: text/html; charset=utf-8');
-            header('Cache-Control: no-store');
+            // A cached interstitial shares one single-use challenge between
+            // every visitor to the URL, and all but the first are refused in
+            // a loop (#417).
+            NoStore::send();
         }
 
         exit($body);
@@ -3056,6 +3108,9 @@ final class Firewall
         if (!headers_sent()) {
             header('Content-Type: text/plain; charset=utf-8');
             header('X-Content-Type-Options: nosniff');
+            // A block is a decision about one client. It sent nothing about
+            // caching before (#417).
+            NoStore::send();
         }
 
         exit($banningMessage);
