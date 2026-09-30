@@ -1813,7 +1813,30 @@ class FirewallTest extends AbstractTestCase
             'backslash escape' => ['/\\evil.test'],
             'javascript scheme' => ['javascript:alert(1)'],
             'data scheme' => ['data:text/html,<script>alert(1)</script>'],
+            // A browser drops tab and newline from a URL, so each of these is
+            // //evil.test by the time it navigates (#422).
+            'tab after the slash' => ["/\t/evil.test"],
+            'newline after the slash' => ["/\n/evil.test"],
+            'CRLF after the slash' => ["/\r\n/evil.test"],
+            'tab then a backslash' => ["/\t\\evil.test"],
+            'a leading tab' => ["\t//evil.test"],
+            'NUL' => ["/ok\x00/evil.test"],
+            'DEL' => ["/\x7f/evil.test"],
+            'a raw space' => ['/ /evil.test'],
+            'backslash then slash' => ['/\\/evil.test'],
+            'double backslash' => ['\\\\evil.test'],
         ];
+    }
+
+    /**
+     * A backslash inside a path is returned as the slash a browser reads it as, so what
+     * reaches `Location` is what was checked (#422).
+     */
+    public function testSanitizeRedirectReturnsWhatItChecked(): void
+    {
+        $method = new \ReflectionMethod(Firewall::class, 'sanitizeRedirect');
+
+        $this->assertSame('/a/b?x=1#top', $method->invoke($this->minimalFirewall(), '/a\\b?x=1#top'));
     }
 
     #[DataProvider('hostileRedirectTargetProvider')]
@@ -1845,6 +1868,15 @@ class FirewallTest extends AbstractTestCase
             'path with query' => ['/search?q=hello'],
             'path with fragment' => ['/page#section'],
             'single slash then text' => ['/evil.test'],
+            // Percent-encoded characters are not decoded while a browser finds
+            // the host, so they stay (#422): refusing them would refuse this.
+            'an encoded space in the query' => ['/search?q=a%20b'],
+            'an encoded tab in the path' => ['/%09/evil.test'],
+            'an encoded backslash' => ['/%5Cevil.test'],
+            'admin with a query' => ['/wp-admin/?x=1'],
+            'a colon after the first segment' => ['/a/b:c'],
+            // parse_url() reads this as a port and fails; it is a path.
+            'a colon then digits' => ['/wiki/Talk:1'],
         ];
     }
 
