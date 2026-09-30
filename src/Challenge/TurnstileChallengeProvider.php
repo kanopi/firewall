@@ -233,6 +233,7 @@ final class TurnstileChallengeProvider implements ChallengeProviderInterface
         $payloadField = InterstitialRenderer::escapeHtml(self::PAYLOAD_FIELD);
 
         return InterstitialRenderer::render([
+            'notices' => InterstitialRenderer::notices($context),
             'intro' => 'Please complete the check below to continue.',
             'extra_styles' => '    .cf-turnstile { display: block; margin-bottom: 1rem; min-height: 65px; }'
                 . "\n" . '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',

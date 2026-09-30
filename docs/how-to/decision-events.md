@@ -66,7 +66,7 @@ The [StatsD exporter](metrics.md#from-yaml) is one of these, under `metrics.stat
 |---|---|
 | `RequestAllowed` | The request is going through — an allow rule matched, or nothing matched |
 | `RequestBlocked` | A rule matched, or the client was already on the durable block list |
-| `RequestChallenged` | A challenge rule matched and an interstitial is being served |
+| `RequestChallenged` | A challenge rule matched and an interstitial is being served. `addNotice()` puts a line of text on that page (see [A notice on the challenge page](../plugins/challenges.md#a-notice-on-the-challenge-page)) |
 | `ChallengeSolved` | A submission verified and a pass token was minted |
 | `ChallengeFailed` | A submission was refused |
 

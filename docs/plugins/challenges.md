@@ -140,6 +140,49 @@ $ bin/firewall-challenge firewall.yml [action] [options]
 
 Restoring is possible because the token was never changed — only the record saying to refuse it. That is also why `--revoke` cannot outlive the pass: a revocation is held for the token's remaining lifetime and no longer.
 
+## A notice on the challenge page
+
+In `mode: block` the challenge page is the library's, so this is how a site tells a visitor
+something (#421):
+
+```yaml
+challenge:
+  notice: "Having trouble? Email help@example.com and quote the time you saw this."
+  # or several lines:
+  # notice:
+  #   - "Having trouble? Email help@example.com."
+  #   - "We are migrating servers until 18:00 UTC."
+```
+
+For a line that depends on the request, add it from a `RequestChallenged` listener (see
+[Decision events](../how-to/decision-events.md)). The motivating case is a pass cookie that
+never comes back. The visitor solves the challenge, their browser or an edge cache doesn't
+return the cookie, and they're challenged again with nothing to say why. Set your own
+short-lived marker cookie when they solve, then:
+
+```php
+public function onChallenged(RequestChallenged $event): void
+{
+    $cookies = $event->getRequest()->cookies;
+
+    if ($cookies->has('my_solved_marker') && !$cookies->has('fw_challenge_pass')) {
+        $event->addNotice('Your browser did not send back the verification cookie, so you are being asked again. Check that cookies are allowed for this site.');
+    }
+}
+```
+
+- **Plain text.** Every notice is escaped when the page is written; it can't add markup.
+- **Order.** `challenge.notice` first, then listener notices in the order they were added.
+- **Every built-in provider** shows them above the form, in a `role="status"` region.
+- **A custom provider** gets them as `notices` in the render context. Read them with
+  `InterstitialRenderer::notices($context)`, and escape them if you write the page yourself.
+- **In `mode: exception`,** they're in `ChallengeRequiredException::getRenderContext()`, and
+  `renderInterstitial()` includes them.
+- **A refused submission** is answered with a fresh challenge carrying `challenge.notice`.
+  No `RequestChallenged` is dispatched for it, so listener notices aren't added there.
+- **Pantheon:** its edge only forwards cookies whose names match its own patterns. Start
+  `challenge.cookie_name`, and your marker's name, with `STYXKEY_`, or neither comes back.
+
 ## Single-use solutions
 
 A stateless provider verifies a solution purely from the posted payload, so the same payload keeps verifying until it expires. For a proof-of-work challenge that quietly defeats the point: an attacker solves one challenge and hands the payload to as many clients as they like, each minting its own IP-bound pass token, and the per-solve cost is amortised to nothing.

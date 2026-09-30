@@ -75,7 +75,7 @@ interface ChallengeProviderInterface
      *
      * @param Request $request
      *   The blocked request that triggered the challenge.
-     * @param array<string, string> $context
+     * @param array<string, mixed> $context
      *   Render-time data injected by the Firewall:
      *     - submit_url:    URL the form should POST to.
      *     - redirect_to:   URL to send the visitor to after success.
@@ -86,6 +86,12 @@ interface ChallengeProviderInterface
      *                      provider to the submission handler. Pass it
      *                      through to InterstitialRenderer, or render it
      *                      into a hidden PROVIDER_FIELD input.
+     *     - notices:       List of plain-text lines the host wants shown,
+     *                      from `challenge.notice` and RequestChallenged
+     *                      listeners (#421). Read them with
+     *                      InterstitialRenderer::notices(); render() escapes
+     *                      them, and a provider writing its own page must.
+     *                      May be absent: providers are called by hosts too.
      *
      * @return string
      *   Complete HTML document.
