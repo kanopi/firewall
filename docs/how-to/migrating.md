@@ -188,12 +188,18 @@ plugins:
     response: block
     enable: true
     metadata:
-      name: login-throttle
+      name: login-by-account
     config:
       - path: /wp-login.php
         rate: 5
         sample: 300
         key: [post.log]        # WordPress posts the username as `log`
+  - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+    response: block
+    enable: true
+    metadata:
+      name: login-by-address
+    config:
       - path: /wp-login.php
         rate: 50
         sample: 300            # and the address, much looser
@@ -210,7 +216,8 @@ plugins:
     An account key gives every account its own budget, so one address working through a
     username list is never limited by it. The address-keyed rule is what catches that. See
     [What a limit counts by](../plugins/rate-limit.md#what-a-limit-counts-by) — and
-    `firewall-check --lint` warns if you have only one.
+    `firewall-check --lint` warns if you have only one. They have to be **two rules**: in
+    one rule's `config:`, the second entry for the same path never runs.
 
 ## Verify the migration rather than trusting it
 

@@ -577,13 +577,76 @@ class ConfigLinterTest extends AbstractTestCase
     }
 
     /**
-     * The pair is the supported shape, so the pair is silent.
+     * Two entries for one path in one rule are not a pair (#424).
+     *
+     * `RateLimit` uses the first entry whose path matches and stops, so the address-keyed
+     * entry below never runs. This used to be silent, and it was the shape the docs showed.
      */
-    public function testAnIdentityKeyAlongsideAnAddressKeyIsFine(): void
+    public function testTwoEntriesForOnePathInOneRuleAreNotAPair(): void
     {
         $findings = $this->lintRateRules([
             ['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']],
             ['path' => '/login', 'rate' => 50, 'sample' => 300],
+        ]);
+
+        $this->assertSame(
+            [
+                'Rule "limits" has more than one entry for /login; only the first ever runs',
+                '/login is rate limited by identity, but not by address',
+            ],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The unreachable entry is reported whichever key it has.
+     */
+    public function testAnUnreachableAddressEntryIsReportedEvenWhenItComesFirst(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 50, 'sample' => 300],
+            ['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']],
+        ]);
+
+        // The address entry runs, so /login is covered by address; the identity
+        // entry never does.
+        $this->assertSame(
+            ['Rule "limits" has more than one entry for /login; only the first ever runs'],
+            $this->titles($findings, Diagnosis::WARNING)
+        );
+    }
+
+    /**
+     * The pair as two rules is the supported shape, so it is silent.
+     */
+    public function testAnIdentityRuleAlongsideAnAddressRuleIsFine(): void
+    {
+        $rule = static fn(array $config): array => [
+            'plugin' => \Kanopi\Firewall\Plugins\RateLimit::class,
+            'response' => 'block',
+            'enable' => true,
+            'config' => [$config],
+        ];
+
+        $findings = $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [
+                $rule(['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']]) + ['metadata' => ['name' => 'by account']],
+                $rule(['path' => '/login', 'rate' => 50, 'sample' => 300]) + ['metadata' => ['name' => 'by address']],
+            ],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * Different paths in one rule are what one rule is for.
+     */
+    public function testDifferentPathsInOneRuleAreFine(): void
+    {
+        $findings = $this->lintRateRules([
+            ['path' => '/login', 'rate' => 5],
+            ['path' => '/register', 'rate' => 5],
         ]);
 
         $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
