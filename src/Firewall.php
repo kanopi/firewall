@@ -2944,7 +2944,10 @@ final class Firewall
             return '/';
         }
 
-        $target = str_replace('\\', '/', $target);
+        // Only in the path: a browser reads `\\` as `/` there, and leaves it
+        // alone in the query and fragment, where it is somebody's data.
+        $pathEnd = strcspn($target, '?#');
+        $target = str_replace('\\', '/', substr($target, 0, $pathEnd)) . substr($target, $pathEnd);
 
         // Exactly one slash, then no control character anywhere: a browser can
         // only read that as a path on this site, so there is no scheme, host or
