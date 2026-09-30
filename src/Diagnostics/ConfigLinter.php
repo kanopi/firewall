@@ -447,8 +447,8 @@ class ConfigLinter
     }
 
     /**
-     * Rules that cannot match anything.    /**
-     * A path rate-limited only by something other than the address.
+     * A path rate-limited only by something other than the address, and entries that can
+     * never run.
      *
      * `key: [post.name]` counts attempts against an account from anywhere, which is what
      * stops credential stuffing -- and it gives **every account its own budget**, so one
@@ -460,8 +460,14 @@ class ConfigLinter
      * one catches many addresses against one account, the other one address against many
      * accounts.
      *
-     * A warning, not an error. It is a legitimate configuration for somebody who limits by
-     * address somewhere else, or in front of the application entirely (#200).
+     * **The pair has to be two rules** (#424). `RateLimit` uses the first entry in its
+     * `config:` whose path matches and stops, so a second entry for the same path in the
+     * same rule never runs. That was the pairing the docs showed, and this check used to
+     * count it as covered. Now the later entry is reported as unreachable, and coverage
+     * counts only the entry that runs.
+     *
+     * Both are warnings, not errors. Limiting by address only somewhere else, or in front of
+     * the application entirely, is a legitimate configuration (#200).
      *
      * @param array<int, array<string, mixed>> $plugins
      *   Declared rules.
@@ -472,6 +478,8 @@ class ConfigLinter
     private function checkRateKeyCoverage(array $plugins): array
     {
         $findings = [];
+        $byAddress = [];
+        $byOther = [];
 
         foreach ($plugins as $plugin) {
             if (($plugin['plugin'] ?? null) !== \Kanopi\Firewall\Plugins\RateLimit::class) {
@@ -482,9 +490,8 @@ class ConfigLinter
             $default = is_array($plugin['metadata']['default_key'] ?? null)
                 ? $plugin['metadata']['default_key']
                 : null;
-
-            $byAddress = [];
-            $byOther = [];
+            // The entry that runs for each path in this rule: the first.
+            $seen = [];
 
             foreach ($rules as $rule) {
                 if (!is_array($rule)) {
@@ -495,11 +502,30 @@ class ConfigLinter
                     continue;
                 }
 
+                $path = $rule['path'];
+
+                if (isset($seen[$path])) {
+                    $findings[] = Diagnosis::warning(
+                        sprintf('Rule "%s" has more than one entry for %s; only the first ever runs', $this->nameOf($plugin), $path),
+                        sprintf(
+                            'A rate limit uses the first entry in its config: whose path matches, so the '
+                            . 'later %1$s entry is never reached. To limit %1$s by address and by identity, '
+                            . 'put each in its own rule (a separate plugin entry).',
+                            $path
+                        ),
+                        'plugins/rate-limit.md#what-a-limit-counts-by'
+                    );
+
+                    continue;
+                }
+
+                $seen[$path] = true;
+
                 $key = is_array($rule['key'] ?? null) ? $rule['key'] : $default;
 
                 if ($key === null) {
                     // Nothing declared: the default key includes the address.
-                    $byAddress[$rule['path']] = true;
+                    $byAddress[$path] = true;
                     continue;
                 }
 
@@ -509,25 +535,25 @@ class ConfigLinter
                 );
 
                 if (in_array('client_ip', $names, true)) {
-                    $byAddress[$rule['path']] = true;
+                    $byAddress[$path] = true;
                 } else {
-                    $byOther[$rule['path']] = true;
+                    $byOther[$path] = true;
                 }
             }
+        }
 
-            foreach (array_keys(array_diff_key($byOther, $byAddress)) as $path) {
-                $findings[] = Diagnosis::warning(
-                    sprintf('%s is rate limited by identity, but not by address', $path),
-                    sprintf(
-                        'Every value of that key gets its own budget, so one address trying many of '
-                        . 'them is never limited -- and a non-address key does not ban an address '
-                        . 'either. Add a second, looser rule for %s keyed on client_ip to keep '
-                        . 'brute-force protection alongside it.',
-                        $path
-                    ),
-                    'plugins/rate-limit.md#what-a-limit-counts-by'
-                );
-            }
+        foreach (array_keys(array_diff_key($byOther, $byAddress)) as $path) {
+            $findings[] = Diagnosis::warning(
+                sprintf('%s is rate limited by identity, but not by address', $path),
+                sprintf(
+                    'Every value of that key gets its own budget, so one address trying many of '
+                    . 'them is never limited -- and a non-address key does not ban an address '
+                    . 'either. Add a second, looser rule for %s keyed on client_ip to keep '
+                    . 'brute-force protection alongside it.',
+                    $path
+                ),
+                'plugins/rate-limit.md#what-a-limit-counts-by'
+            );
         }
 
         return $findings;

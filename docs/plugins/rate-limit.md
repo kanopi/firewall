@@ -155,18 +155,33 @@ request, so they all share one counter and the limit trips for everybody at once
 
     The two keys catch opposite attacks — many addresses against one account, and one address
     against many accounts — so replacing the address-keyed rule with an account-keyed one
-    *removes* brute-force protection while looking like it tightens it. Run both:
+    *removes* brute-force protection while looking like it tightens it. Run both, as **two
+    rules**:
 
     ```yaml
-    config:
-      - path: /login
-        rate: 5
-        sample: 300
-        key: [post.name]          # the account, from anywhere
-      - path: /login
-        rate: 50
-        sample: 300               # and the address, much looser
+    plugins:
+      - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+        response: block
+        enable: true
+        metadata: { name: login-by-account }
+        config:
+          - path: /login
+            rate: 5
+            sample: 300
+            key: [post.name]      # the account, from anywhere
+      - plugin: "Kanopi\\Firewall\\Plugins\\RateLimit"
+        response: block
+        enable: true
+        metadata: { name: login-by-address }
+        config:
+          - path: /login
+            rate: 50
+            sample: 300           # and the address, much looser
     ```
+
+    Two entries for `/login` in **one** rule's `config:` do not work: a rate limit uses the
+    first entry whose path matches and stops, so the second never runs. `firewall-check
+    --lint` reports it (#424).
 
     `firewall-check --lint` warns when a path has an identity-keyed rule and no address-keyed
     one.
