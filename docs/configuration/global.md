@@ -465,6 +465,24 @@ global:
 
 `/blog/index.php` is then the front controller, and `/blog/wp-login.php` is matched as `/wp-login.php`, so the presets work unchanged. The prefix is removed only at a segment boundary (`/blogroll` isn't inside `/blog`), and a file outside it is matched whole.
 
+### WordPress in its own directory
+
+With WordPress "in its own directory", the site's `index.php` is at the root and core lives
+under `/wp/`. Leave `base_path` unset: the front controller really is `/index.php`. Core's
+files then resolve as `/wp/wp-login.php`, `/wp/wp-admin/edit.php` and so on.
+`presets/wordpress.yml` and `search-bots.yml` match WordPress's files and directories **at
+any depth**, so they cover this layout and a subdirectory install with no extra setting
+(#420).
+
+If you write your own rules or rate limits for WordPress, do the same. Match on a segment
+boundary rather than from the root:
+
+```yaml
+- "path@regex:#(^|/)wp-login(/|$|\\.)#"       # a Url rule
+# a rate limit: a wildcard ignores case and matches any prefix
+- { path: "*/wp-login.php", rate: 5, sample: 300 }
+```
+
 ### Checking it
 
 ```console
