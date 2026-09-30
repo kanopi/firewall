@@ -2913,13 +2913,44 @@ final class Firewall
         ));
     }
 
+    /**
+     * A same-origin path to send a solved visitor to, or `/`.
+     *
+     * The target comes off the interstitial's POST, so an attacker can choose it. It ends
+     * up in `window.location` after a solve and, in `mode: exception`, in the `Location`
+     * header the host writes. So it has to be something a browser reads as a path on this
+     * site, which is stricter than "starts with one slash":
+     *
+     * - **No raw control character or whitespace, anywhere (#422).** A browser drops tab
+     *   and newline from a URL, so `/<TAB>/evil.example` becomes `//evil.example`, which
+     *   is off-site. PHP's header check refuses CR and LF but not tab. Percent-encoded forms
+     *   are left alone: a browser never decodes `%09` while finding the host, and refusing
+     *   them would also refuse `/search?q=a%20b`.
+     * - **`\` counts as `/`**, because browsers treat it that way in an http(s) URL, so
+     *   `/\evil.example` is `//evil.example` too.
+     * - **Exactly one leading slash**, so no scheme, host or userinfo. The target returned
+     *   is the one checked, with `\\` already turned into `/`, so the browser gets what
+     *   was checked.
+     *
+     * @param string $target
+     *   The requested redirect.
+     *
+     * @return string
+     *   The target, or `/` when it is not a same-origin path.
+     */
     protected function sanitizeRedirect(string $target): string
     {
-        if ($target === '' || $target[0] !== '/') {
+        if ($target === '' || preg_match('/[\x00-\x20\x7f]/', $target) === 1) {
             return '/';
         }
 
-        if (str_starts_with($target, '//') || str_starts_with($target, '/\\')) {
+        $target = str_replace('\\', '/', $target);
+
+        // Exactly one slash, then no control character anywhere: a browser can
+        // only read that as a path on this site, so there is no scheme, host or
+        // userinfo left to find. parse_url() is not used to confirm it, because
+        // it reads `/wiki/Talk:1` as a port and fails.
+        if ($target[0] !== '/' || str_starts_with($target, '//')) {
             return '/';
         }
 
