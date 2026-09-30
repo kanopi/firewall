@@ -1837,6 +1837,10 @@ class FirewallTest extends AbstractTestCase
         $method = new \ReflectionMethod(Firewall::class, 'sanitizeRedirect');
 
         $this->assertSame('/a/b?x=1#top', $method->invoke($this->minimalFirewall(), '/a\\b?x=1#top'));
+
+        // Only the path: in the query and fragment a backslash is data.
+        $this->assertSame('/s?q=C:\\x#a\\b', $method->invoke($this->minimalFirewall(), '/s?q=C:\\x#a\\b'));
+        $this->assertSame('/', $method->invoke($this->minimalFirewall(), '/\\evil.test?q=\\'), 'The path is still checked.');
     }
 
     #[DataProvider('hostileRedirectTargetProvider')]
