@@ -28,6 +28,11 @@ use Symfony\Component\HttpFoundation\Request;
 final class RequestChallenged extends DecisionEvent
 {
     /**
+     * @var array<int, string>
+     */
+    private array $notices = [];
+
+    /**
      * @param Request $request
      *   The request being challenged.
      * @param PluginInterface $plugin
@@ -75,5 +80,38 @@ final class RequestChallenged extends DecisionEvent
     public function isEnforced(): bool
     {
         return $this->enforced;
+    }
+
+    /**
+     * Put a line of text on the challenge page this visitor is about to see (#421).
+     *
+     * The page is the library's in `mode: block`, so this is how a host tells a visitor
+     * something only it knows. The motivating case: a visitor solves the challenge, the
+     * pass cookie never comes back (an edge that strips cookies by name, a browser that
+     * blocks them), and they are challenged again with nothing to say why. A host that set
+     * its own short-lived marker on the solve can see the marker without the pass here,
+     * and say so.
+     *
+     * Plain text: it is escaped when the page is written. Shown after any
+     * `challenge.notice`, in the order added. Has no effect when the event is not
+     * enforced (`mode: log`), because no page is served.
+     *
+     * @param string $notice
+     *   What to tell the visitor.
+     */
+    public function addNotice(string $notice): void
+    {
+        $this->notices[] = $notice;
+    }
+
+    /**
+     * The notices listeners added, in order.
+     *
+     * @return array<int, string>
+     *   The notices.
+     */
+    public function getNotices(): array
+    {
+        return $this->notices;
     }
 }

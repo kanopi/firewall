@@ -223,6 +223,9 @@ try {
     // Visitor answered correctly. Issue the pass token and send them on.
     $response = new RedirectResponse($e->getRedirect(), 302, NoStore::HEADERS);
     $response->headers->setCookie(
+        // Must be the name in challenge.cookie_name (default fw_challenge_pass):
+        // the firewall reads the pass back from that cookie, so a different
+        // name here is a pass that is never read.
         Cookie::create('fw_challenge_pass', $e->getToken())
             ->withHttpOnly(true)
             ->withSecure(true)

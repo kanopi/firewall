@@ -63,6 +63,35 @@ final class InterstitialRenderer
     }
 
     /**
+     * The notices to show on the page, from a render context (#421).
+     *
+     * A host adds them through `challenge.notice` or a `RequestChallenged` listener, to
+     * tell a visitor something the library cannot know -- the pass cookie that never came
+     * back, a maintenance window, who to contact. They are plain text. Every built-in
+     * provider hands them to render(), which escapes them; a custom provider rendering its
+     * own page reads them here and must escape them itself.
+     *
+     * @param array<string, mixed> $context
+     *   The render context.
+     *
+     * @return array<int, string>
+     *   The non-empty notices, in order.
+     */
+    public static function notices(array $context): array
+    {
+        $notices = $context['notices'] ?? [];
+
+        if (!is_array($notices)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn(mixed $n): string => is_string($n) ? trim($n) : '', $notices),
+            static fn(string $n): bool => $n !== ''
+        ));
+    }
+
+    /**
      * Build the interstitial document.
      *
      * `form_fields`, `extra_script`, `extra_head`, `extra_styles`,
@@ -87,11 +116,13 @@ final class InterstitialRenderer
      *   ttl_field: string|int,
      *   submit_failure?: string,
      *   provider_field?: string|int,
-     *   provider_token?: string|int
+     *   provider_token?: string|int,
+     *   notices?: array<int, string>
      * } $parts
      *   Provider-supplied document pieces. `submit_failure`,
-     *   `provider_field` and `provider_token` are optional, so providers
-     *   written before they existed are unaffected.
+     *   `provider_field`, `provider_token` and `notices` are optional, so
+     *   providers written before they existed are unaffected. `notices` is
+     *   plain text, escaped here like every other value; see notices().
      */
     public static function render(array $parts): string
     {
@@ -138,6 +169,16 @@ final class InterstitialRenderer
             );
         }
 
+        // Above the form, escaped: text a host added for this visitor (#421).
+        $notices = '';
+        foreach (self::notices(['notices' => $parts['notices'] ?? []]) as $notice) {
+            $notices .= "\n    <p class=\"notice\">" . self::escapeHtml($notice) . '</p>';
+        }
+
+        if ($notices !== '') {
+            $notices = "\n    <div class=\"notices\" role=\"status\">" . $notices . "\n    </div>";
+        }
+
         return <<<HTML
 <!DOCTYPE html>
 <html lang="en">
@@ -155,6 +196,8 @@ final class InterstitialRenderer
     button:not(:disabled):hover { background: #1858c4; }
     .error { color: #b42318; margin-top: 0.75rem; font-size: 0.9rem; display: none; }
     .error.visible { display: block; }
+    .notices { margin: 0 0 1.25rem; }
+    .notice { margin: 0 0 0.5rem; padding: 0.6rem 0.75rem; background: #fff8e6; border-left: 3px solid #d4a017; color: #3d2e00; font-size: 0.9rem; }
 {$extraStyles}
   </style>
 {$extraHead}
@@ -162,7 +205,7 @@ final class InterstitialRenderer
 <body>
   <main class="card">
     <h1>Quick verification</h1>
-    <p>{$intro}</p>
+    <p>{$intro}</p>{$notices}
     <form id="challenge-form" method="post" action="{$submitUrl}">
 {$formFields}
       <input type="hidden" name="{$redirectField}" value="{$redirectTo}">

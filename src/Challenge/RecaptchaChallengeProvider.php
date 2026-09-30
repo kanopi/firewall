@@ -391,6 +391,7 @@ final class RecaptchaChallengeProvider implements ChallengeProviderInterface
         $parts = $this->version === self::VERSION_V3 ? $this->v3Parts() : $this->v2Parts();
 
         return InterstitialRenderer::render([
+            'notices' => InterstitialRenderer::notices($context),
             'intro' => $parts['intro'],
             'extra_styles' => $parts['extra_styles'],
             'extra_head' => $parts['extra_head'],

@@ -2109,6 +2109,10 @@ final class Firewall
                         'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
                         'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
                         'provider_token' => $this->signProviderName($providerName, $rejectedTtlSeconds),
+                        // The configured ones only: no RequestChallenged was
+                        // dispatched for a refused submission, so no listener
+                        // had the chance to add its own (#421).
+                        'notices' => $this->configuredNotices(),
                     ]
                 );
             }
@@ -2592,7 +2596,8 @@ final class Firewall
 
         // Before the throw and before the interstitial is written, for the same
         // reason as the block path: neither returns here.
-        $this->announce(new RequestChallenged($request, $plugin, $providerName));
+        $requestChallenged = new RequestChallenged($request, $plugin, $providerName);
+        $this->announce($requestChallenged);
 
         // Built once, above the mode branch, and handed to both paths.
         //
@@ -2614,6 +2619,10 @@ final class Firewall
             'cookie_name' => (string) ($this->challengeConfig['cookie_name'] ?? ''),
             'header_name' => (string) ($this->challengeConfig['header_name'] ?? ''),
             'provider_token' => $this->signProviderName($providerName, $ttl),
+            // What the host wants the visitor told: `challenge.notice`, then
+            // whatever a listener added for this request (#421). Plain text,
+            // escaped by the renderer.
+            'notices' => array_merge($this->configuredNotices(), $requestChallenged->getNotices()),
         ];
 
         if ($this->firewallMode === FirewallMode::Exception) {
@@ -2640,6 +2649,37 @@ final class Firewall
 
         exit($body);
         // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * `challenge.notice`, as a list (#421).
+     *
+     * A string is one notice and a list is several. Anything else is ignored with a
+     * warning rather than refusing to start: a notice is a courtesy to the visitor, and a
+     * typo in one must not take the challenge flow down with it.
+     *
+     * @return array<int, string>
+     *   The configured notices.
+     */
+    private function configuredNotices(): array
+    {
+        $declared = $this->challengeConfig['notice'] ?? null;
+
+        if (in_array($declared, [null, '', []], true)) {
+            return [];
+        }
+
+        $notices = is_array($declared) ? $declared : [$declared];
+
+        if (array_filter($notices, static fn(mixed $n): bool => !is_string($n)) !== []) {
+            $this->getLogger()->warning('challenge.notice must be text or a list of text; ignoring it', [
+                'type' => get_debug_type($declared),
+            ]);
+
+            return [];
+        }
+
+        return array_values($notices);
     }
 
     /**
