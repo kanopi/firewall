@@ -180,8 +180,10 @@ request, so they all share one counter and the limit trips for everybody at once
     ```
 
     Two entries for `/login` in **one** rule's `config:` do not work: a rate limit uses the
-    first entry whose path matches and stops, so the second never runs. `firewall-check
-    --lint` reports it (#424).
+    first entry whose path matches and stops, so the second never runs. The same goes for
+    an earlier pattern that covers a later one: `/log*` before `/login`, or `/login` before
+    `/LOGIN`, since patterns ignore case. `firewall-check --lint` reports both (#424, #437),
+    and a rule with `enable: false` doesn't count as coverage (#438).
 
     `firewall-check --lint` warns when a path has an identity-keyed rule and no address-keyed
     one.

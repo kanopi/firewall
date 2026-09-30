@@ -79,4 +79,16 @@ final class RateLimitPairingTest extends AbstractTestCase
             $this->attempts([$this->rule(self::BY_ACCOUNT, self::BY_ADDRESS)])
         );
     }
+
+    /**
+     * The runtime fact behind #437's warning: an earlier wildcard takes the request, and
+     * the account limit written after it never applies.
+     */
+    public function testAnEarlierWildcardTakesTheRequest(): void
+    {
+        $this->assertSame(
+            'ok,ok,ok,ok,ok',
+            $this->attempts([$this->rule(['path' => '/log*', 'rate' => 50, 'sample' => 300], ['path' => '/login', 'rate' => 1, 'sample' => 300, 'key' => ['post.name']])])
+        );
+    }
 }

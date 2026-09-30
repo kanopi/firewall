@@ -447,6 +447,63 @@ class ConfigLinter
     }
 
     /**
+     * The earlier entry that stops this one from ever running, if one certainly does (#437).
+     *
+     * `RateLimit` uses the first entry whose pattern matches, so a later entry never runs
+     * when an earlier pattern matches every path it covers. Reported only when that is
+     * certain, because a warning that is sometimes wrong gets ignored:
+     *
+     * - a later **exact** path is shadowed by any earlier exact or wildcard pattern that
+     *   matches it, tested with the regex the runtime itself builds;
+     * - a later **wildcard** is shadowed by an earlier `*`, or by an earlier `prefix*` that
+     *   it starts with (`/api*` before `/api/v1/*`);
+     * - patterns written as a regex are left alone, on either side. Whether one arbitrary
+     *   regex covers another cannot be decided reliably.
+     *
+     * @param string $path
+     *   The entry's pattern.
+     * @param array<int, string> $earlier
+     *   The patterns before it in the same rule.
+     *
+     * @return string|null
+     *   The earlier pattern that shadows it, or NULL.
+     */
+    private function shadowedBy(string $path, array $earlier): ?string
+    {
+        if (\Kanopi\Firewall\Plugins\RateLimit::isRegexPattern($path)) {
+            return null;
+        }
+
+        foreach ($earlier as $candidate) {
+            if (\Kanopi\Firewall\Plugins\RateLimit::isRegexPattern($candidate)) {
+                continue;
+            }
+
+            if (!str_contains($path, '*')) {
+                if (preg_match(\Kanopi\Firewall\Plugins\RateLimit::patternToRegex($candidate), $path) === 1) {
+                    return $candidate;
+                }
+
+                continue;
+            }
+
+            if (strcasecmp($candidate, $path) === 0) {
+                return $candidate;
+            }
+
+            // A later wildcard: only an earlier single trailing `*` whose prefix
+            // the later pattern starts with is certain to cover it.
+            $prefix = strtolower(substr($candidate, 0, -1));
+
+            if (substr_count($candidate, '*') === 1 && str_ends_with($candidate, '*') && str_starts_with(strtolower($path), $prefix)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * A path rate-limited only by something other than the address, and entries that can
      * never run.
      *
@@ -481,8 +538,18 @@ class ConfigLinter
         $byAddress = [];
         $byOther = [];
 
+        // Keyed by the lower-cased path, because rate-limit paths ignore case
+        // (#426): `/login` in one rule and `/LOGIN` in another are one path.
+        $shown = [];
+
         foreach ($plugins as $plugin) {
             if (($plugin['plugin'] ?? null) !== \Kanopi\Firewall\Plugins\RateLimit::class) {
+                continue;
+            }
+
+            // A disabled rule limits nothing, so it covers nothing (#438). The
+            // runtime reads a missing `enable` as on.
+            if (($plugin['enable'] ?? true) === false) {
                 continue;
             }
 
@@ -490,8 +557,8 @@ class ConfigLinter
             $default = is_array($plugin['metadata']['default_key'] ?? null)
                 ? $plugin['metadata']['default_key']
                 : null;
-            // The entry that runs for each path in this rule: the first.
-            $seen = [];
+            // The entries before this one in the same rule, in order.
+            $earlier = [];
 
             foreach ($rules as $rule) {
                 if (!is_array($rule)) {
@@ -503,29 +570,44 @@ class ConfigLinter
                 }
 
                 $path = $rule['path'];
+                $shadow = $this->shadowedBy($path, $earlier);
+                $earlier[] = $path;
 
-                if (isset($seen[$path])) {
-                    $findings[] = Diagnosis::warning(
-                        sprintf('Rule "%s" has more than one entry for %s; only the first ever runs', $this->nameOf($plugin), $path),
-                        sprintf(
-                            'A rate limit uses the first entry in its config: whose path matches, so the '
-                            . 'later %1$s entry is never reached. To limit %1$s by address and by identity, '
-                            . 'put each in its own rule (a separate plugin entry).',
-                            $path
-                        ),
-                        'plugins/rate-limit.md#what-a-limit-counts-by'
-                    );
+                if ($shadow !== null) {
+                    $findings[] = $shadow === $path
+                        ? Diagnosis::warning(
+                            sprintf('Rule "%s" has more than one entry for %s; only the first ever runs', $this->nameOf($plugin), $path),
+                            sprintf(
+                                'A rate limit uses the first entry in its config: whose path matches, so the '
+                                . 'later %1$s entry is never reached. To limit %1$s by address and by identity, '
+                                . 'put each in its own rule (a separate plugin entry).',
+                                $path
+                            ),
+                            'plugins/rate-limit.md#what-a-limit-counts-by'
+                        )
+                        : Diagnosis::warning(
+                            sprintf('Rule "%s": the entry for %s never runs, because %s comes first and matches it', $this->nameOf($plugin), $path, $shadow),
+                            sprintf(
+                                'A rate limit uses the first entry in its config: whose path matches, and '
+                                . 'patterns ignore case. Every request %1$s would match reaches %2$s instead. Put '
+                                . '%1$s before %2$s, or in its own rule.',
+                                $path,
+                                $shadow
+                            ),
+                            'plugins/rate-limit.md#what-a-limit-counts-by'
+                        );
 
                     continue;
                 }
 
-                $seen[$path] = true;
+                $lower = strtolower($path);
+                $shown[$lower] ??= $path;
 
                 $key = is_array($rule['key'] ?? null) ? $rule['key'] : $default;
 
                 if ($key === null) {
                     // Nothing declared: the default key includes the address.
-                    $byAddress[$path] = true;
+                    $byAddress[$lower] = true;
                     continue;
                 }
 
@@ -535,14 +617,16 @@ class ConfigLinter
                 );
 
                 if (in_array('client_ip', $names, true)) {
-                    $byAddress[$path] = true;
+                    $byAddress[$lower] = true;
                 } else {
-                    $byOther[$path] = true;
+                    $byOther[$lower] = true;
                 }
             }
         }
 
-        foreach (array_keys(array_diff_key($byOther, $byAddress)) as $path) {
+        foreach (array_keys(array_diff_key($byOther, $byAddress)) as $lower) {
+            $path = $shown[$lower];
+
             $findings[] = Diagnosis::warning(
                 sprintf('%s is rate limited by identity, but not by address', $path),
                 sprintf(

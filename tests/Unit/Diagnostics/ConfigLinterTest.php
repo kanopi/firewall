@@ -7,6 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit\Diagnostics;
 use Kanopi\Firewall\Diagnostics\ConfigLinter;
 use Kanopi\Firewall\Diagnostics\Diagnosis;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
  * Static analysis of a configuration (#216).
@@ -633,6 +634,138 @@ class ConfigLinterTest extends AbstractTestCase
             'plugins' => [
                 $rule(['path' => '/login', 'rate' => 5, 'sample' => 300, 'key' => ['post.name']]) + ['metadata' => ['name' => 'by account']],
                 $rule(['path' => '/login', 'rate' => 50, 'sample' => 300]) + ['metadata' => ['name' => 'by address']],
+            ],
+        ]);
+
+        $this->assertSame([], $this->titles($findings, Diagnosis::WARNING));
+    }
+
+    /**
+     * An earlier pattern that certainly covers a later entry hides it, and the warning
+     * names which (#437). Coverage is then judged by the entry that runs, so the example
+     * no longer reports "identity, but not by address" -- the reverse of what happens.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     * @param array<int, string> $expected
+     */
+    #[DataProvider('shadowedEntries')]
+    public function testAnEntryAnEarlierPatternCoversIsReported(array $rules, array $expected): void
+    {
+        $this->assertSame($expected, $this->titles($this->lintRateRules($rules), Diagnosis::WARNING));
+    }
+
+    /**
+     * @return array<string, array{array<int, array<string, mixed>>, array<int, string>}>
+     */
+    public static function shadowedEntries(): array
+    {
+        $never = static fn(string $later, string $earlier): string
+            => sprintf('Rule "limits": the entry for %s never runs, because %s comes first and matches it', $later, $earlier);
+
+        return [
+            'a wildcard before an exact path' => [
+                [['path' => '/log*', 'rate' => 50], ['path' => '/login', 'rate' => 5, 'key' => ['post.name']]],
+                [$never('/login', '/log*')],
+            ],
+            'a case variant' => [
+                [['path' => '/login', 'rate' => 50], ['path' => '/LOGIN', 'rate' => 5, 'key' => ['post.name']]],
+                [$never('/LOGIN', '/login')],
+            ],
+            'a catch-all before a wildcard' => [
+                [['path' => '*', 'rate' => 50], ['path' => '/api/*', 'rate' => 5]],
+                [$never('/api/*', '*')],
+            ],
+            'a wider prefix before a narrower wildcard' => [
+                [['path' => '/api*', 'rate' => 50], ['path' => '/api/v1/*', 'rate' => 5]],
+                [$never('/api/v1/*', '/api*')],
+            ],
+            'a wildcard with a star inside, twice' => [
+                [['path' => '/api/*/users', 'rate' => 50], ['path' => '/API/*/users', 'rate' => 5]],
+                [$never('/API/*/users', '/api/*/users')],
+            ],
+            'an exact duplicate keeps its own wording' => [
+                [['path' => '/login', 'rate' => 50], ['path' => '/login', 'rate' => 5]],
+                ['Rule "limits" has more than one entry for /login; only the first ever runs'],
+            ],
+        ];
+    }
+
+    /**
+     * Only what is certain is reported.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
+    #[DataProvider('entriesThatRun')]
+    public function testAnEntryThatCanRunIsNotReported(array $rules): void
+    {
+        $this->assertSame([], $this->titles($this->lintRateRules($rules), Diagnosis::WARNING));
+    }
+
+    /**
+     * @return array<string, array{array<int, array<string, mixed>>}>
+     */
+    public static function entriesThatRun(): array
+    {
+        return [
+            'the exact path first' => [[['path' => '/login', 'rate' => 5], ['path' => '/log*', 'rate' => 50]]],
+            'the narrower wildcard first' => [[['path' => '/api/v1/*', 'rate' => 5], ['path' => '/api/*', 'rate' => 50]]],
+            'a later wider wildcard' => [[['path' => '/api/*', 'rate' => 5], ['path' => '/api*', 'rate' => 50]]],
+            'unrelated wildcards' => [[['path' => '/api/*', 'rate' => 5], ['path' => '/admin/*', 'rate' => 50]]],
+            // Regex coverage cannot be decided reliably, so neither side is judged.
+            'an earlier regex' => [[['path' => '#^/log#', 'rate' => 50], ['path' => '/login', 'rate' => 5]]],
+            'a later regex' => [[['path' => '/login', 'rate' => 50], ['path' => '#^/login$#', 'rate' => 5]]],
+        ];
+    }
+
+    /**
+     * A disabled rule limits nothing, so it covers nothing (#438).
+     */
+    public function testADisabledRuleDoesNotCountAsCoverage(): void
+    {
+        $rule = static fn(array $config, string $name, ?bool $enable): array => [
+            'plugin' => \Kanopi\Firewall\Plugins\RateLimit::class,
+            'response' => 'block',
+            'metadata' => ['name' => $name],
+            'config' => [$config],
+        ] + ($enable === null ? [] : ['enable' => $enable]);
+
+        $account = ['path' => '/login', 'rate' => 5, 'key' => ['post.name']];
+        $address = ['path' => '/login', 'rate' => 50];
+
+        $lint = fn(array ...$plugins): array => $this->titles(
+            $this->lint(['global' => ['mode' => 'block'], 'plugins' => $plugins]),
+            Diagnosis::WARNING
+        );
+
+        $this->assertSame(
+            ['/login is rate limited by identity, but not by address'],
+            $lint($rule($account, 'by-account', true), $rule($address, 'by-address', false)),
+            'A disabled address rule used to silence this.'
+        );
+
+        $this->assertSame(
+            [],
+            $lint($rule($account, 'by-account', false)),
+            'A disabled identity rule is nothing to warn about.'
+        );
+
+        $this->assertSame(
+            [],
+            $lint($rule($account, 'by-account', true), $rule($address, 'by-address', null)),
+            'A missing enable is on, as the firewall reads it.'
+        );
+    }
+
+    /**
+     * Paths ignore case across rules too, as they do at runtime (#426).
+     */
+    public function testCoverageAcrossRulesIgnoresCase(): void
+    {
+        $findings = $this->lint([
+            'global' => ['mode' => 'block'],
+            'plugins' => [
+                ['plugin' => \Kanopi\Firewall\Plugins\RateLimit::class, 'response' => 'block', 'enable' => true, 'metadata' => ['name' => 'a'], 'config' => [['path' => '/login', 'rate' => 5, 'key' => ['post.name']]]],
+                ['plugin' => \Kanopi\Firewall\Plugins\RateLimit::class, 'response' => 'block', 'enable' => true, 'metadata' => ['name' => 'b'], 'config' => [['path' => '/LOGIN', 'rate' => 50]]],
             ],
         ]);
 
