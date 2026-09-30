@@ -20,7 +20,9 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class Asn extends AbstractPluginBase
 {
-    use EvaluateTrait;
+    use EvaluateTrait {
+        evaluateComparison as private compareValues;
+    }
     use GeoLocationTrait;
 
     /**
@@ -195,6 +197,67 @@ class Asn extends AbstractPluginBase
             'asn_org' => $record->autonomousSystemOrganization,
             default => null,
         };
+    }
+
+    /**
+     * Compare `asn` as a number (#423).
+     *
+     * MaxMind returns the number as an integer and every rule value arrives as a string --
+     * `asn:16509` written in YAML, or `{value}` substituted from a rule source -- so the
+     * strict comparison underneath never matched. Every `asn` equality rule had silently
+     * never fired, and `asn@not_equals:` matched every visitor, the named network included.
+     * `AS16509`, the way the number is usually written, did not match either.
+     *
+     * So for `equals`, `not_equals` and `in`, both sides are read as a number first, with a
+     * leading `AS` allowed. A side that is not a number is left alone, which keeps a lookup
+     * that failed from matching anything. `contains` and the pattern operators compare text
+     * as before.
+     *
+     * {@inheritdoc}
+     */
+    protected function evaluateComparison(
+        mixed $requestValue,
+        string $operator,
+        mixed $value,
+        bool $caseSensitive = false,
+        ?string $variable = null
+    ): bool {
+        // `in` is not listed because it never arrives here: the rule parser
+        // turns it into one `equals` per value.
+        if ($variable === 'asn' && in_array($operator, ['equals', 'not_equals'], true)) {
+            $number = $this->asNumber($requestValue);
+
+            if ($number !== null) {
+                $requestValue = $number;
+                $value = $this->asNumber($value) ?? $value;
+            }
+        }
+
+        return $this->compareValues($requestValue, $operator, $value, $caseSensitive, $variable);
+    }
+
+    /**
+     * An autonomous system number, from `16509`, `"16509"` or `"AS16509"`.
+     *
+     * @param mixed $value
+     *   A value from the lookup or from a rule.
+     *
+     * @return int|null
+     *   The number, or NULL when the value is not one.
+     */
+    private function asNumber(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $digits = (string) preg_replace('/^as/i', '', trim($value));
+
+        return ctype_digit($digits) ? (int) $digits : null;
     }
 
     /**
