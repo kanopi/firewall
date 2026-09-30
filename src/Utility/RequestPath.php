@@ -142,6 +142,41 @@ final class RequestPath
     }
 
     /**
+     * The URL the client asked for, without its query (#419).
+     *
+     * Not `getUri()`: that joins the base URL and the path info, and for a file served
+     * directly those are the file and `/`, so `/wp-login.php` comes out as
+     * `/wp-login.php/`. Logs and block records both build their URL from this, so the two
+     * cannot disagree about it.
+     *
+     * @param Request $request
+     *   The request.
+     *
+     * @return string
+     *   Scheme, host and the requested path, as the client sent the path.
+     */
+    public static function urlWithoutQuery(Request $request): string
+    {
+        return $request->getSchemeAndHttpHost() . explode('?', $request->getRequestUri(), 2)[0];
+    }
+
+    /**
+     * The URL the client asked for, with its query in Symfony's normalised form.
+     *
+     * @param Request $request
+     *   The request.
+     *
+     * @return string
+     *   The URL.
+     */
+    public static function url(Request $request): string
+    {
+        $query = $request->getQueryString();
+
+        return self::urlWithoutQuery($request) . ($query === null ? '' : '?' . $query);
+    }
+
+    /**
      * Whether a configured `path_source` is one this understands.
      *
      * @param mixed $source

@@ -213,17 +213,14 @@ final class RecordedRequest
      */
     private function uri(Request $request, array $query): string
     {
-        // From the request URI rather than getUri(), which joins the base URL
-        // and the path info: for a file served directly those are the file and
-        // "/", and the record would name /wp-login.php/ -- a URL nobody asked
-        // for (#414).
-        $base = $request->getSchemeAndHttpHost() . explode('?', $request->getRequestUri(), 2)[0];
-
+        // RequestPath's URL rather than getUri(), which names a directly served
+        // file as /wp-login.php/ (#414). The logger builds its URL the same way,
+        // so the two agree (#419).
         if ($this->query === null || $request->query->all() === $query) {
-            $queryString = $request->getQueryString();
-
-            return $queryString === null ? $base : $base . '?' . $queryString;
+            return RequestPath::url($request);
         }
+
+        $base = RequestPath::urlWithoutQuery($request);
 
         return $query === [] ? $base : $base . '?' . http_build_query($query);
     }
