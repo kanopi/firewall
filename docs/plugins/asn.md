@@ -42,7 +42,7 @@ too, since `{value}` is substituted as text.
 `contains`, `starts_with` and the other text operators compare the number as text, so
 `asn@contains:1650` also matches 16509. Use `equals` or `in` for a network.
 
-!!! note "Before 2.34.2"
+!!! note "Before 2.35.0"
     Every `asn` equality rule silently failed to match, because the lookup returns an
     integer and rule values are text. `asn@not_equals:` therefore matched every visitor,
     the named network included. Check any `not_equals` rule when you upgrade: it now
