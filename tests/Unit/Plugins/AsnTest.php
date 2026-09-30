@@ -445,4 +445,89 @@ class AsnTest extends AbstractTestCase
             }
         };
     }
+
+    /**
+     * A plugin whose lookup answers AS16509 for every client.
+     *
+     * @param array<int, mixed> $rules
+     */
+    private function amazonClient(array $rules): Asn
+    {
+        $reader = $this->createMock(Reader::class);
+        $reader->method('asn')->willReturn(new AsnModel([
+            'autonomous_system_number' => 16509,
+            'autonomous_system_organization' => 'AMAZON-02',
+            'ip_address' => '203.0.113.9',
+            'prefix_len' => 24,
+        ]));
+
+        return new class(['reader' => ['type' => 'mock', 'instance' => $reader]], $rules) extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return $config['instance'] ?? null;
+            }
+        };
+    }
+
+    /**
+     * `asn` compares as a number (#423).
+     *
+     * MaxMind returns an integer and every rule value is a string, so the strict comparison
+     * underneath never matched. Every documented `asn:` rule had silently never fired, and
+     * `asn@not_equals:` matched the very network it named.
+     *
+     * The rules below are the shapes the docs use, and the shape a rule source's template
+     * (`asn:{value}`) expands to.
+     *
+     * @param mixed $rule
+     *   One rule.
+     * @param bool $matches
+     *   Whether a client in AS16509 matches it.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('asnRules')]
+    public function testAsnComparesAsANumber(mixed $rule, bool $matches): void
+    {
+        $request = new Request([], [], [], [], [], ['REMOTE_ADDR' => '203.0.113.9']);
+
+        $this->assertSame($matches, $this->amazonClient([$rule])->evaluate($request));
+    }
+
+    /**
+     * @return array<string, array{mixed, bool}>
+     */
+    public static function asnRules(): array
+    {
+        return [
+            'the number' => ['asn:16509', true],
+            'with the AS prefix' => ['asn:AS16509', true],
+            'with a lowercase prefix' => ['asn:as16509', true],
+            'another network' => ['asn:13335', false],
+            'in a list' => ['asn@in:13335,16509', true],
+            'in a list, prefixed' => ['asn@in:AS13335,AS16509', true],
+            'not in the list' => ['asn@in:13335,15169', false],
+            'not_equals the network itself' => ['asn@not_equals:16509', false],
+            'not_equals another network' => ['asn@not_equals:13335', true],
+            'inside a group' => [['type' => 'AND', 'rules' => ['asn:16509']], true],
+            // Text operators keep text semantics.
+            'contains is still a substring match' => ['asn@contains:1650', true],
+            // Not a number at all: compared as written, so it matches nothing.
+            'not a number' => ['asn:amazon', false],
+        ];
+    }
+
+    /**
+     * A lookup that found nothing is not a number, and still matches no equality rule.
+     */
+    public function testAFailedLookupMatchesNoAsnRule(): void
+    {
+        $reader = $this->createMock(Reader::class);
+        $reader->method('asn')->willThrowException(new \RuntimeException('not found'));
+
+        $plugin = new class(['reader' => ['type' => 'mock', 'instance' => $reader]], ['asn:16509', 'asn@in:16509']) extends Asn {
+            protected function createService(?string $type, array $config = []): \GeoIp2\Database\Reader|\GeoIp2\WebService\Client|null {
+                return $config['instance'] ?? null;
+            }
+        };
+
+        $this->assertFalse($plugin->evaluate(new Request([], [], [], [], [], ['REMOTE_ADDR' => '203.0.113.9'])));
+    }
 }
