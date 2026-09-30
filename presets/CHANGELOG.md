@@ -25,6 +25,17 @@ else that leaves the matched traffic identical.
 
 ---
 
+## Version 2
+
+**2026-09-30**: WordPress's rules match wherever WordPress is installed (#420).
+
+| Preset | What changed |
+|---|---|
+| `wordpress.yml` | Every path rule matches WordPress's files and directories **at any depth**, on a segment boundary, instead of only at the site root. It now also covers a subdirectory install (`/blog/wp-login.php`), core in its own directory (`/wp/wp-login.php`), and both. **Widened:** `readme.html` and `license.txt` are blocked at any depth, not only at the root, and `wp-includes/*.php` and `wp-content/uploads/*.php` wherever those directories sit. **Narrowed:** `wp-admin` and `wp-login` now need a segment boundary after them, so `/wp-login-help/` (a post slug) is no longer blocked, while `/wp-login.php` and `/wp-admin/…` still are. |
+| `search-bots.yml` | The back-end exclusion matches WordPress's `wp-admin`, `wp-login`, `wp-json` and `xmlrpc` at any depth, so a verified crawler's allow no longer covers `/wp/wp-login.php` or `/blog/wp-admin/`. Drupal's paths stay root-anchored. |
+
+A site already at the root sees one difference: a path that only *started* with `wp-login` or `wp-admin`, such as a post slug, is no longer blocked.
+
 ## Version 1
 
 **2026-09-11** — the baseline. Every shipped rule set starts here.

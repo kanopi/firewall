@@ -365,4 +365,120 @@ class DirectFileRequestTest extends AbstractTestCase
         $storage = (new \ReflectionProperty($firewall, 'storage'))->getValue($firewall);
         $this->assertSame($urls[0], $storage->isBlocked($storage->getKey($request))['request']['uri']);
     }
+
+    /**
+     * Every WordPress layout, with no base_path (#420).
+     *
+     * The preset matches WordPress's files at any depth, on a segment boundary, so the
+     * root, a subdirectory install, core in its own directory, and both, are one preset.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function wordpressLayouts(): array
+    {
+        $cases = [];
+
+        foreach (['root' => '', 'subdirectory' => '/blog', 'own directory' => '/wp', 'both' => '/blog/wp'] as $layout => $prefix) {
+            foreach ([
+                'wp-login.php' => '/wp-login.php',
+                'an admin screen' => '/wp-admin/edit.php',
+                'the admin index' => '/wp-admin/index.php',
+                'xmlrpc.php' => '/xmlrpc.php',
+                'wp-cron.php' => '/wp-cron.php',
+                'wp-load.php' => '/wp-load.php',
+                'readme.html' => '/readme.html',
+                'an includes file' => '/wp-includes/version.php',
+                'an uploaded script' => '/wp-content/uploads/2026/09/shell.php',
+            ] as $file => $path) {
+                $cases[$layout . ', ' . $file] = [$prefix . $path];
+            }
+        }
+
+        return $cases;
+    }
+
+    #[DataProvider('wordpressLayouts')]
+    public function testEveryLayoutIsCovered(string $script): void
+    {
+        $this->assertTrue($this->refuses(
+            $this->firewall(['wordpress.yml'], ['path_source' => 'script_name']),
+            $this->direct($script)
+        ));
+    }
+
+    /**
+     * The REST API is routed through index.php wherever the site address is.
+     *
+     * A subdirectory install still names its base_path, which is how script_name tells
+     * the front controller (`/blog/index.php`) from a file served directly. Core in its own
+     * directory needs nothing: its front controller is `/index.php`.
+     *
+     * @return array<string, array{string, string, string}>
+     */
+    public static function restLayouts(): array
+    {
+        return [
+            'root' => ['/wp-json/wp/v2/users', '/index.php', ''],
+            'own directory' => ['/wp-json/wp/v2/users', '/index.php', ''],
+            'subdirectory' => ['/blog/wp-json/wp/v2/users', '/blog/index.php', '/blog'],
+        ];
+    }
+
+    #[DataProvider('restLayouts')]
+    public function testTheRestApiIsCoveredWhereverTheSiteIs(string $uri, string $script, string $basePath): void
+    {
+        $this->assertTrue($this->refuses(
+            $this->firewall(['wordpress.yml'], ['path_source' => 'script_name', 'base_path' => $basePath]),
+            $this->direct($uri, $script, 'GET')
+        ));
+    }
+
+    /**
+     * A segment boundary, not a substring: posts whose slugs merely contain the names
+     * are served.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function postsThatMentionWordPress(): array
+    {
+        return [
+            'wp-admin in a slug' => ['/2026/09/wp-admin-tips/'],
+            'wp-login in a slug' => ['/wp-login-help/'],
+            'wp-json in a slug' => ['/guides/wp-json-explained/'],
+            'xmlrpc in a slug' => ['/xmlrpc-php-is-old/'],
+            'a readme page' => ['/docs/readme/'],
+        ];
+    }
+
+    #[DataProvider('postsThatMentionWordPress')]
+    public function testAPostThatMentionsWordPressIsServed(string $uri): void
+    {
+        $this->assertTrue(
+            $this->firewall(['wordpress.yml'], ['path_source' => 'script_name'])->evaluate($this->direct($uri, '/index.php', 'GET'))
+        );
+    }
+
+    /**
+     * The search-bot allow stops at the back end wherever core is installed.
+     */
+    public function testTheSearchBotExclusionCoversCoreInItsOwnDirectory(): void
+    {
+        foreach (['/wp/wp-login.php', '/blog/wp-admin/edit.php', '/blog/wp/xmlrpc.php'] as $script) {
+            $this->assertTrue($this->refuses(
+                $this->firewall(['search-bots.yml', 'wordpress.yml'], ['path_source' => 'script_name']),
+                $this->direct($script, null, 'POST', ['HTTP_USER_AGENT' => self::GOOGLEBOT])
+            ), $script);
+        }
+    }
+
+    /**
+     * The preset's traversal rule fires on a path that keeps its `..` (#425).
+     */
+    public function testTraversalIsStillBlocked(): void
+    {
+        $this->assertTrue($this->refuses(
+            $this->firewall(['wordpress.yml'], ['path_source' => 'script_name']),
+            $this->direct('/wp-content/../../../etc/passwd', '/index.php', 'GET')
+        ));
+    }
 }

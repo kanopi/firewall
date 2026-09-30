@@ -1,6 +1,6 @@
 # WordPress Endpoint Blocking Configuration
 #
-# Preset-Version: 1 — see CHANGELOG.md in this directory for what has
+# Preset-Version: 2 — see CHANGELOG.md in this directory for what has
 # changed about what this blocks, separately from the library version.
 #
 # Blocks common WordPress admin pages, sensitive files, and attack vectors
@@ -9,8 +9,27 @@
 # REQUIRES `global.path_source: script_name`. WordPress serves wp-login.php,
 # xmlrpc.php, wp-cron.php and every /wp-admin/*.php as files of their own,
 # and under the default path source each of them is matched as "/" -- so the
-# rules below would never fire on the pages they name (#414). Add
-# `base_path: /blog` too if WordPress is installed in a subdirectory.
+# rules below would never fire on the pages they name (#414).
+#
+# WHERE WORDPRESS LIVES DOES NOT MATTER (#420). The rules match WordPress's
+# files and directories at any depth, on a segment boundary, so one preset
+# covers every layout:
+#
+#   /wp-login.php            WordPress at the root
+#   /blog/wp-login.php       installed in a subdirectory
+#   /wp/wp-login.php         core in its own directory ("Giving WordPress Its
+#                            Own Directory"), with index.php at the root
+#   /blog/wp/wp-login.php    both
+#
+# Core in its own directory needs no base_path. A SUBDIRECTORY install
+# (/blog) still sets `base_path: /blog`: that is how script_name tells the
+# front controller, /blog/index.php, from a file served directly, and without
+# it routed requests such as /blog/wp-json/... are seen as /blog/index.php.
+# "On a segment boundary" means /2026/wp-admin-tips/ is a post, not the admin.
+#
+# Patterns are regexes matched case-insensitively (the firewall lower-cases
+# the path and the pattern), so they are written in lower case with no
+# escape whose meaning changes with case.
 
 plugins:
   - plugin: "Kanopi\\Firewall\\Plugins\\Url"
@@ -20,47 +39,35 @@ plugins:
     config:
       # =====================================================================
       # WordPress Admin Access
-      # Block all wp-admin and wp-login access
+      # Block all wp-admin and wp-login access, wherever core is installed
       # =====================================================================
-      - path@starts_with:/wp-admin
-      - path@starts_with:/wp-login
-      - path:/wp-login.php
+      - path@regex:#(^|/)wp-admin(/|$|\.)#
+      - path@regex:#(^|/)wp-login(/|$|\.)#
 
       # =====================================================================
       # XML-RPC Endpoint
       # Frequently abused for DDoS and brute force attacks
       # =====================================================================
-      - path:/xmlrpc.php
+      - path@regex:#(^|/)xmlrpc\.php$#
 
       # =====================================================================
       # WordPress REST API
       # Block all REST API access (uncomment if you need to block it)
       # =====================================================================
-      - path@starts_with:/wp-json/
-      - path:/wp-json
+      - path@regex:#(^|/)wp-json(/|$)#
 
       # =====================================================================
       # WordPress Configuration Files
       # Prevent direct access to sensitive configuration files
       # =====================================================================
       - path@contains:/wp-config
-      - path:/readme.html
-      - path:/license.txt
+      - path@regex:#(^|/)(readme\.html|license\.txt)$#
 
       # =====================================================================
       # WordPress Core PHP Files
       # Block direct access to WordPress core files
       # =====================================================================
-      - path:/wp-activate.php
-      - path:/wp-blog-header.php
-      - path:/wp-comments-post.php
-      - path:/wp-cron.php
-      - path:/wp-links-opml.php
-      - path:/wp-load.php
-      - path:/wp-mail.php
-      - path:/wp-settings.php
-      - path:/wp-signup.php
-      - path:/wp-trackback.php
+      - path@regex:#(^|/)wp-(activate|blog-header|comments-post|cron|links-opml|load|mail|settings|signup|trackback)\.php$#
 
       # =====================================================================
       # WordPress Includes Directory
@@ -68,7 +75,7 @@ plugins:
       # =====================================================================
       - type: AND
         rules:
-          - path@starts_with:/wp-includes/
+          - path@contains:/wp-includes/
           - path@ends_with:.php
 
       # =====================================================================
@@ -77,7 +84,7 @@ plugins:
       # =====================================================================
       - type: AND
         rules:
-          - path@starts_with:/wp-content/uploads/
+          - path@contains:/wp-content/uploads/
           - path@ends_with:.php
 
       # =====================================================================
