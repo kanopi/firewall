@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Traits;
 
+use Kanopi\Firewall\Utility\RequestPath;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -73,7 +74,7 @@ trait RequestValueTrait
                 return $request->getHost();
 
             case 'path':
-                return $request->getPathInfo();
+                return RequestPath::of($request);
 
             case 'query':
                 if (count($segments) === 1) {

@@ -5,6 +5,12 @@
 #
 # Blocks common WordPress admin pages, sensitive files, and attack vectors
 # while allowing normal website functionality.
+#
+# REQUIRES `global.path_source: script_name`. WordPress serves wp-login.php,
+# xmlrpc.php, wp-cron.php and every /wp-admin/*.php as files of their own,
+# and under the default path source each of them is matched as "/" -- so the
+# rules below would never fire on the pages they name (#414). Add
+# `base_path: /blog` too if WordPress is installed in a subdirectory.
 
 plugins:
   - plugin: "Kanopi\\Firewall\\Plugins\\Url"

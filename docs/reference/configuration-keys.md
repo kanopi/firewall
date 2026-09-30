@@ -54,6 +54,8 @@ Nothing here explains anything; that is deliberate.
 | `lockdown_status` | int | `503` | | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_retry_after` | int | `300` | Seconds in `Retry-After`; `0` omits it | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_message` | string | built-in | Supports `{{request.id}}` | [Lockdown](../configuration/global.md#lockdown) |
+| `path_source` | string | `pathinfo` | `pathinfo` (relative to the front controller) or `script_name` (the file the server ran). WordPress needs `script_name`; front-controller apps keep the default | [Path Source](../configuration/global.md#path-source) |
+| `base_path` | string | *unset* | Where the application is installed, for `script_name` in a subdirectory | [Path Source](../configuration/global.md#path-source) |
 | `stale_source_error_after` | int | `0` *(off)* | Seconds before an unrefreshed source is an error | [Stale Rule Sources](../configuration/global.md#stale-rule-sources) |
 
 ## `storage:`

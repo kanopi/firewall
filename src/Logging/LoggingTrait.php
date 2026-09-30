@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Logging;
 
 use Monolog\Logger;
+use Kanopi\Firewall\Utility\RequestPath;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -60,7 +61,7 @@ trait LoggingTrait
             'request_id' => $request->attributes->get('x-request-id'),
             'host' => $request->getHost(),
             'client_ip' => $request->getClientIp(),
-            'path' => $request->getPathInfo(),
+            'path' => RequestPath::of($request),
             'method' => $request->getMethod(),
             'user_agent' => $request->headers->get('User-Agent') ?: 'unknown',
             'query_params' => $request->query->all(),

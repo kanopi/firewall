@@ -21,6 +21,8 @@ if (class_exists('\Kanopi\Firewall\Firewall')) {
 }
 ```
 
+Drupal's routes all go through `index.php`, so the default `path_source` is right for them. `settings.php` is also loaded by the files Drupal serves directly (`core/install.php`, `core/rebuild.php`, `core/authorize.php`). A rule on those paths, like the ones in `presets/drupal.yml`, only fires with `path_source: script_name`. See [Path Source](../configuration/global.md#path-source).
+
 ## WordPress
 
 Add to `wp-config.php` after `ABSPATH` is defined but before `wp-settings.php`:
@@ -38,6 +40,16 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     }
 }
 ```
+
+**Set `path_source: script_name` in that config.** WordPress serves `wp-login.php`, `xmlrpc.php`, `wp-cron.php` and every `/wp-admin/*.php` as files of their own. Under the default `path_source`, the firewall matches each of them as `/`, so `presets/wordpress.yml` and any `/wp-login.php` rate limit never fire on them:
+
+```yaml
+global:
+  path_source: script_name
+  # base_path: /blog       # if WordPress is installed in a subdirectory
+```
+
+See [Path Source](../configuration/global.md#path-source).
 
 ## Symfony
 
@@ -62,6 +74,8 @@ return function (array $context) {
 };
 ```
 
+Every request goes through `index.php`, so keep the default `path_source`. See [Path Source](../configuration/global.md#path-source).
+
 ## Laravel
 
 Add to `public/index.php` after the autoloader:
@@ -79,3 +93,5 @@ if (class_exists('\Kanopi\Firewall\Firewall')) {
 
 $app = require_once __DIR__.'/../bootstrap/app.php';
 ```
+
+Every request goes through `index.php`, so keep the default `path_source`. See [Path Source](../configuration/global.md#path-source).

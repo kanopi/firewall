@@ -176,6 +176,8 @@ block:
       - 'path@regex:#/wp-.*\.php$#'
 ```
 
+On a real WordPress site these files are served directly, so the rules need `global.path_source: script_name`. See [Path Source](../configuration/global.md#path-source).
+
 Test:
 ```bash
 curl http://localhost:8080/wp-login.php

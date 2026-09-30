@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Storage;
 
+use Kanopi\Firewall\Utility\RequestPath;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -174,7 +175,7 @@ final class RecordedRequest
             // password reset token redacted out of one field and left in the
             // one beside it.
             'uri' => $this->uri($request, $query),
-            'path' => $request->getPathInfo(),
+            'path' => RequestPath::of($request),
             'query' => $query,
             'request' => $this->filter($request->request->all(), $this->body),
             'headers' => $this->filter($this->headerNames($request), $this->headers),
@@ -212,11 +213,17 @@ final class RecordedRequest
      */
     private function uri(Request $request, array $query): string
     {
-        if ($this->query === null || $request->query->all() === $query) {
-            return $request->getUri();
-        }
+        // From the request URI rather than getUri(), which joins the base URL
+        // and the path info: for a file served directly those are the file and
+        // "/", and the record would name /wp-login.php/ -- a URL nobody asked
+        // for (#414).
+        $base = $request->getSchemeAndHttpHost() . explode('?', $request->getRequestUri(), 2)[0];
 
-        $base = $request->getSchemeAndHttpHost() . $request->getBaseUrl() . $request->getPathInfo();
+        if ($this->query === null || $request->query->all() === $query) {
+            $queryString = $request->getQueryString();
+
+            return $queryString === null ? $base : $base . '?' . $queryString;
+        }
 
         return $query === [] ? $base : $base . '?' . http_build_query($query);
     }

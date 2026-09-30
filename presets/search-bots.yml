@@ -22,6 +22,12 @@
 # The exclusion covers the paths WordPress and Drupal put their back ends on.
 # If your admin lives somewhere else, add it to the second rule below.
 #
+# On WordPress, set `global.path_source: script_name`. The exclusion is a
+# negated path match, and under the default path source a directly served
+# file such as wp-login.php is matched as "/" -- so the exclusion is always
+# true and the allow covers exactly the paths it was written to keep out
+# (#414).
+#
 # STRONGER OPTIONS, in increasing order of correctness:
 #
 #   1. This preset — scoped by path. Cheap, and enough for most sites.

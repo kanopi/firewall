@@ -378,6 +378,74 @@ Lockdown adds a refusal; it never removes one.
     means. `firewall-doctor` reports an empty list as a warning before you rely on it, and as
     an error once lockdown is on.
 
+## Path Source
+
+Which path the rules match: every `path` condition, rate-limit pattern and preset, and the `path` in logs and block records.
+
+```yaml
+global:
+  path_source: script_name   # default: pathinfo
+  base_path: /blog           # optional: where the application is installed
+```
+
+| Key | Default | |
+|---|---|---|
+| `path_source` | `pathinfo` | `pathinfo` is the path relative to the front controller. `script_name` is the file the web server ran, falling back to `pathinfo` when that file is the front controller |
+| `base_path` | *unset* | With `script_name`, where the application is installed. `<base_path>/index.php` is the front controller, and `base_path` is taken off the front of any other file's path |
+
+### Which one you need
+
+| Application | `path_source` |
+|---|---|
+| **WordPress** | **`script_name`** |
+| Drupal, for rules on `core/install.php`, `core/rebuild.php` or `core/authorize.php` | `script_name` |
+| Laravel, Symfony, Drupal's routes: anything where every request goes through `index.php` | the default, `pathinfo` |
+
+`pathinfo` is Symfony's `getPathInfo()`, and it's right when every request goes through one `index.php`. **Keep it for a front-controller application.** `script_name` gives the same answer there, but it isn't more correct, and it matters that nobody turns it on thinking it is.
+
+**`pathinfo` is wrong for a file the web server runs directly.** For such a file, `SCRIPT_NAME` is the file itself, and the path relative to it is `/`:
+
+| Request | Server runs | `pathinfo` | `script_name` |
+|---|---|---|---|
+| `/wp-login.php` | `wp-login.php` | `/` | `/wp-login.php` |
+| `/wp-admin/edit.php` | `wp-admin/edit.php` | `/` | `/wp-admin/edit.php` |
+| `/wp-admin/` | `wp-admin/index.php` | `/` | `/wp-admin/index.php` |
+| `/xmlrpc.php` | `xmlrpc.php` | `/` | `/xmlrpc.php` |
+| `/core/install.php` (Drupal) | `core/install.php` | `/` | `/core/install.php` |
+| `/learning/` | `index.php` | `/learning/` | `/learning/` |
+
+So under `pathinfo`, a rule on `/wp-login.php` never fires on the real login page, a rate limit on it never counts, and a *negated* condition such as `!path@starts_with:/wp-admin` is true on every admin screen. WordPress serves its login page, XML-RPC, cron and every admin screen as files of their own. Drupal's `settings.php`, where the firewall usually runs, is also loaded by the files Drupal serves directly.
+
+Note the admin index: the server runs `wp-admin/index.php`, so that's the path. A rule written `path@starts_with:/wp-admin` matches it; an exact `path:/wp-admin/` doesn't.
+
+`pathinfo` stays the default in 2.x, because switching would change what `path` means for sites that work today.
+
+### Why it's the file that ran, not the URL
+
+The web server decodes and normalises the URL before it chooses a file. `/./wp-login.php`, `/%77p-login.php`, `//wp-login.php` and `/x/../wp-login.php` all run `wp-login.php`. Matched as the raw URL, each would walk past a `path:/wp-login.php` rate limit. `SCRIPT_NAME` is `/wp-login.php` for all of them, because it's what the server ran after all that work.
+
+It's read from the request the firewall evaluates, never from `$_SERVER`, so it's also right under Octane, RoadRunner or Swoole, where `$_SERVER` belongs to the worker.
+
+### Subdirectory installs
+
+On a direct-file request, nothing in the request says where the application starts. `getBasePath()` for `/wp-admin/edit.php` is `/wp-admin`. So name it:
+
+```yaml
+global:
+  path_source: script_name
+  base_path: /blog
+```
+
+`/blog/index.php` is then the front controller, and `/blog/wp-login.php` is matched as `/wp-login.php`, so the presets work unchanged. The prefix is removed only at a segment boundary (`/blogroll` isn't inside `/blog`), and a file outside it is matched whole.
+
+### Checking it
+
+```console
+$ vendor/bin/firewall-check --config=firewall.yml --url=/wp-login.php --script-name=/wp-login.php
+```
+
+`--script-name` makes the check a direct-file request. Without it, the check matches the path as typed, which is not what the site sees under `pathinfo`. The tool warns about this when `--url` names a `.php` file. `firewall-doctor` reports which source is in use, and reports an unknown `path_source` or an unusable `base_path` as an error. At runtime, the firewall falls back to `pathinfo` with a warning.
+
 ## Stale Rule Sources
 
 `stale_source_error_after` is how long a [rule source](sources.md) may go unrefreshed before

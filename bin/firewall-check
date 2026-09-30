@@ -44,6 +44,7 @@ use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Storage\InMemoryStorage;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\PanicSwitch;
+use Kanopi\Firewall\Utility\RequestPath;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Monolog\Handler\TestHandler;
 use Monolog\Level;
@@ -99,6 +100,7 @@ $options = getopt('h', [
     'method::',
     'header:',
     'body::',
+    'script-name::',
     'explain',
     'json',
     'lint',
@@ -134,6 +136,10 @@ function usage(): void
       --method=VERB      HTTP method. Default GET, or POST when --body is given
       --header=NAME:VAL  Request header. Repeatable
       --body=STRING      Request body
+      --script-name=FILE The PHP file the web server runs for this URL. Default:
+                         the front controller. Set it to check a file served
+                         directly, as WordPress serves /wp-login.php:
+                         --url=/wp-login.php --script-name=/wp-login.php
 
     OUTPUT
       --explain          Show every plugin that evaluated, with result and
@@ -291,6 +297,23 @@ $method = strtoupper((string) single($options, 'method', $body === null ? 'GET' 
 
 $server = ['REMOTE_ADDR' => $ip];
 
+// A directly requested file is its own SCRIPT_NAME, which is what makes
+// getPathInfo() come back as "/" in production (#414). Request::create() sets
+// no script at all, so without this the check answers for a request the site
+// never receives, and says a rule matches that never does.
+$scriptName = single($options, 'script-name');
+
+if ($scriptName !== null) {
+    if ($scriptName === '' || $scriptName[0] !== '/' || !str_ends_with(strtolower($scriptName), '.php')) {
+        fwrite(STDERR, "Error: --script-name must be a path to a .php file, such as /wp-login.php\n");
+        exit(EXIT_USAGE);
+    }
+
+    $server['SCRIPT_NAME'] = $scriptName;
+    $server['PHP_SELF'] = $scriptName;
+    $server['SCRIPT_FILENAME'] = $scriptName;
+}
+
 foreach (repeatable($options, 'header') as $header) {
     if (!str_contains($header, ':')) {
         fwrite(STDERR, "Error: --header must be NAME:VALUE, got: {$header}\n");
@@ -389,6 +412,26 @@ try {
 }
 
 $request = Request::create($url, $method, [], [], [], $server, $body);
+
+// A .php URL other than the front controller is the case this check gets
+// wrong by default: here it matches the path as typed, while a site serving
+// that file directly matches "/" (#414). On stderr, so --json stays parseable.
+$urlPath = (string) parse_url($url, PHP_URL_PATH);
+
+if ($scriptName === null
+    && ($loadedGlobal['path_source'] ?? RequestPath::PATHINFO) !== RequestPath::SCRIPT_NAME
+    && str_ends_with(strtolower($urlPath), '.php')
+    && strtolower(basename($urlPath)) !== 'index.php'
+) {
+    fwrite(STDERR, sprintf(
+        "Note: %s is a PHP file. If the web server runs it directly, as WordPress runs\n"
+        . "      wp-login.php, the firewall on the site matches it as \"/\" under the default\n"
+        . "      global.path_source, not as the path checked here. Add --script-name=%s to\n"
+        . "      check what the site sees, or set path_source: script_name.\n",
+        $urlPath,
+        $urlPath,
+    ));
+}
 
 $verdict = 'allowed';
 $status = null;
@@ -577,7 +620,9 @@ $result = [
     'request' => [
         'ip' => $ip,
         'method' => $request->getMethod(),
-        'path' => $request->getPathInfo(),
+        // The path the rules were matched against, which is not always the
+        // URL's: see path_source (#414).
+        'path' => RequestPath::of($request),
         'query' => $request->getQueryString(),
     ],
     'storage' => $liveStorage ? 'configured backend' : 'throwaway (in-memory)',
@@ -623,6 +668,12 @@ if (isset($options['json'])) {
 
     printf("%s  %s %s\n", $label, $request->getMethod(), $url);
     printf("  client            %s\n", $ip);
+
+    // Only when it differs from what was typed, which is exactly when it
+    // explains a surprising verdict.
+    if (RequestPath::of($request) !== (string) parse_url($url, PHP_URL_PATH)) {
+        printf("  matched as path   %s\n", RequestPath::of($request));
+    }
 
     if ($plugin !== null) {
         printf("  %-17s %s\n", $pluginRole ?? 'matched plugin', $plugin);
