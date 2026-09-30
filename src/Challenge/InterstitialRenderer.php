@@ -179,17 +179,32 @@ final class InterstitialRenderer
       var headerName = {$headerNameJs};
       var redirectTo = {$redirectToJs};
 
+      // One submission at a time. A double click, or Enter then a click,
+      // would otherwise post the same single-use solution twice: the first
+      // mints the pass, the second is refused, and its failure handling races
+      // the successful redirect (#417).
+      var inFlight = false;
+
       function fail() {
+        inFlight = false;
+        // Re-enabled before the provider's own failure handling, so a provider
+        // that needs a fresh token first can disable it again.
+        submit.disabled = false;
         err.classList.add('visible');
 {$submitFailure}
       }
 {$extraScript}
       form.addEventListener('submit', function (event) {
         event.preventDefault();
+        if (inFlight) {
+          return;
+        }
         err.classList.remove('visible');
 
         var data = new FormData(form);
 {$submitGuard}
+        inFlight = true;
+        submit.disabled = true;
         fetch(form.action, {
           method: 'POST',
           body: data,

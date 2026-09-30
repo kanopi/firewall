@@ -186,9 +186,13 @@ final class SingleUseRecoveryTest extends AbstractTestCase
         $found = preg_match('/function fail\(\) \{(.*?)\n      \}/s', $html, $matches);
         $this->assertSame(1, $found, 'no fail() handler in the rendered interstitial');
 
-        $body = str_replace(self::SHARED_FAIL_LINE, '', $matches[1]);
+        // The provider's own failure handling is injected after the shared
+        // line, and the lines before it are shared too: the in-flight guard
+        // resets there (#417). So what follows that line is the provider's.
+        $parts = explode(self::SHARED_FAIL_LINE, $matches[1], 2);
+        $this->assertCount(2, $parts, 'fail() no longer reveals the error message');
 
-        return trim($body);
+        return trim($parts[1]);
     }
 
     private function render(string $name): string

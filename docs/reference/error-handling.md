@@ -212,6 +212,7 @@ use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Firewall;
+use Kanopi\Firewall\Utility\NoStore;
 
 // Same secret as challenge.secret in your YAML.
 $provider = new MathChallengeProvider(new TokenManager($_ENV['FIREWALL_SECRET']));
@@ -220,7 +221,7 @@ try {
     Firewall::create([__DIR__ . '/firewall.yml'])->evaluate($request);
 } catch (ChallengeSolvedException $e) {
     // Visitor answered correctly. Issue the pass token and send them on.
-    $response = new RedirectResponse($e->getRedirect());
+    $response = new RedirectResponse($e->getRedirect(), 302, NoStore::HEADERS);
     $response->headers->setCookie(
         Cookie::create('fw_challenge_pass', $e->getToken())
             ->withHttpOnly(true)
@@ -235,12 +236,20 @@ try {
     // this cannot be assembled wrongly — see the warning below.
     return new Response($e->renderInterstitial($request), 200, [
         'Content-Type' => 'text/html; charset=utf-8',
-        'Cache-Control' => 'no-store',
-    ]);
+    ] + NoStore::HEADERS);
 } catch (FirewallBlockedException $e) {
-    return new Response($e->getMessage(), $e->getStatusCode());
+    return new Response($e->getMessage(), $e->getStatusCode(), NoStore::HEADERS);
 }
 ```
+
+!!! warning "Send `NoStore::HEADERS` on every response the firewall decides"
+
+    Each of these responses is a decision about one visitor, so a cache must never serve it
+    to anyone else. `Cache-Control: no-store` on its own isn't enough: some CDNs, including
+    Pantheon's Global CDN, cache a response that carries only that. A cached interstitial
+    gives every visitor the same single-use challenge, so everyone after the first solver is
+    refused, in a loop. `Kanopi\Firewall\Utility\NoStore::HEADERS` is the set the firewall
+    sends itself in `mode: block`.
 
 !!! danger "Do not assemble the render context by hand"
 

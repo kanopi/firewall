@@ -39,9 +39,8 @@ use Symfony\Component\HttpFoundation\Request;
  *     $firewall->evaluate($request);
  * } catch (ChallengeRequiredException $e) {
  *     return new Response($e->renderInterstitial($request), 200, [
- *         'Content-Type'  => 'text/html; charset=utf-8',
- *         'Cache-Control' => 'no-store',
- *     ]);
+ *         'Content-Type' => 'text/html; charset=utf-8',
+ *     ] + NoStore::HEADERS);
  * }
  * ```
  *
