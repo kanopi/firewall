@@ -71,7 +71,9 @@ final class RequestPath
     {
         $path = $request->attributes->get(self::ATTRIBUTE);
 
-        return is_string($path) ? $path : $request->getPathInfo();
+        // Normalised here too, so a plugin evaluated on its own sees the same
+        // path the firewall would have given it.
+        return is_string($path) ? $path : self::normalise($request->getPathInfo());
     }
 
     /**
@@ -209,8 +211,14 @@ final class RequestPath
      *   other percent-encoding keeps its meaning, with its hex digits upper-cased. `%2F`
      *   stays `%2F`: decoding it would change where the segments are;
      * - `;params` are dropped from each segment;
-     * - repeated slashes are collapsed;
-     * - `.` and `..` segments are resolved, never above the root.
+     * - repeated slashes are collapsed, and `.` segments removed.
+     *
+     * **`..` is not resolved.** Resolving it removes the segment before it, so it can make
+     * the path the rules see *shorter* than the one the application routes:
+     * `/wp-json/wp/v2/x/../../../../y` would be `/y` to the rules and still the REST API to
+     * WordPress, which routes on the raw path. Every step above can only remove an empty or
+     * `.` segment, so a path that began with a segment still begins with it, and a rule on
+     * that prefix still matches.
      *
      * A trailing slash is kept, because `/wp-admin` and `/wp-admin/` are different rules.
      *
@@ -239,11 +247,15 @@ final class RequestPath
 
         foreach (explode('/', $path) as $segment) {
             $segment = explode(';', $segment, 2)[0];
-            $directory = in_array($segment, ['', '.', '..'], true);
+            $directory = in_array($segment, ['', '.'], true);
 
-            if ($segment === '..') {
-                array_pop($segments);
-            } elseif (!$directory) {
+            // `..` is kept as written, never resolved. Resolving it deletes the
+            // segment before it, and the application routes on the raw path:
+            // WordPress hands /wp-json/a/b/../../x to the REST API, while a
+            // resolved /x would walk past every rule on /wp-json/. Every other
+            // step here only drops an empty or `.` segment, so a path that
+            // began with a segment still begins with it.
+            if (!$directory) {
                 $segments[] = $segment;
             }
         }

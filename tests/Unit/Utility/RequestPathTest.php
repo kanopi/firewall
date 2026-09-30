@@ -251,8 +251,8 @@ class RequestPathTest extends TestCase
     }
 
     /**
-     * Until the firewall attaches a path, of() is getPathInfo(), so a plugin evaluated on
-     * its own behaves exactly as it did before the key existed.
+     * Until the firewall attaches a path, of() is getPathInfo(), normalised, so a plugin
+     * evaluated on its own sees the path the firewall would have given it.
      */
     public function testOfFallsBackToPathinfo(): void
     {
@@ -314,8 +314,15 @@ class RequestPathTest extends TestCase
             'a dot segment' => ['/./wp-json/wp/v2/users', '/wp-json/wp/v2/users'],
             'a doubled slash' => ['//wp-json/wp/v2/users', '/wp-json/wp/v2/users'],
             'slashes inside' => ['/a//b///c', '/a/b/c'],
-            'a dot-dot segment' => ['/x/../wp-json/wp/v2/users', '/wp-json/wp/v2/users'],
-            'dot-dot never climbs above the root' => ['/../../etc/passwd', '/etc/passwd'],
+            // `..` is kept as written: the application routes on the raw path,
+            // so resolving it would show the rules a shorter path than the one
+            // served. These three reached the REST API while resolving to `/x`
+            // or `/`.
+            'dot-dot is kept' => ['/x/../wp-json/wp/v2/users', '/x/../wp-json/wp/v2/users'],
+            'dot-dot cannot remove the prefix' => ['/wp-json/wp/v2/global-styles/themes/../../../../../x', '/wp-json/wp/v2/global-styles/themes/../../../../../x'],
+            'dot-dot with parameters' => ['/wp-json/x/..;/..;/', '/wp-json/x/../../'],
+            'encoded dot-dot' => ['/wp-json/%2e%2e/', '/wp-json/../'],
+            'an encoded dot is removed like a dot' => ['/%2e/wp-json/x', '/wp-json/x'],
             'encoded unreserved' => ['/%77p-json/wp/v2/users', '/wp-json/wp/v2/users'],
             'encoded tilde' => ['/%7Euser', '/~user'],
             'encoded slash keeps its meaning' => ['/a%2Fb', '/a%2Fb'],
@@ -326,7 +333,7 @@ class RequestPathTest extends TestCase
             'a parameter mid-path' => ['/wp-json;x/wp/v2/users', '/wp-json/wp/v2/users'],
             'the trailing slash is kept' => ['/wp-admin/', '/wp-admin/'],
             'and its absence' => ['/wp-admin', '/wp-admin'],
-            'ending on dot-dot names a directory' => ['/a/b/..', '/a/'],
+            'ending on dot-dot is kept' => ['/a/b/..', '/a/b/..'],
             'ending on dot names a directory' => ['/a/b/.', '/a/b/'],
             'the root' => ['/', '/'],
             'only slashes' => ['///', '/'],

@@ -434,13 +434,19 @@ server normalises a URL before routing it (#425):
 | Request | Matched as |
 |---|---|
 | `//wp-json/wp/v2/users` | `/wp-json/wp/v2/users` |
-| `/./wp-json/…`, `/x/../wp-json/…` | `/wp-json/…` |
+| `/./wp-json/…`, `/%2e/wp-json/…` | `/wp-json/…` |
 | `/%77p-json/…` | `/wp-json/…` |
 | `/user/login;jsessionid=1` | `/user/login` |
+| `/wp-json/a/../../x` | `/wp-json/a/../../x` (`..` is **not** resolved) |
 
 - Percent-encoded **unreserved** characters (`A-Z a-z 0-9 - . _ ~`) are decoded. Other
   encodings keep their meaning, upper-cased: `%2F` stays `%2F`, because decoding it would
   move a segment boundary.
+- **`..` is kept as written.** The application routes on the raw path: WordPress still
+  hands `/wp-json/a/../../x` to the REST API. Resolving the dots would show the rules `/x`,
+  a way past every rule on `/wp-json/`. Every other step only removes an empty or `.`
+  segment, so a path that begins with `/wp-json/` still does, and a rule on it still
+  matches.
 - A trailing slash is kept, so `/wp-admin` and `/wp-admin/` are still different paths.
 - The normalised path is also what logs and block records show.
 

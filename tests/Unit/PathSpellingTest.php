@@ -64,7 +64,7 @@ class PathSpellingTest extends AbstractTestCase
             'as written' => ['/wp-json/wp/v2/users'],
             'a doubled slash' => ['//wp-json/wp/v2/users'],
             'a dot segment' => ['/./wp-json/wp/v2/users'],
-            'a dot-dot segment' => ['/x/../wp-json/wp/v2/users'],
+            'an encoded dot segment' => ['/%2e/wp-json/wp/v2/users'],
             'percent-encoded' => ['/%77p-json/wp/v2/users'],
             'a segment parameter' => ['/wp-json;x/wp/v2/users'],
         ];
@@ -109,5 +109,32 @@ class PathSpellingTest extends AbstractTestCase
     public function testAPublicPageIsServed(): void
     {
         $this->assertTrue($this->firewall([])->evaluate($this->throughIndex('/2026/09/a-post/')));
+    }
+
+    /**
+     * Dot-dot segments cannot walk a path out of the rule that covers it.
+     *
+     * WordPress routes on the raw path, so `/wp-json/<n segments>/..×n/x` is still the
+     * REST API to it. An earlier version of this change resolved the dots, and the rules
+     * saw `/x` -- a way past `path@starts_with:/wp-json/` that the raw path never had.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function dotDotWalks(): array
+    {
+        return [
+            'past every segment' => ['/wp-json/wp/v2/global-styles/themes/../../../../../x'],
+            'with parameters' => ['/wp-json/x/..;/..;/'],
+            'encoded' => ['/wp-json/%2e%2e/'],
+            'mixed' => ['/wp-json/a/%2E%2e;x/../b'],
+        ];
+    }
+
+    #[DataProvider('dotDotWalks')]
+    public function testDotDotCannotWalkOutOfARule(string $uri): void
+    {
+        foreach (['pathinfo', 'script_name'] as $source) {
+            $this->assertTrue($this->refuses($this->firewall([], $source), $this->throughIndex($uri)), $source);
+        }
     }
 }
