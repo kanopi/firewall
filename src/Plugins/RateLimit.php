@@ -351,7 +351,12 @@ class RateLimit extends AbstractPluginBase
         // `query` to NULL, so there is nothing here to guard against. An
         // `is_array()` branch would be unreachable, and unreachable defensive
         // code is a claim about behaviour that nothing checks.
-        return is_scalar($value) ? (string) $value : '';
+        $value = is_scalar($value) ? (string) $value : '';
+
+        // Case-insensitive, like the path patterns, so /WP-LOGIN.PHP on a
+        // case-insensitive filesystem is the same budget as /wp-login.php
+        // (#426). A lower-case path hashes exactly as it did before.
+        return $component === 'path' ? strtolower($value) : $value;
     }
 
     /**
@@ -506,6 +511,11 @@ class RateLimit extends AbstractPluginBase
     /**
      * Convert a wildcard path (e.g. "/example/*") to a regex.
      *
+     * Case-insensitive, as Url's path conditions already are (#426). On a case-insensitive
+     * filesystem `/WP-LOGIN.PHP` runs `wp-login.php`, and a case-sensitive pattern gave it
+     * a budget of its own. A pattern written as a regex keeps its own flags: whoever wrote
+     * the delimiters chose them.
+     *
      * @param string $pattern
      *   The string to check against.
      *
@@ -523,7 +533,7 @@ class RateLimit extends AbstractPluginBase
         $escaped = preg_quote($pattern, '/');
         $regex = str_replace('\*', '.*', $escaped);
 
-        return '/^' . $regex . '$/';
+        return '/^' . $regex . '$/i';
     }
 
     /**

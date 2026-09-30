@@ -245,3 +245,8 @@ this is a separate key rather than a special value for `default_rate`. A rate th
 - Exact match: `/login`
 - Wildcard: `/api/*` (matches /api/users, /api/posts/123, etc.)
 - Regex: `/^\/api\/v[0-9]+\//` (matches /api/v1/, /api/v2/, etc.)
+
+Exact and wildcard patterns **ignore case**, as a URL rule's `path` conditions do, so
+`/wp-login.php` also limits `/WP-LOGIN.PHP`. On a case-insensitive filesystem both run the
+same file. A key that counts by the request `path` counts them as one path too. A regex
+keeps the flags you give it: add `i` to make it ignore case.
