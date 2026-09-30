@@ -339,4 +339,30 @@ class DirectFileRequestTest extends AbstractTestCase
         $this->assertSame('/wp-login.php', $record['request']['path']);
         $this->assertSame('http://example.com/wp-login.php?redirect_to=x', $record['request']['uri']);
     }
+
+    /**
+     * The log names the URL the client asked for, as the block record does (#419).
+     *
+     * It used getUri(), which joins the base URL and the path info. For a file served
+     * directly those are the file and `/`, so the log said `/wp-login.php/?...` beside a
+     * block record that, since 2.34.0, said `/wp-login.php?...`.
+     */
+    public function testTheLogAndTheBlockRecordAgreeOnTheUrl(): void
+    {
+        $handler = new TestHandler(Level::Debug);
+        $firewall = $this->firewall(['wordpress.yml'], ['path_source' => 'script_name'], [], $handler);
+        $request = $this->direct('/wp-login.php?redirect_to=x', '/wp-login.php');
+
+        $this->assertTrue($this->refuses($firewall, $request));
+
+        $urls = array_values(array_unique(array_filter(array_map(
+            static fn($record): mixed => $record->context['url'] ?? null,
+            $handler->getRecords()
+        ))));
+
+        $this->assertSame(['http://example.com/wp-login.php?redirect_to=x'], $urls);
+
+        $storage = (new \ReflectionProperty($firewall, 'storage'))->getValue($firewall);
+        $this->assertSame($urls[0], $storage->isBlocked($storage->getKey($request))['request']['uri']);
+    }
 }

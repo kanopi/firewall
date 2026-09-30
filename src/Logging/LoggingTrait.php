@@ -65,7 +65,9 @@ trait LoggingTrait
             'method' => $request->getMethod(),
             'user_agent' => $request->headers->get('User-Agent') ?: 'unknown',
             'query_params' => $request->query->all(),
-            'url' => $request->getUri(),
+            // Not getUri(), which names a directly served file as
+            // /wp-login.php/ (#419).
+            'url' => RequestPath::url($request),
         ];
     }
 

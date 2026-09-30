@@ -267,4 +267,26 @@ class RequestPathTest extends TestCase
         RequestPath::attach($request, RequestPath::PATHINFO);
         $this->assertSame('/', RequestPath::of($request));
     }
+
+    /**
+     * The requested URL, never getUri()'s join of base URL and path info (#419).
+     */
+    public function testUrlIsTheRequestedUrl(): void
+    {
+        $direct = new Request(['a' => '1'], [], [], [], [], [
+            'REQUEST_URI' => '/wp-login.php?a=1',
+            'QUERY_STRING' => 'a=1',
+            'SCRIPT_NAME' => '/wp-login.php',
+            'PHP_SELF' => '/wp-login.php',
+            'SCRIPT_FILENAME' => '/var/www/html/wp-login.php',
+            'HTTP_HOST' => 'example.com',
+        ]);
+
+        $this->assertSame('http://example.com/wp-login.php/?a=1', $direct->getUri(), 'The bug, for reference.');
+        $this->assertSame('http://example.com/wp-login.php?a=1', RequestPath::url($direct));
+        $this->assertSame('http://example.com/wp-login.php', RequestPath::urlWithoutQuery($direct));
+
+        $front = Request::create('http://example.com/learning/');
+        $this->assertSame($front->getUri(), RequestPath::url($front), 'Through a front controller the two agree.');
+    }
 }
