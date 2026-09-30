@@ -71,7 +71,9 @@ final class RequestPath
     {
         $path = $request->attributes->get(self::ATTRIBUTE);
 
-        return is_string($path) ? $path : $request->getPathInfo();
+        // Normalised here too, so a plugin evaluated on its own sees the same
+        // path the firewall would have given it.
+        return is_string($path) ? $path : self::normalise($request->getPathInfo());
     }
 
     /**
@@ -106,6 +108,24 @@ final class RequestPath
      *   The path, starting with `/`.
      */
     public static function resolve(Request $request, string $source, string $basePath = ''): string
+    {
+        return self::normalise(self::unnormalised($request, $source, $basePath));
+    }
+
+    /**
+     * The path as the source gives it, before normalise().
+     *
+     * @param Request $request
+     *   The request.
+     * @param string $source
+     *   A valid `path_source`.
+     * @param string $basePath
+     *   A normalised `base_path`.
+     *
+     * @return string
+     *   The path.
+     */
+    private static function unnormalised(Request $request, string $source, string $basePath): string
     {
         if ($source !== self::SCRIPT_NAME) {
             return $request->getPathInfo();
@@ -174,6 +194,77 @@ final class RequestPath
         $query = $request->getQueryString();
 
         return self::urlWithoutQuery($request) . ($query === null ? '' : '?' . $query);
+    }
+
+    /**
+     * Put a path in the one spelling every rule is written against (#425).
+     *
+     * `getPathInfo()` comes from the raw request URI, and the web server normalises the URL
+     * before it routes to the front controller, so different spellings of one route reach
+     * the rules with different paths. `//wp-json/wp/v2/users` is served by WordPress as the
+     * REST route -- `WP::parse_request()` trims every leading slash -- while missing a rule
+     * on `path@starts_with:/wp-json/`. The same goes for `/./wp-json`, `/x/../wp-json` and
+     * `/%77p-json` wherever the application accepts them. So, the way RFC 3986 and the
+     * servers do it:
+     *
+     * - percent-encoded unreserved characters (`A-Z a-z 0-9 - . _ ~`) are decoded, and any
+     *   other percent-encoding keeps its meaning, with its hex digits upper-cased. `%2F`
+     *   stays `%2F`: decoding it would change where the segments are;
+     * - `;params` are dropped from each segment;
+     * - repeated slashes are collapsed, and `.` segments removed.
+     *
+     * **`..` is not resolved.** Resolving it removes the segment before it, so it can make
+     * the path the rules see *shorter* than the one the application routes:
+     * `/wp-json/wp/v2/x/../../../../y` would be `/y` to the rules and still the REST API to
+     * WordPress, which routes on the raw path. Every step above can only remove an empty or
+     * `.` segment, so a path that began with a segment still begins with it, and a rule on
+     * that prefix still matches.
+     *
+     * A trailing slash is kept, because `/wp-admin` and `/wp-admin/` are different rules.
+     *
+     * @param string $path
+     *   A path starting with `/`.
+     *
+     * @return string
+     *   The same path in its one spelling.
+     */
+    public static function normalise(string $path): string
+    {
+        $path = (string) preg_replace_callback(
+            '/%([0-9A-Fa-f]{2})/',
+            static function (array $match): string {
+                $char = chr((int) hexdec($match[1]));
+
+                return preg_match('/^[A-Za-z0-9\-._~]$/', $char) === 1 ? $char : '%' . strtoupper($match[1]);
+            },
+            $path
+        );
+
+        $segments = [];
+        // Whether the path ends by naming a directory: a trailing slash, or a
+        // last segment of `.` or `..`.
+        $directory = false;
+
+        foreach (explode('/', $path) as $segment) {
+            $segment = explode(';', $segment, 2)[0];
+            $directory = in_array($segment, ['', '.'], true);
+
+            // `..` is kept as written, never resolved. Resolving it deletes the
+            // segment before it, and the application routes on the raw path:
+            // WordPress hands /wp-json/a/b/../../x to the REST API, while a
+            // resolved /x would walk past every rule on /wp-json/. Every other
+            // step here only drops an empty or `.` segment, so a path that
+            // began with a segment still begins with it.
+            if (!$directory) {
+                $segments[] = $segment;
+            }
+        }
+
+        if ($segments === []) {
+            return '/';
+        }
+
+        return '/' . implode('/', $segments) . ($directory ? '/' : '');
     }
 
     /**
