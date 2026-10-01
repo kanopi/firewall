@@ -469,7 +469,58 @@ trait EvaluateTrait
             $value = array_map(strtolower(...), $value);
         }
 
-        $result = match ($operator) {
+        // A number from the request against a number written as text (#443).
+        //
+        // `port`, `query_count`, `asn` and GeoLocation's database fields resolve
+        // to an int or float, and every rule value arrives as a string -- from
+        // YAML, or from a rule source's `{value}`, substituted after the config
+        // is built. Compared strictly, `port:8443` never matched port 8443, and
+        // `not_equals` matched every request: a block rule on
+        // `query_count.f@not_equals:0` refused everyone. Only when the request
+        // value is already a number: two strings stay strict, so `01` is still
+        // not `1` on a text variable. `in` arrives here as one `equals` per
+        // value, so it is covered too.
+        $numeric = ($operator === 'equals' || $operator === 'not_equals')
+            && (is_int($requestValue) || is_float($requestValue))
+            && is_string($value)
+            && is_numeric(trim($value));
+
+        $same = $numeric && (float) $requestValue === (float) trim((string) $value);
+
+        $result = match (true) {
+            $numeric && $operator === 'equals' => $same,
+            $numeric => !$same,
+            default => $this->compareStrictly($requestValue, $operator, $value),
+        };
+
+        $shouldRedact = $variable !== null && LoggingFactory::shouldRedactVariable($variable);
+        $loggedValue = $shouldRedact ? '[REDACTED]' : $requestValue;
+
+        $this->getLogger()->debug('Comparison matched', [
+            'operator' => $operator,
+            'request_value' => $loggedValue,
+            'case_sensitive' => $caseSensitive,
+        ]);
+
+        return $result;
+    }
+
+    /**
+     * The comparison itself, once both sides are in the form the operator expects.
+     *
+     * @param mixed $requestValue
+     *   The value from the request.
+     * @param string $operator
+     *   The operator.
+     * @param mixed $value
+     *   The rule's value.
+     *
+     * @return bool
+     *   Whether it matches.
+     */
+    private function compareStrictly(mixed $requestValue, string $operator, mixed $value): bool
+    {
+        return match ($operator) {
             'equals' => $requestValue === $value,
             'not_equals' => $requestValue !== $value,
             // Resolution returns NULL for a variable the request does not
@@ -487,17 +538,6 @@ trait EvaluateTrait
             'less_than_or_equal' => is_numeric($requestValue) && is_numeric($value) && $requestValue <= $value,
             default => false,
         };
-
-        $shouldRedact = $variable !== null && LoggingFactory::shouldRedactVariable($variable);
-        $loggedValue = $shouldRedact ? '[REDACTED]' : $requestValue;
-
-        $this->getLogger()->debug('Comparison matched', [
-            'operator' => $operator,
-            'request_value' => $loggedValue,
-            'case_sensitive' => $caseSensitive,
-        ]);
-
-        return $result;
     }
 
     /**
