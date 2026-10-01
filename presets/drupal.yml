@@ -147,3 +147,22 @@ plugins:
       - path@starts_with:/core/tests/
       - path@ends_with:/phpunit.xml
       - path@ends_with:/phpunit.xml.dist
+
+# =====================================================================
+# Optional: Facet Crawling (#440)
+#
+# Bots walk search pages through every facet combination, each one an
+# uncacheable search. Off by default, because the right threshold and
+# path are site-specific. Uncomment, adjust, and see the "Stop facet
+# crawling" recipe. `challenge` needs `challenge.secret` set.
+# =====================================================================
+#  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+#    response: challenge
+#    enable: true
+#    metadata:
+#      name: facet-crawling
+#    config:
+#      - type: AND
+#        rules:
+#          - "path@starts_with:/search"
+#          - "query_count.f@greater_than:3"

@@ -11,6 +11,10 @@ This project follows [Semantic Versioning](https://semver.org/). A patch release
 fixes with no new configuration keys and no changed semantics for a value that already
 works; anything needing a new key waits for a minor.
 
+## [2.36.0](https://github.com/kanopi/firewall/releases/tag/v2.36.0) — 2026-09-30
+
+`query_count.<name>` is how many values the client sent for one query parameter, so a rule can cap facet crawling: `query_count.f@greater_than:3`. Bots walk search pages through every facet combination (`?f[0]=…&f[1]=…&f[2]=…&f[3]=…`), each one an uncacheable faceted search, and there was no rule a bot couldn't get past by changing how it wrote the URL. A list under `query.f` resolves to nothing by design, PHP keeps only the last of `f=a&f=b`, and the regex workaround missed sparse keys, repeated names and anything interleaved. The count is taken from the raw query string, so `f[0]=`, `f[]=`, sparse and named keys, encoded brackets and repeated `f=` all count the same. `query_count` alone counts every parameter. A "Stop facet crawling" recipe recommends `response: challenge`, since a `block` rule also bans the address, and `presets/drupal.yml` carries a commented-out entry for Search API facets.
+
 ## [2.35.1](https://github.com/kanopi/firewall/releases/tag/v2.35.1) — 2026-09-30
 
 Two holes in the rate-limit lint that 2.35.0 added, both found in review. An earlier entry that *covers* a later one hid it without a word, as long as the two paths weren't identical. That meant a wildcard (`/log*` before `/login`) or, since paths now ignore case, a case variant (`/login` before `/LOGIN`), and the linter then warned that the path was limited by identity but not by address, the reverse of what the firewall did. It's now reported as the unreachable entry, naming the one that takes the request. And a rule with `enable: false` counted as address coverage, so switching the address limit off silenced the very warning that said brute-force protection was gone. Lint only: nothing the firewall enforces changes.

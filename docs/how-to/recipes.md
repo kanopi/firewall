@@ -78,6 +78,41 @@ plugins:
 
 ---
 
+## Stop facet crawling
+
+Bots walk a search or listing page through every combination of facets:
+`?f[0]=type:article&f[1]=tag:a&f[2]=tag:b&f[3]=year:2026`. Each combination is an
+uncacheable faceted search. People rarely apply more than two or three, so cap it (#440):
+
+```yaml
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: challenge        # a person with five facets can solve it
+    enable: true
+    metadata:
+      name: facet-crawling
+    config:
+      - type: AND
+        rules:
+          - "path@starts_with:/search"
+          - "query_count.f@greater_than:3"
+```
+
+- **`query_count.f`** counts every way of sending a facet: `f[0]=`, `f[]=`, sparse or named
+  keys, encoded brackets, and repeated `f=`. A bot can't get under the cap by changing how it
+  writes the URL. Drupal's Search API facets are `f`; use your own parameter name otherwise.
+- **Prefer `challenge` to `block`.** A `block` rule also bans the address, so a person who
+  really did apply four facets would be shut out for the ban period. If you do use `block`,
+  set `metadata.record: false` so it refuses the request without banning.
+- **Pair it with a rate limit on the search path**, keyed on the address, for crawlers
+  that stay under the cap but request thousands of combinations.
+- **Facets packed into one value** (`filter_color=red,blue`, as WooCommerce does) are one
+  parameter. Match them with `query.filter_color@regex:` on the commas instead.
+
+[URL plugin: counting a parameter's values](../plugins/url.md#counting-a-parameters-values)
+
+---
+
 ## Catch a scanner with a honeypot
 
 A path no legitimate client has any reason to fetch. Anything that asks for one is written
