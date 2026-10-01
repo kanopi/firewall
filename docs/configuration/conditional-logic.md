@@ -48,6 +48,13 @@ Quick and readable syntax for common conditions:
 - `less_than_or_equal` (<=)
 - `exists`
 
+**Equality on a number compares as a number** (#443). `port`, `query_count`, `asn` and
+GeoLocation's database fields (`location.latitude`, `*.geoname_id`, …) resolve to numbers, and
+every value you write is text, so `equals`, `not_equals` and `in` read your value as a number
+for them: `port:8443`, `port@in:8443,9443` and `query_count.f@not_equals:0` mean what they say,
+and so does a `{value}` from a [rule source](sources.md). Text variables stay exact: `query.page:01`
+does not match `?page=1`.
+
 `exists` is the one operator that takes **no value** — it asks only whether the request
 carried the variable at all, so there is nothing after the operator name:
 

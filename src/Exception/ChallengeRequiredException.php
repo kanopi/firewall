@@ -66,9 +66,10 @@ class ChallengeRequiredException extends FirewallException
      * @param string $providerName
      *   The configured name of that provider — `math`, `recaptcha`, a class.
      *   This is what the pass token ends up scoped to.
-     * @param array<string, string> $renderContext
+     * @param array<string, mixed> $renderContext
      *   Exactly what `ChallengeProviderInterface::renderInterstitial()` expects,
-     *   `provider_token` included.
+     *   `provider_token` included. Typed as the interface types it: `notices`
+     *   is a list, not a string (#442).
      */
     public function __construct(
         string $message,
@@ -108,9 +109,16 @@ class ChallengeRequiredException extends FirewallException
     /**
      * Everything the interstitial needs, assembled by the firewall.
      *
-     * @return array<string, string>
+     * @return array<string, mixed>
      *   `submit_url`, `redirect_to`, `ttl`, `cookie_name`, `header_name` and
-     *   `provider_token`. Empty only when constructed without one.
+     *   `provider_token` as strings, and `notices` as a list of strings (#421).
+     *   Empty only when constructed without one.
+     *
+     *   Deliberately not a closed array shape. The context gains keys over time
+     *   -- `provider_token` in 2.26, `notices` in 2.35 -- and a closed shape
+     *   would turn each addition into a type error for every host reading it.
+     *   Declared `array<string, string>` until 2.36.1, which told static
+     *   analysis that `notices` was a string (#442).
      */
     public function getRenderContext(): array
     {

@@ -511,12 +511,17 @@ final class MemcachedStorageTest extends AbstractTestCase
         $storage = $this->storage();
         $this->memcached->put('firewall:offense:203.0.113.5', json_encode(['t' => range(1, MemcachedStorage::MAX_OFFENSES)]));
 
+        // Bracketed rather than compared with a later time(): on a slow run
+        // the clock can tick between the write and the assertion.
+        $before = time();
         $this->assertTrue($storage->recordOffense('203.0.113.5'));
+        $after = time();
 
         $moments = $this->document('firewall:offense:203.0.113.5')['t'];
         $this->assertCount(MemcachedStorage::MAX_OFFENSES, $moments);
         $this->assertSame(2, $moments[0], 'The oldest is the one dropped');
-        $this->assertSame(time(), end($moments));
+        $this->assertGreaterThanOrEqual($before, end($moments));
+        $this->assertLessThanOrEqual($after, end($moments));
     }
 
     public function testAFailedOffenseWriteIsReported(): void
@@ -1040,11 +1045,13 @@ final class MemcachedStorageTest extends AbstractTestCase
     public function testASecondLossExtendsTheFirst(): void
     {
         $storage = $this->storage();
-        $later = time() + 7200;
+        $now = time();
+        $later = $now + 7200;
+        $since = $now - 60;
         $this->memcached->put('firewall:index:meta', json_encode([
-            'started' => time(),
+            'started' => $now,
             'horizon' => $later,
-            'lost' => ['since' => time() - 60, 'until' => time() + 60, 'what' => 'index shard 1'],
+            'lost' => ['since' => $since, 'until' => $now + 60, 'what' => 'index shard 1'],
         ]));
 
         $shardLost = new \ReflectionMethod(MemcachedStorage::class, 'shardLost');
@@ -1052,7 +1059,7 @@ final class MemcachedStorageTest extends AbstractTestCase
 
         $lost = $this->document('firewall:index:meta')['lost'];
         $this->assertSame($later, $lost['until']);
-        $this->assertSame(time() - 60, $lost['since'], 'The loss began when the first one did');
+        $this->assertSame($since, $lost['since'], 'The loss began when the first one did');
 
         $meta = $this->document('firewall:index:meta');
         $meta['horizon'] = 0;
@@ -1081,10 +1088,13 @@ final class MemcachedStorageTest extends AbstractTestCase
 
         $this->assertNull($storage->enumerationGap(), 'The first loss has healed');
 
+        $before = time();
         (new \ReflectionMethod(MemcachedStorage::class, 'shardLost'))->invoke($storage, $meta, 2);
+        $after = time();
 
         $lost = $this->document('firewall:index:meta')['lost'];
-        $this->assertSame(time(), $lost['since']);
+        $this->assertGreaterThanOrEqual($before, $lost['since']);
+        $this->assertLessThanOrEqual($after, $lost['since']);
         $this->assertSame('index shard 2', $lost['what']);
     }
 
