@@ -97,6 +97,6 @@ class Url extends AbstractPluginBase
      */
     protected function knownRuleVariables(): array
     {
-        return ['method', 'host', 'path', 'query', 'scheme', 'port', 'post', 'header', 'cookie'];
+        return ['method', 'host', 'path', 'query', 'query_count', 'scheme', 'port', 'post', 'header', 'cookie'];
     }
 }
