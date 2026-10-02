@@ -94,6 +94,7 @@ final class MathChallengeProvider implements ChallengeProviderInterface
 
         return InterstitialRenderer::render([
             'notices' => InterstitialRenderer::notices($context),
+            'page' => ChallengePage::fromContext($context),
             'intro' => 'Please answer the question below to continue.',
             'extra_styles' => '    label { display: block; font-weight: 600; margin-bottom: 0.5rem; }'
                 . "\n" . '    input[type="text"] { width: 100%; padding: 0.6rem 0.75rem; font-size: 1rem; '

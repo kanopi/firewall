@@ -392,6 +392,7 @@ final class RecaptchaChallengeProvider implements ChallengeProviderInterface
 
         return InterstitialRenderer::render([
             'notices' => InterstitialRenderer::notices($context),
+            'page' => ChallengePage::fromContext($context),
             'intro' => $parts['intro'],
             'extra_styles' => $parts['extra_styles'],
             'extra_head' => $parts['extra_head'],

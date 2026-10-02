@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Diagnostics;
 
+use Kanopi\Firewall\Challenge\ChallengePage;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\Connections;
@@ -145,6 +146,10 @@ class ConfigLinter
         }
 
         foreach ($this->checkChallengeTtl($config, $plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkChallengePage($config) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -922,6 +927,34 @@ class ConfigLinter
         }
 
         return sprintf('bot_score %s %s', $operator, is_scalar($rule['value'] ?? null) ? (string) $rule['value'] : '?');
+    }
+
+    /**
+     * A `challenge.page` the firewall would refuse to start with (#451).
+     *
+     * The same checks `Firewall::create()` makes, reported one per line instead of as the
+     * first exception: an unknown key, text that is not text, a language tag of the wrong
+     * shape, CSS that would close its style block, a stylesheet that is not a path or an
+     * `https:` URL.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration, for its `challenge:` section.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkChallengePage(array $config): array
+    {
+        $challenge = is_array($config['challenge'] ?? null) ? $config['challenge'] : [];
+
+        return array_map(
+            static fn(string $problem): Diagnosis => Diagnosis::error(
+                '`challenge.page` cannot be used: ' . $problem,
+                'The firewall refuses to start with it while any rule uses `response: challenge`.',
+                'plugins/challenges.md#wording-language-and-styling'
+            ),
+            ChallengePage::problems($challenge['page'] ?? null)
+        );
     }
 
     /**

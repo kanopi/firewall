@@ -92,6 +92,14 @@ interface ChallengeProviderInterface
      *                      InterstitialRenderer::notices(); render() escapes
      *                      them, and a provider writing its own page must.
      *                      May be absent: providers are called by hosts too.
+     *     - page:          `challenge.page`: lang, title, heading, intro,
+     *                      button, error_message, styles, stylesheet
+     *                      (#451). Read it with
+     *                      ChallengePage::fromContext() and pass it to
+     *                      InterstitialRenderer::render(), which applies and
+     *                      escapes it. A provider writing its own page
+     *                      should honour what it can and escape the text.
+     *                      May be absent, or carry only some keys.
      *
      * @return string
      *   Complete HTML document.
