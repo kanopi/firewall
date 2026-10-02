@@ -283,6 +283,22 @@ HTML;
         $this->firewall($global, $metadata);
     }
 
+    /**
+     * A conflict inside one setting is that setting's problem, and is not reported a
+     * second time as a merged one.
+     */
+    public function testAConflictIsReportedOnce(): void
+    {
+        $template = '<html><body>{{page.message}}</body></html>';
+        $conflicting = ['template' => $template, 'styles' => 'p{}'];
+
+        $this->assertSame([], BlockPage::mergedProblems($conflicting, ['message' => 'x']));
+        $this->assertSame([], BlockPage::mergedProblems(['message' => 'x'], $conflicting));
+        $this->assertSame([], BlockPage::mergedProblems(true, ['styles' => 'p{}']));
+        $this->assertSame([], BlockPage::mergedProblems(['template' => $template], null));
+        $this->assertCount(1, BlockPage::mergedProblems(['template' => $template], ['styles' => 'p{}']));
+    }
+
     public function testATemplateWithoutTheMessageIsAllowed(): void
     {
         $this->assertSame([], BlockPage::problems(['template' => '<html><body>Go away.</body></html>']));
