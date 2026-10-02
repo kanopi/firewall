@@ -21,7 +21,7 @@ Every exception the library throws extends `Kanopi\Firewall\Exception\FirewallEx
 | `ConfigurationException` | During `Firewall::create()`: an empty `challenge.secret` while challenge plugins are configured, a `challenge.provider` that does not resolve to a `ChallengeProviderInterface`, or no trusted proxies when `require_trusted_proxies: true`. | Fail the deploy. This always signals operator error, never attacker input. |
 | `StorageException` | A `FileStorage` / `FileRateLimitStorage` path cannot be created, read, or written. | Fix permissions on the storage path. Thrown at construction, so it also surfaces from `create()`. |
 | `StorageConnectionException` | A `DatabaseStorage` / `DatabaseRateLimitStorage` cannot build its connection, create its schema manager, or reach the database. Carries the redacted target (`driver=… host=… dbname=…`) and the driver exception as `previous`. | Fix the credentials or reachability. Thrown at construction, so `DatabaseStorage` surfaces from `create()`; rate-limit storage is built lazily and surfaces on the first evaluated request. |
-| `FirewallBlockedException` | `mode: exception` only — a `block` plugin matched. Carries `getStatusCode()` and the interpolated banning message. | Render your framework's error response with that status code. |
+| `FirewallBlockedException` | `mode: exception` only — a `block` plugin matched. Carries `getStatusCode()`, the body as its message (the interpolated banning message, a [block page](../configuration/global.md#block-and-lockdown-pages), or JSON), and that body's `getContentType()`. | Render your framework's error response with that status code. |
 | `ChallengeRequiredException` | `mode: exception` only — a `challenge` plugin matched and the visitor holds no valid pass token, **or** a posted solution was rejected. | Render the interstitial yourself, or return the status your API expects. |
 | `FirewallLockdownException` | `mode: exception` only — [lockdown](../configuration/global.md#lockdown) is active and the address is not in `lockdown_allow`. **Extends `FirewallBlockedException`**, so a host catching that already handles it; caught on its own it carries `getRetryAfter()`. | Return the status with a `Retry-After` header, so a monitor backs off instead of hammering. |
 | `FirewallRedirectException` | `mode: exception` only — a `redirect` rule matched. Carries `getLocation()` and `getStatusCode()`. The location is never built from the request, so it cannot become an open redirect. | Return your framework's redirect response. |
@@ -142,8 +142,11 @@ use Kanopi\Firewall\Firewall;
 try {
     Firewall::create([__DIR__ . '/firewall.yml'])->evaluate();
 } catch (FirewallBlockedException $e) {
-    // mode: exception — a plugin blocked the request. Render your own page.
-    return new Response($e->getMessage(), $e->getStatusCode());
+    // mode: exception — a plugin blocked the request. Send what the firewall
+    // would have sent, or render your own page.
+    return new Response($e->getMessage(), $e->getStatusCode(), [
+        'Content-Type' => $e->getContentType(),
+    ]);
 } catch (ConfigurationException $e) {
     // Startup validation failed. See "Fail open or fail closed?" below.
     $logger->critical('Firewall failed to start: ' . $e->getMessage());
@@ -241,7 +244,15 @@ try {
         'Content-Type' => 'text/html; charset=utf-8',
     ] + NoStore::HEADERS);
 } catch (FirewallBlockedException $e) {
-    return new Response($e->getMessage(), $e->getStatusCode(), NoStore::HEADERS);
+    $headers = ['Content-Type' => $e->getContentType()] + NoStore::HEADERS;
+
+    // A block or lockdown page has no script and posts nothing; send the
+    // policy the firewall sends with it in mode: block (#452).
+    if (str_starts_with($e->getContentType(), 'text/html')) {
+        $headers['Content-Security-Policy'] = \Kanopi\Firewall\Page\BlockPage::CONTENT_SECURITY_POLICY;
+    }
+
+    return new Response($e->getMessage(), $e->getStatusCode(), $headers);
 }
 ```
 

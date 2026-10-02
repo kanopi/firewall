@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Diagnostics;
 
 use Kanopi\Firewall\Challenge\ChallengePage;
+use Kanopi\Firewall\Page\BlockPage;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\Connections;
@@ -102,6 +103,12 @@ class ConfigLinter
         }
 
         $plugins = $this->declaredPlugins($config);
+
+        // Before the rules, and whether or not there are any: a lockdown page
+        // is served with no rules at all (#452).
+        foreach ($this->checkRefusalPages($config, $plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
 
         if ($plugins === []) {
             $findings[] = Diagnosis::warning(
@@ -927,6 +934,48 @@ class ConfigLinter
         }
 
         return sprintf('bot_score %s %s', $operator, is_scalar($rule['value'] ?? null) ? (string) $rule['value'] : '?');
+    }
+
+    /**
+     * A block or lockdown page the firewall would refuse to start with (#452).
+     *
+     * `global.block_page`, `global.lockdown_page` and each rule's `metadata.block_page`,
+     * with the checks `Firewall::create()` makes, one finding per problem.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration.
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkRefusalPages(array $config, array $plugins): array
+    {
+        $global = is_array($config['global'] ?? null) ? $config['global'] : [];
+        $findings = [];
+
+        $settings = [
+            '`global.block_page`' => $global['block_page'] ?? null,
+            '`global.lockdown_page`' => $global['lockdown_page'] ?? null,
+        ];
+
+        foreach ($plugins as $plugin) {
+            $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+            $settings[sprintf('`metadata.block_page` on rule "%s"', $this->nameOf($plugin))] = $metadata['block_page'] ?? null;
+        }
+
+        foreach ($settings as $label => $declared) {
+            foreach (BlockPage::problems($declared) as $problem) {
+                $findings[] = Diagnosis::error(
+                    $label . ' cannot be used: ' . $problem,
+                    'The firewall refuses to start with it.',
+                    'configuration/global.md#block-and-lockdown-pages'
+                );
+            }
+        }
+
+        return $findings;
     }
 
     /**

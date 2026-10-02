@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Challenge;
 
+use Kanopi\Firewall\Page\PageRenderer;
+
 /**
  * Renders the shared challenge interstitial document.
  *
@@ -27,11 +29,23 @@ namespace Kanopi\Firewall\Challenge;
 final class InterstitialRenderer
 {
     /**
+     * The rules only the interstitial needs: its button, error line and notices.
+     */
+    private const STYLES = <<<'CSS'
+    button { width: 100%; padding: 0.65rem 1rem; font-size: 1rem; background: #1f6feb; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+    button:not(:disabled):hover { background: #1858c4; }
+    .error { color: #b42318; margin-top: 0.75rem; font-size: 0.9rem; display: none; }
+    .error.visible { display: block; }
+    .notices { margin: 0 0 1.25rem; }
+    .notice { margin: 0 0 0.5rem; padding: 0.6rem 0.75rem; background: #fff8e6; border-left: 3px solid #d4a017; color: #3d2e00; font-size: 0.9rem; }
+CSS;
+
+    /**
      * Escape a value for interpolation into HTML text or an attribute.
      */
     public static function escapeHtml(string|int $value): string
     {
-        return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        return PageRenderer::escapeHtml($value);
     }
 
     /**
@@ -147,21 +161,9 @@ final class InterstitialRenderer
         // they always were.
         $page = ChallengePage::fromContext(['page' => $parts['page'] ?? []]);
 
-        $lang = self::escapeHtml($page['lang'] ?? 'en');
-        $title = self::escapeHtml($page['title'] ?? 'Verification required');
-        $heading = self::escapeHtml($page['heading'] ?? 'Quick verification');
         $button = self::escapeHtml($page['button'] ?? 'Continue');
         $intro = isset($page['intro']) ? self::escapeHtml($page['intro']) : $parts['intro'];
         $errorMessage = isset($page['error_message']) ? self::escapeHtml($page['error_message']) : $parts['error_message'];
-
-        // Last, so the operator's rules win over the built-in ones and the
-        // provider's at equal specificity. Not escaped: CSS is not HTML, and
-        // ChallengePage has already refused the one thing that could close
-        // the block.
-        $extraStyles = $parts['extra_styles'] . (isset($page['styles']) ? "\n" . $page['styles'] : '');
-        $stylesheet = isset($page['stylesheet'])
-            ? "\n  <link rel=\"stylesheet\" href=\"" . self::escapeHtml($page['stylesheet']) . '">'
-            : '';
 
         $extraHead = $parts['extra_head'];
         $formFields = $parts['form_fields'];
@@ -203,32 +205,17 @@ final class InterstitialRenderer
             $notices = "\n    <div class=\"notices\" role=\"status\">" . $notices . "\n    </div>";
         }
 
-        return <<<HTML
-<!DOCTYPE html>
-<html lang="{$lang}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex, nofollow">
-  <title>{$title}</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f6f8; color: #1a1a1a; margin: 0; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
-    .card { background: #fff; padding: 2rem 2.5rem; border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); max-width: 28rem; width: 90%; }
-    h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
-    p { margin: 0 0 1.25rem; color: #555; }
-    button { width: 100%; padding: 0.65rem 1rem; font-size: 1rem; background: #1f6feb; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
-    button:not(:disabled):hover { background: #1858c4; }
-    .error { color: #b42318; margin-top: 0.75rem; font-size: 0.9rem; display: none; }
-    .error.visible { display: block; }
-    .notices { margin: 0 0 1.25rem; }
-    .notice { margin: 0 0 0.5rem; padding: 0.6rem 0.75rem; background: #fff8e6; border-left: 3px solid #d4a017; color: #3d2e00; font-size: 0.9rem; }
-{$extraStyles}
-  </style>{$stylesheet}
-{$extraHead}
-</head>
-<body>
-  <main class="card">
-    <h1>{$heading}</h1>
+        // The card, the heading, the stylesheet and `lang`/`title`/`heading`
+        // are the shared page's (#452), so the block page looks like this one
+        // and the operator's `styles` style both.
+        return PageRenderer::document([
+            'settings' => $page,
+            'title' => 'Verification required',
+            'heading' => 'Quick verification',
+            'page_styles' => self::STYLES,
+            'extra_styles' => $parts['extra_styles'],
+            'extra_head' => $extraHead,
+            'body' => <<<HTML
     <p>{$intro}</p>{$notices}
     <form id="challenge-form" method="post" action="{$submitUrl}">
 {$formFields}
@@ -237,7 +224,8 @@ final class InterstitialRenderer
       <button type="submit" id="submit"{$disabled}>{$button}</button>
       <div id="error" class="error" role="alert">{$errorMessage}</div>
     </form>
-  </main>
+HTML,
+            'after_main' => <<<HTML
   <script>
     (function () {
       var form = document.getElementById('challenge-form');
@@ -296,8 +284,7 @@ final class InterstitialRenderer
       });
     })();
   </script>
-</body>
-</html>
-HTML;
+HTML,
+        ]);
     }
 }

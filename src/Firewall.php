@@ -26,6 +26,7 @@ use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Exception\StorageException;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Page\BlockPage;
 use Kanopi\Firewall\Plugins\AbstractPluginBase;
 use Kanopi\Firewall\Plugins\PluginInterface;
 use Kanopi\Firewall\Plugins\PluginManager;
@@ -384,6 +385,10 @@ final class Firewall
 
         self::warnOnDuplicatePluginNames($declaredPlugins);
 
+        // Before the first request, so a typo in a page or CSS that would
+        // break out of its style block is found at deploy (#452).
+        self::checkRefusalPages($config['global'], $declaredPlugins);
+
         // Partition plugins by response type and sort by weight.
         $partitioned = PluginConfigNormalizer::partitionAndSort($declaredPlugins);
 
@@ -552,6 +557,46 @@ final class Firewall
             $challengeConfig,
             $challengeProviderRegistry,
         ];
+    }
+
+    /**
+     * Refuse to start with a block or lockdown page that cannot be used (#452).
+     *
+     * `global.block_page`, `global.lockdown_page`, and each rule's `metadata.block_page`
+     * and `metadata.banning_message`. Read off the config entries, as
+     * declaredChallengeProviders() does, so no plugin is built to ask.
+     *
+     * @param array<string, mixed> $global
+     *   The `global:` section.
+     * @param array<int, mixed> $declaredPlugins
+     *   The `plugins:` entries.
+     *
+     * @throws ConfigurationException
+     *   Naming the setting and every problem with it.
+     */
+    private static function checkRefusalPages(array $global, array $declaredPlugins): void
+    {
+        BlockPage::fromConfig('global.block_page', $global['block_page'] ?? null);
+        BlockPage::fromConfig('global.lockdown_page', $global['lockdown_page'] ?? null);
+
+        foreach ($declaredPlugins as $index => $declaredPlugin) {
+            $metadata = is_array($declaredPlugin) && is_array($declaredPlugin['metadata'] ?? null)
+                ? $declaredPlugin['metadata']
+                : [];
+
+            $name = is_string($metadata['name'] ?? null) ? $metadata['name'] : '#' . $index;
+
+            BlockPage::fromConfig(sprintf('rule "%s" metadata.block_page', $name), $metadata['block_page'] ?? null);
+
+            $message = $metadata['banning_message'] ?? null;
+            if ($message !== null && !is_string($message)) {
+                throw new ConfigurationException(sprintf(
+                    'rule "%s" metadata.banning_message must be text, not %s',
+                    $name,
+                    get_debug_type($message)
+                ));
+            }
+        }
     }
 
     /**
@@ -1247,13 +1292,6 @@ final class Firewall
             ? max(0, $this->config['lockdown_retry_after'])
             : 300;
 
-        $message = $this->interpolateTemplate(
-            is_string($this->config['lockdown_message'] ?? null)
-                ? $this->config['lockdown_message']
-                : 'This site is temporarily closed to visitors. Please try again shortly.',
-            $request
-        );
-
         // Warning, on every refused request. A lockdown is the loudest thing a
         // firewall can do and the easiest to forget, exactly like the panic
         // switch it is usually reached through (#207).
@@ -1271,16 +1309,31 @@ final class Firewall
 
         $this->announce(new RequestBlocked($request, null, $status));
 
+        $configuredMessage = is_string($this->config['lockdown_message'] ?? null) ? $this->config['lockdown_message'] : null;
+
+        // The same three forms as a block: JSON, `global.lockdown_page`, or the
+        // plain-text message (#452).
+        [$message, $contentType] = $this->refusal(
+            $request,
+            'lockdown',
+            $status,
+            $configuredMessage,
+            $configuredMessage ?? BlockPage::DEFAULTS['lockdown']['message'],
+            $this->config['lockdown_page'] ?? null,
+            null,
+            ['block.status' => $status],
+            $retryAfter
+        );
+
         if ($this->firewallMode === FirewallMode::Exception) {
-            throw new FirewallLockdownException($message, $status, $retryAfter);
+            throw new FirewallLockdownException($message, $status, $retryAfter, null, $contentType);
         }
 
         // @codeCoverageIgnoreStart
         http_response_code($status);
 
         if (!headers_sent()) {
-            header('Content-Type: text/plain; charset=utf-8');
-            header('X-Content-Type-Options: nosniff');
+            $this->sendRefusalHeaders($contentType);
             NoStore::send();
 
             if ($retryAfter > 0) {
@@ -1978,7 +2031,7 @@ final class Firewall
             // and calls exit() in every other one. Announcing afterwards would
             // announce nothing at all.
             $this->announce(new RequestBlocked($request, $plugin, $plugin->getStatusCode($request)));
-            $this->sendBlockingResponse($request, $plugin->getStatusCode($request));
+            $this->sendBlockingResponse($request, $plugin->getStatusCode($request), $plugin);
         }
 
         $this->getLogger()->debug('Request allowed', $this->getContext($request));
@@ -3150,7 +3203,7 @@ final class Firewall
      *   In `mode: exception`. Every other mode writes the status code and
      *   message to the response and exits.
      */
-    protected function sendBlockingResponse(Request $request, int $statusCode = 0): void
+    protected function sendBlockingResponse(Request $request, int $statusCode = 0, ?PluginInterface $plugin = null): void
     {
         // Check to see if status code is 0 and a global config is set.
         if ($statusCode === 0 && array_key_exists('banning_status_code', $this->config) && is_int($this->config['banning_status_code'])) {
@@ -3166,40 +3219,140 @@ final class Firewall
             'status_code' => $statusCode,
         ]));
 
-        // Replace variables in the custom message.
-        $banningMessage = $this->interpolateTemplate(
-            (
-                (
-                    array_key_exists('banning_message', $this->config) &&
-                    is_string($this->config['banning_message'])
-                ) ?
-                $this->config['banning_message'] :
-                "{{request.id}} Request Banned"
-            ),
-            $request
+        // The rule's own message and page first, then the global ones (#452).
+        // A rule not built on the base class has neither.
+        $ruleMessage = $plugin instanceof AbstractPluginBase ? $plugin->getBanningMessage() : null;
+        $globalMessage = is_string($this->config['banning_message'] ?? null) ? $this->config['banning_message'] : null;
+
+        [$body, $contentType] = $this->refusal(
+            $request,
+            'block',
+            $statusCode,
+            $ruleMessage ?? $globalMessage,
+            $ruleMessage ?? $globalMessage ?? '{{request.id}} Request Banned',
+            $this->config['block_page'] ?? null,
+            $plugin instanceof AbstractPluginBase ? $plugin->getBlockPage() : null,
+            [
+                'block.status' => $statusCode,
+                // Only where the operator writes it: it tells the client which
+                // rule refused it, which no default should.
+                'block.rule' => $plugin instanceof PluginInterface ? $plugin->getName() : '',
+            ]
         );
 
         if ($this->firewallMode === FirewallMode::Exception) {
-            throw new FirewallBlockedException($banningMessage, $statusCode);
+            throw new FirewallBlockedException($body, $statusCode, null, $contentType);
         }
 
         // @codeCoverageIgnoreStart
         http_response_code($statusCode);
-        // Force a non-HTML content type so any escaped placeholders that
-        // still slip into the body (e.g. attacker-supplied bytes inside a
-        // {{request.*}} substitution) cannot render as markup in the
-        // victim's browser. Belt-and-braces alongside the htmlspecialchars
-        // in interpolateTemplate().
+        // A non-HTML content type for the plain-text message, so any escaped
+        // placeholders that still slip into the body (e.g. attacker-supplied
+        // bytes inside a {{request.*}} substitution) cannot render as markup in
+        // the victim's browser. Belt-and-braces alongside the htmlspecialchars
+        // in interpolateTemplate(). The HTML page escapes its own text, and is
+        // sent with a policy that refuses script outright.
         if (!headers_sent()) {
-            header('Content-Type: text/plain; charset=utf-8');
-            header('X-Content-Type-Options: nosniff');
+            $this->sendRefusalHeaders($contentType);
             // A block is a decision about one client. It sent nothing about
             // caching before (#417).
             NoStore::send();
         }
 
-        exit($banningMessage);
+        exit($body);
         // @codeCoverageIgnoreEnd
+    }
+
+    /**
+     * The body and content type of a refusal: a page, JSON, or the plain-text message (#452).
+     *
+     * - **JSON** when `global.banning_json` is on and the client's first preference is
+     *   JSON, so an API client gets something it can parse.
+     * - **A page** when the rule or `global.block_page` / `global.lockdown_page` configures
+     *   one. Its text is the page's `title`, `heading` and `message`, falling back to the
+     *   configured plain-text message and then to the built-in wording, with placeholders
+     *   substituted and the whole escaped once.
+     * - **The plain-text message** otherwise, exactly as before.
+     *
+     * @param Request $request
+     *   The refused request.
+     * @param string $kind
+     *   `block` or `lockdown`.
+     * @param int $status
+     *   The status being sent.
+     * @param string|null $configuredMessage
+     *   The plain-text message the operator set, if any. A page uses it when it sets no
+     *   `message` of its own.
+     * @param string $textMessage
+     *   The plain-text message to send when there is no page: the configured one or the
+     *   built-in one.
+     * @param mixed $globalPage
+     *   `global.block_page` or `global.lockdown_page`.
+     * @param mixed $rulePage
+     *   The rule's `metadata.block_page`, merged over the global one.
+     * @param array<string, string|int> $placeholders
+     *   Extra `{{…}}` values: `block.status`, `block.rule`.
+     * @param int $retryAfter
+     *   Seconds until a lockdown may lift, for the JSON body; 0 for none.
+     *
+     * @return array{0: string, 1: string}
+     *   The body and its `Content-Type`.
+     */
+    private function refusal(
+        Request $request,
+        string $kind,
+        int $status,
+        ?string $configuredMessage,
+        string $textMessage,
+        mixed $globalPage,
+        mixed $rulePage,
+        array $placeholders,
+        int $retryAfter = 0
+    ): array {
+        $reference = (string) $request->attributes->get('x-request-id', '');
+
+        if (($this->config['banning_json'] ?? false) === true && BlockPage::prefersJson($request)) {
+            return [BlockPage::json($kind, $status, $reference, $retryAfter), 'application/json; charset=utf-8'];
+        }
+
+        $global = BlockPage::settings($globalPage);
+        $rule = BlockPage::settings($rulePage);
+
+        if ($global === null && $rule === null) {
+            return [$this->interpolateTemplate($textMessage, $request, $placeholders), 'text/plain; charset=utf-8'];
+        }
+
+        $settings = array_merge($global ?? [], $rule ?? []);
+        $defaults = BlockPage::DEFAULTS[$kind] ?? BlockPage::DEFAULTS['block'];
+
+        // Substituted unescaped and escaped once, by the page: escaping each
+        // substitution here as well would show a visitor `&amp;`.
+        $text = [];
+        foreach (BlockPage::TEXT_KEYS as $key) {
+            $template = $settings[$key] ?? ($key === 'message' ? $configuredMessage : null) ?? $defaults[$key];
+            $text[$key] = $this->interpolateTemplate($template, $request, $placeholders, false);
+        }
+
+        return [BlockPage::html($kind, $text, $settings), 'text/html; charset=utf-8'];
+    }
+
+    /**
+     * The headers a refusal is sent with, for its content type.
+     *
+     * @param string $contentType
+     *   What refusal() returned.
+     *
+     * @codeCoverageIgnore
+     *   Writes headers, which only a real response can observe.
+     */
+    private function sendRefusalHeaders(string $contentType): void
+    {
+        header('Content-Type: ' . $contentType);
+        header('X-Content-Type-Options: nosniff');
+
+        if (str_starts_with($contentType, 'text/html')) {
+            header('Content-Security-Policy: ' . BlockPage::CONTENT_SECURITY_POLICY);
+        }
     }
 
     /**
@@ -3226,21 +3379,25 @@ final class Firewall
      *   The current Symfony Request
      * @param  array   $context
      *   Optional extra key/value pairs to interpolate
+     * @param  bool    $escape
+     *   Whether to HTML-escape each substitution. FALSE only for text that is
+     *   escaped as a whole afterwards, as a block page's is (#452). CR and LF
+     *   are stripped either way.
      *
      * @return string
      *   The interpolated result
      */
-    protected function interpolateTemplate(string $template, Request $request, array $context = []): string
+    protected function interpolateTemplate(string $template, Request $request, array $context = [], bool $escape = true): string
     {
         // Values from the request (headers, query, post, cookies) are attacker-
         // controlled. The interpolated output is written verbatim to the HTTP
         // response by sendBlockingResponse(), so every substitution is HTML-
         // escaped and stripped of CR/LF to prevent reflected XSS and response-
         // splitting (CWE-79, CWE-113).
-        $sanitize = static function (mixed $value): string {
+        $sanitize = static function (mixed $value) use ($escape): string {
             $string = is_scalar($value) || $value === null ? (string) $value : '';
             $string = str_replace(["\r", "\n"], '', $string);
-            return htmlspecialchars($string, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            return $escape ? htmlspecialchars($string, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : $string;
         };
 
         return strval(preg_replace_callback(

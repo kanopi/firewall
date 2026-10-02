@@ -133,7 +133,7 @@ TokenSubstitute::enableUnsafeProcessors(['file'], ['/etc/firewall/secrets']);
 
 ```yaml
 global:
-  banning_message: '%env(file:BANNED_TEMPLATE_PATH)%'   # /etc/firewall/secrets/banned.html
+  banning_message: '%env(file:BANNED_TEMPLATE_PATH)%'   # /etc/firewall/secrets/banned.txt
 ```
 
 - **First argument** — processors to enable. Only `file` and `require` are valid; anything else throws `ConfigurationException`.
@@ -150,7 +150,7 @@ challenge:
   secret: '%file(/etc/firewall/hmac.key)%'
 
 global:
-  banning_message: '%file(/etc/firewall/banned.html)%'
+  banning_message: '%file(/etc/firewall/banned.txt)%'
 ```
 
 The token content is the whole path, so unlike the `file:` processor there is **no colon limitation** — `%file(/tmp/sec:rets/key.txt)%` works. There is also no environment variable involved, so nothing in the environment can redirect the read.
