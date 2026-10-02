@@ -171,6 +171,7 @@ anchor lacks. See [`%config(...)%`](environment-variables.md#config-reusing-a-va
 | `buffer_limit` | `0` | Flush early once this many records are held (`0` = at shutdown) |
 | `retention_days` | `0` | Delete rows older than this (`0` = keep forever) |
 | `prune_probability` | `0.01` | Chance per flush of running that delete |
+| `prune_batch_size` | `1000` | Rows that delete removes per statement |
 
 ### The columns
 
@@ -242,8 +243,15 @@ six months out. `retention_days` sets the window; there are two ways to enforce 
 chance that any given flush also runs the retention delete. On a site with traffic this
 keeps up on its own.
 
+A flush deletes **one batch** of `prune_batch_size` rows (default `1000`), never more. The
+first prune after rows start leaving the window can face the whole backlog: retention just
+switched on, `retention_days` lowered, or pruning off for a while. As one statement, 2.17M
+rows took 26 seconds on MariaDB, inside a request, holding locks on the table every other
+request was writing to. In batches, a backlog drains over later flushes instead, and the
+script below clears it in one sitting.
+
 **Scheduled, deterministic.** `bin/firewall-log-prune` does the same delete when you say
-so, and reports how many rows went:
+so, batch after batch until nothing is left, and reports how many rows went:
 
 ```bash
 vendor/bin/firewall-log-prune config/firewall.yml --dry-run
