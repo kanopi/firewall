@@ -503,7 +503,27 @@ class Config
      */
     private static function environmentFingerprint(): string
     {
-        return hash('xxh128', serialize(getenv()) . serialize($_SERVER));
+        // Only the stable part of the environment. Under a web SAPI both
+        // $_SERVER and getenv() -- which PHP-FPM fills with the FastCGI
+        // parameters -- carry per-request values: REQUEST_URI, QUERY_STRING,
+        // REQUEST_TIME_FLOAT, REMOTE_PORT, every HTTP_* header. Hashing them
+        // made every web request a cache miss, rewriting the entry and
+        // sweeping the directory on each one (#445).
+        $stable = static function (array $values): array {
+            $values = array_filter(
+                $values,
+                static fn ($key): bool => !is_string($key) || preg_match(
+                    '/^(HTTP_|REQUEST_|REMOTE_|REDIRECT_|SCRIPT_|PATH_INFO$|PATH_TRANSLATED$|ORIG_|QUERY_STRING$|CONTENT_|DOCUMENT_URI$|PHP_SELF$|PHP_AUTH_|AUTH_TYPE$|HTTPS$|SERVER_PORT$|SERVER_ADDR$|SERVER_NAME$|UNIQUE_ID$|FCGI_ROLE$|argv$|argc$)/',
+                    $key
+                ) !== 1,
+                ARRAY_FILTER_USE_KEY
+            );
+            ksort($values);
+
+            return $values;
+        };
+
+        return hash('xxh128', serialize($stable(getenv())) . serialize($stable($_SERVER)));
     }
 
     /**
