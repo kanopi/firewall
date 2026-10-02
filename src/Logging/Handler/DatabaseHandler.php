@@ -84,6 +84,11 @@ class DatabaseHandler extends AbstractProcessingHandler
     public const DEFAULT_PRUNE_BATCH_SIZE = 1000;
 
     /**
+     * Batches a winning flush may delete at most, unless configured.
+     */
+    public const DEFAULT_PRUNE_MAX_BATCHES = 10;
+
+    /**
      * Columns promoted out of the record context, in table order.
      *
      * Everything here is written to its own column *and* left out of the
@@ -140,6 +145,22 @@ class DatabaseHandler extends AbstractProcessingHandler
     private int $pruneBatchSize;
 
     /**
+     * Batches a winning flush may delete at most.
+     */
+    private int $pruneMaxBatches;
+
+    /**
+     * Tables this process has said request-path pruning is behind on.
+     *
+     * Static, as `DatabaseTrait`'s schema check is: the handler is built per
+     * request, and a site that is behind is behind on every winning flush, so
+     * once per worker is enough to act on.
+     *
+     * @var array<string, true>
+     */
+    private static array $backlogReported = [];
+
+    /**
      * Records held back from the database until the buffer is flushed.
      *
      * @var array<int, array<string, mixed>>
@@ -181,8 +202,11 @@ class DatabaseHandler extends AbstractProcessingHandler
      *   - `prune_probability`: chance, per flush, of running that delete.
      *     Ignored when `retention_days` is `0`.
      *   - `prune_batch_size`: rows that delete removes per statement. Defaults
-     *     to `1000`. A flush runs one batch at most; `prune()` with no limit,
-     *     which is what `bin/firewall-log-prune` calls, runs until done.
+     *     to `1000`. `prune()` with no limit, which is what
+     *     `bin/firewall-log-prune` calls, runs until done.
+     *   - `prune_max_batches`: batches a winning flush may delete at most.
+     *     Defaults to `10`. A flush runs as many as it takes to cover what it
+     *     wrote, up to this.
      */
     public function __construct(array $config = [])
     {
@@ -203,6 +227,9 @@ class DatabaseHandler extends AbstractProcessingHandler
 
         $batchSize = $config['prune_batch_size'] ?? self::DEFAULT_PRUNE_BATCH_SIZE;
         $this->pruneBatchSize = is_numeric($batchSize) ? max(1, (int) $batchSize) : self::DEFAULT_PRUNE_BATCH_SIZE;
+
+        $maxBatches = $config['prune_max_batches'] ?? self::DEFAULT_PRUNE_MAX_BATCHES;
+        $this->pruneMaxBatches = is_numeric($maxBatches) ? max(1, (int) $maxBatches) : self::DEFAULT_PRUNE_MAX_BATCHES;
 
         $this->schemaCheckProbability = self::normalizeSchemaCheckProbability(
             $config['schema_check_probability'] ?? null
@@ -346,7 +373,7 @@ class DatabaseHandler extends AbstractProcessingHandler
             }
         }
 
-        $this->pruneIfDue();
+        $this->pruneIfDue(count($rows));
     }
 
     /**
@@ -576,12 +603,18 @@ class DatabaseHandler extends AbstractProcessingHandler
      * the message is trying to describe. Overriding the trait's accessor
      * (a class method wins over a trait method) redirects every such line,
      * including the trait's own connection diagnostics, to the PHP error log.
+     *
+     * Warnings as well as errors (#464). At `Error` only, the two warnings this
+     * handler has -- the table is behind the declared schema, and retention is
+     * behind the rows -- went nowhere, though each is the only way an operator
+     * learns to run `bin/firewall-migrate` or `bin/firewall-log-prune`. Both
+     * are once per process, so neither can flood the log.
      */
     protected function getLogger(): Logger
     {
         if (!$this->internalLogger instanceof Logger) {
             $this->internalLogger = new Logger('firewall.log-handler');
-            $this->internalLogger->pushHandler(new ErrorLogHandler(ErrorLogHandler::OPERATING_SYSTEM, Level::Error));
+            $this->internalLogger->pushHandler(new ErrorLogHandler(ErrorLogHandler::OPERATING_SYSTEM, Level::Warning));
         }
 
         return $this->internalLogger;
@@ -775,8 +808,25 @@ class DatabaseHandler extends AbstractProcessingHandler
 
     /**
      * Run the retention delete on a fraction of flushes.
+     *
+     * A winning flush deletes enough batches to cover what it wrote, in
+     * expectation: with a probability `p` and batches of `b`, a flush of `n`
+     * rows runs `ceil(n / (p * b))` of them, so `p` flushes in every one delete
+     * at least the `n` each wrote. One batch, which is all a flush ran before,
+     * removes `p * b` -- ten rows with the defaults -- so any site whose
+     * logging requests wrote more than that grew the table forever, and said
+     * nothing (#464).
+     *
+     * Capped at `prune_max_batches`, because the uncapped figure is unbounded
+     * in `p`: one in a million and a single row would ask a thousand batches
+     * of whichever request drew the roll, which is the unbounded delete #459
+     * removed. The cap is where keeping up stops being guaranteed -- a hundred
+     * rows a flush with the defaults -- and past it, the notice below says so.
+     *
+     * @param int $written
+     *   Rows the flush just wrote.
      */
-    private function pruneIfDue(): void
+    private function pruneIfDue(int $written): void
     {
         if ($this->retentionDays <= 0 || $this->pruneProbability <= 0.0) {
             return;
@@ -789,9 +839,27 @@ class DatabaseHandler extends AbstractProcessingHandler
             return;
         }
 
-        // One batch. A backlog drains over successive winning flushes rather
-        // than landing on whichever request drew the roll (#459).
-        $this->prune(1);
+        $batches = (int) min(
+            $this->pruneMaxBatches,
+            max(1, ceil($written / ($this->pruneProbability * $this->pruneBatchSize)))
+        );
+
+        $deleted = $this->prune($batches);
+
+        // Every batch came back full, so rows older than the window are still
+        // waiting. A warning, because it is the level that reaches anyone: see
+        // getLogger().
+        if ($deleted !== null && $deleted >= $batches * $this->pruneBatchSize && !isset(self::$backlogReported[$this->table])) {
+            self::$backlogReported[$this->table] = true;
+
+            $this->getLogger()->warning('Firewall log retention is behind: rows older than retention_days remain', [
+                'table' => $this->table,
+                'retention_days' => $this->retentionDays,
+                'prune_batch_size' => $this->pruneBatchSize,
+                'prune_max_batches' => $this->pruneMaxBatches,
+                'hint' => 'Run bin/firewall-log-prune to clear the backlog, or raise prune_max_batches or prune_probability.',
+            ]);
+        }
     }
 
     /**
