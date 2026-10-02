@@ -692,7 +692,7 @@ final class RecaptchaChallengeProvider implements ChallengeProviderInterface
         return [
             'intro' => 'Please complete the check below to continue.',
             'extra_styles' => '    .g-recaptcha { display: block; margin-bottom: 1rem; min-height: 78px; }'
-                . "\n" . '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',
+                . "\n" . '    button:disabled { background: var(--fw-accent-disabled); cursor: not-allowed; }',
             // The widget callbacks are declared here, ahead of the async
             // bundle, and resolve the button lazily. Declaring them in the
             // document-bottom script instead would be a race: the widget can
@@ -763,7 +763,7 @@ FAILURE,
 
         return [
             'intro' => 'Verifying your browser. This only takes a moment.',
-            'extra_styles' => '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',
+            'extra_styles' => '    button:disabled { background: var(--fw-accent-disabled); cursor: not-allowed; }',
             'extra_head' => <<<HEAD
   <script src="{$widgetSrc}" async defer></script>
 HEAD,

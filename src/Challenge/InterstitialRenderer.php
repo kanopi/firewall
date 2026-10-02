@@ -32,12 +32,12 @@ final class InterstitialRenderer
      * The rules only the interstitial needs: its button, error line and notices.
      */
     private const STYLES = <<<'CSS'
-    button { width: 100%; padding: 0.65rem 1rem; font-size: 1rem; background: #1f6feb; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
-    button:not(:disabled):hover { background: #1858c4; }
-    .error { color: #b42318; margin-top: 0.75rem; font-size: 0.9rem; display: none; }
+    button { width: 100%; padding: 0.65rem 1rem; font-size: 1rem; background: var(--fw-accent); color: var(--fw-accent-text); border: 0; border-radius: 4px; cursor: pointer; }
+    button:not(:disabled):hover { background: var(--fw-accent-hover); }
+    .error { color: var(--fw-error); margin-top: 0.75rem; font-size: 0.9rem; display: none; }
     .error.visible { display: block; }
     .notices { margin: 0 0 1.25rem; }
-    .notice { margin: 0 0 0.5rem; padding: 0.6rem 0.75rem; background: #fff8e6; border-left: 3px solid #d4a017; color: #3d2e00; font-size: 0.9rem; }
+    .notice { margin: 0 0 0.5rem; padding: 0.6rem 0.75rem; background: var(--fw-notice-bg); border-left: 3px solid var(--fw-notice-border); color: var(--fw-notice-text); font-size: 0.9rem; }
 CSS;
 
     /**

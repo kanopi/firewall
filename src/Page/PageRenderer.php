@@ -26,13 +26,48 @@ namespace Kanopi\Firewall\Page;
 final class PageRenderer
 {
     /**
+     * Every colour the built-in pages use, as the custom property that holds it (#454).
+     *
+     * The supported way to theme the pages. A site that sets one -- in
+     * `challenge.page.styles`, `global.block_page.styles` or its own stylesheet --
+     * changes it on every page that uses it:
+     *
+     * ```css
+     * :root { --fw-accent: #0b8f5a; --fw-accent-hover: #087448; }
+     * ```
+     *
+     * Overriding the selectors still works, but they are the markup's, and can change
+     * between releases; these names are kept.
+     *
+     * @var array<string, string>
+     */
+    public const COLORS = [
+        '--fw-bg' => '#f5f6f8',
+        '--fw-text' => '#1a1a1a',
+        '--fw-card' => '#fff',
+        '--fw-card-shadow' => 'rgba(0,0,0,0.08)',
+        '--fw-muted' => '#555',
+        '--fw-accent' => '#1f6feb',
+        '--fw-accent-hover' => '#1858c4',
+        '--fw-accent-disabled' => '#9bb8e6',
+        '--fw-accent-text' => '#fff',
+        '--fw-error' => '#b42318',
+        '--fw-notice-bg' => '#fff8e6',
+        '--fw-notice-border' => '#d4a017',
+        '--fw-notice-text' => '#3d2e00',
+        '--fw-input-border' => '#ccc',
+    ];
+
+    /**
      * The rules every page has: the page, the card, the heading, a paragraph.
+     *
+     * Colours only through COLORS, so one property recolours every rule using it.
      */
     public const BASE_STYLES = <<<'CSS'
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f6f8; color: #1a1a1a; margin: 0; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
-    .card { background: #fff; padding: 2rem 2.5rem; border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); max-width: 28rem; width: 90%; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--fw-bg); color: var(--fw-text); margin: 0; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+    .card { background: var(--fw-card); padding: 2rem 2.5rem; border-radius: 8px; box-shadow: 0 4px 24px var(--fw-card-shadow); max-width: 28rem; width: 90%; }
     h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
-    p { margin: 0 0 1.25rem; color: #555; }
+    p { margin: 0 0 1.25rem; color: var(--fw-muted); }
 CSS;
 
     /**
@@ -41,6 +76,20 @@ CSS;
     public static function escapeHtml(string|int $value): string
     {
         return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+
+    /**
+     * The `:root` rule declaring COLORS.
+     */
+    public static function rootRule(): string
+    {
+        $declarations = [];
+
+        foreach (self::COLORS as $property => $value) {
+            $declarations[] = $property . ': ' . $value . ';';
+        }
+
+        return ':root { ' . implode(' ', $declarations) . ' }';
     }
 
     /**
@@ -74,7 +123,9 @@ CSS;
         $title = self::escapeHtml($settings['title'] ?? $parts['title']);
         $heading = self::escapeHtml($settings['heading'] ?? $parts['heading']);
 
-        $styles = self::BASE_STYLES;
+        // Declared first, so a `:root` rule anywhere after it -- the operator's
+        // `styles`, their stylesheet -- replaces any of them.
+        $styles = '    ' . self::rootRule() . "\n" . self::BASE_STYLES;
 
         foreach ([$parts['page_styles'] ?? '', $parts['extra_styles'] ?? ''] as $rules) {
             if ($rules !== '') {
