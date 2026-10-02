@@ -220,6 +220,114 @@ class ConfigCacheTest extends AbstractTestCase
     }
 
     /**
+     * A request-scoped value read through `%env()%` resolves per request (#467).
+     *
+     * The fingerprint ignores request-scoped keys so web requests hit the cache (#445),
+     * so it cannot see `SERVER_NAME` change. Cached, the first request's value would be
+     * every later one's -- and a config choosing rules by host would serve one site
+     * another's. Such a load is not cached at all.
+     */
+    public function testARequestScopedEnvValueIsNotFrozenByTheCache(): void
+    {
+        $file = $this->write('host.yml', "global:\n  mode: '%env(SERVER_NAME)%'\n", 10);
+        $entry = $this->cacheDir() . '/' . hash('xxh128', serialize([$file])) . '.php';
+        $saved = $_SERVER['SERVER_NAME'] ?? null;
+
+        try {
+            $_SERVER['SERVER_NAME'] = 'block';
+            $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+            $this->assertFileDoesNotExist($entry, 'A merge that read a request-scoped value is not cached');
+
+            $_SERVER['SERVER_NAME'] = 'log';
+            $this->assertSame('log', Config::load([$file])['global']['mode'] ?? null);
+        } finally {
+            $saved === null ? $_SERVER = array_diff_key($_SERVER, ['SERVER_NAME' => true]) : $_SERVER['SERVER_NAME'] = $saved;
+        }
+    }
+
+    /**
+     * Every way of reading a variable counts, and so does an include path.
+     *
+     * @param string $yaml
+     *   A config that depends on HTTP_HOST.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('requestScopedReads')]
+    public function testEveryReadOfARequestScopedValueCounts(string $yaml): void
+    {
+        $this->write('site-a.example.yml', "global:\n  mode: block\n", 10);
+        $file = $this->write('reads.yml', $yaml, 10);
+        $saved = $_SERVER['HTTP_HOST'] ?? null;
+        $_SERVER['HTTP_HOST'] = 'site-a.example';
+
+        try {
+            Config::load([$file]);
+        } finally {
+            $saved === null ? $_SERVER = array_diff_key($_SERVER, ['HTTP_HOST' => true]) : $_SERVER['HTTP_HOST'] = $saved;
+        }
+
+        $this->assertFileDoesNotExist($this->cacheDir() . '/' . hash('xxh128', serialize([$file])) . '.php');
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function requestScopedReads(): array
+    {
+        return [
+            'a plain read' => ["global:\n  host: '%env(HTTP_HOST)%'\n"],
+            'defined:' => ["global:\n  has_host: '%env(defined:HTTP_HOST)%'\n"],
+            'default:' => ["global:\n  host: '%env(default:none:HTTP_HOST)%'\n"],
+            'safe:' => ["global:\n  host: '%env(safe:none:HTTP_HOST)%'\n"],
+            'an include path' => ["configs:\n  - '%env(HTTP_HOST)%.yml'\n"],
+        ];
+    }
+
+    /**
+     * A config that reads only stable variables is still cached, so #445's hits stay.
+     */
+    public function testAStableEnvValueIsStillCached(): void
+    {
+        putenv('FW_STABLE_TEST_MODE=block');
+        $file = $this->write('stable.yml', "global:\n  mode: '%env(FW_STABLE_TEST_MODE)%'\n", 10);
+
+        try {
+            $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        } finally {
+            putenv('FW_STABLE_TEST_MODE');
+        }
+
+        $this->assertFileExists($this->cacheDir() . '/' . hash('xxh128', serialize([$file])) . '.php');
+    }
+
+    /**
+     * The protocol, the TLS session and GeoIP's per-request values are request-scoped
+     * too, so a site whose clients differ in them still hits the cache.
+     */
+    public function testConnectionValuesDoNotInvalidate(): void
+    {
+        $file = $this->write('connection.yml', "global:\n  mode: block\n", 10);
+        $saved = $_SERVER;
+
+        try {
+            $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+            $_SERVER['SSL_SESSION_ID'] = 'first';
+            $_SERVER['GEOIP_COUNTRY_CODE'] = 'NZ';
+            Config::load([$file]);
+            $before = $this->cacheEntries();
+
+            $_SERVER['SERVER_PROTOCOL'] = 'HTTP/2.0';
+            $_SERVER['SSL_SESSION_ID'] = 'second';
+            $_SERVER['GEOIP_COUNTRY_CODE'] = 'CA';
+            Config::load([$file]);
+
+            $this->assertNotSame([], $before);
+            $this->assertSame($before, $this->cacheEntries());
+        } finally {
+            $_SERVER = $saved;
+        }
+    }
+
+    /**
      * Different overrides are different cache entries.
      */
     public function testOverridesAreNotSharedBetweenLoads(): void

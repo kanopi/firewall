@@ -96,6 +96,7 @@ class Config
 
         if ($merged === null) {
             ConfigLoader::takeLoadedFiles();
+            TokenSubstitute::takeResolvedVariables();
 
             $merged = [];
 
@@ -120,7 +121,20 @@ class Config
             // not be read, a remote include served stale -- would otherwise be
             // frozen in place, and the operator would keep getting the degraded
             // result long after fixing the cause.
-            if (self::$loadErrors === [] && self::$loadWarnings === []) {
+            //
+            // Nor is one whose `%env()%` read a request-scoped value (#467). The
+            // fingerprint ignores those keys so that web requests can hit the
+            // cache at all (#445), which means it cannot tell one request's
+            // value from the next: cached, the first request's `SERVER_NAME`
+            // would be every later request's, and a config that picks rules by
+            // host would serve one site another's. Parsed per request, as it
+            // was before #445, and everything else stays cached.
+            $requestScoped = array_values(array_filter(
+                TokenSubstitute::takeResolvedVariables(),
+                self::isRequestScoped(...)
+            ));
+
+            if (self::$loadErrors === [] && self::$loadWarnings === [] && $requestScoped === []) {
                 self::writeConfigCache(
                     $cacheKey,
                     $merged,
@@ -702,10 +716,7 @@ class Config
         $stable = static function (array $values): array {
             $values = array_filter(
                 $values,
-                static fn ($key): bool => !is_string($key) || preg_match(
-                    '/^(HTTP_|REQUEST_|REMOTE_|REDIRECT_|SCRIPT_|PATH_INFO$|PATH_TRANSLATED$|ORIG_|QUERY_STRING$|CONTENT_|DOCUMENT_URI$|PHP_SELF$|PHP_AUTH_|AUTH_TYPE$|HTTPS$|SERVER_PORT$|SERVER_ADDR$|SERVER_NAME$|UNIQUE_ID$|FCGI_ROLE$|argv$|argc$)/',
-                    $key
-                ) !== 1,
+                static fn (int|string $key): bool => is_int($key) || !self::isRequestScoped($key),
                 ARRAY_FILTER_USE_KEY
             );
             ksort($values);
@@ -714,6 +725,32 @@ class Config
         };
 
         return hash('xxh128', serialize($stable(getenv())) . serialize($stable($_SERVER)));
+    }
+
+    /**
+     * Whether a variable holds a value that belongs to one request.
+     *
+     * The fingerprint leaves these out, so a cache entry survives from one web request to
+     * the next (#445), and `load()` does not cache a merge whose `%env()%` read one, because
+     * the fingerprint cannot see it change (#467). One list for both, so they cannot drift.
+     *
+     * - The request and its client: `HTTP_*` headers, `REQUEST_*`, `REMOTE_*`, `QUERY_STRING`,
+     *   `CONTENT_*`, `PHP_AUTH_*`, `AUTH_TYPE`.
+     * - The connection: `HTTPS`, `SERVER_PORT`, `SERVER_ADDR`, `SERVER_NAME`,
+     *   `SERVER_PROTOCOL` (HTTP/1.1 against HTTP/2), and Apache's and nginx's per-connection
+     *   `SSL_*` and per-request `GEOIP_*`.
+     * - The script the server resolved: `SCRIPT_*`, `PATH_INFO`, `PATH_TRANSLATED`,
+     *   `DOCUMENT_URI`, `PHP_SELF`, `REDIRECT_*`, `ORIG_*`.
+     * - `UNIQUE_ID`, `FCGI_ROLE`, and the CLI's `argv` and `argc`.
+     */
+    private static function isRequestScoped(string $name): bool
+    {
+        return preg_match(
+            '/^(?:HTTP_|REQUEST_|REMOTE_|REDIRECT_|SCRIPT_|ORIG_|CONTENT_|PHP_AUTH_|SSL_|GEOIP_'
+            . '|PATH_INFO$|PATH_TRANSLATED$|QUERY_STRING$|DOCUMENT_URI$|PHP_SELF$|AUTH_TYPE$|HTTPS$'
+            . '|SERVER_PORT$|SERVER_ADDR$|SERVER_NAME$|SERVER_PROTOCOL$|UNIQUE_ID$|FCGI_ROLE$|argv$|argc$)/',
+            $name
+        ) === 1;
     }
 
     /**
