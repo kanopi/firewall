@@ -193,6 +193,7 @@ is parsed.
 | `KANOPI_FIREWALL_CACHE_DIR` | system temp | Where compiled config and source caches are written |
 | `KANOPI_FIREWALL_CACHE_TTL` | `3600` | Default rule-source TTL, when a source names none |
 | `KANOPI_FIREWALL_CACHE_MAX_AGE` | 30 days | Compiled-config entries older than this are swept; `0` disables |
+| `KANOPI_FIREWALL_CONFIG_FILE_CACHE` | `true` | `false` (or any value `FILTER_VALIDATE_BOOL` reads as false, such as `'0'`) stops the compiled config being written to files; a pool from [`Config::setConfigCachePool()`](../configuration/loading-and-includes.md#keeping-it-in-a-cache-pool-or-off-disk-entirely) is still used |
 | `KANOPI_FIREWALL_CACHE_MAX_STALE` | — | How long a stale cached source may still be served |
 | `KANOPI_FIREWALL_CACHE_TIMEOUT` | — | Fetch timeout for remote sources |
 | `KANOPI_FIREWALL_REQUIRE_CONFIG` | `false` | Same as `global.require_config` |

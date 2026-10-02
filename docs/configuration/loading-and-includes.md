@@ -78,6 +78,54 @@ Nothing needs configuring. It lives in `KANOPI_FIREWALL_CACHE_DIR/compiled` when
 constant is defined, and in a `kanopi-firewall-config` directory inside the system temp
 directory otherwise.
 
+### Keeping it in a cache pool, or off disk entirely
+
+Writing PHP files is the right default when the cache directory is local. It is the wrong
+one where the only persistent writable directory is a **network filesystem** — writing an
+entry and sweeping the directory there can cost more than the parse it saves — or where an
+integration keeps runtime caches in its application's own backend.
+
+A host can hand over any PSR-6 pool before the firewall loads its configuration:
+
+```php
+use Kanopi\Firewall\Cache\NoObjectsMarshaller;
+use Kanopi\Firewall\Utility\Config;
+use Symfony\Component\Cache\Adapter\RedisAdapter;
+
+Config::setConfigCachePool(new RedisAdapter($redis, 'firewall', 0, new NoObjectsMarshaller()));
+
+\Kanopi\Firewall\Firewall::create([__DIR__ . '/config.yml'])->evaluate();
+```
+
+With a pool set, entries are read and written through it and nothing is written to disk.
+They are validated exactly as file entries are — every file fingerprint and the environment
+— and expire `KANOPI_FIREWALL_CACHE_MAX_AGE` after they were written, which stands in for the
+sweep. A pool that throws costs a parse, never the load. A pool that is slow or unreachable
+is another matter: every load then waits out a read timeout and a write timeout, so keep the
+client's timeouts short. The setting is process-wide and
+lasts until it is replaced; `Config::setConfigCachePool(null)` goes back to files.
+
+A configuration containing an object is still not cached, so only arrays and scalars ever
+reach the pool. Reading them back is the pool's job, though, and Symfony's default marshaller
+will unserialise any object it finds there. Give the pool `NoObjectsMarshaller`, as above, so a
+store something else can write to cannot hand the firewall an object.
+
+A process with no pool to offer (CLI, cron) still writes files. To stop that on a host that
+should never have cache files written:
+
+```php
+define('KANOPI_FIREWALL_CONFIG_FILE_CACHE', false);  // Default: files are written
+```
+
+Any value PHP's `FILTER_VALIDATE_BOOL` reads as false turns the file cache off, so `'0'`,
+`'off'` or `''` from an environment variable work too. That includes `getenv()` returning
+`false` for an unset variable: `define('KANOPI_FIREWALL_CONFIG_FILE_CACHE', getenv('X'))`
+switches the cache off when `X` is not set.
+
+The configuration is then parsed on every load that has no pool. The constant only covers
+this cache: cached copies of remote includes and rule sources are unaffected, and a pool, if
+one is set, is still used.
+
 ### What invalidates an entry
 
 Each file is fingerprinted by a **hash of its content**. An entry is discarded when any file

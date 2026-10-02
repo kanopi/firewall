@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Utility;
 
+use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Component\PropertyAccess\PropertyAccess;
 use Symfony\Component\PropertyAccess\PropertyAccessorInterface;
 
@@ -23,6 +24,11 @@ class Config
      * The accessor overrides are written through, built once per process.
      */
     private static ?PropertyAccessorInterface $propertyAccessor = null;
+
+    /**
+     * Where the compiled configuration is cached instead of PHP files, if set.
+     */
+    private static ?CacheItemPoolInterface $cacheItemPool = null;
 
     /**
      * Load failures recorded since the last `clearLoadErrors()`.
@@ -206,13 +212,66 @@ class Config
     }
 
     /**
+     * Cache the compiled configuration in a PSR-6 pool rather than PHP files.
+     *
+     * For a host whose only persistent writable directory is slow -- a network
+     * filesystem, where writing an entry and sweeping the directory costs far
+     * more than the parse it saves -- or an integration that keeps runtime
+     * caches in the application's own backend (#447).
+     *
+     * With a pool set, entries are read and written through it, validated
+     * exactly as file entries are, expire after `KANOPI_FIREWALL_CACHE_MAX_AGE`,
+     * and nothing is written to disk. A pool that throws costs a parse, never
+     * the load. The setting is process-wide and lasts until it is replaced.
+     *
+     * Configurations holding an object are still not cached, so only arrays
+     * and scalars ever reach the pool.
+     *
+     * @param \Psr\Cache\CacheItemPoolInterface|null $cacheItemPool
+     *   The pool, or null to go back to PHP files.
+     */
+    public static function setConfigCachePool(?CacheItemPoolInterface $cacheItemPool): void
+    {
+        self::$cacheItemPool = $cacheItemPool;
+    }
+
+    /**
+     * The pool key for a cache entry.
+     *
+     * @param string $key
+     *   Cache key.
+     *
+     * @return string
+     *   A key using only characters PSR-6 requires every pool to accept.
+     */
+    private static function configCachePoolKey(string $key): string
+    {
+        return 'kanopi_firewall_config.' . $key;
+    }
+
+    /**
      * Where the compiled configuration is kept.
+     *
+     * `KANOPI_FIREWALL_CONFIG_FILE_CACHE` defined as false -- or any value
+     * `FILTER_VALIDATE_BOOL` reads as false, such as `'0'` from an environment
+     * variable -- means nowhere: the
+     * configuration is parsed on every load that has no pool, and no file is
+     * written. For a process that has no pool to offer -- CLI, cron -- on a host
+     * that should never have cache files written (#447).
      *
      * @return string|null
      *   A writable directory, or null when there is none.
      */
     private static function configCacheDir(): ?string
     {
+        $fileCache = defined('KANOPI_FIREWALL_CONFIG_FILE_CACHE')
+            ? filter_var(constant('KANOPI_FIREWALL_CONFIG_FILE_CACHE'), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE)
+            : true;
+
+        if ($fileCache === false) {
+            return null;
+        }
+
         // The cast is taken before the concatenation, not inside it. Rector
         // strips a cast adjacent to a concat (RemoveConcatAutocastRector,
         // correctly -- concatenation casts anyway), and PHPStan then objects
@@ -252,6 +311,12 @@ class Config
      */
     private static function readConfigCache(string $key): ?array
     {
+        $pool = self::$cacheItemPool;
+
+        if ($pool instanceof CacheItemPoolInterface) {
+            return self::readConfigCachePool($pool, $key);
+        }
+
         $dir = self::configCacheDir();
 
         if ($dir === null) {
@@ -282,12 +347,94 @@ class Config
             return null;
         }
 
-        if (!is_array($payload) || !isset($payload['config'], $payload['files'], $payload['env'])) {
+        if (!self::isConfigCachePayload($payload)) {
             @unlink($file);
 
             return null;
         }
 
+        return self::validConfigCache($payload);
+    }
+
+    /**
+     * Return a pooled merge, if one is still valid.
+     *
+     * @param \Psr\Cache\CacheItemPoolInterface $cacheItemPool
+     *   The pool.
+     * @param string $key
+     *   Cache key.
+     *
+     * @return array{config: array<string, mixed>, references: bool}|null
+     *   The cached configuration and whether it may hold references, or null when there is
+     *   none, it is stale, or the pool failed.
+     */
+    private static function readConfigCachePool(CacheItemPoolInterface $cacheItemPool, string $key): ?array
+    {
+        $poolKey = self::configCachePoolKey($key);
+
+        try {
+            $item = $cacheItemPool->getItem($poolKey);
+            $payload = $item->isHit() ? $item->get() : null;
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($payload === null) {
+            return null;
+        }
+
+        if (!self::isConfigCachePayload($payload)) {
+            try {
+                $cacheItemPool->deleteItem($poolKey);
+            } catch (\Throwable) {
+                // It is ignored on every read regardless, and overwritten on
+                // the next clean load.
+            }
+
+            return null;
+        }
+
+        return self::validConfigCache($payload);
+    }
+
+    /**
+     * Whether a cached value has the shape `writeConfigCache()` stores.
+     *
+     * @param mixed $payload
+     *   The cached value.
+     *
+     * @return bool
+     *   True when it has the config, files and environment entries, with the
+     *   config an array and at least one file. `writeConfigCache()` never stores
+     *   anything else: a non-array config would load as no rules at all, and an
+     *   empty file list would skip every fingerprint check.
+     *
+     * @phpstan-assert-if-true array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed} $payload
+     */
+    private static function isConfigCachePayload(mixed $payload): bool
+    {
+        return is_array($payload)
+            && isset($payload['config'], $payload['files'], $payload['env'])
+            && is_array($payload['config'])
+            && is_array($payload['files'])
+            && $payload['files'] !== [];
+    }
+
+    /**
+     * Check a cached payload against the files and environment it came from.
+     *
+     * The same for a file and a pooled entry, so neither can serve a merge the
+     * other would have rejected.
+     *
+     * @param array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed} $payload
+     *   A payload `isConfigCachePayload()` accepted.
+     *
+     * @return array{config: array<string, mixed>, references: bool}|null
+     *   The cached configuration and whether it may hold references, or null when it is
+     *   stale.
+     */
+    private static function validConfigCache(array $payload): ?array
+    {
         if ($payload['env'] !== self::environmentFingerprint()) {
             return null;
         }
@@ -299,7 +446,7 @@ class Config
         }
 
         return [
-            'config' => is_array($payload['config']) ? $payload['config'] : [],
+            'config' => $payload['config'],
             // Absent in an entry written before this was recorded; assuming a
             // reference may be present costs a walk rather than correctness.
             'references' => (bool) ($payload['references'] ?? true),
@@ -321,9 +468,14 @@ class Config
      */
     private static function writeConfigCache(string $key, array $merged, array $files, bool $references): void
     {
-        $dir = self::configCacheDir();
+        if ($files === []) {
+            return;
+        }
 
-        if ($dir === null || $files === []) {
+        $pool = self::$cacheItemPool;
+        $dir = $pool instanceof CacheItemPoolInterface ? null : self::configCacheDir();
+
+        if (!$pool instanceof CacheItemPoolInterface && $dir === null) {
             return;
         }
 
@@ -353,6 +505,12 @@ class Config
             'env' => self::environmentFingerprint(),
             'references' => $references,
         ];
+
+        if ($pool instanceof CacheItemPoolInterface) {
+            self::writeConfigCachePool($pool, $key, $payload);
+
+            return;
+        }
 
         $code = '<?php return ' . var_export($payload, true) . ';';
         $temporary = $dir . '/' . $key . '.' . getmypid() . '.tmp';
@@ -387,6 +545,38 @@ class Config
         // @codeCoverageIgnoreEnd
 
         self::sweepConfigCache($dir);
+    }
+
+    /**
+     * Store a payload in the pool.
+     *
+     * Expiry stands in for the sweep: the entry lapses `configCacheMaxAge()`
+     * after it was written -- the same "time since written" the file cache
+     * uses -- and never when the maximum age is zero.
+     *
+     * @param \Psr\Cache\CacheItemPoolInterface $cacheItemPool
+     *   The pool.
+     * @param string $key
+     *   Cache key.
+     * @param array<string, mixed> $payload
+     *   What `writeConfigCache()` would have written to a file.
+     */
+    private static function writeConfigCachePool(CacheItemPoolInterface $cacheItemPool, string $key, array $payload): void
+    {
+        try {
+            $item = $cacheItemPool->getItem(self::configCachePoolKey($key));
+            $item->set($payload);
+
+            $maxAge = self::configCacheMaxAge();
+            if ($maxAge > 0) {
+                $item->expiresAfter($maxAge);
+            }
+
+            $cacheItemPool->save($item);
+        } catch (\Throwable) {
+            // A pool that cannot be written to costs a parse next time, which
+            // is all the cache was saving.
+        }
     }
 
     /**
