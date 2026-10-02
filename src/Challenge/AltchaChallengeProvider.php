@@ -166,6 +166,7 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface, Singl
 
         return InterstitialRenderer::render([
             'notices' => InterstitialRenderer::notices($context),
+            'page' => ChallengePage::fromContext($context),
             'intro' => 'Please complete the check below to continue.',
             'extra_styles' => '    altcha-widget { display: block; margin-bottom: 1rem; }'
                 . "\n" . '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',

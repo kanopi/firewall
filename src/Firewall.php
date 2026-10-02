@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall;
 
+use Kanopi\Firewall\Challenge\ChallengePage;
 use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
 use Kanopi\Firewall\Challenge\ChallengeProviderRegistry;
@@ -469,8 +470,9 @@ final class Firewall
      * @return array{0: ?ChallengeProviderInterface, 1: ?TokenManager, 2: array<string, mixed>, 3: ?ChallengeProviderRegistry}
      *
      * @throws ConfigurationException
-     *   When challenge plugins exist but no secret is configured, or when
-     *   a provider named by the config or by a plugin cannot be resolved.
+     *   When challenge plugins exist but no secret is configured, when
+     *   `challenge.page` cannot be used, or when a provider named by the
+     *   config or by a plugin cannot be resolved.
      */
     private static function createChallengePieces(
         array $challengeConfig,
@@ -506,6 +508,11 @@ final class Firewall
                 . 'pass tokens can be HMAC-signed.'
             );
         }
+
+        // Refused here rather than left for the page to drop, so a typo in a
+        // key, or CSS that would break out of the style block, is found at
+        // deploy and not by a visitor seeing the old page (#451).
+        $challengeConfig['page'] = ChallengePage::fromConfig($challengeConfig['page'] ?? null);
 
         $providerOptions = $challengeConfig['provider_options'] ?? [];
         $defaultProvider = (string) $challengeConfig['provider'];
@@ -2113,6 +2120,7 @@ final class Firewall
                         // dispatched for a refused submission, so no listener
                         // had the chance to add its own (#421).
                         'notices' => $this->configuredNotices(),
+                        'page' => $this->challengeConfig['page'] ?? [],
                     ]
                 );
             }
@@ -2623,6 +2631,9 @@ final class Firewall
             // whatever a listener added for this request (#421). Plain text,
             // escaped by the renderer.
             'notices' => array_merge($this->configuredNotices(), $requestChallenged->getNotices()),
+            // `challenge.page`, validated at startup: the wording, language and
+            // styling the operator chose for this page (#451).
+            'page' => $this->challengeConfig['page'] ?? [],
         ];
 
         if ($this->firewallMode === FirewallMode::Exception) {

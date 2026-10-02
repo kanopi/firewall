@@ -117,12 +117,16 @@ final class InterstitialRenderer
      *   submit_failure?: string,
      *   provider_field?: string|int,
      *   provider_token?: string|int,
-     *   notices?: array<int, string>
+     *   notices?: array<int, string>,
+     *   page?: array<string, string>
      * } $parts
      *   Provider-supplied document pieces. `submit_failure`,
-     *   `provider_field`, `provider_token` and `notices` are optional, so
-     *   providers written before they existed are unaffected. `notices` is
-     *   plain text, escaped here like every other value; see notices().
+     *   `provider_field`, `provider_token`, `notices` and `page` are
+     *   optional, so providers written before they existed are unaffected.
+     *   `notices` is plain text, escaped here like every other value; see
+     *   notices(). `page` is `challenge.page` as ChallengePage::fromContext()
+     *   returns it: its text replaces the defaults below, and the
+     *   provider's own `intro` and `error_message`, escaped (#451).
      */
     public static function render(array $parts): string
     {
@@ -136,11 +140,31 @@ final class InterstitialRenderer
         $headerNameJs = self::escapeJs($parts['header_name']);
         $redirectToJs = self::escapeJs($parts['redirect_to']);
 
-        $intro = $parts['intro'];
-        $extraStyles = $parts['extra_styles'];
+        // `challenge.page` (#451). Filtered again here, not only at startup:
+        // a provider can be handed a page by a host as well as by the
+        // Firewall. Its text is the operator's and plain, so it is escaped;
+        // the provider's own `intro` and `error_message` are written as
+        // they always were.
+        $page = ChallengePage::fromContext(['page' => $parts['page'] ?? []]);
+
+        $lang = self::escapeHtml($page['lang'] ?? 'en');
+        $title = self::escapeHtml($page['title'] ?? 'Verification required');
+        $heading = self::escapeHtml($page['heading'] ?? 'Quick verification');
+        $button = self::escapeHtml($page['button'] ?? 'Continue');
+        $intro = isset($page['intro']) ? self::escapeHtml($page['intro']) : $parts['intro'];
+        $errorMessage = isset($page['error_message']) ? self::escapeHtml($page['error_message']) : $parts['error_message'];
+
+        // Last, so the operator's rules win over the built-in ones and the
+        // provider's at equal specificity. Not escaped: CSS is not HTML, and
+        // ChallengePage has already refused the one thing that could close
+        // the block.
+        $extraStyles = $parts['extra_styles'] . (isset($page['styles']) ? "\n" . $page['styles'] : '');
+        $stylesheet = isset($page['stylesheet'])
+            ? "\n  <link rel=\"stylesheet\" href=\"" . self::escapeHtml($page['stylesheet']) . '">'
+            : '';
+
         $extraHead = $parts['extra_head'];
         $formFields = $parts['form_fields'];
-        $errorMessage = $parts['error_message'];
         $submitGuard = $parts['submit_guard'];
         $extraScript = $parts['extra_script'];
         $disabled = $parts['submit_disabled'] ? ' disabled' : '';
@@ -181,12 +205,12 @@ final class InterstitialRenderer
 
         return <<<HTML
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{$lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Verification required</title>
+  <title>{$title}</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f6f8; color: #1a1a1a; margin: 0; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
     .card { background: #fff; padding: 2rem 2.5rem; border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); max-width: 28rem; width: 90%; }
@@ -199,18 +223,18 @@ final class InterstitialRenderer
     .notices { margin: 0 0 1.25rem; }
     .notice { margin: 0 0 0.5rem; padding: 0.6rem 0.75rem; background: #fff8e6; border-left: 3px solid #d4a017; color: #3d2e00; font-size: 0.9rem; }
 {$extraStyles}
-  </style>
+  </style>{$stylesheet}
 {$extraHead}
 </head>
 <body>
   <main class="card">
-    <h1>Quick verification</h1>
+    <h1>{$heading}</h1>
     <p>{$intro}</p>{$notices}
     <form id="challenge-form" method="post" action="{$submitUrl}">
 {$formFields}
       <input type="hidden" name="{$redirectField}" value="{$redirectTo}">
       <input type="hidden" name="{$ttlField}" value="{$ttl}">{$providerInput}
-      <button type="submit" id="submit"{$disabled}>Continue</button>
+      <button type="submit" id="submit"{$disabled}>{$button}</button>
       <div id="error" class="error" role="alert">{$errorMessage}</div>
     </form>
   </main>

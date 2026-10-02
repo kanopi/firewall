@@ -183,6 +183,57 @@ public function onChallenged(RequestChallenged $event): void
 - **Pantheon:** its edge only forwards cookies whose names match its own patterns. Start
   `challenge.cookie_name`, and your marker's name, with `STYXKEY_`, or neither comes back.
 
+## Wording, language and styling
+
+The page's title, heading, intro, button, error message, language and CSS are set under
+`challenge.page` (#451). Every key is optional, and an unset key keeps the built-in page:
+
+```yaml
+challenge:
+  page:
+    lang: fr-CA
+    title: "Vérification requise"
+    heading: "Vérification rapide"
+    intro: "Merci de confirmer que vous êtes humain."
+    button: "Continuer"
+    error_message: "La vérification a échoué. Réessayez."
+    styles: |
+      .card { border-top: 4px solid #0b5; }
+      button { background: #0b5; }
+    stylesheet: /themes/custom/site/firewall.css
+```
+
+| Key | Default | |
+|---|---|---|
+| `lang` | `en` | The page's `lang` attribute. A language tag: `en`, `fr-CA`, `zh-Hant-TW` |
+| `title` | `Verification required` | The browser tab's title |
+| `heading` | `Quick verification` | The heading on the card |
+| `intro` | the provider's own | The line under the heading |
+| `button` | `Continue` | The submit button's label |
+| `error_message` | the provider's own | Shown when a submission is refused |
+| `styles` | *none* | CSS added after the built-in rules, so yours win at equal specificity |
+| `stylesheet` | *none* | A `<link rel="stylesheet">`, after the built-in CSS |
+
+- **Text is plain text,** escaped when the page is written, like a notice. It can't add
+  markup.
+- **`styles` is CSS,** written as is, and it can't contain `</style`, which would close
+  the block. A logo goes here, as a `background-image`, or in your stylesheet.
+- **`stylesheet` is a path on this site** (`/css/firewall.css`) or an `https:` URL. A
+  protocol-relative `//host/...` URL, `http:`, and other schemes are refused.
+- **A value that can't be used stops the firewall starting** with a `ConfigurationException`
+  naming every problem, as long as any rule uses `response: challenge`. That includes an
+  unknown key, so a typo like `buton` gets reported, not ignored. `firewall lint` reports the
+  same problems before you deploy.
+- **The widget's own text** (ALTCHA's "I'm not a robot", Turnstile's and reCAPTCHA's) comes
+  from the widget, not from this page. ALTCHA's "Fetching a new one…" retry message is
+  also still English.
+- **A custom provider** gets the values as `page` in the render context. Pass
+  `ChallengePage::fromContext($context)` to `InterstitialRenderer::render()` as `page`, and
+  it is applied and escaped for you.
+- **In `mode: exception`,** `ChallengeRequiredException::getRenderContext()['page']` has
+  the validated values, for a host rendering its own page, and `renderInterstitial()`
+  applies them.
+
 ## Single-use solutions
 
 A stateless provider verifies a solution purely from the posted payload, so the same payload keeps verifying until it expires. For a proof-of-work challenge that quietly defeats the point: an attacker solves one challenge and hands the payload to as many clients as they like, each minting its own IP-bound pass token, and the per-solve cost is amortised to nothing.
@@ -482,7 +533,7 @@ class HCaptchaProvider implements ChallengeProviderInterface
     public function renderInterstitial(Request $request, array $context): string
     {
         // $context carries: submit_url, redirect_to, ttl, cookie_name,
-        // header_name, provider_token.
+        // header_name, provider_token, and notices and page when set.
         // Echo redirect_to, ttl and provider_token back as hidden fields — the
         // Firewall reads them off the POST to size and target the pass token,
         // and to know which provider is being answered.

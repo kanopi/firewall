@@ -111,12 +111,13 @@ class ChallengeRequiredException extends FirewallException
      *
      * @return array<string, mixed>
      *   `submit_url`, `redirect_to`, `ttl`, `cookie_name`, `header_name` and
-     *   `provider_token` as strings, and `notices` as a list of strings (#421).
-     *   Empty only when constructed without one.
+     *   `provider_token` as strings, `notices` as a list of strings (#421), and
+     *   `page` as a map of strings (#451). Empty only when constructed without one.
      *
      *   Deliberately not a closed array shape. The context gains keys over time
-     *   -- `provider_token` in 2.26, `notices` in 2.35 -- and a closed shape
-     *   would turn each addition into a type error for every host reading it.
+     *   -- `provider_token` in 2.26, `notices` in 2.35, `page` for #451 -- and a
+     *   closed shape would turn each addition into a type error for every host
+     *   reading it.
      *   Declared `array<string, string>` until 2.36.1, which told static
      *   analysis that `notices` was a string (#442).
      */
