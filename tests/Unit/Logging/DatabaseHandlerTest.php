@@ -527,6 +527,12 @@ class DatabaseHandlerTest extends AbstractTestCase
         self::assertNotSame($firewallLogger, $internal);
         self::assertSame('firewall.log-handler', $internal->getName());
         self::assertSame($internal, self::readProperty($handler, 'internalLogger'), 'The internal logger is built once');
+
+        // Warnings reach the error log too: the schema-drift and retention
+        // warnings are what tell an operator to run the CLI scripts (#464).
+        $errorLog = $internal->getHandlers()[0] ?? null;
+        self::assertInstanceOf(\Monolog\Handler\ErrorLogHandler::class, $errorLog);
+        self::assertSame(Level::Warning, $errorLog->getLevel());
     }
 
     /**
@@ -852,16 +858,17 @@ class DatabaseHandlerTest extends AbstractTestCase
     }
 
     /**
-     * A winning flush deletes one batch, never the whole backlog.
+     * A winning flush of a few rows deletes one batch, never the whole backlog.
      *
      * The request that draws the roll has already answered its visitor; what
      * it costs from here is a worker and locks on a table every other request
      * writes to. One batch bounds both, and the backlog drains over later
      * rolls (#459).
      */
-    public function testAWinningFlushPrunesOneBatchAtMost(): void
+    public function testAWinningFlushOfAFewRowsPrunesOneBatch(): void
     {
         $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 1, 'prune_batch_size' => 3]);
+        $this->quietInternalLogger($handler);
         $handler->handle($this->record(Level::Warning, 'Creates the table'));
         $handler->flush();
 
@@ -878,6 +885,156 @@ class DatabaseHandlerTest extends AbstractTestCase
         $handler->flush();
 
         self::assertSame(4, $handler->countPrunable());
+    }
+
+    /**
+     * A winning flush deletes enough batches to cover what it wrote (#464).
+     *
+     * One batch removes `p * b` rows a flush, in expectation, so a flush that
+     * wrote more than that grew the table forever. With certainty and batches
+     * of three, a flush of seven runs ceil(7 / 3) = 3 batches.
+     */
+    public function testAWinningFlushCoversWhatItWrote(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 1, 'prune_batch_size' => 3]);
+        $this->quietInternalLogger($handler);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        for ($i = 0; $i < 20; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        for ($i = 0; $i < 7; $i++) {
+            $handler->handle($this->record(Level::Warning, 'Row ' . $i));
+        }
+
+        $handler->flush();
+
+        self::assertSame(11, $handler->countPrunable());
+    }
+
+    /**
+     * The probability is part of the sum: at one in two, a flush of three rows
+     * runs ceil(3 / (0.5 * 3)) = 2 batches, so the half of flushes that prune
+     * cover what both halves wrote.
+     */
+    public function testTheBatchCountAllowsForTheProbability(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 0.5, 'prune_batch_size' => 3]);
+        $this->quietInternalLogger($handler);
+
+        // Written with pruning off, then the roll fixed to one that wins.
+        $writer = $this->createHandler(['retention_days' => 30, 'prune_probability' => 0]);
+        $writer->handle($this->record(Level::Warning, 'Creates the table'));
+        $writer->flush();
+
+        for ($i = 0; $i < 20; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        for ($i = 0; $i < 3; $i++) {
+            $handler->handle($this->record(Level::Warning, 'Row ' . $i));
+        }
+
+        mt_srand($this->winningSeed(0.5));
+        $handler->flush();
+        mt_srand();
+
+        self::assertSame(14, $handler->countPrunable());
+    }
+
+    /**
+     * `prune_max_batches` caps it, so no request is handed the unbounded
+     * delete #459 removed, however small the probability.
+     */
+    public function testAWinningFlushIsCappedAtPruneMaxBatches(): void
+    {
+        $handler = $this->createHandler([
+            'retention_days' => 30,
+            'prune_probability' => 1,
+            'prune_batch_size' => 3,
+            'prune_max_batches' => 2,
+        ]);
+        $this->quietInternalLogger($handler);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        for ($i = 0; $i < 20; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        for ($i = 0; $i < 12; $i++) {
+            $handler->handle($this->record(Level::Warning, 'Row ' . $i));
+        }
+
+        $handler->flush();
+
+        self::assertSame(14, $handler->countPrunable(), 'Two batches of three, not the four twelve rows ask for');
+    }
+
+    public function testPruneMaxBatchesIsClampedAndDefaulted(): void
+    {
+        self::assertSame(DatabaseHandler::DEFAULT_PRUNE_MAX_BATCHES, self::readProperty($this->createHandler(), 'pruneMaxBatches'));
+        self::assertSame(1, self::readProperty($this->createHandler(['prune_max_batches' => 0]), 'pruneMaxBatches'));
+        self::assertSame(4, self::readProperty($this->createHandler(['prune_max_batches' => '4']), 'pruneMaxBatches'));
+        self::assertSame(
+            DatabaseHandler::DEFAULT_PRUNE_MAX_BATCHES,
+            self::readProperty($this->createHandler(['prune_max_batches' => 'lots']), 'pruneMaxBatches')
+        );
+    }
+
+    /**
+     * A winning flush whose batches all came back full says retention is behind,
+     * once per process and table.
+     */
+    public function testAFlushThatLeavesABacklogSaysSoOnce(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 1, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        $records = $this->quietInternalLogger($handler);
+
+        $handler->handle($this->record(Level::Warning, 'One'));
+        $handler->flush();
+        $handler->handle($this->record(Level::Warning, 'Two'));
+        $handler->flush();
+
+        $behind = array_values(array_filter(
+            $records->getRecords(),
+            static fn(LogRecord $record): bool => str_contains($record->message, 'retention is behind')
+        ));
+
+        self::assertCount(1, $behind, 'Once, though both flushes left rows behind');
+        self::assertSame(Level::Warning, $behind[0]->level);
+        self::assertSame('firewall_log', $behind[0]->context['table']);
+        self::assertStringContainsString('bin/firewall-log-prune', $behind[0]->context['hint']);
+    }
+
+    /**
+     * A flush that clears what is left says nothing.
+     */
+    public function testAFlushThatKeepsUpSaysNothing(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 1, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        $this->insertAncientRow(40);
+        $this->insertAncientRow(41);
+
+        $records = $this->quietInternalLogger($handler);
+
+        $handler->handle($this->record(Level::Warning, 'One'));
+        $handler->flush();
+
+        self::assertSame(0, $handler->countPrunable());
+        self::assertFalse($records->hasWarningRecords());
     }
 
     /**
@@ -1056,6 +1213,33 @@ class DatabaseHandlerTest extends AbstractTestCase
     private static function readProperty(DatabaseHandler $handler, string $property): mixed
     {
         return (new \ReflectionProperty(DatabaseHandler::class, $property))->getValue($handler);
+    }
+
+    /**
+     * Point the handler's own logger at a TestHandler, and forget which tables
+     * this process has already said are behind.
+     */
+    private function quietInternalLogger(DatabaseHandler $handler): TestHandler
+    {
+        $records = new TestHandler();
+        (new \ReflectionProperty(DatabaseHandler::class, 'internalLogger'))->setValue($handler, new Logger('test', [$records]));
+        (new \ReflectionProperty(DatabaseHandler::class, 'backlogReported'))->setValue(null, []);
+
+        return $records;
+    }
+
+    /**
+     * A seed under which the next prune roll wins at this probability.
+     */
+    private function winningSeed(float $probability): int
+    {
+        for ($seed = 1; ; $seed++) {
+            mt_srand($seed);
+
+            if (mt_rand(1, PHP_INT_MAX) / PHP_INT_MAX <= $probability) {
+                return $seed;
+            }
+        }
     }
 
     /**

@@ -172,6 +172,7 @@ anchor lacks. See [`%config(...)%`](environment-variables.md#config-reusing-a-va
 | `retention_days` | `0` | Delete rows older than this (`0` = keep forever) |
 | `prune_probability` | `0.01` | Chance per flush of running that delete |
 | `prune_batch_size` | `1000` | Rows that delete removes per statement |
+| `prune_max_batches` | `10` | Most batches one flush runs, however much it wrote |
 
 ### The columns
 
@@ -249,15 +250,28 @@ Nothing prunes a log table on its own, and a table that only grows is a support 
 six months out. `retention_days` sets the window; there are two ways to enforce it.
 
 **Probabilistic, needs no scheduling.** `prune_probability` (default `0.01`) is the
-chance that any given flush also runs the retention delete. On a site with traffic this
-keeps up on its own.
+chance that any given flush also runs the retention delete.
 
-A flush deletes **one batch** of `prune_batch_size` rows (default `1000`), never more. The
-first prune after rows start leaving the window can face the whole backlog: retention just
-switched on, `retention_days` lowered, or pruning off for a while. As one statement, 2.17M
-rows took 26 seconds on MariaDB, inside a request, holding locks on the table every other
-request was writing to. In batches, a backlog drains over later flushes instead, and the
-script below clears it in one sitting.
+The delete runs in batches of `prune_batch_size` rows (default `1000`), and a flush that
+wins the roll runs **enough batches to cover what it wrote**: `n / (prune_probability ×
+prune_batch_size)` of them for a flush of `n` rows, rounded up. Since only one flush in
+`1 / prune_probability` prunes, each one that does removes what all of them wrote, so the
+table keeps pace with what is logged. A typical flush of a few records runs one batch.
+
+`prune_max_batches` (default `10`) caps how many batches one flush runs. A single
+unbounded delete of 2.17M rows took 26 seconds on MariaDB, inside a request, holding locks
+on the table every other request was writing to. The cap keeps any one request well short
+of that, at the cost of keeping up only while flushes average no more than
+`prune_probability × prune_batch_size × prune_max_batches` records: **100 with the
+defaults**. Past that, the handler logs a warning to the PHP error log, once per process:
+
+```
+firewall.log-handler.WARNING: Firewall log retention is behind: rows older than retention_days remain
+```
+
+**Run the script below once** whenever a backlog appears: after switching retention on,
+lowering `retention_days`, or turning pruning back on. The request path then only has to
+keep up with what is new.
 
 **Scheduled, deterministic.** `bin/firewall-log-prune` does the same delete when you say
 so, batch after batch until nothing is left, and reports how many rows went:
@@ -290,8 +304,8 @@ lines are exactly the ones under attack. Two defaults follow from that:
 - **`buffer` defaults to `true`.** Records are held in memory and written when the handler
   closes, which PHP does on a normal shutdown and on the `exit()` a blocking response ends
   on. They go in multi-row `INSERT`s of up to 71 rows, so a request that logged a dozen
-  lines costs one round trip, not twelve. A fatal error skips destructors and loses the buffered records; `buffer: false` pays
-  a round trip per record to avoid that.
+  lines costs one round trip, not twelve. A fatal error skips destructors and loses the
+  buffered records; `buffer: false` pays a round trip per record to avoid that.
 
 No connection is opened until the first record is actually written, so a request that logs
 nothing costs nothing.
