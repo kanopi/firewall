@@ -320,6 +320,7 @@ global:
 | `lockdown_status` | `503` | |
 | `lockdown_retry_after` | `300` | Seconds in `Retry-After`; `0` omits the header |
 | `lockdown_message` | built-in | Supports `{{request.id}}` |
+| `lockdown_page` | *unset* | `true` or a map: an HTML page instead of the message. See [Block and lockdown pages](#block-and-lockdown-pages) |
 
 ### An entry it cannot read serves nobody
 
@@ -549,6 +550,76 @@ below.
 *   • {{ request.post.? }}          →  body fields (application/x-www-form-urlencoded, multipart, JSON parsed by you, …)
 *   • {{ request.cookie.? }}        →  cookies
 ```
+
+A block also substitutes:
+
+- `{{block.status}}`: the status being sent.
+- `{{block.rule}}`: the name of the rule that refused the request. This tells the client
+  which rule it tripped, so it's never in a default and only appears where you write it.
+
+A rule can carry its own message as `metadata.banning_message`, which replaces this one for
+blocks that rule causes.
+
+The message is sent as `text/plain`, so HTML in it is shown as source. For a page, use
+[`block_page`](#block-and-lockdown-pages).
+
+## Block and lockdown pages
+
+A block and a lockdown are plain text unless you ask for a page (#452). `block_page` and
+`lockdown_page` take the same kind of settings as
+[`challenge.page`](../plugins/challenges.md#wording-language-and-styling), and the page
+is built on the challenge interstitial's card and stylesheet, so one set of `styles`
+themes all three:
+
+```yaml
+global:
+  block_page: true             # the built-in page, as it comes
+  lockdown_page:
+    lang: fr
+    heading: "De retour bientôt"
+    message: |
+      Nous mettons le site à jour jusqu'à 18 h UTC.
+      Référence : {{request.id}}
+    styles: ".card { border-top: 4px solid #0b8f5a; }"
+    stylesheet: /themes/custom/site/firewall.css
+```
+
+| Key | Default (block / lockdown) | |
+|---|---|---|
+| `lang` | `en` | The page's `lang` attribute |
+| `title` | `Request blocked` / `Temporarily closed` | The browser tab's title |
+| `heading` | `Request blocked` / `Temporarily closed` | The heading on the card |
+| `message` | `banning_message` / `lockdown_message` if you set one, else the built-in text, which quotes `{{request.id}}` | One paragraph per line |
+| `styles` | *none* | CSS after the built-in rules |
+| `stylesheet` | *none* | A `<link rel="stylesheet">`: a path on this site or an `https:` URL |
+
+- **`true`** is the built-in page. **`false`**, or leaving it out, is the plain-text
+  message it has always been.
+- **Text is plain text,** with the same `{{…}}` placeholders as `banning_message`. What
+  the client sent is substituted and the whole is escaped once, so it can't become markup.
+- **A rule's own page** is `metadata.block_page`: `true`, or a map merged over
+  `block_page` for the blocks that rule causes. It works whether or not `block_page` is set.
+- **Sent with a strict `Content-Security-Policy`.** The page has no script and no form, so
+  neither is allowed. Styles, images and fonts are allowed from this site and over
+  `https:`, so a stylesheet and a logo in it work.
+- **A value that can't be used stops the firewall starting** with a
+  `ConfigurationException` naming every problem, and `firewall lint` reports it first. This
+  covers an unknown key, text that isn't text, a malformed `lang`, CSS containing a closing
+  `style` tag, and a stylesheet that isn't a path or an `https:` URL.
+- **In `mode: exception`,** the page is the exception's message, and `getContentType()`
+  says what it is. See [Error Handling](../reference/error-handling.md).
+
+### JSON for API clients
+
+```yaml
+global:
+  banning_json: true
+```
+
+A client whose **first** preference in `Accept` is JSON (`application/json`, or any
+`+json` type) gets `{"error":"blocked","status":403,"request_id":"…"}` instead of the
+page or the message. A lockdown answers `{"error":"lockdown",…,"retry_after":300}`. A
+browser lists `text/html` first and still gets the page.
 
 ## Multiple Offenses Defense
 

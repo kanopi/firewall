@@ -33,14 +33,17 @@ class FirewallLockdownException extends FirewallBlockedException
      *   Seconds to put in `Retry-After`. Zero omits the header.
      * @param \Throwable|null $previous
      *   Previous exception for chaining, if any.
+     * @param string $contentType
+     *   The body's `Content-Type` (#452).
      */
     public function __construct(
         string $message,
         int $statusCode = 503,
         private readonly int $retryAfter = 300,
-        ?\Throwable $previous = null
+        ?\Throwable $previous = null,
+        string $contentType = 'text/plain; charset=utf-8'
     ) {
-        parent::__construct($message, $statusCode, $previous);
+        parent::__construct($message, $statusCode, $previous, $contentType);
     }
 
     /**

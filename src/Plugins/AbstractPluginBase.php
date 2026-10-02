@@ -876,6 +876,38 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
     }
 
     /**
+     * The message this rule's blocks are refused with, if it sets one (#452).
+     *
+     * Read from `metadata.banning_message`, in place of `global.banning_message` -- and,
+     * on a block page, used as its message when the page sets none. Only consulted for
+     * blocks this rule causes.
+     *
+     * @return string|null
+     *   The template, or NULL to use the global one.
+     */
+    public function getBanningMessage(): ?string
+    {
+        $message = $this->metadata['banning_message'] ?? null;
+
+        return is_string($message) && trim($message) !== '' ? $message : null;
+    }
+
+    /**
+     * This rule's block page, as configured (#452).
+     *
+     * `metadata.block_page`: `true`, or a map merged over `global.block_page` for blocks
+     * this rule causes. Validated when the firewall is built, and read back through
+     * `BlockPage::settings()`.
+     *
+     * @return mixed
+     *   The raw value; NULL when the rule sets none.
+     */
+    public function getBlockPage(): mixed
+    {
+        return $this->metadata['block_page'] ?? null;
+    }
+
+    /**
      * {@inheritdoc}
      *
      * Read from `metadata.challenge_provider`, alongside the other

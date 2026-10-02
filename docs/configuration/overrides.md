@@ -65,7 +65,7 @@ Overrides are ordinary PHP, so a value that lives in a file needs nothing more t
 Firewall::create([__DIR__ . '/firewall.yml'], [
     // Secrets mounted by the orchestrator, read at bootstrap.
     '[challenge][secret]' => trim(file_get_contents('/run/secrets/firewall_hmac')),
-    '[global][banning_message]' => file_get_contents('/etc/firewall/banned.html'),
+    '[global][banning_message]' => file_get_contents('/etc/firewall/banned.txt'),
 ]);
 ```
 

@@ -227,6 +227,9 @@ challenge:
 - **The widget's own text** (ALTCHA's "I'm not a robot", Turnstile's and reCAPTCHA's) comes
   from the widget, not from this page. ALTCHA's "Fetching a new one…" retry message is
   also still English.
+- **The block and lockdown pages** are built on the same card and stylesheet, so the
+  same `styles` and `stylesheet` theme them. See
+  [Block and lockdown pages](../configuration/global.md#block-and-lockdown-pages).
 - **A custom provider** gets the values as `page` in the render context. Pass
   `ChallengePage::fromContext($context)` to `InterstitialRenderer::render()` as `page`, and
   it is applied and escaped for you.

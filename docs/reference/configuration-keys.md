@@ -40,7 +40,9 @@ Nothing here explains anything; that is deliberate.
 | `mode` | string | `block` | `block`, `log`, `exception`, `disabled`, `lockdown` | [Mode](../configuration/global.md#mode) |
 | `panic_file` | string | *unset* | A file that overrides `mode` when it exists | [Panic Switch](../configuration/global.md#panic-switch) |
 | `banning_status_code` | int | `400` | Status sent when a rule blocks | [Status Code](../configuration/global.md#status-code) |
-| `banning_message` | string | built-in | Body template; `{{request.id}}` is substituted | [Banning Message](../configuration/global.md#banning-message) |
+| `banning_message` | string | built-in | Plain-text body template; `{{request.id}}`, `{{block.status}}` and `{{block.rule}}` are substituted | [Banning Message](../configuration/global.md#banning-message) |
+| `block_page` | bool or map | *unset* | An HTML page instead of the message: `lang`, `title`, `heading`, `message`, `styles`, `stylesheet` | [Block and lockdown pages](../configuration/global.md#block-and-lockdown-pages) |
+| `banning_json` | bool | `false` | Answer a client that prefers JSON with JSON | [JSON for API clients](../configuration/global.md#json-for-api-clients) |
 | `repeat_offender_status` | int | `0` | Status for a client already on the block list | [Global](../configuration/global.md) |
 | `add_to_expire` | int | `3600` | Seconds added to a ban on each repeat hit | [Global](../configuration/global.md) |
 | `blocking_escalation` | list | `[]` | Window/offense/duration rules that lengthen bans | [Multiple Offenses](../configuration/global.md#multiple-offenses-defense) |
@@ -54,6 +56,7 @@ Nothing here explains anything; that is deliberate.
 | `lockdown_status` | int | `503` | | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_retry_after` | int | `300` | Seconds in `Retry-After`; `0` omits it | [Lockdown](../configuration/global.md#lockdown) |
 | `lockdown_message` | string | built-in | Supports `{{request.id}}` | [Lockdown](../configuration/global.md#lockdown) |
+| `lockdown_page` | bool or map | *unset* | As `block_page`, for the lockdown response | [Block and lockdown pages](../configuration/global.md#block-and-lockdown-pages) |
 | `path_source` | string | `pathinfo` | `pathinfo` (relative to the front controller) or `script_name` (the file the server ran). WordPress needs `script_name`; front-controller apps keep the default | [Path Source](../configuration/global.md#path-source) |
 | `base_path` | string | *unset* | Where the application is installed, for `script_name` in a subdirectory | [Path Source](../configuration/global.md#path-source) |
 | `stale_source_error_after` | int | `0` *(off)* | Seconds before an unrefreshed source is an error | [Stale Rule Sources](../configuration/global.md#stale-rule-sources) |
@@ -122,6 +125,8 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 | `name` | string | class name | What the log calls it. Name every rule | [Plugins](../plugins/index.md) |
 | `mode` | string | *enforce* | `log` observes this one rule without enforcing it | [Observe mode](../configuration/global.md#observing-one-rule-while-the-rest-enforce) |
 | `status_code` | int | `banning_status_code` | Per-rule override | [Status Code](../configuration/global.md#status-code) |
+| `banning_message` | string | `banning_message` | Per-rule override of the block message | [Banning Message](../configuration/global.md#banning-message) |
+| `block_page` | bool or map | `block_page` | This rule's block page, merged over the global one | [Block and lockdown pages](../configuration/global.md#block-and-lockdown-pages) |
 | `default_expiration_time` | int | `challenge.ttl` on a challenge rule, else `3600` | Ban length, or pass-token TTL. On a challenge rule it is capped by `challenge.ttl` | [Global](../configuration/global.md) |
 | `record` | bool | `true` | `false` refuses without writing to the block list. On a `redirect` rule the default is `false` and `true` opts in | [Evaluation Order](evaluation-order.md#refusing-and-recording-are-separate) |
 | `mark_as` | string | the rule's name | The signal `response: mark` raises, so several rules can raise one |
