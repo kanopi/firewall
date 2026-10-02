@@ -131,9 +131,10 @@ configs:
 | **Rate limits** | The same database, or Redis on plans that include it |
 
 The `%env(safe:…)%` chain in `storage-pantheon.yml` is worth reading if you are writing a
-recipe for another host: it pulls credentials out of a JSON blob and falls back cleanly when
-the variable is absent, so including that preset off-platform degrades to the default storage
-instead of crashing. See [Environment Variables](../configuration/environment-variables.md).
+recipe for another host: it pulls credentials out of a JSON blob, decoding it with `json:`
+on every token, and falls back to DDEV's `db`/`db`@`db:3306` when the variable is absent. So
+the preset works under DDEV as well, but on any other host without a `db` server the storage
+cannot connect. See [Environment Variables](../configuration/environment-variables.md).
 
 !!! warning "`logging-pantheon.yml` is not safe to include off-platform"
 
