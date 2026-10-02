@@ -216,7 +216,7 @@ challenge:
 
 - **Text is plain text,** escaped when the page is written, like a notice. It can't add
   markup.
-- **`styles` is CSS,** written as is, and it can't contain `</style`, which would close
+- **`styles` is CSS,** written as is, and it can't contain a closing `style` tag, which would close
   the block. A logo goes here, as a `background-image`, or in your stylesheet.
 - **`stylesheet` is a path on this site** (`/css/firewall.css`) or an `https:` URL. A
   protocol-relative `//host/...` URL, `http:`, and other schemes are refused.
