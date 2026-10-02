@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit\Logging;
 
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Logging\Middleware as LoggingMiddleware;
 use Kanopi\Firewall\Logging\Handler\DatabaseHandler;
 use Kanopi\Firewall\Logging\LoggingFactory;
 use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 use Kanopi\Firewall\Utility\DegradedBackends;
+use Monolog\Handler\TestHandler;
 use Monolog\Level;
 use Monolog\LogRecord;
 use Monolog\Logger;
@@ -524,6 +527,92 @@ class DatabaseHandlerTest extends AbstractTestCase
         self::assertNotSame($firewallLogger, $internal);
         self::assertSame('firewall.log-handler', $internal->getName());
         self::assertSame($internal, self::readProperty($handler, 'internalLogger'), 'The internal logger is built once');
+    }
+
+    /**
+     * A flush is one INSERT per chunk of rows, not one per row.
+     *
+     * Counted at the driver, through DBAL's logging middleware, because the
+     * defect was invisible from the table: the rows all landed either way, a
+     * round trip and a transaction apiece (#460).
+     */
+    public function testAFlushWritesOneStatementPerChunk(): void
+    {
+        $handler = $this->createHandler();
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        $statements = new TestHandler();
+        $configuration = (new Configuration())->setMiddlewares([
+            new LoggingMiddleware(new Logger('dbal', [$statements])),
+        ]);
+        $connection = DriverManager::getConnection(
+            ['driver' => 'pdo_sqlite', 'path' => $this->databasePath],
+            $configuration
+        );
+
+        $handler = new DatabaseHandler(['connection' => $connection]);
+        for ($i = 1; $i <= 150; $i++) {
+            $handler->handle($this->record(Level::Warning, 'Record ' . $i));
+        }
+        $handler->flush();
+
+        $inserts = array_filter(
+            $statements->getRecords(),
+            static fn(LogRecord $record): bool => str_contains((string) ($record->context['sql'] ?? ''), 'INSERT INTO firewall_log')
+        );
+
+        // Fourteen columns, so 71 rows a statement under SQLite's 999
+        // parameters: 71 + 71 + 8.
+        self::assertCount(3, $inserts);
+
+        $messages = array_column($this->rows(), 'message');
+        self::assertCount(151, $messages, 'Every record landed');
+        self::assertSame('Record 1', $messages[1]);
+        self::assertSame('Record 150', $messages[150], 'In the order they were logged');
+    }
+
+    /**
+     * An unbuffered handler still writes each record as it arrives.
+     */
+    public function testUnbufferedRecordsAreEachTheirOwnStatement(): void
+    {
+        $handler = $this->createHandler(['buffer' => false]);
+        $handler->handle($this->record(Level::Warning, 'First'));
+
+        self::assertSame(['First'], array_column($this->rows(), 'message'), 'Written before any flush');
+
+        $handler->handle($this->record(Level::Warning, 'Second'));
+
+        self::assertSame(['First', 'Second'], array_column($this->rows(), 'message'));
+    }
+
+    /**
+     * Columns are written by name, so every promoted value lands in its own.
+     *
+     * A multi-row INSERT binds by position, which a row whose keys came out in
+     * another order would quietly scramble. Checked on a row from the second
+     * chunk, past the boundary where a positional slip would first show.
+     */
+    public function testPromotedColumnsSurviveTheChunkBoundary(): void
+    {
+        $handler = $this->createHandler();
+        for ($i = 1; $i <= 80; $i++) {
+            $handler->handle($this->record(Level::Warning, 'Record ' . $i, [
+                'client_ip' => '203.0.113.' . $i,
+                'plugin_name' => 'rule-' . $i,
+                'method' => 'POST',
+            ]));
+        }
+        $handler->flush();
+
+        $row = $this->connection()->fetchAssociative('SELECT * FROM firewall_log WHERE message = ?', ['Record 75']);
+
+        self::assertIsArray($row);
+        self::assertSame('203.0.113.75', $row['client_ip']);
+        self::assertSame('rule-75', $row['plugin_name']);
+        self::assertSame('POST', $row['method']);
+        self::assertSame('WARNING', $row['level']);
     }
 
     /**

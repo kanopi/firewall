@@ -167,7 +167,7 @@ anchor lacks. See [`%config(...)%`](environment-variables.md#config-reusing-a-va
 | `connection` | *(required)* | Doctrine parameters, or a `dsn:` |
 | `level` | `Monolog\Level::Warning` | Minimum severity to record |
 | `bubble` | `true` | Whether records continue to handlers below |
-| `buffer` | `true` | Hold records in memory, write them in one go at shutdown |
+| `buffer` | `true` | Hold records in memory, write them in one go at shutdown (one statement per 71 records) |
 | `buffer_limit` | `0` | Flush early once this many records are held (`0` = at shutdown) |
 | `retention_days` | `0` | Delete rows older than this (`0` = keep forever) |
 | `prune_probability` | `0.01` | Chance per flush of running that delete |
@@ -289,7 +289,8 @@ lines are exactly the ones under attack. Two defaults follow from that:
   every allowed request, which is a load test you did not mean to run.
 - **`buffer` defaults to `true`.** Records are held in memory and written when the handler
   closes, which PHP does on a normal shutdown and on the `exit()` a blocking response ends
-  on. A fatal error skips destructors and loses the buffered records; `buffer: false` pays
+  on. They go in multi-row `INSERT`s of up to 71 rows, so a request that logged a dozen
+  lines costs one round trip, not twelve. A fatal error skips destructors and loses the buffered records; `buffer: false` pays
   a round trip per record to avoid that.
 
 No connection is opened until the first record is actually written, so a request that logs
