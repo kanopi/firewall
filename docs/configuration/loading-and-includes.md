@@ -78,6 +78,45 @@ Nothing needs configuring. It lives in `KANOPI_FIREWALL_CACHE_DIR/compiled` when
 constant is defined, and in a `kanopi-firewall-config` directory inside the system temp
 directory otherwise.
 
+### Keeping it in a cache pool, or off disk entirely
+
+Writing PHP files is the right default when the cache directory is local. It is the wrong
+one where the only persistent writable directory is a **network filesystem** — writing an
+entry and sweeping the directory there can cost more than the parse it saves — or where an
+integration keeps runtime caches in its application's own backend.
+
+A host can hand over any PSR-6 pool before the firewall loads its configuration:
+
+```php
+use Kanopi\Firewall\Utility\Config;
+use Symfony\Component\Cache\Adapter\RedisAdapter;
+
+Config::setConfigCachePool(new RedisAdapter($redis, 'firewall'));
+
+\Kanopi\Firewall\Firewall::create([__DIR__ . '/config.yml'])->evaluate();
+```
+
+With a pool set, entries are read and written through it and nothing is written to disk.
+They are validated exactly as file entries are — every file fingerprint and the environment
+— and expire `KANOPI_FIREWALL_CACHE_MAX_AGE` after they were written, which stands in for the
+sweep. A pool that throws costs a parse, never the load. The setting is process-wide and
+lasts until it is replaced; `Config::setConfigCachePool(null)` goes back to files.
+
+A configuration containing an object is still not cached, so only arrays and scalars ever
+reach the pool. How the pool stores them — serialised or not — is the pool's choice, as it
+is for every other cache you hand the firewall.
+
+A process with no pool to offer (CLI, cron) still writes files. To stop that on a host that
+should never have cache files written:
+
+```php
+define('KANOPI_FIREWALL_CONFIG_FILE_CACHE', false);  // Default: files are written
+```
+
+The configuration is then parsed on every load that has no pool. The constant only covers
+this cache: cached copies of remote includes and rule sources are unaffected, and a pool, if
+one is set, is still used.
+
 ### What invalidates an entry
 
 Each file is fingerprinted by a **hash of its content**. An entry is discarded when any file
