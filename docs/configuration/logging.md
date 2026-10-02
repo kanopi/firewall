@@ -193,8 +193,10 @@ JSON, so nothing is lost.
 | `user_agent` | |
 | `context` | everything not promoted to a column, as JSON |
 
-`logged_at`, `client_ip` and `plugin_type` are indexed, because every question the table
-exists for is bounded by time, by address, or by rule:
+`logged_at`, `client_ip`, `plugin_type` and `plugin_name` are indexed, because every
+question the table exists for is bounded by time, by address, or by rule. `plugin_name` is
+indexed twice, once rule-first and once time-first, because "what has this rule done" and
+"which rules did the most this week" each need the order the other doesn't:
 
 ```sql
 -- Which rule has blocked the most clients this week?
@@ -206,6 +208,13 @@ ORDER BY clients DESC;
 
 -- Did anything match this rule at all since it was added?
 SELECT COUNT(*) FROM firewall_log WHERE plugin_type = 'Kanopi\\Firewall\\Plugins\\GeoLocation';
+
+-- The same two questions for a named rule, answered from the index alone.
+SELECT plugin_name, COUNT(*) FROM firewall_log
+WHERE logged_at >= UNIX_TIMESTAMP() - 604800
+GROUP BY plugin_name;
+
+SELECT COUNT(*) FROM firewall_log WHERE plugin_name = 'known-bad-ranges';
 
 -- What did we do to this address before it complained?
 SELECT logged_at, level, message, path FROM firewall_log
