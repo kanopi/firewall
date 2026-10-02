@@ -137,10 +137,23 @@ settings into a YAML file does exactly that. The consequence was a firewall enfo
 previous configuration while reporting itself perfectly healthy. It also means a deploy that
 rewrites identical files *keeps* the cache rather than discarding it.
 
-Two things are never cached: a configuration containing an object, which cannot be written
-as PHP source without `serialize()` — deliberately not used anywhere this library writes and
-reads back — and a load that reported an error or a warning, which would otherwise freeze a
-degraded result in place.
+The **environment** is fingerprinted too, because `%env()%` is resolved during the parse:
+change a variable a configuration reads and its entry is discarded. Values that belong to
+one request are left out of that fingerprint, or no web request would ever hit the cache:
+headers (`HTTP_*`), `REQUEST_*`, `REMOTE_*`, `QUERY_STRING`, `SERVER_NAME`, `SERVER_PORT`,
+`SERVER_PROTOCOL`, `HTTPS`, `SSL_*`, `GEOIP_*` and the like.
+
+Three things are never cached:
+
+- a configuration containing an object, which cannot be written as PHP source without
+  `serialize()`, deliberately not used anywhere this library writes and reads back;
+- a load that reported an error or a warning, which would otherwise freeze a degraded
+  result in place;
+- a load whose `%env()%` read one of those request-scoped values, such as
+  `%env(SERVER_NAME)%` or `%env(HTTP_HOST)%` in a `configs:` path that picks rules per site.
+  The fingerprint can't see such a value change, so a cached entry would serve the first
+  request's value to every later one. That configuration is parsed on each request, and
+  everything else stays cached.
 
 ### Old entries are removed
 

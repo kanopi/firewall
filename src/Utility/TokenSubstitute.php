@@ -67,6 +67,31 @@ final class TokenSubstitute
     private static array $unsafeProcessorAllowedBaseDirs = [];
 
     /**
+     * Environment variables `%env()%` has read since the last takeResolvedVariables().
+     *
+     * So `Config` can tell a merge that read a request-scoped value -- which a cache
+     * entry would freeze at the first request's -- from one that read only stable ones
+     * (#467).
+     *
+     * @var array<string, true>
+     */
+    private static array $resolvedVariables = [];
+
+    /**
+     * The variables `%env()%` has read since the last call, and forget them.
+     *
+     * @return array<int, string>
+     *   Variable names, each once.
+     */
+    public static function takeResolvedVariables(): array
+    {
+        $names = array_keys(self::$resolvedVariables);
+        self::$resolvedVariables = [];
+
+        return $names;
+    }
+
+    /**
      * Opt in to the filesystem-touching processors.
      *
      * The `file` and `require` processors turn any env-var injection into
@@ -318,6 +343,11 @@ final class TokenSubstitute
     {
         $parts = \explode(':', $token);
         $var = \array_pop($parts); // Last element is always the env var name
+
+        // Recorded before anything below can throw or return: a `defined:`
+        // check, a `safe:` fallback and a `default:` all depend on the
+        // variable as much as a plain read does (#467).
+        self::$resolvedVariables[$var] = true;
 
         // Handle 'defined' processor - special case that just checks existence
         if (count($parts) === 1 && strtolower($parts[0]) === 'defined') {
