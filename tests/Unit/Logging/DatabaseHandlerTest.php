@@ -691,11 +691,104 @@ class DatabaseHandlerTest extends AbstractTestCase
             'retention_days' => -5,
             'prune_probability' => 7.5,
             'buffer_limit' => -1,
+            'prune_batch_size' => 0,
         ]);
 
         self::assertSame(0, $handler->getRetentionDays());
         self::assertSame(1.0, self::readProperty($handler, 'pruneProbability'));
         self::assertSame(0, self::readProperty($handler, 'bufferLimit'));
+        self::assertSame(1, self::readProperty($handler, 'pruneBatchSize'), 'A batch of nothing would never finish');
+    }
+
+    /**
+     * A `prune_batch_size` that is not a number falls back to the default.
+     */
+    public function testNonNumericPruneBatchSizeFallsBackToTheDefault(): void
+    {
+        self::assertSame(
+            DatabaseHandler::DEFAULT_PRUNE_BATCH_SIZE,
+            self::readProperty($this->createHandler(['prune_batch_size' => 'lots']), 'pruneBatchSize')
+        );
+    }
+
+    /**
+     * A backlog bigger than one batch is cleared by a prune with no limit.
+     *
+     * Which is what `bin/firewall-log-prune` calls, so batching changes how
+     * the CLI deletes and not how much (#459).
+     */
+    public function testAnUnlimitedPruneClearsABacklogOfManyBatches(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 0, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Recent'));
+        $handler->flush();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        self::assertSame(10, $handler->prune());
+        self::assertSame(0, $handler->countPrunable());
+        self::assertSame(['Recent'], array_column($this->rows(), 'message'));
+    }
+
+    /**
+     * A limited prune stops after that many batches, oldest rows first.
+     */
+    public function testALimitedPruneStopsAfterItsBatchesOldestFirst(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 0, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        $newestFour = $this->connection()->fetchFirstColumn(
+            'SELECT logged_at FROM firewall_log WHERE message = ? ORDER BY logged_at DESC LIMIT 4',
+            ['Ancient']
+        );
+
+        self::assertSame(6, $handler->prune(2));
+        self::assertSame(4, $handler->countPrunable());
+        self::assertSame(
+            $newestFour,
+            $this->connection()->fetchFirstColumn(
+                'SELECT logged_at FROM firewall_log WHERE message = ? ORDER BY logged_at DESC',
+                ['Ancient']
+            ),
+            'The oldest six went, and the newest of the old are what is left'
+        );
+    }
+
+    /**
+     * A winning flush deletes one batch, never the whole backlog.
+     *
+     * The request that draws the roll has already answered its visitor; what
+     * it costs from here is a worker and locks on a table every other request
+     * writes to. One batch bounds both, and the backlog drains over later
+     * rolls (#459).
+     */
+    public function testAWinningFlushPrunesOneBatchAtMost(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 1, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        $handler->handle($this->record(Level::Warning, 'Triggers one batch'));
+        $handler->flush();
+
+        self::assertSame(7, $handler->countPrunable());
+
+        $handler->handle($this->record(Level::Warning, 'And another'));
+        $handler->flush();
+
+        self::assertSame(4, $handler->countPrunable());
     }
 
     /**
