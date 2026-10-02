@@ -162,8 +162,9 @@ class DatabaseHandler extends AbstractProcessingHandler
      *   - `level`: minimum level to record. Defaults to `Warning`, because
      *     `debug` on this handler means a row per allowed request.
      *   - `bubble`: whether handled records continue down the stack.
-     *   - `buffer`: hold records in memory and write them in one statement at
-     *     shutdown rather than one round trip per record. On by default.
+     *   - `buffer`: hold records in memory and write them together at
+     *     shutdown, in one statement per 71 records rather than one round
+     *     trip each. On by default.
      *   - `buffer_limit`: flush early once this many records are held. `0`
      *     (the default) holds everything until shutdown.
      *   - `retention_days`: delete rows older than this. `0` keeps forever.
@@ -304,9 +305,13 @@ class DatabaseHandler extends AbstractProcessingHandler
             return;
         }
 
-        foreach ($rows as $row) {
+        // One statement per chunk, not per row (#460). Each row was its own
+        // round trip and, under autocommit, its own transaction -- so its own
+        // redo log flush on InnoDB -- which made buffering a matter of *when*
+        // the round trips happened rather than how many there were.
+        foreach (array_chunk($rows, self::insertChunkSize($rows[0])) as $chunk) {
             try {
-                $this->connection->insert($this->table, $row);
+                $this->insertRows($chunk);
             } catch (\Throwable $throwable) {
                 $this->reportFailure('Failed to write a firewall log record', $throwable);
                 return;
@@ -314,6 +319,57 @@ class DatabaseHandler extends AbstractProcessingHandler
         }
 
         $this->pruneIfDue();
+    }
+
+    /**
+     * Write rows in one multi-row `INSERT`.
+     *
+     * Multi-row `VALUES` is common to every platform this handler targets:
+     * MySQL, MariaDB, PostgreSQL, and SQLite from 3.7.11. Identifiers are
+     * written as `Connection::insert()` wrote them, unquoted, so a table name
+     * that worked before still resolves to the same table.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     *   Rows from `toRow()`, which all carry the same columns in the same
+     *   order.
+     */
+    private function insertRows(array $rows): void
+    {
+        $columns = array_keys($rows[0]);
+        $tuple = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
+
+        $parameters = [];
+        foreach ($rows as $row) {
+            foreach ($columns as $column) {
+                $parameters[] = $row[$column] ?? '';
+            }
+        }
+
+        $this->connection->executeStatement(
+            sprintf(
+                'INSERT INTO %s (%s) VALUES %s',
+                $this->table,
+                implode(', ', $columns),
+                implode(', ', array_fill(0, count($rows), $tuple))
+            ),
+            $parameters
+        );
+    }
+
+    /**
+     * Rows per statement that keep it under 999 bound parameters.
+     *
+     * SQLite's historical limit, and the lowest of the platforms supported.
+     * MySQL and PostgreSQL take far more, but one fixed rule is one code path,
+     * and past a few dozen rows per statement the round trip is already paid
+     * for: fourteen columns makes it 71.
+     *
+     * @param array<string, mixed> $row
+     *   A representative row.
+     */
+    private static function insertChunkSize(array $row): int
+    {
+        return max(1, intdiv(999, max(1, count($row))));
     }
 
     /**
