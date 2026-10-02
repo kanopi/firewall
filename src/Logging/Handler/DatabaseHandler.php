@@ -309,7 +309,7 @@ class DatabaseHandler extends AbstractProcessingHandler
         // round trip and, under autocommit, its own transaction -- so its own
         // redo log flush on InnoDB -- which made buffering a matter of *when*
         // the round trips happened rather than how many there were.
-        foreach (array_chunk($rows, self::insertChunkSize($rows[0])) as $chunk) {
+        foreach (array_chunk($rows, $this->insertChunkSize($rows[0])) as $chunk) {
             try {
                 $this->insertRows($chunk);
             } catch (\Throwable $throwable) {
@@ -367,7 +367,7 @@ class DatabaseHandler extends AbstractProcessingHandler
      * @param array<string, mixed> $row
      *   A representative row.
      */
-    private static function insertChunkSize(array $row): int
+    private function insertChunkSize(array $row): int
     {
         return max(1, intdiv(999, max(1, count($row))));
     }
