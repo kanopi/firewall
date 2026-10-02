@@ -154,6 +154,72 @@ class ConfigCacheTest extends AbstractTestCase
     }
 
     /**
+     * Per-request server values do not invalidate (#445).
+     *
+     * Under PHP-FPM, $_SERVER and getenv() both carry the request URI, the
+     * request time, the client's port and every header. Fingerprinting them
+     * made every web request a miss that rewrote the entry and swept the
+     * directory.
+     */
+    public function testPerRequestServerValuesDoNotInvalidate(): void
+    {
+        $file = $this->write('request.yml', "global:\n  mode: block\n", 10);
+        $saved = $_SERVER;
+
+        try {
+            $this->loadAcrossTwoRequests($file);
+        } finally {
+            $_SERVER = $saved;
+            putenv('REQUEST_URI');
+        }
+    }
+
+    /**
+     * Loads the file under one request's server values, then another's.
+     */
+    private function loadAcrossTwoRequests(string $file): void
+    {
+        $_SERVER['REQUEST_URI'] = '/first';
+        $_SERVER['QUERY_STRING'] = 'a=1';
+        $_SERVER['REQUEST_TIME_FLOAT'] = 1000.25;
+        $_SERVER['REMOTE_PORT'] = '51000';
+        $_SERVER['HTTP_USER_AGENT'] = 'first';
+        putenv('REQUEST_URI=/first');
+        Config::load([$file]);
+        $before = $this->cacheEntries();
+
+        $_SERVER['REQUEST_URI'] = '/second';
+        $_SERVER['QUERY_STRING'] = 'b=2';
+        $_SERVER['REQUEST_TIME_FLOAT'] = 1001.75;
+        $_SERVER['REMOTE_PORT'] = '51001';
+        $_SERVER['HTTP_USER_AGENT'] = 'second';
+        putenv('REQUEST_URI=/second');
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        $this->assertSame(
+            $before,
+            $this->cacheEntries(),
+            'A second request must be served from the entry the first wrote, not rewrite it'
+        );
+    }
+
+    /**
+     * The compiled entries and their contents, to tell a hit from a rewrite.
+     *
+     * @return array<string, string>
+     */
+    private function cacheEntries(): array
+    {
+        $entries = [];
+
+        foreach (glob($this->cacheDir() . '/*.php') ?: [] as $entry) {
+            $entries[$entry] = (string) hash_file('xxh128', $entry);
+        }
+
+        return $entries;
+    }
+
+    /**
      * Different overrides are different cache entries.
      */
     public function testOverridesAreNotSharedBetweenLoads(): void
