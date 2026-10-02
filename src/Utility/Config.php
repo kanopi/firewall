@@ -20,6 +20,21 @@ use Symfony\Component\PropertyAccess\PropertyAccessorInterface;
 class Config
 {
     /**
+     * Environment and $_SERVER keys that carry per-request values.
+     *
+     * Left out of the environment fingerprint, so a web request does not miss
+     * the compiled cache on its URI, headers or client port (#445).
+     */
+    private const REQUEST_SCOPED_KEYS = '/^(?:
+        HTTP_ | REQUEST_ | REMOTE_ | REDIRECT_ | SCRIPT_ | ORIG_ | CONTENT_
+        | PHP_AUTH_ | SSL_ | GEOIP_
+        | PATH_INFO$ | PATH_TRANSLATED$ | QUERY_STRING$ | DOCUMENT_URI$
+        | PHP_SELF$ | AUTH_TYPE$ | HTTPS$ | UNIQUE_ID$ | FCGI_ROLE$
+        | SERVER_PROTOCOL$ | SERVER_PORT$ | SERVER_ADDR$ | SERVER_NAME$
+        | argv$ | argc$
+    )/x';
+
+    /**
      * The accessor overrides are written through, built once per process.
      */
     private static ?PropertyAccessorInterface $propertyAccessor = null;
@@ -90,6 +105,7 @@ class Config
 
         if ($merged === null) {
             ConfigLoader::takeLoadedFiles();
+            TokenSubstitute::takeReadEnvironment();
 
             $merged = [];
 
@@ -119,6 +135,7 @@ class Config
                     $cacheKey,
                     $merged,
                     ConfigLoader::takeLoadedFiles(),
+                    TokenSubstitute::takeReadEnvironment(),
                     $mayHoldReferences
                 );
             }
@@ -282,7 +299,11 @@ class Config
             return null;
         }
 
-        if (!is_array($payload) || !isset($payload['config'], $payload['files'], $payload['env'])) {
+        $wellFormed = is_array($payload)
+            && isset($payload['config'], $payload['files'], $payload['env'], $payload['vars'])
+            && is_array($payload['vars']);
+
+        if (!$wellFormed) {
             @unlink($file);
 
             return null;
@@ -290,6 +311,15 @@ class Config
 
         if ($payload['env'] !== self::environmentFingerprint()) {
             return null;
+        }
+
+        // What `%env()%` resolved, checked by value. The fingerprint above
+        // leaves request-scoped keys out, so this is the only thing that sees a
+        // config built from `%env(SERVER_NAME)%` or `%env(HTTP_HOST)%` change.
+        foreach ($payload['vars'] as $var => $fingerprint) {
+            if (self::valueFingerprint(TokenSubstitute::environmentValue((string) $var)) !== $fingerprint) {
+                return null;
+            }
         }
 
         foreach ($payload['files'] as $path => $fingerprint) {
@@ -315,11 +345,13 @@ class Config
      *   The merged configuration.
      * @param array<string, string> $files
      *   Files read, absolute path to fingerprint.
+     * @param array<string, mixed> $vars
+     *   Environment variables `%env()%` read, name to raw value.
      * @param bool $references
      *   Whether the merge may hold `%config(...)%` tokens, so a later cache hit can skip
      *   scanning for them (#259).
      */
-    private static function writeConfigCache(string $key, array $merged, array $files, bool $references): void
+    private static function writeConfigCache(string $key, array $merged, array $files, array $vars, bool $references): void
     {
         $dir = self::configCacheDir();
 
@@ -351,6 +383,10 @@ class Config
             'config' => $merged,
             'files' => $files,
             'env' => self::environmentFingerprint(),
+            // Hashed, not stored: a variable can hold more than the merge kept
+            // of it -- a whole JSON credential blob for one `key:` -- and the
+            // entry has no reason to carry the rest.
+            'vars' => array_map(self::valueFingerprint(...), $vars),
             'references' => $references,
         ];
 
@@ -496,6 +532,20 @@ class Config
     }
 
     /**
+     * A fingerprint of one environment value, as `%env()%` read it.
+     *
+     * @param mixed $value
+     *   The raw value, false for a variable that was not set.
+     *
+     * @return string
+     *   The fingerprint.
+     */
+    private static function valueFingerprint(mixed $value): string
+    {
+        return hash('xxh128', var_export($value, true));
+    }
+
+    /**
      * A fingerprint of the environment the parse would see.
      *
      * @return string
@@ -509,13 +559,16 @@ class Config
         // REQUEST_TIME_FLOAT, REMOTE_PORT, every HTTP_* header. Hashing them
         // made every web request a cache miss, rewriting the entry and
         // sweeping the directory on each one (#445).
+        //
+        // Leaving them out cannot serve a stale merge: whatever `%env()%` read
+        // is stored with the entry and compared by value on read. This list
+        // only decides how often an entry is rewritten, not whether it is
+        // correct, so a per-request key it misses costs a rewrite, not a wrong
+        // configuration.
         $stable = static function (array $values): array {
             $values = array_filter(
                 $values,
-                static fn ($key): bool => !is_string($key) || preg_match(
-                    '/^(HTTP_|REQUEST_|REMOTE_|REDIRECT_|SCRIPT_|PATH_INFO$|PATH_TRANSLATED$|ORIG_|QUERY_STRING$|CONTENT_|DOCUMENT_URI$|PHP_SELF$|PHP_AUTH_|AUTH_TYPE$|HTTPS$|SERVER_PORT$|SERVER_ADDR$|SERVER_NAME$|UNIQUE_ID$|FCGI_ROLE$|argv$|argc$)/',
-                    $key
-                ) !== 1,
+                static fn ($key): bool => !is_string($key) || preg_match(self::REQUEST_SCOPED_KEYS, $key) !== 1,
                 ARRAY_FILTER_USE_KEY
             );
             ksort($values);

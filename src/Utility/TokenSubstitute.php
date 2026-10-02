@@ -67,6 +67,65 @@ final class TokenSubstitute
     private static array $unsafeProcessorAllowedBaseDirs = [];
 
     /**
+     * Environment variables `%env()%` has read since the last take, with the
+     * raw value each had: a string, or false when it was not set.
+     *
+     * Config's compiled cache stores these and checks them on read, so a value
+     * that changes between requests -- `SERVER_NAME` on a multisite, say --
+     * rebuilds the merge instead of serving one resolved for another (#445).
+     *
+     * @var array<string, mixed>
+     */
+    private static array $readEnvironment = [];
+
+    /**
+     * Environment variables read since the last call, with the value each had.
+     *
+     * @return array<string, mixed>
+     *   Variable name to raw value, false for one that was not set.
+     */
+    public static function takeReadEnvironment(): array
+    {
+        $read = self::$readEnvironment;
+        self::$readEnvironment = [];
+
+        return $read;
+    }
+
+    /**
+     * The raw value of an environment variable, as `%env()%` would read it.
+     *
+     * getenv() first, then $_SERVER. Not recorded: this is for checking a
+     * value read earlier, not for resolving a token.
+     *
+     * @return mixed
+     *   The value, or false when it is set in neither.
+     */
+    public static function environmentValue(string $var): mixed
+    {
+        $raw = \getenv($var);
+        if ($raw === false && isset($_SERVER[$var])) {
+            return $_SERVER[$var];
+        }
+
+        return $raw;
+    }
+
+    /**
+     * The raw value of an environment variable, recorded as read.
+     *
+     * @return mixed
+     *   The value, or false when it is set in neither.
+     */
+    private static function readEnvironment(string $var): mixed
+    {
+        $raw = self::environmentValue($var);
+        self::$readEnvironment[$var] = $raw;
+
+        return $raw;
+    }
+
+    /**
      * Opt in to the filesystem-touching processors.
      *
      * The `file` and `require` processors turn any env-var injection into
@@ -321,7 +380,7 @@ final class TokenSubstitute
 
         // Handle 'defined' processor - special case that just checks existence
         if (count($parts) === 1 && strtolower($parts[0]) === 'defined') {
-            return \getenv($var) !== false || isset($_SERVER[$var]);
+            return self::readEnvironment($var) !== false;
         }
 
         // Handle 'const' processor - gets PHP constant instead of env var
@@ -358,11 +417,7 @@ final class TokenSubstitute
             array_splice($parts, $safeIndex, 2);
 
             try {
-                // Get the initial value - check getenv() first, then $_SERVER
-                $raw = \getenv($var);
-                if ($raw === false && isset($_SERVER[$var])) {
-                    $raw = $_SERVER[$var];
-                }
+                $raw = self::readEnvironment($var);
 
                 if ($raw === false) {
                     throw new ConfigurationException(\sprintf('Environment variable "%s" is not set', $var));
@@ -378,11 +433,7 @@ final class TokenSubstitute
             }
         }
 
-        // Get the initial value - check getenv() first, then $_SERVER
-        $raw = \getenv($var);
-        if ($raw === false && isset($_SERVER[$var])) {
-            $raw = $_SERVER[$var];
-        }
+        $raw = self::readEnvironment($var);
 
         // Handle 'default' processor with special logic
         $hasDefault = false;

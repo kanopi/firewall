@@ -89,6 +89,20 @@ settings into a YAML file does exactly that. The consequence was a firewall enfo
 previous configuration while reporting itself perfectly healthy. It also means a deploy that
 rewrites identical files *keeps* the cache rather than discarding it.
 
+The **environment** counts too, because `%env()%` is resolved during the parse and baked into
+the merge. Two checks cover it:
+
+- **Every variable a `%env()%` read** is stored with the entry, along with the value it had,
+  or the fact that it was unset. The entry is discarded as soon as any of them differs, so a
+  configuration that reads `%env(SERVER_NAME)%` or chooses an include with `%env(HTTP_HOST)%`
+  is rebuilt for each host instead of serving one host's merge to another.
+- **The rest of the environment** is hashed: every `getenv()` and `$_SERVER` value except
+  the request-scoped ones a web server sets on each request (`HTTP_*`, `REQUEST_*`,
+  `REMOTE_*`, `SSL_*`, `GEOIP_*`, `QUERY_STRING`, `SERVER_NAME`, `SERVER_PROTOCOL` and
+  similar). Those are left out, or every web request would miss and rewrite the entry.
+  Leaving them out can't serve a stale merge, because the first check still compares
+  whatever a configuration read.
+
 Two things are never cached: a configuration containing an object, which cannot be written
 as PHP source without `serialize()` — deliberately not used anywhere this library writes and
 reads back — and a load that reported an error or a warning, which would otherwise freeze a

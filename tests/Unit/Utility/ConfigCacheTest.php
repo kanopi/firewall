@@ -175,6 +175,141 @@ class ConfigCacheTest extends AbstractTestCase
     }
 
     /**
+     * A value `%env()%` reads from a request-scoped key still resolves per request (#445).
+     *
+     * Request-scoped keys are left out of the environment fingerprint, so the
+     * value itself has to be what invalidates. Without that, the first request's
+     * `SERVER_NAME` was baked into the merge and served to every request after
+     * it -- on a shared codebase, one site's configuration served to another.
+     */
+    public function testAnEnvTokenOnARequestScopedKeyResolvesPerRequest(): void
+    {
+        $file = $this->write('host.yml', "global:\n  mode: '%env(SERVER_NAME)%'\n", 10);
+        $saved = $_SERVER;
+
+        try {
+            $_SERVER['SERVER_NAME'] = 'block';
+            $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+
+            $_SERVER['SERVER_NAME'] = 'log';
+            $this->assertSame('log', Config::load([$file])['global']['mode'] ?? null);
+        } finally {
+            $_SERVER = $saved;
+        }
+    }
+
+    /**
+     * An include chosen by a request-scoped key follows the request (#445).
+     */
+    public function testAnIncludeChosenByARequestScopedKeyFollowsTheRequest(): void
+    {
+        $this->write('site-a.yml', "global:\n  status_code: 401\n", 10);
+        $this->write('site-b.yml', "global:\n  status_code: 429\n", 10);
+        $main = $this->write('main.yml', "configs:\n  - '%env(HTTP_HOST)%'\n", 10);
+        $saved = $_SERVER;
+
+        try {
+            $_SERVER['HTTP_HOST'] = $this->dir . '/site-a.yml';
+            $this->assertSame(401, Config::load([$main])['global']['status_code'] ?? null);
+
+            $_SERVER['HTTP_HOST'] = $this->dir . '/site-b.yml';
+            $this->assertSame(
+                429,
+                Config::load([$main])['global']['status_code'] ?? null,
+                "One host's include must not be served to another"
+            );
+        } finally {
+            $_SERVER = $saved;
+        }
+    }
+
+    /**
+     * A request-scoped key `%env()%` read, unchanged, still hits (#445).
+     *
+     * Only the variables a configuration read are compared, so the other
+     * per-request values changing does not cost a rewrite.
+     */
+    public function testAnUnchangedRequestScopedReadStillHits(): void
+    {
+        $file = $this->write('host.yml', "global:\n  mode: '%env(SERVER_NAME)%'\n", 10);
+        $saved = $_SERVER;
+
+        try {
+            $_SERVER['SERVER_NAME'] = 'block';
+            $this->loadAcrossTwoRequests($file);
+        } finally {
+            $_SERVER = $saved;
+            putenv('REQUEST_URI');
+        }
+    }
+
+    /**
+     * A variable `%env()%` found unset is recorded too, so setting it invalidates.
+     */
+    public function testSettingAVariableThatWasUnsetInvalidates(): void
+    {
+        $file = $this->write('default.yml', "global:\n  mode: '%env(default:block:HTTP_X_FW_CACHE_TEST)%'\n", 10);
+        $saved = $_SERVER;
+
+        try {
+            unset($_SERVER['HTTP_X_FW_CACHE_TEST']);
+            $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+
+            $_SERVER['HTTP_X_FW_CACHE_TEST'] = 'log';
+            $this->assertSame('log', Config::load([$file])['global']['mode'] ?? null);
+        } finally {
+            $_SERVER = $saved;
+        }
+    }
+
+    /**
+     * The entry records a fingerprint of what `%env()%` read, never the value.
+     *
+     * A variable can hold more than the merge keeps of it, so the raw value has
+     * no business on disk.
+     */
+    public function testTheEntryDoesNotHoldTheRawValue(): void
+    {
+        putenv('FW_CACHE_TEST_SECRET=do-not-write-me');
+        $file = $this->write('secret.yml', "global:\n  enabled: '%env(defined:FW_CACHE_TEST_SECRET)%'\n", 10);
+
+        try {
+            $this->assertTrue(Config::load([$file])['global']['enabled'] ?? null);
+
+            $entry = $this->cacheDir() . '/' . hash('xxh128', serialize([$file])) . '.php';
+            $this->assertFileExists($entry);
+            $this->assertStringNotContainsString('do-not-write-me', (string) file_get_contents($entry));
+        } finally {
+            putenv('FW_CACHE_TEST_SECRET');
+        }
+    }
+
+    /**
+     * An entry with no record of what `%env()%` read is discarded.
+     *
+     * One written before the record existed cannot be checked against it, so it
+     * is treated as malformed rather than trusted.
+     */
+    public function testAnEntryWithoutTheEnvironmentRecordIsDiscarded(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n", 10);
+        Config::load([$file]);
+
+        $entry = $this->cacheDir() . '/' . hash('xxh128', serialize([$file])) . '.php';
+        $this->assertFileExists($entry);
+        $payload = include $entry;
+        $this->assertIsArray($payload);
+        unset($payload['vars']);
+        $payload['config'] = ['global' => ['mode' => 'from-the-old-entry']];
+        file_put_contents($entry, '<?php return ' . var_export($payload, true) . ';');
+        if (function_exists('opcache_invalidate')) {
+            @opcache_invalidate($entry, true);
+        }
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+    }
+
+    /**
      * Loads the file under one request's server values, then another's.
      */
     private function loadAcrossTwoRequests(string $file): void
@@ -184,6 +319,9 @@ class ConfigCacheTest extends AbstractTestCase
         $_SERVER['REQUEST_TIME_FLOAT'] = 1000.25;
         $_SERVER['REMOTE_PORT'] = '51000';
         $_SERVER['HTTP_USER_AGENT'] = 'first';
+        $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+        $_SERVER['SSL_SESSION_ID'] = 'first';
+        $_SERVER['GEOIP_COUNTRY_CODE'] = 'US';
         putenv('REQUEST_URI=/first');
         Config::load([$file]);
         $before = $this->cacheEntries();
@@ -193,6 +331,9 @@ class ConfigCacheTest extends AbstractTestCase
         $_SERVER['REQUEST_TIME_FLOAT'] = 1001.75;
         $_SERVER['REMOTE_PORT'] = '51001';
         $_SERVER['HTTP_USER_AGENT'] = 'second';
+        $_SERVER['SERVER_PROTOCOL'] = 'HTTP/2.0';
+        $_SERVER['SSL_SESSION_ID'] = 'second';
+        $_SERVER['GEOIP_COUNTRY_CODE'] = 'DE';
         putenv('REQUEST_URI=/second');
 
         $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
