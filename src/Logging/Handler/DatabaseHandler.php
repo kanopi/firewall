@@ -234,6 +234,18 @@ class DatabaseHandler extends AbstractProcessingHandler
                     new Index($this->indexName('logged_at'), ['logged_at']),
                     new Index($this->indexName('client_ip'), ['client_ip']),
                     new Index($this->indexName('plugin_type'), ['plugin_type']),
+                    // The rule is `plugin_name`; `plugin_type` is the class,
+                    // which four IpAddress rules share. Both orders, because
+                    // the two rule questions want opposite ones (#458).
+                    //
+                    // Rule first answers anything filtered to one rule: did it
+                    // match, and its records newest first.
+                    new Index($this->indexName('plugin_name_logged_at'), ['plugin_name', 'logged_at']),
+                    // Time first answers per-rule totals over a window from
+                    // the index alone. Without it MySQL abandons the range and
+                    // scans the table to group, so "last day" cost nearly what
+                    // "all history" did: 0.42 s against 0.02 s on 2.8M rows.
+                    new Index($this->indexName('logged_at_plugin_name'), ['logged_at', 'plugin_name']),
                 ]
             ),
         ];

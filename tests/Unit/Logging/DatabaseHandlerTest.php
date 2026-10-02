@@ -738,6 +738,68 @@ class DatabaseHandlerTest extends AbstractTestCase
         self::assertContains('scoped_log_logged_at_idx', $indexes);
         self::assertContains('scoped_log_client_ip_idx', $indexes);
         self::assertContains('scoped_log_plugin_type_idx', $indexes);
+        self::assertContains('scoped_log_plugin_name_logged_at_idx', $indexes);
+        self::assertContains('scoped_log_logged_at_plugin_name_idx', $indexes);
+    }
+
+    /**
+     * The rule is indexed in both orders, each with the leading column its
+     * question needs.
+     *
+     * The order is the point, so it is what is asserted: an index on the
+     * right columns in the wrong order answers neither question. Rule first
+     * serves anything filtered to one rule; time first serves per-rule totals
+     * over a window from the index alone, which is what took "last day" from
+     * 0.42 s to 0.02 s on MySQL (#458). The planner's choice is not asserted,
+     * because SQLite's on an empty, unanalysed table is not MySQL's on a full
+     * one.
+     */
+    public function testTheRuleIsIndexedInBothOrders(): void
+    {
+        $handler = $this->createHandler();
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        $columns = [];
+        foreach ($this->connection()->createSchemaManager()->listTableIndexes('firewall_log') as $index) {
+            $columns[$index->getName()] = $index->getColumns();
+        }
+
+        self::assertSame(['plugin_name', 'logged_at'], $columns['firewall_log_plugin_name_logged_at_idx'] ?? null);
+        self::assertSame(['logged_at', 'plugin_name'], $columns['firewall_log_logged_at_plugin_name_idx'] ?? null);
+    }
+
+    /**
+     * A table an earlier release created gains the rule indexes on migrate.
+     *
+     * The way an existing site gets them: nothing on the request path takes
+     * the lock an index build needs, so they arrive through `migrateSchema()`
+     * or `bin/firewall-migrate`, which the drift warning tells an operator to
+     * run.
+     */
+    public function testATableWithoutTheRuleIndexesGainsThemOnMigrate(): void
+    {
+        $handler = $this->createHandler();
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        // As 2.36 left it.
+        $this->connection()->executeStatement('DROP INDEX firewall_log_plugin_name_logged_at_idx');
+        $this->connection()->executeStatement('DROP INDEX firewall_log_logged_at_plugin_name_idx');
+
+        $pending = array_column($this->createHandler()->pendingSchemaChanges(), 'name');
+        self::assertContains('firewall_log_plugin_name_logged_at_idx', $pending);
+        self::assertContains('firewall_log_logged_at_plugin_name_idx', $pending);
+
+        $applied = array_column(array_filter(
+            $this->createHandler()->migrateSchema(),
+            static fn(array $result): bool => $result['applied']
+        ), 'name');
+        self::assertContains('firewall_log_plugin_name_logged_at_idx', $applied);
+        self::assertContains('firewall_log_logged_at_plugin_name_idx', $applied);
+
+        self::assertSame([], $this->createHandler()->pendingSchemaChanges());
+        self::assertSame(['Creates the table'], array_column($this->rows(), 'message'), 'No row was lost');
     }
 
     /**
