@@ -960,17 +960,31 @@ class ConfigLinter
             '`global.lockdown_page`' => $global['lockdown_page'] ?? null,
         ];
 
+        $merged = [];
+
         foreach ($plugins as $plugin) {
             $metadata = is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
-            $settings[sprintf('`metadata.block_page` on rule "%s"', $this->nameOf($plugin))] = $metadata['block_page'] ?? null;
+            $label = sprintf('`metadata.block_page` on rule "%s"', $this->nameOf($plugin));
+            $settings[$label] = $metadata['block_page'] ?? null;
+            $merged[$label] = BlockPage::mergedProblems($global['block_page'] ?? null, $metadata['block_page'] ?? null);
         }
 
         foreach ($settings as $label => $declared) {
-            foreach (BlockPage::problems($declared) as $problem) {
+            foreach ([...BlockPage::problems($declared), ...($merged[$label] ?? [])] as $problem) {
                 $findings[] = Diagnosis::error(
                     $label . ' cannot be used: ' . $problem,
                     'The firewall refuses to start with it.',
                     'configuration/global.md#block-and-lockdown-pages'
+                );
+            }
+
+            // A template that never shows the message shows the same words for
+            // every rule, which may be the point -- so a warning (#456).
+            if (BlockPage::templateLacksMessage($declared)) {
+                $findings[] = Diagnosis::warning(
+                    $label . ' has a template without {{page.message}}',
+                    "Every block shows the template's own text, whatever message the page or the rule sets.",
+                    'configuration/global.md#your-own-template'
                 );
             }
         }
