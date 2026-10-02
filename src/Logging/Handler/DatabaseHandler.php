@@ -79,6 +79,11 @@ class DatabaseHandler extends AbstractProcessingHandler
     public const DEFAULT_TABLE = 'firewall_log';
 
     /**
+     * Rows the retention delete removes per statement, unless configured.
+     */
+    public const DEFAULT_PRUNE_BATCH_SIZE = 1000;
+
+    /**
      * Columns promoted out of the record context, in table order.
      *
      * Everything here is written to its own column *and* left out of the
@@ -130,6 +135,11 @@ class DatabaseHandler extends AbstractProcessingHandler
     private float $pruneProbability;
 
     /**
+     * Rows the retention delete removes per statement.
+     */
+    private int $pruneBatchSize;
+
+    /**
      * Records held back from the database until the buffer is flushed.
      *
      * @var array<int, array<string, mixed>>
@@ -170,6 +180,9 @@ class DatabaseHandler extends AbstractProcessingHandler
      *   - `retention_days`: delete rows older than this. `0` keeps forever.
      *   - `prune_probability`: chance, per flush, of running that delete.
      *     Ignored when `retention_days` is `0`.
+     *   - `prune_batch_size`: rows that delete removes per statement. Defaults
+     *     to `1000`. A flush runs one batch at most; `prune()` with no limit,
+     *     which is what `bin/firewall-log-prune` calls, runs until done.
      */
     public function __construct(array $config = [])
     {
@@ -187,6 +200,9 @@ class DatabaseHandler extends AbstractProcessingHandler
 
         $probability = $config['prune_probability'] ?? 0.01;
         $this->pruneProbability = is_numeric($probability) ? min(1.0, max(0.0, (float) $probability)) : 0.01;
+
+        $batchSize = $config['prune_batch_size'] ?? self::DEFAULT_PRUNE_BATCH_SIZE;
+        $this->pruneBatchSize = is_numeric($batchSize) ? max(1, (int) $batchSize) : self::DEFAULT_PRUNE_BATCH_SIZE;
 
         $this->schemaCheckProbability = self::normalizeSchemaCheckProbability(
             $config['schema_check_probability'] ?? null
@@ -235,6 +251,18 @@ class DatabaseHandler extends AbstractProcessingHandler
                     new Index($this->indexName('logged_at'), ['logged_at']),
                     new Index($this->indexName('client_ip'), ['client_ip']),
                     new Index($this->indexName('plugin_type'), ['plugin_type']),
+                    // The rule is `plugin_name`; `plugin_type` is the class,
+                    // which four IpAddress rules share. Both orders, because
+                    // the two rule questions want opposite ones (#458).
+                    //
+                    // Rule first answers anything filtered to one rule: did it
+                    // match, and its records newest first.
+                    new Index($this->indexName('plugin_name_logged_at'), ['plugin_name', 'logged_at']),
+                    // Time first answers per-rule totals over a window from
+                    // the index alone. Without it MySQL abandons the range and
+                    // scans the table to group, so "last day" cost nearly what
+                    // "all history" did: 0.42 s against 0.02 s on 2.8M rows.
+                    new Index($this->indexName('logged_at_plugin_name'), ['logged_at', 'plugin_name']),
                 ]
             ),
         ];
@@ -373,7 +401,7 @@ class DatabaseHandler extends AbstractProcessingHandler
     }
 
     /**
-     * Delete rows older than `retention_days`.
+     * Delete rows older than `retention_days`, in batches.
      *
      * A log table that only grows is a support ticket six months out, and
      * nothing in a library can promise an operator has a cron. So the delete
@@ -381,12 +409,25 @@ class DatabaseHandler extends AbstractProcessingHandler
      * deterministically for deployments that would rather schedule it —
      * set `prune_probability: 0` to leave pruning entirely to the script.
      *
+     * In batches of `prune_batch_size`, because one statement was unbounded.
+     * The first prune after rows begin leaving the window -- retention just
+     * enabled, or lowered, or pruning off for a while -- deleted the whole
+     * backlog at once: 2.17M rows took 25.9 s on MariaDB, inside a request
+     * that had already sent its response, holding row locks over most of a
+     * table every other request was inserting into (#459). Selecting ids and
+     * then deleting them is the portable form: DBAL has no `LIMIT` on a
+     * `DELETE`, and the platforms disagree on how to write one.
+     *
+     * @param int|null $maxBatches
+     *   Stop after this many batches. NULL runs until nothing is left, which
+     *   is what the CLI and a host's cron want; a flush passes `1`.
+     *
      * @return int|null
      *   Number of rows deleted, 0 when retention is off, or NULL when the
      *   delete could not run — a distinction `bin/firewall-log-prune` reports
      *   as a failure rather than as a quiet success.
      */
-    public function prune(): ?int
+    public function prune(?int $maxBatches = null): ?int
     {
         if ($this->retentionDays <= 0) {
             return 0;
@@ -396,14 +437,53 @@ class DatabaseHandler extends AbstractProcessingHandler
             return null;
         }
 
+        $cutoff = $this->retentionCutoff();
+        $deleted = 0;
+        $batches = 0;
+
         try {
-            $deleted = (int) $this->connection->createQueryBuilder()
-                ->delete($this->table)
-                ->where('logged_at < :cutoff')
-                ->setParameter('cutoff', $this->retentionCutoff())
-                ->executeStatement();
+            do {
+                // Oldest first, which is a range on the `logged_at` index, so
+                // finding a batch costs the batch rather than the table.
+                $ids = $this->connection->createQueryBuilder()
+                    ->select('id')
+                    ->from($this->table)
+                    ->where('logged_at < :cutoff')
+                    ->setParameter('cutoff', $cutoff)
+                    ->orderBy('logged_at')
+                    ->setMaxResults($this->pruneBatchSize)
+                    ->executeQuery()
+                    ->fetchFirstColumn();
+
+                if ($ids === []) {
+                    break;
+                }
+
+                // Written into the statement rather than bound. They are
+                // integers this method just read, and a bound list of 1000 is
+                // over the 999 parameters older SQLite allows.
+                $queryBuilder = $this->connection->createQueryBuilder();
+                $deleted += (int) $queryBuilder
+                    ->delete($this->table)
+                    ->where($queryBuilder->expr()->in('id', array_map(
+                        static fn(mixed $id): string => (string) (int) $id,
+                        $ids
+                    )))
+                    ->executeStatement();
+
+                $batches++;
+            } while (count($ids) === $this->pruneBatchSize && ($maxBatches === null || $batches < $maxBatches));
         } catch (\Throwable $throwable) {
-            $this->reportFailure('Failed to prune the firewall log table', $throwable);
+            $this->disabled = true;
+
+            $this->getLogger()->error('Failed to prune the firewall log table', [
+                'table' => $this->table,
+                'error' => $throwable->getMessage(),
+                // Committed already: each batch is its own statement, so what
+                // went before the failure stays gone.
+                'deleted_before_failure' => $deleted,
+            ]);
+
             return null;
         }
 
@@ -412,6 +492,7 @@ class DatabaseHandler extends AbstractProcessingHandler
                 'table' => $this->table,
                 'retention_days' => $this->retentionDays,
                 'deleted' => $deleted,
+                'batches' => $batches,
             ]);
         }
 
@@ -708,7 +789,9 @@ class DatabaseHandler extends AbstractProcessingHandler
             return;
         }
 
-        $this->prune();
+        // One batch. A backlog drains over successive winning flushes rather
+        // than landing on whichever request drew the roll (#459).
+        $this->prune(1);
     }
 
     /**

@@ -780,11 +780,104 @@ class DatabaseHandlerTest extends AbstractTestCase
             'retention_days' => -5,
             'prune_probability' => 7.5,
             'buffer_limit' => -1,
+            'prune_batch_size' => 0,
         ]);
 
         self::assertSame(0, $handler->getRetentionDays());
         self::assertSame(1.0, self::readProperty($handler, 'pruneProbability'));
         self::assertSame(0, self::readProperty($handler, 'bufferLimit'));
+        self::assertSame(1, self::readProperty($handler, 'pruneBatchSize'), 'A batch of nothing would never finish');
+    }
+
+    /**
+     * A `prune_batch_size` that is not a number falls back to the default.
+     */
+    public function testNonNumericPruneBatchSizeFallsBackToTheDefault(): void
+    {
+        self::assertSame(
+            DatabaseHandler::DEFAULT_PRUNE_BATCH_SIZE,
+            self::readProperty($this->createHandler(['prune_batch_size' => 'lots']), 'pruneBatchSize')
+        );
+    }
+
+    /**
+     * A backlog bigger than one batch is cleared by a prune with no limit.
+     *
+     * Which is what `bin/firewall-log-prune` calls, so batching changes how
+     * the CLI deletes and not how much (#459).
+     */
+    public function testAnUnlimitedPruneClearsABacklogOfManyBatches(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 0, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Recent'));
+        $handler->flush();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        self::assertSame(10, $handler->prune());
+        self::assertSame(0, $handler->countPrunable());
+        self::assertSame(['Recent'], array_column($this->rows(), 'message'));
+    }
+
+    /**
+     * A limited prune stops after that many batches, oldest rows first.
+     */
+    public function testALimitedPruneStopsAfterItsBatchesOldestFirst(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 0, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        $newestFour = $this->connection()->fetchFirstColumn(
+            'SELECT logged_at FROM firewall_log WHERE message = ? ORDER BY logged_at DESC LIMIT 4',
+            ['Ancient']
+        );
+
+        self::assertSame(6, $handler->prune(2));
+        self::assertSame(4, $handler->countPrunable());
+        self::assertSame(
+            $newestFour,
+            $this->connection()->fetchFirstColumn(
+                'SELECT logged_at FROM firewall_log WHERE message = ? ORDER BY logged_at DESC',
+                ['Ancient']
+            ),
+            'The oldest six went, and the newest of the old are what is left'
+        );
+    }
+
+    /**
+     * A winning flush deletes one batch, never the whole backlog.
+     *
+     * The request that draws the roll has already answered its visitor; what
+     * it costs from here is a worker and locks on a table every other request
+     * writes to. One batch bounds both, and the backlog drains over later
+     * rolls (#459).
+     */
+    public function testAWinningFlushPrunesOneBatchAtMost(): void
+    {
+        $handler = $this->createHandler(['retention_days' => 30, 'prune_probability' => 1, 'prune_batch_size' => 3]);
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->insertAncientRow(31 + $i);
+        }
+
+        $handler->handle($this->record(Level::Warning, 'Triggers one batch'));
+        $handler->flush();
+
+        self::assertSame(7, $handler->countPrunable());
+
+        $handler->handle($this->record(Level::Warning, 'And another'));
+        $handler->flush();
+
+        self::assertSame(4, $handler->countPrunable());
     }
 
     /**
@@ -827,6 +920,68 @@ class DatabaseHandlerTest extends AbstractTestCase
         self::assertContains('scoped_log_logged_at_idx', $indexes);
         self::assertContains('scoped_log_client_ip_idx', $indexes);
         self::assertContains('scoped_log_plugin_type_idx', $indexes);
+        self::assertContains('scoped_log_plugin_name_logged_at_idx', $indexes);
+        self::assertContains('scoped_log_logged_at_plugin_name_idx', $indexes);
+    }
+
+    /**
+     * The rule is indexed in both orders, each with the leading column its
+     * question needs.
+     *
+     * The order is the point, so it is what is asserted: an index on the
+     * right columns in the wrong order answers neither question. Rule first
+     * serves anything filtered to one rule; time first serves per-rule totals
+     * over a window from the index alone, which is what took "last day" from
+     * 0.42 s to 0.02 s on MySQL (#458). The planner's choice is not asserted,
+     * because SQLite's on an empty, unanalysed table is not MySQL's on a full
+     * one.
+     */
+    public function testTheRuleIsIndexedInBothOrders(): void
+    {
+        $handler = $this->createHandler();
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        $columns = [];
+        foreach ($this->connection()->createSchemaManager()->listTableIndexes('firewall_log') as $index) {
+            $columns[$index->getName()] = $index->getColumns();
+        }
+
+        self::assertSame(['plugin_name', 'logged_at'], $columns['firewall_log_plugin_name_logged_at_idx'] ?? null);
+        self::assertSame(['logged_at', 'plugin_name'], $columns['firewall_log_logged_at_plugin_name_idx'] ?? null);
+    }
+
+    /**
+     * A table an earlier release created gains the rule indexes on migrate.
+     *
+     * The way an existing site gets them: nothing on the request path takes
+     * the lock an index build needs, so they arrive through `migrateSchema()`
+     * or `bin/firewall-migrate`, which the drift warning tells an operator to
+     * run.
+     */
+    public function testATableWithoutTheRuleIndexesGainsThemOnMigrate(): void
+    {
+        $handler = $this->createHandler();
+        $handler->handle($this->record(Level::Warning, 'Creates the table'));
+        $handler->flush();
+
+        // As 2.36 left it.
+        $this->connection()->executeStatement('DROP INDEX firewall_log_plugin_name_logged_at_idx');
+        $this->connection()->executeStatement('DROP INDEX firewall_log_logged_at_plugin_name_idx');
+
+        $pending = array_column($this->createHandler()->pendingSchemaChanges(), 'name');
+        self::assertContains('firewall_log_plugin_name_logged_at_idx', $pending);
+        self::assertContains('firewall_log_logged_at_plugin_name_idx', $pending);
+
+        $applied = array_column(array_filter(
+            $this->createHandler()->migrateSchema(),
+            static fn(array $result): bool => $result['applied']
+        ), 'name');
+        self::assertContains('firewall_log_plugin_name_logged_at_idx', $applied);
+        self::assertContains('firewall_log_logged_at_plugin_name_idx', $applied);
+
+        self::assertSame([], $this->createHandler()->pendingSchemaChanges());
+        self::assertSame(['Creates the table'], array_column($this->rows(), 'message'), 'No row was lost');
     }
 
     /**

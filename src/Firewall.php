@@ -586,7 +586,13 @@ final class Firewall
 
             $name = is_string($metadata['name'] ?? null) ? $metadata['name'] : '#' . $index;
 
-            BlockPage::fromConfig(sprintf('rule "%s" metadata.block_page', $name), $metadata['block_page'] ?? null);
+            $label = sprintf('rule "%s" metadata.block_page', $name);
+            BlockPage::fromConfig($label, $metadata['block_page'] ?? null);
+
+            $merged = BlockPage::mergedProblems($global['block_page'] ?? null, $metadata['block_page'] ?? null);
+            if ($merged !== []) {
+                throw new ConfigurationException($label . ': ' . implode('; ', $merged));
+            }
 
             $message = $metadata['banning_message'] ?? null;
             if ($message !== null && !is_string($message)) {
@@ -3333,6 +3339,26 @@ final class Firewall
             $text[$key] = $this->interpolateTemplate($template, $request, $placeholders, false);
         }
 
+        // The operator's own document (#456). Its placeholders are the page's
+        // text and everything a message has; each is escaped, except the
+        // message, which is the paragraphs the built-in page would have shown.
+        if (isset($settings['template'])) {
+            return [
+                $this->interpolateTemplate(
+                    $settings['template'],
+                    $request,
+                    $placeholders + [
+                        'page.heading' => $text['heading'],
+                        'page.title' => $text['title'],
+                        'page.lang' => $settings['lang'] ?? 'en',
+                    ],
+                    true,
+                    ['page.message' => BlockPage::paragraphs($text['message'], '')]
+                ),
+                'text/html; charset=utf-8',
+            ];
+        }
+
         return [BlockPage::html($kind, $text, $settings), 'text/html; charset=utf-8'];
     }
 
@@ -3383,11 +3409,16 @@ final class Firewall
      *   Whether to HTML-escape each substitution. FALSE only for text that is
      *   escaped as a whole afterwards, as a block page's is (#452). CR and LF
      *   are stripped either way.
+     * @param  array<string, string> $markup
+     *   Placeholders replaced verbatim: markup the firewall built and escaped
+     *   itself, such as a template's `{{page.message}}` (#456). Substituted in
+     *   the same pass as everything else, so nothing a client sent can expand
+     *   into one of them.
      *
      * @return string
      *   The interpolated result
      */
-    protected function interpolateTemplate(string $template, Request $request, array $context = [], bool $escape = true): string
+    protected function interpolateTemplate(string $template, Request $request, array $context = [], bool $escape = true, array $markup = []): string
     {
         // Values from the request (headers, query, post, cookies) are attacker-
         // controlled. The interpolated output is written verbatim to the HTTP
@@ -3402,8 +3433,12 @@ final class Firewall
 
         return strval(preg_replace_callback(
             '/\{\{\s*([a-zA-Z0-9_\.\-]+)\s*\}\}/',
-            function (array $m) use ($request, $context, $sanitize): string {
+            function (array $m) use ($request, $context, $sanitize, $markup): string {
                 $key = strtolower($m[1]);
+
+                if (array_key_exists($key, $markup)) {
+                    return $markup[$key];
+                }
 
                 // 1. Built-in request values ------------------------------------
                 switch ($key) {
@@ -3455,6 +3490,13 @@ final class Firewall
                 // 6. Arbitrary context values ----------------------------------
                 if (array_key_exists($m[1], $context)) {
                     return $sanitize($context[$m[1]]);
+                }
+
+                // The firewall's own placeholders -- `block.*`, `page.*` -- are
+                // lower-case keys, matched as case-insensitively as the
+                // request's are.
+                if (array_key_exists($key, $context)) {
+                    return $sanitize($context[$key]);
                 }
 
                 // 7. Unknown placeholder – leave as-is so caller sees what was missing
