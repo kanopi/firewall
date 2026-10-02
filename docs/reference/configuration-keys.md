@@ -41,7 +41,7 @@ Nothing here explains anything; that is deliberate.
 | `panic_file` | string | *unset* | A file that overrides `mode` when it exists | [Panic Switch](../configuration/global.md#panic-switch) |
 | `banning_status_code` | int | `400` | Status sent when a rule blocks | [Status Code](../configuration/global.md#status-code) |
 | `banning_message` | string | built-in | Plain-text body template; `{{request.id}}`, `{{block.status}}` and `{{block.rule}}` are substituted | [Banning Message](../configuration/global.md#banning-message) |
-| `block_page` | bool or map | *unset* | An HTML page instead of the message: `lang`, `title`, `heading`, `message`, `styles`, `stylesheet` | [Block and lockdown pages](../configuration/global.md#block-and-lockdown-pages) |
+| `block_page` | bool or map | *unset* | An HTML page instead of the message: `lang`, `title`, `heading`, `message`, `styles`, `stylesheet`, or your own `template` | [Block and lockdown pages](../configuration/global.md#block-and-lockdown-pages) |
 | `banning_json` | bool | `false` | Answer a client that prefers JSON with JSON | [JSON for API clients](../configuration/global.md#json-for-api-clients) |
 | `repeat_offender_status` | int | `0` | Status for a client already on the block list | [Global](../configuration/global.md) |
 | `add_to_expire` | int | `3600` | Seconds added to a ban on each repeat hit | [Global](../configuration/global.md) |

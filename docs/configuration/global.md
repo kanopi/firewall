@@ -592,6 +592,7 @@ global:
 | `message` | `banning_message` / `lockdown_message` if you set one, else the built-in text, which quotes `{{request.id}}` | One paragraph per line |
 | `styles` | *none* | CSS after the built-in rules |
 | `stylesheet` | *none* | A `<link rel="stylesheet">`: a path on this site or an `https:` URL |
+| `template` | *none* | Your own HTML document instead of the built-in one. See [Your own template](#your-own-template) |
 
 - **`true`** is the built-in page. **`false`**, or leaving it out, is the plain-text
   message it has always been.
@@ -608,6 +609,87 @@ global:
   `style` tag, and a stylesheet that isn't a path or an `https:` URL.
 - **In `mode: exception`,** the page is the exception's message, and `getContentType()`
   says what it is. See [Error Handling](../reference/error-handling.md).
+
+### Your own template
+
+The built-in page is the default. To use your own layout, with your logo, header and
+footer, set `template` to a whole HTML document (#456). `%file(...)%` loads it from disk
+when the configuration loads:
+
+```yaml
+global:
+  block_page:
+    template: '%file(/etc/firewall/block.html)%'
+    lang: fr
+    heading: "Accès refusé"
+    message: |
+      Cette requête a été bloquée par le pare-feu du site.
+      Référence : {{request.id}}
+
+plugins:
+  - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+    response: block
+    metadata:
+      name: no-facet-crawl
+      block_page:
+        message: "Automated access to search is not allowed."   # same template, its own message
+```
+
+The page's other keys fill the template's placeholders, so a rule's own `message`, or a
+translated `heading`, lands in your layout:
+
+```html
+<!DOCTYPE html>
+<html lang="{{page.lang}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{page.title}} · Example Co.</title>
+  <link rel="stylesheet" href="/themes/custom/site/css/firewall.css">
+  <style>
+    .brand { height: 32px; margin-bottom: 1.5rem; }
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <img class="brand" src="/themes/custom/site/logo.svg" alt="Example Co.">
+    <h1>{{page.heading}}</h1>
+    {{page.message}}
+    <p class="meta">Status {{block.status}} · Reference <code>{{request.id}}</code></p>
+  </main>
+</body>
+</html>
+```
+
+| Placeholder | Value |
+|---|---|
+| `{{page.message}}` | The message as `<p>` paragraphs, one per line, already escaped. From `message`, else `banning_message` / `lockdown_message`, else the built-in text |
+| `{{page.heading}}`, `{{page.title}}` | The page's text, or the built-in wording |
+| `{{page.lang}}` | `lang`, or `en` |
+| `{{block.status}}`, `{{block.rule}}` | As in [Banning Message](#banning-message) |
+| `{{request.*}}` | Every request placeholder, as in [Banning Message](#banning-message) |
+
+- **Every placeholder is HTML-escaped,** except `{{page.message}}`, which is markup the
+  firewall builds from escaped text. That makes them safe in element text and in quoted
+  attributes (`title="{{request.path}}"`).
+- **They aren't safe** inside `<script>` or `<style>`, in an unquoted attribute, or as a
+  whole URL (`href="{{request.query.next}}"`). Don't put them there.
+- **The same `Content-Security-Policy` applies.** Inline `<script>` and `onclick=` don't
+  run. Inline `<style>`, a stylesheet from this site or over `https:`, images and fonts
+  all work.
+- **What a client sends is substituted once.** A header that contains `{{page.message}}`
+  shows as that text; it isn't expanded.
+- **An unknown placeholder is left as written,** so a typo like `{{page.mesage}}` shows
+  on the page rather than disappearing.
+- **`styles` and `stylesheet` can't be set with `template`,** because the template carries
+  its own styling. That includes a global `template` with a rule's `styles`, or the reverse.
+  Startup refuses it.
+- **`template` must be a document,** with an `<html>` element. A fragment is refused.
+  `firewall lint` warns about a template without `{{page.message}}`, because every block
+  would then show the same words, whatever the rule says.
+- **`lockdown_page.template`** works the same way, and a rule can set its own
+  `metadata.block_page.template`.
 
 ### JSON for API clients
 
