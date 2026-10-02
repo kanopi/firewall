@@ -176,7 +176,66 @@ class ConfigCachePoolTest extends AbstractTestCase
             'a string' => ['not a payload'],
             'missing keys' => [['config' => ['global' => ['mode' => 'log']]]],
             'files not a list' => [['config' => [], 'files' => 'x', 'env' => 'y']],
+            'config not an array' => [['config' => 'x', 'files' => ['/a' => 'b'], 'env' => 'y']],
+            'no files' => [['config' => [], 'files' => [], 'env' => 'y']],
         ];
+    }
+
+    /**
+     * A current entry whose config is not an array is reparsed, not loaded as no rules.
+     *
+     * The entry keeps the real file and environment fingerprints, so only the
+     * shape check stands between it and a load with every rule gone.
+     *
+     * @param mixed $config
+     *   What the entry holds in place of the merge.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('nonArrayConfigs')]
+    public function testACurrentEntryWithANonArrayConfigIsReparsed(mixed $config): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n");
+        Config::load([$file]);
+
+        $poolKey = 'kanopi_firewall_config.' . $this->key([$file]);
+        $entry = $this->pool->values[$poolKey];
+        $this->assertIsArray($entry);
+        $entry['config'] = $config;
+        $this->pool->values[$poolKey] = $entry;
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        $this->assertSame([$poolKey], $this->pool->deleted);
+    }
+
+    /**
+     * @return array<string, array{mixed}>
+     *   Non-array values a tampered or corrupt entry could hold.
+     */
+    public static function nonArrayConfigs(): array
+    {
+        return [
+            'a string' => ['x'],
+            'an integer' => [1],
+            'true' => [true],
+        ];
+    }
+
+    /**
+     * A current entry with no files is reparsed rather than trusted on the environment alone.
+     */
+    public function testACurrentEntryWithNoFilesIsReparsed(): void
+    {
+        $file = $this->write('main.yml', "global:\n  mode: block\n");
+        Config::load([$file]);
+
+        $poolKey = 'kanopi_firewall_config.' . $this->key([$file]);
+        $entry = $this->pool->values[$poolKey];
+        $this->assertIsArray($entry);
+        $entry['config'] = ['global' => ['mode' => 'from-the-pool']];
+        $entry['files'] = [];
+        $this->pool->values[$poolKey] = $entry;
+
+        $this->assertSame('block', Config::load([$file])['global']['mode'] ?? null);
+        $this->assertSame([$poolKey], $this->pool->deleted);
     }
 
     /**

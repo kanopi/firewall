@@ -252,7 +252,9 @@ class Config
     /**
      * Where the compiled configuration is kept.
      *
-     * `KANOPI_FIREWALL_CONFIG_FILE_CACHE` defined as `false` means nowhere: the
+     * `KANOPI_FIREWALL_CONFIG_FILE_CACHE` defined as false -- or any value
+     * `FILTER_VALIDATE_BOOL` reads as false, such as `'0'` from an environment
+     * variable -- means nowhere: the
      * configuration is parsed on every load that has no pool, and no file is
      * written. For a process that has no pool to offer -- CLI, cron -- on a host
      * that should never have cache files written (#447).
@@ -262,7 +264,11 @@ class Config
      */
     private static function configCacheDir(): ?string
     {
-        if (defined('KANOPI_FIREWALL_CONFIG_FILE_CACHE') && constant('KANOPI_FIREWALL_CONFIG_FILE_CACHE') === false) {
+        $fileCache = defined('KANOPI_FIREWALL_CONFIG_FILE_CACHE')
+            ? filter_var(constant('KANOPI_FIREWALL_CONFIG_FILE_CACHE'), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE)
+            : true;
+
+        if ($fileCache === false) {
             return null;
         }
 
@@ -398,15 +404,20 @@ class Config
      *   The cached value.
      *
      * @return bool
-     *   True when it has the config, files and environment entries.
+     *   True when it has the config, files and environment entries, with the
+     *   config an array and at least one file. `writeConfigCache()` never stores
+     *   anything else: a non-array config would load as no rules at all, and an
+     *   empty file list would skip every fingerprint check.
      *
-     * @phpstan-assert-if-true array{config: mixed, files: mixed, env: mixed, references?: mixed} $payload
+     * @phpstan-assert-if-true array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed} $payload
      */
     private static function isConfigCachePayload(mixed $payload): bool
     {
         return is_array($payload)
             && isset($payload['config'], $payload['files'], $payload['env'])
-            && is_array($payload['files']);
+            && is_array($payload['config'])
+            && is_array($payload['files'])
+            && $payload['files'] !== [];
     }
 
     /**
@@ -415,7 +426,7 @@ class Config
      * The same for a file and a pooled entry, so neither can serve a merge the
      * other would have rejected.
      *
-     * @param array{config: mixed, files: mixed, env: mixed, references?: mixed} $payload
+     * @param array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed} $payload
      *   A payload `isConfigCachePayload()` accepted.
      *
      * @return array{config: array<string, mixed>, references: bool}|null
@@ -435,7 +446,7 @@ class Config
         }
 
         return [
-            'config' => is_array($payload['config']) ? $payload['config'] : [],
+            'config' => $payload['config'],
             // Absent in an entry written before this was recorded; assuming a
             // reference may be present costs a walk rather than correctness.
             'references' => (bool) ($payload['references'] ?? true),
@@ -457,10 +468,14 @@ class Config
      */
     private static function writeConfigCache(string $key, array $merged, array $files, bool $references): void
     {
+        if ($files === []) {
+            return;
+        }
+
         $pool = self::$cacheItemPool;
         $dir = $pool instanceof CacheItemPoolInterface ? null : self::configCacheDir();
 
-        if ((!$pool instanceof CacheItemPoolInterface && $dir === null) || $files === []) {
+        if (!$pool instanceof CacheItemPoolInterface && $dir === null) {
             return;
         }
 

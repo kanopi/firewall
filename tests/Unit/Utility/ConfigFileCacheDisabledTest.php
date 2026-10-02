@@ -82,6 +82,43 @@ class ConfigFileCacheDisabledTest extends AbstractTestCase
     }
 
     /**
+     * A falsy string, as an environment variable gives, turns the file cache off too.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testAFalsyStringDisablesTheFileCache(): void
+    {
+        define('KANOPI_FIREWALL_CONFIG_FILE_CACHE', '0');
+
+        $config = $this->write("global:\n  mode: block\n");
+        $entry = $this->cacheDir() . '/' . hash('xxh128', serialize([$config])) . '.php';
+
+        $this->assertSame('block', Config::load([$config])['global']['mode'] ?? null);
+        $this->assertFileDoesNotExist($entry);
+
+        @unlink($config);
+    }
+
+    /**
+     * A value that is not a boolean at all leaves the file cache on.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testANonBooleanStringLeavesTheFileCacheOn(): void
+    {
+        define('KANOPI_FIREWALL_CONFIG_FILE_CACHE', 'sometimes');
+
+        $config = $this->write("global:\n  mode: block\n");
+        $entry = $this->cacheDir() . '/' . hash('xxh128', serialize([$config])) . '.php';
+
+        Config::load([$config]);
+        $this->assertFileExists($entry);
+
+        @unlink($entry);
+        @unlink($config);
+    }
+
+    /**
      * Any other value leaves the file cache on.
      */
     #[RunInSeparateProcess]
