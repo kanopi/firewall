@@ -266,10 +266,10 @@ Two presets wire the firewall into [Pantheon](https://pantheon.io)'s environment
 
 | Preset | Included off-platform |
 |---|---|
-| `storage-pantheon.yml` | Degrades. The `%env(safe:…)%` fallbacks leave the credentials empty and the firewall uses its default storage |
+| `storage-pantheon.yml` | **Connects to `db:3306` as `db`/`db`.** Those are the `%env(safe:…)%` fallbacks, and they are DDEV's credentials, so under DDEV it uses the local database. Anywhere else the connection fails and `Firewall::create()` throws `StorageConnectionException` |
 | `logging-pantheon.yml` | **Stops the firewall from starting.** `/files/private/` cannot be created elsewhere, and Monolog throws from the handler's constructor, which `Firewall::create()` does not catch |
 
-Include `logging-pantheon.yml` behind an environment check rather than unconditionally in a config shared with local development.
+Include both behind an environment check rather than unconditionally in a config shared with local development, unless that development happens under DDEV.
 
 ### `storage-pantheon.yml`
 
@@ -280,7 +280,7 @@ configs:
   - presets/storage-pantheon.yml
 ```
 
-Every value uses the `safe:` env processor with a fallback, so a missing or malformed `PRESSFLOW_SETTINGS` degrades to placeholder values instead of throwing during bootstrap. See [Environment Variables in YAML](../configuration/environment-variables.md) for the processor syntax.
+Every value uses the `safe:` env processor with a fallback, so a missing or malformed `PRESSFLOW_SETTINGS` resolves to DDEV's `db`/`db`@`db:3306` instead of throwing while the configuration loads. A fallback is silent: if a value comes out as `db` on Pantheon, the variable was set but could not be read. See [Environment Variables in YAML](../configuration/environment-variables.md) for the processor syntax.
 
 Tables are created automatically on first connection, using the `DatabaseStorage` defaults `firewall_storage` and `firewall_offenses` (this preset does not override the names — add `storage_table` / `offenses_table` under `config` if you need different ones). Database storage is the right choice on Pantheon because it is shared across application containers, unlike file storage on the ephemeral local filesystem.
 
