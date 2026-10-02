@@ -169,7 +169,7 @@ final class AltchaChallengeProvider implements ChallengeProviderInterface, Singl
             'page' => ChallengePage::fromContext($context),
             'intro' => 'Please complete the check below to continue.',
             'extra_styles' => '    altcha-widget { display: block; margin-bottom: 1rem; }'
-                . "\n" . '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',
+                . "\n" . '    button:disabled { background: var(--fw-accent-disabled); cursor: not-allowed; }',
             // The official ALTCHA distribution is an ES module — a classic
             // <script> tag fails with "Unexpected token 'export'".
             'extra_head' => sprintf('  <script type="module" src="%s"%s async defer></script>', $widgetSrc, $integrityAttr),

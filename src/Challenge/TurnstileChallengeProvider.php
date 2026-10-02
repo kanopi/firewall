@@ -237,7 +237,7 @@ final class TurnstileChallengeProvider implements ChallengeProviderInterface
             'page' => ChallengePage::fromContext($context),
             'intro' => 'Please complete the check below to continue.',
             'extra_styles' => '    .cf-turnstile { display: block; margin-bottom: 1rem; min-height: 65px; }'
-                . "\n" . '    button:disabled { background: #9bb8e6; cursor: not-allowed; }',
+                . "\n" . '    button:disabled { background: var(--fw-accent-disabled); cursor: not-allowed; }',
             // The widget callbacks are declared here, ahead of the async
             // bundle, and resolve the button lazily. Declaring them in the
             // document-bottom script instead would be a race: the widget

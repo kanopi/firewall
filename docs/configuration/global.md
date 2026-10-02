@@ -569,7 +569,7 @@ A block and a lockdown are plain text unless you ask for a page (#452). `block_p
 `lockdown_page` take the same kind of settings as
 [`challenge.page`](../plugins/challenges.md#wording-language-and-styling), and the page
 is built on the challenge interstitial's card and stylesheet, so one set of `styles`
-themes all three:
+themes all three, and the same [colour properties](../plugins/challenges.md#colours) recolour them:
 
 ```yaml
 global:

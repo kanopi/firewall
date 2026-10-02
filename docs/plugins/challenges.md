@@ -237,6 +237,38 @@ challenge:
   the validated values, for a host rendering its own page, and `renderInterstitial()`
   applies them.
 
+### Colours
+
+Every colour on the built-in pages is a CSS custom property (#454). Set the ones you want
+in `styles`, or in your stylesheet, and every rule using them changes on the challenge,
+block and lockdown pages alike:
+
+```yaml
+challenge:
+  page:
+    styles: ":root { --fw-accent: #0b8f5a; --fw-accent-hover: #087448; --fw-accent-disabled: #9fd3bd; }"
+```
+
+| Property | Default | Used for |
+|---|---|---|
+| `--fw-bg` | `#f5f6f8` | The page behind the card |
+| `--fw-text` | `#1a1a1a` | Body text and the heading |
+| `--fw-card` | `#fff` | The card |
+| `--fw-card-shadow` | `rgba(0,0,0,0.08)` | The card's shadow |
+| `--fw-muted` | `#555` | Paragraphs: the intro and the block page's message |
+| `--fw-accent` | `#1f6feb` | The button |
+| `--fw-accent-hover` | `#1858c4` | The button under the pointer |
+| `--fw-accent-disabled` | `#9bb8e6` | The button before a widget has a token |
+| `--fw-accent-text` | `#fff` | The button's label |
+| `--fw-error` | `#b42318` | The error line under the button |
+| `--fw-notice-bg`, `--fw-notice-border`, `--fw-notice-text` | `#fff8e6`, `#d4a017`, `#3d2e00` | [Notices](#a-notice-on-the-challenge-page) |
+| `--fw-input-border` | `#ccc` | The math provider's answer box |
+
+These names are the supported way to theme the pages. Selectors like `.card` and
+`button` still work in `styles`, but they belong to the markup and can change between
+releases. A [`template`](../configuration/global.md#your-own-template) brings its own CSS,
+so these don't apply to it.
+
 ## Single-use solutions
 
 A stateless provider verifies a solution purely from the posted payload, so the same payload keeps verifying until it expires. For a proof-of-work challenge that quietly defeats the point: an attacker solves one challenge and hands the payload to as many clients as they like, each minting its own IP-bound pass token, and the per-solve cost is amortised to nothing.
