@@ -81,10 +81,18 @@ final class GetoptTest extends AbstractTestCase
             var_export(self::LONG, true)
         );
 
-        $process = proc_open([PHP_BINARY, '-r', $script, '--', ...$arguments], [1 => ['pipe', 'w']], $pipes);
+        // display_errors=stderr, and stderr kept apart: the CI image prints
+        // "Module ... is already loaded" on every PHP start, which would land
+        // ahead of the JSON on stdout.
+        $process = proc_open(
+            [PHP_BINARY, '-d', 'display_errors=stderr', '-r', $script, '--', ...$arguments],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
         $this->assertIsResource($process);
         $expected = stream_get_contents($pipes[1]);
         fclose($pipes[1]);
+        fclose($pipes[2]);
         proc_close($process);
 
         $this->assertSame(

@@ -227,18 +227,22 @@ final class MemcachedEndToEndTest extends IntegrationTestCase
     }
 
     /**
-     * Run one of the bin/ commands as a process.
+     * Run a `firewall` subcommand as a process.
      *
+     * @param string $command
+     *   As it is typed: `firewall block`.
      * @param array<int, string> $args
      *
      * @return array{stdout: string, stderr: string, code: int}
      */
     private function runCommand(string $command, array $args): array
     {
+        [$program, $subcommand] = explode(' ', $command, 2);
+
         // display_errors=stderr: the CI image prints "Module ... is already
         // loaded" on every PHP start, which would otherwise corrupt stdout.
         $process = proc_open(
-            array_merge([PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 3) . '/bin/' . $command], $args),
+            array_merge([PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 3) . '/bin/' . $program, $subcommand], $args),
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes
         );
