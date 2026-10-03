@@ -41,6 +41,11 @@ final class FirewallCommandTest extends AbstractTestCase
         fclose($pipes[1]);
         fclose($pipes[2]);
 
+        // The CI image loads some extensions twice, and PHP says so on stderr
+        // at every start. That is the environment, not the command, so it is
+        // taken out before anything is compared.
+        $stderr = (string) preg_replace('/^(?:PHP )?Warning: +Module "[^"]+" is already loaded in Unknown on line 0\R/m', '', $stderr);
+
         return ['stdout' => $stdout, 'stderr' => $stderr, 'code' => proc_close($process)];
     }
 
