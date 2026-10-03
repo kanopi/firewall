@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit;
 
 /**
- * `bin/firewall-init` (#210).
+ * `bin/firewall init` (#210).
  *
  * A subprocess, like the other command tests: the exit codes and the refusal to
  * overwrite are the contract, and whether it prompts depends on having a
@@ -52,13 +52,13 @@ final class FirewallInitCommandTest extends AbstractTestCase
     private function runInit(array $args, string $stdin = ''): array
     {
         $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall-init'],
+            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall', 'init'],
             $args
         );
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open($command, $descriptors, $pipes);
 
-        $this->assertIsResource($process, 'Could not start bin/firewall-init');
+        $this->assertIsResource($process, 'Could not start bin/firewall init');
 
         fwrite($pipes[0], $stdin);
         fclose($pipes[0]);
@@ -83,7 +83,7 @@ final class FirewallInitCommandTest extends AbstractTestCase
         $this->assertSame(self::EXIT_OK, $result['code'], $result['stderr']);
         $this->assertFileExists($output);
         $this->assertStringContainsString('drupal.yml', (string) file_get_contents($output));
-        $this->assertStringContainsString('firewall-doctor', $result['stdout'], 'It says what to run next');
+        $this->assertStringContainsString('firewall doctor', $result['stdout'], 'It says what to run next');
     }
 
     /**
@@ -172,6 +172,6 @@ final class FirewallInitCommandTest extends AbstractTestCase
         $result = $this->runInit(['--help']);
 
         $this->assertSame(self::EXIT_OK, $result['code']);
-        $this->assertStringContainsString('firewall-init', $result['stdout']);
+        $this->assertStringContainsString('firewall init', $result['stdout']);
     }
 }

@@ -29,7 +29,7 @@ use Kanopi\Firewall\Storage\StorageInterface;
  *
  * ## It is only useful against the real store
  *
- * `bin/firewall-check` deliberately swaps in a throwaway so that checking a request cannot
+ * `bin/firewall check` deliberately swaps in a throwaway so that checking a request cannot
  * ban anybody. This is the opposite: pointed at a throwaway it would report nothing blocked,
  * truthfully and uselessly, and an operator would conclude the customer is not blocked here.
  * So the backend is named in the output, and a store that cannot outlive the process says so.

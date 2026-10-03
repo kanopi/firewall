@@ -7,7 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit;
 use Kanopi\Firewall\Storage\FileStorage;
 
 /**
- * `bin/firewall-block` (#291).
+ * `bin/firewall block` (#291).
  *
  * A subprocess, like the other command tests: the exit codes are the contract,
  * and so is the stdout/stderr split that keeps `--json` parseable.
@@ -45,13 +45,13 @@ final class FirewallBlockCommandTest extends AbstractTestCase
     private function runBlock(array $args): array
     {
         $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall-block'],
+            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall', 'block'],
             $args
         );
         $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open($command, $descriptors, $pipes);
 
-        $this->assertIsResource($process, 'Could not start bin/firewall-block');
+        $this->assertIsResource($process, 'Could not start bin/firewall block');
 
         $stdout = (string) stream_get_contents($pipes[1]);
         $stderr = (string) stream_get_contents($pipes[2]);
@@ -277,6 +277,6 @@ final class FirewallBlockCommandTest extends AbstractTestCase
         $result = $this->runBlock(['--help']);
 
         $this->assertSame(self::EXIT_OK, $result['code']);
-        $this->assertStringContainsString('firewall-block', $result['stdout']);
+        $this->assertStringContainsString('firewall block', $result['stdout']);
     }
 }

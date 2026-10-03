@@ -66,7 +66,7 @@ final class ScheduledRuleTest extends AbstractTestCase
      * A schedule nobody can read takes the rule out rather than guessing.
      *
      * The throw is what `LazyObjectRegistry` turns into a failed rule, which is what
-     * `getFailedRules()` and `firewall-doctor` report. Guessing would mean choosing
+     * `getFailedRules()` and `firewall doctor` report. Guessing would mean choosing
      * silently between over-blocking and not protecting.
      */
     public function testAnUnreadableScheduleStopsTheRule(): void

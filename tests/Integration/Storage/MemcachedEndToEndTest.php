@@ -20,8 +20,8 @@ use Symfony\Component\Yaml\Yaml;
  * `MemcachedStorageIntegrationTest` calls the storage directly. This drives it the way a site
  * does: a rule blocks a client and a *separate* firewall -- a separate request, in effect --
  * refuses that client on the block list alone; a repeat hit extends the ban and is counted;
- * escalation reads the offense history back out of Memcached. Then `bin/firewall-block` and
- * `bin/firewall-doctor` are run as processes against the same server, which is how an
+ * escalation reads the offense history back out of Memcached. Then `bin/firewall block` and
+ * `bin/firewall doctor` are run as processes against the same server, which is how an
  * operator meets this backend.
  */
 #[RequiresPhpExtension('memcached')]
@@ -279,25 +279,25 @@ final class MemcachedEndToEndTest extends IntegrationTestCase
         $this->seed();
         $config = $this->configFile();
 
-        $list = $this->json($this->runCommand('firewall-block', [$config, '--list', '--json']));
+        $list = $this->json($this->runCommand('firewall block', [$config, '--list', '--json']));
         $this->assertSame(3, $list['count']);
         $this->assertSame(MemcachedStorage::class, $list['backend']['class']);
         $this->assertTrue($list['backend']['queryable']);
         $this->assertNull($list['backend']['gap']);
         $this->assertNull($list['warning']);
 
-        $find = $this->json($this->runCommand('firewall-block', [$config, '--find=203.0.113.0/24', '--json']));
+        $find = $this->json($this->runCommand('firewall block', [$config, '--find=203.0.113.0/24', '--json']));
         $this->assertEqualsCanonicalizing(['203.0.113.5', '203.0.113.99'], array_keys($find['records']));
 
-        $show = $this->json($this->runCommand('firewall-block', [$config, '--show=203.0.113.5', '--json']));
+        $show = $this->json($this->runCommand('firewall block', [$config, '--show=203.0.113.5', '--json']));
         $this->assertTrue($show['blocked']);
         $this->assertCount(1, $show['offenses']);
 
-        $dryRun = $this->json($this->runCommand('firewall-block', [$config, '--lift=203.0.113.0/24', '--dry-run', '--json']));
+        $dryRun = $this->json($this->runCommand('firewall block', [$config, '--lift=203.0.113.0/24', '--dry-run', '--json']));
         $this->assertSame(0, $dryRun['removed']);
         $this->assertTrue($this->storage()->exists('203.0.113.5'), 'A dry run removes nothing');
 
-        $lift = $this->json($this->runCommand('firewall-block', [$config, '--lift=203.0.113.0/24', '--json']));
+        $lift = $this->json($this->runCommand('firewall block', [$config, '--lift=203.0.113.0/24', '--json']));
         $this->assertSame(2, $lift['removed']);
         $this->assertFalse($this->storage()->exists('203.0.113.5'));
         $this->assertSame(0, $this->storage()->countOffenses('203.0.113.5'));
@@ -314,11 +314,11 @@ final class MemcachedEndToEndTest extends IntegrationTestCase
         $config = $this->configFile();
         $this->evictShardOf('203.0.113.5');
 
-        $text = $this->runCommand('firewall-block', [$config, '--find=203.0.113.0/24']);
+        $text = $this->runCommand('firewall block', [$config, '--find=203.0.113.0/24']);
         $this->assertSame(0, $text['code'], $text['stderr']);
         $this->assertStringContainsString('Results may be incomplete', $text['stderr']);
 
-        $show = $this->json($this->runCommand('firewall-block', [$config, '--show=203.0.113.5', '--json']));
+        $show = $this->json($this->runCommand('firewall block', [$config, '--show=203.0.113.5', '--json']));
         $this->assertTrue($show['blocked'], 'An exact address does not depend on the index');
         $this->assertNotNull($show['backend']['gap']);
     }
@@ -331,13 +331,13 @@ final class MemcachedEndToEndTest extends IntegrationTestCase
         $this->seed();
         $config = $this->configFile();
 
-        $healthy = $this->runCommand('firewall-doctor', [$config, '--json']);
+        $healthy = $this->runCommand('firewall doctor', [$config, '--json']);
         $this->assertNotContains('Block list searches may be incomplete', $this->titles($healthy));
         $this->assertStringNotContainsString('Failed to initialize Memcached storage', $healthy['stderr'] . $healthy['stdout']);
 
         $this->evictShardOf('203.0.113.5');
 
-        $damaged = $this->runCommand('firewall-doctor', [$config, '--json']);
+        $damaged = $this->runCommand('firewall doctor', [$config, '--json']);
         $finding = array_values(array_filter(
             $this->json($damaged)['findings'],
             static fn(array $f): bool => $f['title'] === 'Block list searches may be incomplete'

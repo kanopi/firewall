@@ -7,7 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
- * `bin/firewall-check` (#105).
+ * `bin/firewall check` (#105).
  *
  * Driven as a real subprocess rather than by including the script. The exit
  * code is part of the contract — it is how the tool composes in CI — and so is
@@ -180,9 +180,14 @@ final class FirewallCheckCommandTest extends AbstractTestCase
         );
     }
 
-    private function script(): string
+    /**
+     * `firewall check`, as a command line.
+     *
+     * @return array<int, string>
+     */
+    private function script(): array
     {
-        return dirname(__DIR__, 2) . '/bin/firewall-check';
+        return [dirname(__DIR__, 2) . '/bin/firewall', 'check'];
     }
 
     private function writeConfig(string $yaml): string
@@ -210,13 +215,13 @@ final class FirewallCheckCommandTest extends AbstractTestCase
         // loaded' — which would land ahead of the JSON document and make these
         // assertions measure the environment rather than the tool.
         $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', $this->script()],
+            [PHP_BINARY, '-d', 'display_errors=stderr', ...$this->script()],
             $args,
         );
         $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open($command, $descriptors, $pipes);
 
-        $this->assertIsResource($process, 'Could not start bin/firewall-check');
+        $this->assertIsResource($process, 'Could not start bin/firewall check');
 
         $stdout = (string) stream_get_contents($pipes[1]);
         $stderr = (string) stream_get_contents($pipes[2]);

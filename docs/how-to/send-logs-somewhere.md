@@ -160,7 +160,7 @@ here is a harmless no-op.
     loses the buffer. That is the right trade for a firewall log and the wrong one for an audit
     log.
 
-    **Under CLI there is nothing to release.** `bin/firewall-check` and `firewall-doctor` have
+    **Under CLI there is nothing to release.** `bin/firewall check` and `firewall doctor` have
     no connection to close, so records are flushed at shutdown without the early release rather
     than dropped.
 
@@ -187,7 +187,7 @@ handler whose constructor genuinely takes an array is unaffected.
 ## Check it is actually writing
 
 ```console
-$ firewall-doctor config/firewall.yml
+$ firewall doctor config/firewall.yml
 ```
 
 A handler that cannot reach its destination — an unwritable path, an unreachable database —
@@ -201,5 +201,5 @@ is reported there rather than failing silently on the next request.
 | Keep secrets out of the log | [Sensitive value redaction](../configuration/logging.md#sensitive-value-redaction) |
 | Wrap handlers (`FingersCrossed`, `Buffer`, `Filter`) | [Wrapping handlers](#wrapping-handlers-generally), or [inject your own logger](../configuration/logging.md#injecting-your-own-logger) |
 | Stop a remote handler slowing the request | [Defer it](#if-you-must-send-http-from-php-defer-it) |
-| Trim an oversized log table | `firewall-log-prune config.yml` |
+| Trim an oversized log table | `firewall log-prune config.yml` |
 | React to decisions in code instead of reading logs | [React to Decisions](decision-events.md) |

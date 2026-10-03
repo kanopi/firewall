@@ -1,0 +1,92 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * The firewall's command line: one entry point, one subcommand per job (#289).
+ *
+ * Usage:
+ *   bin/firewall                      List the commands.
+ *   bin/firewall <command> [args]     Run one. `--help` after it explains it.
+ *   bin/firewall help <command>       The same as `<command> --help`.
+ *
+ * Each command is in bin/commands/<command>.php and runs exactly as the
+ * bin/firewall-<command> script it replaces did: the same arguments, output
+ * and exit codes. Those scripts still work, as wrappers around this, and are
+ * deprecated; they go in 3.0.
+ */
+
+const FIREWALL_COMMANDS = [
+    'check' => 'Ask whether a given request would be blocked, and by what',
+    'doctor' => 'Diagnose a live firewall installation',
+    'init' => 'Write a starting configuration',
+    'rule' => 'Add and remove rules without hand-editing YAML',
+    'block' => 'See who is blocked, and lift a block',
+    'challenge' => 'Read a challenge pass, and withdraw one',
+    'sources' => 'Refresh every metadata.sources list a config declares',
+    'migrate' => 'Bring existing firewall tables up to the schema this release declares',
+    'log-prune' => 'Delete firewall log rows older than the retention window',
+];
+
+$firewallCommand = $argv[1] ?? null;
+
+if ($firewallCommand === 'help' && isset($argv[2])) {
+    $firewallCommand = $argv[2];
+    $argv = [$argv[0], $firewallCommand, '--help'];
+}
+
+if ($firewallCommand === null || in_array($firewallCommand, ['help', '--help', '-h', 'list'], true)) {
+    $firewallWidth = max(array_map('strlen', array_keys(FIREWALL_COMMANDS)));
+    $firewallList = '';
+
+    foreach (FIREWALL_COMMANDS as $firewallName => $firewallSummary) {
+        $firewallList .= sprintf("  %s  %s\n", str_pad($firewallName, $firewallWidth), $firewallSummary);
+    }
+
+    fwrite(STDOUT, <<<TEXT
+    The Kanopi firewall's command line.
+
+    Usage:
+      firewall <command> [arguments]
+      firewall help <command>
+
+    Commands:
+    {$firewallList}
+    Run `firewall <command> --help` for a command's arguments and exit codes.
+
+    TEXT);
+
+    exit(0);
+}
+
+if (!array_key_exists($firewallCommand, FIREWALL_COMMANDS)) {
+    fwrite(STDERR, sprintf(
+        "Unknown command \"%s\". Run `firewall` to list the commands.\n",
+        $firewallCommand
+    ));
+
+    exit(2);
+}
+
+// The command reads its own arguments from $argv, exactly as the script it
+// replaces did, with the command's name where the script's path was.
+$argv = ['firewall ' . $firewallCommand, ...array_slice($argv, 2)];
+$argc = count($argv);
+$_SERVER['argv'] = $argv;
+$_SERVER['argc'] = $argc;
+
+$firewallScript = __DIR__ . '/commands/' . $firewallCommand . '.php';
+
+// Run at the top level, as a script, rather than inside a function: the
+// commands are scripts, and their variables and functions are global.
+unset($firewallCommand, $firewallWidth, $firewallList, $firewallName, $firewallSummary);
+
+require $firewallScript;

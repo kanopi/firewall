@@ -49,7 +49,7 @@ configs:
     error and returns nothing, so *every* rule in the configuration stops being configured.
 
     That matters most when adding an include for a file you are about to create. Write the
-    file first — [`firewall-rule init`](../how-to/managing-rules.md) does exactly that, in
+    file first — [`firewall rule init`](../how-to/managing-rules.md) does exactly that, in
     that order — and add the `configs:` line afterwards.
 
     `global.require_config: true` turns the failure into a startup exception instead, which

@@ -133,8 +133,8 @@ docs/
     **1. A redirect.** Add it to `redirect_maps` in `mkdocs.yml`. Old URLs are in published
     release notes and blog posts and cannot be edited after the fact.
 
-    **2. Check whether the code points at it.** `firewall-doctor` and
-    `firewall-check --lint` print `See docs/…` pointers that live in PHP strings, so
+    **2. Check whether the code points at it.** `firewall doctor` and
+    `firewall check --lint` print `See docs/…` pointers that live in PHP strings, so
     `mkdocs build --strict` cannot see them. `DocumentedReferenceTest` holds them — run
     `composer phpunit:unit` after moving anything, including after renaming a *heading*
     that something links to by anchor.

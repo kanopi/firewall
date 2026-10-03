@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Tests\Unit;
 
 /**
- * `bin/firewall-doctor` (#211).
+ * `bin/firewall doctor` (#211).
  *
  * Driven as a real subprocess, for the same reasons `FirewallCheckCommandTest`
  * is: the exit code is the contract that lets this gate a deploy, and the
@@ -45,9 +45,14 @@ final class FirewallDoctorCommandTest extends AbstractTestCase
         parent::tearDown();
     }
 
-    private function script(): string
+    /**
+     * `firewall doctor`, as a command line.
+     *
+     * @return array<int, string>
+     */
+    private function script(): array
     {
-        return dirname(__DIR__, 2) . '/bin/firewall-doctor';
+        return [dirname(__DIR__, 2) . '/bin/firewall', 'doctor'];
     }
 
     private function writeConfig(string $yaml): string
@@ -70,11 +75,11 @@ final class FirewallDoctorCommandTest extends AbstractTestCase
         // CI installs extensions over an image that has them, so every run
         // prints 'Module "..." is already loaded' — which would land ahead of
         // the JSON and make these assertions measure the environment.
-        $command = array_merge([PHP_BINARY, '-d', 'display_errors=stderr', $this->script()], $args);
+        $command = array_merge([PHP_BINARY, '-d', 'display_errors=stderr', ...$this->script()], $args);
         $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open($command, $descriptors, $pipes);
 
-        $this->assertIsResource($process, 'Could not start bin/firewall-doctor');
+        $this->assertIsResource($process, 'Could not start bin/firewall doctor');
 
         $stdout = (string) stream_get_contents($pipes[1]);
         $stderr = (string) stream_get_contents($pipes[2]);
@@ -182,6 +187,6 @@ final class FirewallDoctorCommandTest extends AbstractTestCase
         $result = $this->runDoctor(['--help']);
 
         $this->assertSame(self::EXIT_OK, $result['code']);
-        $this->assertStringContainsString('firewall-doctor', $result['stdout']);
+        $this->assertStringContainsString('firewall doctor', $result['stdout']);
     }
 }

@@ -8,7 +8,7 @@ use Kanopi\Firewall\Challenge\TokenManager;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * `bin/firewall-challenge` (#368).
+ * `bin/firewall challenge` (#368).
  *
  * A subprocess, like the other command tests: the exit codes are the contract,
  * and so is the stdout/stderr split that keeps `--json` parseable.
@@ -51,7 +51,7 @@ final class FirewallChallengeCommandTest extends AbstractTestCase
     }
 
     /**
-     * The backend is named for the same reason `bin/firewall-block` names it:
+     * The backend is named for the same reason `bin/firewall block` names it:
      * a revocation is only worth anything against the store the site reads.
      */
     public function testTheBackendIsAlwaysNamed(): void
@@ -237,13 +237,13 @@ final class FirewallChallengeCommandTest extends AbstractTestCase
     private function runChallenge(array $args): array
     {
         $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall-challenge'],
+            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall', 'challenge'],
             $args
         );
         $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open($command, $descriptors, $pipes);
 
-        $this->assertIsResource($process, 'Could not start bin/firewall-challenge');
+        $this->assertIsResource($process, 'Could not start bin/firewall challenge');
 
         $stdout = (string) stream_get_contents($pipes[1]);
         $stderr = (string) stream_get_contents($pipes[2]);

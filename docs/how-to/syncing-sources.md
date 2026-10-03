@@ -18,7 +18,7 @@ Moving the refresh out of band fixes both. This guide covers doing that.
 ## Refreshing
 
 ```bash
-vendor/bin/firewall-sources config/firewall.yml
+vendor/bin/firewall sources config/firewall.yml
 ```
 
 The command reads the same configuration your application does, collects every source
@@ -61,7 +61,7 @@ So a deploy step can simply not continue:
 
 ```bash
 set -e
-vendor/bin/firewall-sources config/firewall.yml
+vendor/bin/firewall sources config/firewall.yml
 ```
 
 That is usually what you want for an allow list, where a source silently dropping out
@@ -71,11 +71,11 @@ declaration and let the command's non-zero exit be your signal rather than your 
 
 ### And on a sync that has quietly stopped
 
-`firewall-sources` fails when a *fetch* fails. It says nothing about a fetch that stopped
+`firewall sources` fails when a *fetch* fails. It says nothing about a fetch that stopped
 being attempted — a cron that was removed, a credential that expired months ago. The rule
 keeps matching either way, on a list nobody has updated since.
 
-[`firewall-doctor`](diagnosing.md#making-a-stale-rule-source-fail-the-deploy) is the check
+[`firewall doctor`](diagnosing.md#making-a-stale-rule-source-fail-the-deploy) is the check
 for that, once you tell it how long is too long. Past that age a stale source is an error
 rather than a warning, so the same `set -e` deploy step catches it:
 
@@ -91,7 +91,7 @@ Off unless set, because how long is too long depends on how often yours refreshe
 `--dry-run` reports the state of each cache and touches no network:
 
 ```bash
-vendor/bin/firewall-sources config/firewall.yml --dry-run
+vendor/bin/firewall sources config/firewall.yml --dry-run
 ```
 
 ```
@@ -150,7 +150,7 @@ user agents changes when someone edits it.
 
 ```cron
 # Refresh firewall lists every six hours
-0 */6 * * * cd /srv/app && FEED_TOKEN=... vendor/bin/firewall-sources config/firewall.yml --quiet
+0 */6 * * * cd /srv/app && FEED_TOKEN=... vendor/bin/firewall sources config/firewall.yml --quiet
 ```
 
 Better still, source the same environment file your application uses rather than putting
@@ -169,10 +169,10 @@ composer install --no-dev --optimize-autoloader
 
 # Refresh every declared list. A required source that cannot be read fails here,
 # before any traffic reaches the new release.
-vendor/bin/firewall-sources config/firewall.yml
+vendor/bin/firewall sources config/firewall.yml
 
 # Confirm what landed.
-vendor/bin/firewall-sources config/firewall.yml --dry-run
+vendor/bin/firewall sources config/firewall.yml --dry-run
 ```
 
 ## Related

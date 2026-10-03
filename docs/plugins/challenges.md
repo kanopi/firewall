@@ -67,7 +67,7 @@ Two things follow that are worth knowing:
 - **Raising `challenge.ttl` raises the ceiling for everything.** A single rule needing a long pass sets the limit every other rule is measured against, because verification cannot tell them apart. If one route genuinely needs a day-long pass and the rest should not, give it its own instance with its own `audience`.
 - **Tokens already issued are not revoked by lowering it.** They are stateless and signed, so an outstanding long-lived pass stays valid until it expires — see [Withdrawing a pass](#withdrawing-a-pass) for the two levers that take one away without rotating the secret.
 
-`firewall-check --lint` reports a challenge rule whose `default_expiration_time` exceeds `challenge.ttl`, so a rule that does not do what it says shows up in CI rather than one request at a time in a log.
+`firewall check --lint` reports a challenge rule whose `default_expiration_time` exceeds `challenge.ttl`, so a rule that does not do what it says shows up in CI rather than one request at a time in a log.
 
 ## Withdrawing a pass
 
@@ -96,7 +96,7 @@ challenge:
 ```
 
 ```console
-$ bin/firewall-challenge firewall.yml --inspect=eyJpcCI6...
+$ bin/firewall challenge firewall.yml --inspect=eyJpcCI6...
 Pass token:
   address:  203.0.113.9
   provider: math
@@ -104,7 +104,7 @@ Pass token:
   expires:  2026-09-16 13:04:11 UTC
   nonce:    af2f100884fa35c3281b6d1db727b8fd
 
-$ bin/firewall-challenge firewall.yml --revoke-nonce=af2f1008… --reason="abusing the pass"
+$ bin/firewall challenge firewall.yml --revoke-nonce=af2f1008… --reason="abusing the pass"
 Revoked af2f100884fa35c3281b6d1db727b8fd until 2026-09-16 13:04:11 UTC.
 ```
 
@@ -121,10 +121,10 @@ The `Challenge solution accepted` line carries `pass_nonce` and `pass_expires` f
 
 !!! warning "Revoking is not blocking"
 
-    Blocking an address refuses a client. Revoking withdraws an *exemption* a client earned, which is the opposite direction and does not follow from it. `bin/firewall-block` is the other tool, and both read the real store.
+    Blocking an address refuses a client. Revoking withdraws an *exemption* a client earned, which is the opposite direction and does not follow from it. `bin/firewall block` is the other tool, and both read the real store.
 
 ```console
-$ bin/firewall-challenge firewall.yml [action] [options]
+$ bin/firewall challenge firewall.yml [action] [options]
 
   --inspect=TOKEN    Decode a pass: address, provider, issued, expires, nonce
   --revoke=TOKEN     Withdraw that pass, until its own expiry

@@ -51,7 +51,7 @@ use Symfony\Component\HttpFoundation\Request;
  * opposite direction to every reputation score in this library, where high is
  * bad. So the rule that blocks bots is `bot_score <= 5`, and `bot_score > 30`
  * on a `response: block` rule blocks *humans*, which is an outage that looks
- * like a working configuration. `firewall-check --lint` warns about that shape.
+ * like a working configuration. `firewall check --lint` warns about that shape.
  *
  * ## It does nothing without trusted proxies
  *

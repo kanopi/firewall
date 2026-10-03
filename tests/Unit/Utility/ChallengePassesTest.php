@@ -16,7 +16,7 @@ use Symfony\Component\HttpFoundation\Request;
 /**
  * Reading and withdrawing passes from a configuration (#368).
  *
- * The part `bin/firewall-challenge` is a thin shell over, so the command test
+ * The part `bin/firewall challenge` is a thin shell over, so the command test
  * can stay about exit codes and this can be about behaviour.
  */
 class ChallengePassesTest extends AbstractTestCase

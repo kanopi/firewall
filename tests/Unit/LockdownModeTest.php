@@ -120,7 +120,7 @@ class LockdownModeTest extends AbstractTestCase
 
     /**
      * An empty allowlist serves nobody — which is what deny-by-default means,
-     * and why `firewall-doctor` reports it before you rely on it.
+     * and why `firewall doctor` reports it before you rely on it.
      */
     public function testAnEmptyAllowlistServesNobody(): void
     {

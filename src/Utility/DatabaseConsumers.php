@@ -23,8 +23,8 @@ use Kanopi\Firewall\Storage\DatabaseStorage;
  * `DatabaseHandler` under `logger:`. Anything asking "which tables does this configuration
  * own" has to walk all three.
  *
- * Extracted from `bin/firewall-migrate`, which was the only caller until
- * `bin/firewall-doctor` needed the same answer. A second copy of this walk is a second
+ * Extracted from `bin/firewall migrate`, which was the only caller until
+ * `bin/firewall doctor` needed the same answer. A second copy of this walk is a second
  * place to forget when a fourth consumer appears.
  *
  * **Constructing is the point, not a side effect.** The declared schema lives on the class
@@ -50,7 +50,7 @@ class DatabaseConsumers
     public static function fromConfig(array $config): array
     {
         // A backend or handler may name its connection (#395). Resolved here
-        // because this is where they are built, for firewall-migrate.
+        // because this is where they are built, for firewall migrate.
         $config = Connections::resolveIn($config);
         $consumers = [];
         $failures = [];

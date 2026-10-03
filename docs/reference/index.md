@@ -10,6 +10,15 @@ follows is the reference that belongs to neither.
 
 <div class="grid cards" markdown>
 
+-   :material-console:{ .lg .middle } **Command Line**
+
+    ---
+
+    The `firewall` command and its subcommands: check, doctor, init, rule, block,
+    challenge, sources, migrate, log-prune. And what replaced the old `firewall-*` scripts.
+
+    [:octicons-arrow-right-24: Command line](command-line.md)
+
 -   :material-book-alphabet:{ .lg .middle } **Glossary**
 
     ---

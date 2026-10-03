@@ -32,7 +32,7 @@ use Symfony\Component\Yaml\Yaml;
  *   - plugin: A   # trailing note
  * ```
  *
- * Symfony's YAML has no comment-preserving round trip, and `bin/firewall-init` (#210) goes
+ * Symfony's YAML has no comment-preserving round trip, and `bin/firewall init` (#210) goes
  * to some trouble to generate a *heavily commented* config precisely so an operator reads it
  * and edits it. A command whose first `add` silently deleted all of that would have taken
  * something away, and the person who ran it would not find out until they next opened the
@@ -95,7 +95,7 @@ class ManagedRules
      * Matched on read, not just written: a file without it is a file somebody wrote
      * themselves, and overwriting it would be the exact loss this class exists to avoid.
      */
-    public const MARKER = '# Managed by bin/firewall-rule. Edits here are overwritten.';
+    public const MARKER = '# Managed by bin/firewall rule. Edits here are overwritten.';
 
     /**
      * Read the rules out of a managed file.
@@ -324,7 +324,7 @@ class ManagedRules
         $lines = [
             self::MARKER,
             '#',
-            '# Add, remove and disable entries with `firewall-rule`, not an editor -- this',
+            '# Add, remove and disable entries with `firewall rule`, not an editor -- this',
             '# file is rewritten in full on every change and anything you add by hand goes',
             '# with it. Rules you want to keep belong in your own configuration, where they',
             '# keep their comments and this command will not touch them.',

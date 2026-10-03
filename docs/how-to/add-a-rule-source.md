@@ -160,4 +160,4 @@ plugins:
 | Keep fetches off the request path | [Sync Rule Sources](syncing-sources.md) |
 | A private feed needing a token | [Authentication](../configuration/sources.md#authentication) |
 | Every option, format and guardrail | [Rule Sources](../configuration/sources.md) |
-| Check what a source resolved to | `firewall-sources config.yml --dry-run` |
+| Check what a source resolved to | `firewall sources config.yml --dry-run` |

@@ -809,7 +809,7 @@ class DatabaseHandlerTest extends AbstractTestCase
     /**
      * A backlog bigger than one batch is cleared by a prune with no limit.
      *
-     * Which is what `bin/firewall-log-prune` calls, so batching changes how
+     * Which is what `bin/firewall log-prune` calls, so batching changes how
      * the CLI deletes and not how much (#459).
      */
     public function testAnUnlimitedPruneClearsABacklogOfManyBatches(): void
@@ -1013,7 +1013,7 @@ class DatabaseHandlerTest extends AbstractTestCase
         self::assertCount(1, $behind, 'Once, though both flushes left rows behind');
         self::assertSame(Level::Warning, $behind[0]->level);
         self::assertSame('firewall_log', $behind[0]->context['table']);
-        self::assertStringContainsString('bin/firewall-log-prune', $behind[0]->context['hint']);
+        self::assertStringContainsString('bin/firewall log-prune', $behind[0]->context['hint']);
     }
 
     /**
@@ -1113,7 +1113,7 @@ class DatabaseHandlerTest extends AbstractTestCase
      *
      * The way an existing site gets them: nothing on the request path takes
      * the lock an index build needs, so they arrive through `migrateSchema()`
-     * or `bin/firewall-migrate`, which the drift warning tells an operator to
+     * or `bin/firewall migrate`, which the drift warning tells an operator to
      * run.
      */
     public function testATableWithoutTheRuleIndexesGainsThemOnMigrate(): void

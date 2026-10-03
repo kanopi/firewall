@@ -10,7 +10,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * Hold every doc path the *code* prints to a page that exists.
  *
- * `firewall-doctor` and `firewall-check --lint` end a finding with a pointer:
+ * `firewall doctor` and `firewall check --lint` end a finding with a pointer:
  *
  * ```
  *   ✗ GeoIP database not found
@@ -109,7 +109,7 @@ class DocumentedReferenceTest extends TestCase
 
         $this->assertFileExists(
             self::docsDir() . '/' . $page,
-            sprintf('%s points at docs/%s, which does not exist. Printed by firewall-doctor.', $source, $page)
+            sprintf('%s points at docs/%s, which does not exist. Printed by firewall doctor.', $source, $page)
         );
     }
 

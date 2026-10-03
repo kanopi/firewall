@@ -72,7 +72,7 @@ final class SourceLoader
      * @param bool|null $offline
      *   When true, never touch the network: cached entries are used and a
      *   source with no cache is an error. This is the mode a request path
-     *   should run in, with refreshes done out of band by `bin/firewall-sources`.
+     *   should run in, with refreshes done out of band by `bin/firewall sources`.
      *   NULL takes the KANOPI_FIREWALL_SOURCES_OFFLINE constant, defaulting to
      *   false.
      */

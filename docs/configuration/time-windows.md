@@ -59,7 +59,7 @@ changes length.
       hours: "18:00-06:00"
     ```
 
-    `firewall-check --lint` warns on a scheduled rule that does not name one, and naming
+    `firewall check --lint` warns on a scheduled rule that does not name one, and naming
     `UTC` explicitly silences it.
 
 A `timezone` that *is* written and is not a zone this system knows — a typo, or an
@@ -154,7 +154,7 @@ that could never run.
 A scheduled rule matching nothing looks exactly like a broken one, and the afternoon spent
 telling them apart is the real cost of this feature. So it is reported in three places.
 
-**`firewall-doctor`** lists it, as information rather than a warning — a rule outside its
+**`firewall doctor`** lists it, as information rather than a warning — a rule outside its
 window is doing what it was configured to do:
 
 ```
@@ -164,7 +164,7 @@ window is doing what it was configured to do:
       being broken.
 ```
 
-**`firewall-check --explain`** says `ASLEEP` rather than `pass`, because the rule did not
+**`firewall check --explain`** says `ASLEEP` rather than `pass`, because the rule did not
 run — which is usually the answer to "why wasn't this caught?":
 
 ```
@@ -190,15 +190,15 @@ a status page, not on a request path.
 ## A schedule that cannot be read stops the rule
 
 A misspelled key, a timezone this system does not have, `hours: "6pm-6am"` — any of them and
-the rule **does not start**. It is reported by `getFailedRules()`, by `firewall-doctor` and
-by `firewall-check`, in the same place as a rule whose storage backend is unreachable.
+the rule **does not start**. It is reported by `getFailedRules()`, by `firewall doctor` and
+by `firewall check`, in the same place as a rule whose storage backend is unreachable.
 
 That is deliberate, and it is the least bad of three options. Treating an unreadable
 schedule as *always on* silently over-blocks; treating it as *always off* silently stops
 protecting. Both invent an answer to a question the operator got wrong, which is how `file:`
 came to be documented under `FileStorage` in five places when the key is `storage_file`.
 
-`firewall-check --lint` catches all of it before a deploy, where it is cheap:
+`firewall check --lint` catches all of it before a deploy, where it is cheap:
 
 ```
   ✗ Rule "after-hours-geo-block" has a schedule that cannot be read

@@ -3,7 +3,7 @@
 ## Generate a configuration
 
 ```bash
-vendor/bin/firewall-init
+vendor/bin/firewall init
 ```
 
 ```
@@ -25,14 +25,14 @@ Every answer is also a flag, and with no terminal attached it takes the defaults
 prompting — so it is safe inside a scaffolding script or a container build:
 
 ```bash
-vendor/bin/firewall-init --platform=drupal --cdn=pantheon --storage=database --mode=log
+vendor/bin/firewall init --platform=drupal --cdn=pantheon --storage=database --mode=log
 ```
 
 Then check it:
 
 ```bash
-vendor/bin/firewall-check --config=config/firewall.yml --lint   # are the rules sane?
-vendor/bin/firewall-doctor config/firewall.yml                  # does this environment work?
+vendor/bin/firewall check --config=config/firewall.yml --lint   # are the rules sane?
+vendor/bin/firewall doctor config/firewall.yml                  # does this environment work?
 ```
 
 The rest of this page is what that file contains, and how to wire it in.

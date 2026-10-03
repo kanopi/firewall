@@ -7,7 +7,7 @@ namespace Kanopi\Firewall\Tests\Unit;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
- * `bin/firewall-rule` (#290).
+ * `bin/firewall rule` (#290).
  *
  * Driven as a real subprocess, like the other command tests: the exit code is
  * part of the contract, and so is the stdout/stderr split that keeps `--json`
@@ -93,13 +93,13 @@ final class FirewallRuleCommandTest extends AbstractTestCase
     private function runRule(array $args): array
     {
         $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall-rule'],
+            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall', 'rule'],
             $args,
         );
 
         $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
 
-        $this->assertIsResource($process, 'Could not start bin/firewall-rule');
+        $this->assertIsResource($process, 'Could not start bin/firewall rule');
 
         $stdout = (string) stream_get_contents($pipes[1]);
         $stderr = (string) stream_get_contents($pipes[2]);
@@ -331,7 +331,7 @@ final class FirewallRuleCommandTest extends AbstractTestCase
             $result = $this->runRule($args);
 
             $this->assertSame(self::EXIT_OK, $result['code']);
-            $this->assertStringContainsString('firewall-rule ACTION', $result['stdout']);
+            $this->assertStringContainsString('firewall rule ACTION', $result['stdout']);
         }
 
         // --help after an action, which is where somebody who has started
@@ -415,7 +415,7 @@ final class FirewallRuleCommandTest extends AbstractTestCase
         $this->assertStringContainsString('did not load cleanly', $result['stderr']);
         $this->assertStringContainsString('missing.yml', $result['stderr']);
         $this->assertStringContainsString('empties the whole document', $result['stderr']);
-        $this->assertStringContainsString('firewall-rule init', $result['stderr']);
+        $this->assertStringContainsString('firewall rule init', $result['stderr']);
     }
 
     public function testAnEmptyConfigListsNothing(): void
