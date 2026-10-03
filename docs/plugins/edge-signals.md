@@ -46,7 +46,7 @@ front of it.
 
     The mistake is invisible after the fact: the rule matches, the block page is served, the
     log says a rule fired, and the only symptom is that real visitors stopped arriving.
-    `firewall-check --lint` warns on a `block` or `challenge` rule comparing `bot_score` with
+    `firewall check --lint` warns on a `block` or `challenge` rule comparing `bot_score` with
     `>` or `>=`.
 
     On a `response: allow` rule that comparison is correct — "let the humans past" — so it is
@@ -94,7 +94,7 @@ bots" rule match every request the moment somebody forgot to enable the header.
 
     On Cloudflare they are added by **Managed Transforms**, per zone. Until the transform is
     enabled the headers are absent, the rules match nothing, and nothing anywhere says so
-    except a `debug` line. Check with `firewall-check --explain` against a real request.
+    except a `debug` line. Check with `firewall check --explain` against a real request.
 
 ### Fastly
 

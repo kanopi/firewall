@@ -243,7 +243,7 @@ class BlockListTest extends AbstractTestCase
      *
      * Its answers are then true and incomplete, and "nothing matched" stops meaning
      * "nothing is blocked" -- so the gap travels with the description of the backend,
-     * which is what `bin/firewall-block` and the doctor read.
+     * which is what `bin/firewall block` and the doctor read.
      */
     public function testABackendReportingAGapPassesItOn(): void
     {

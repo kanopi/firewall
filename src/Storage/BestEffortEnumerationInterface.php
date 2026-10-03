@@ -21,7 +21,7 @@ namespace Kanopi\Firewall\Storage;
  * true and incomplete, and "nothing matched" stops meaning "nothing is blocked".
  *
  * This is how such a backend says so, so `BlockList::backend()` and
- * `bin/firewall-block` can warn rather than answer with false confidence (#392).
+ * `bin/firewall block` can warn rather than answer with false confidence (#392).
  *
  * A separate interface for the same reason enumeration is one: adding a method
  * to `QueryableStorageInterface` would break every third-party implementation

@@ -11,7 +11,7 @@ use Kanopi\Firewall\Storage\InMemoryStorage;
  * A queryable storage that reports a gap in its enumeration, chosen by config.
  *
  * `MemcachedStorage` is the shipped backend that can report one, and it needs a server and
- * an extension. What `BlockList`, `bin/firewall-block` and the doctor do with a gap does not,
+ * an extension. What `BlockList`, `bin/firewall block` and the doctor do with a gap does not,
  * so they are tested against this.
  *
  * `config.gap` is the sentence returned; `config.throw` makes construction fail, the way a

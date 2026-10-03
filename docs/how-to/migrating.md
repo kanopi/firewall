@@ -216,7 +216,7 @@ plugins:
     An account key gives every account its own budget, so one address working through a
     username list is never limited by it. The address-keyed rule is what catches that. See
     [What a limit counts by](../plugins/rate-limit.md#what-a-limit-counts-by) — and
-    `firewall-check --lint` warns if you have only one. They have to be **two rules**: in
+    `firewall check --lint` warns if you have only one. They have to be **two rules**: in
     one rule's `config:`, the second entry for the same path never runs.
 
 ## Verify the migration rather than trusting it
@@ -237,7 +237,7 @@ block:   BLOCKED  GET /search?q=1%27+UNION+SELECT
 supposed to catch:
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --url='/wp-login.php' --script-name=/wp-login.php --ip=203.0.113.5 --explain
+vendor/bin/firewall check --config=firewall.yml --url='/wp-login.php' --script-name=/wp-login.php --ip=203.0.113.5 --explain
 ```
 
 `--script-name` makes the check a direct-file request, which is how the site receives it.
@@ -251,7 +251,7 @@ an asset, a logged-in editor's path — and confirm it is still `ALLOWED`.
 **4. Lint before deploying.**
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --lint
+vendor/bin/firewall check --config=firewall.yml --lint
 ```
 
 It reports rules that cannot match, unreachable rules, duplicate names, and the specific
@@ -261,7 +261,7 @@ bot score compared the wrong way round, a schedule that cannot be read.
 **5. Then ask the environment.**
 
 ```bash
-vendor/bin/firewall-doctor firewall.yml
+vendor/bin/firewall doctor firewall.yml
 ```
 
 See [Diagnosing](diagnosing.md) for what it checks.

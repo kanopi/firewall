@@ -38,7 +38,7 @@ So under attack the tarpit stops tarpitting. That is the failure the site surviv
 
 **The default of 5 is small on purpose.** The number that matters is `pm.max_children`, which the firewall cannot see. A tenth of the worker pool is a reasonable starting point; a cap near the size of the pool is the outage this is meant to prevent.
 
-`firewall-check --lint` reports what your configuration can hold, so the arithmetic happens before the deploy rather than during an incident:
+`firewall check --lint` reports what your configuration can hold, so the arithmetic happens before the deploy rather than during an incident:
 
 ```
   ! Tarpit rules can hold 40 workers at once

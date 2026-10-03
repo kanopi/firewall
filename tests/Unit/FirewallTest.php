@@ -806,7 +806,7 @@ class FirewallTest extends AbstractTestCase
      * `mark`, `record` and `redirect` arrived in 2.26.0 and the health
      * reporting never learned about them, so a `response: record` honeypot
      * whose backend was unreachable was **not running** while
-     * `firewall-doctor` reported that every configured rule was (#353).
+     * `firewall doctor` reported that every configured rule was (#353).
      *
      * That is #260's failure -- a firewall running three rules short looking
      * exactly like one running correctly -- reopened for the buckets added

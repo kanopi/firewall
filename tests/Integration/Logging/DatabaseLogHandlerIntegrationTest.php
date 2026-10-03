@@ -207,7 +207,7 @@ class DatabaseLogHandlerIntegrationTest extends IntegrationTestCase
     }
 
     /**
-     * `bin/firewall-log-prune` deletes what the retention window excludes.
+     * `bin/firewall log-prune` deletes what the retention window excludes.
      */
     public function testThePruneScriptDeletesExpiredRows(): void
     {
@@ -340,7 +340,7 @@ class DatabaseLogHandlerIntegrationTest extends IntegrationTestCase
     }
 
     /**
-     * Run `bin/firewall-log-prune` in its own process.
+     * Run `bin/firewall log-prune` in its own process.
      *
      * @param array<int, string> $arguments
      *   Arguments to pass.
@@ -351,7 +351,7 @@ class DatabaseLogHandlerIntegrationTest extends IntegrationTestCase
     private function runPruneScript(array $arguments): array
     {
         $command = escapeshellarg(PHP_BINARY)
-            . ' ' . escapeshellarg(dirname(__DIR__, 3) . '/bin/firewall-log-prune')
+            . ' ' . escapeshellarg(dirname(__DIR__, 3) . '/bin/firewall') . ' log-prune'
             . ' ' . implode(' ', array_map(escapeshellarg(...), $arguments))
             . ' 2>&1';
 

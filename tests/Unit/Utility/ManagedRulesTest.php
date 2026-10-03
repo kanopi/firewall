@@ -12,7 +12,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
  * The file a command owns, and the line it will not cross (#290).
  *
  * The refusals matter more than the successes here. A tool that silently
- * rewrote a hand-written config would destroy the comments `firewall-init`
+ * rewrote a hand-written config would destroy the comments `firewall init`
  * goes to some trouble to generate, and the person who ran it would not find
  * out until they next opened the file.
  */

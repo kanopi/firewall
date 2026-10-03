@@ -20,7 +20,7 @@ use Symfony\Component\HttpFoundation\Request;
  * Before this, the answer was *everything*: the whole cookie jar and the whole
  * header set, verbatim. So a visitor who was blocked had their session cookie,
  * their `Authorization` header and their challenge pass persisted into the
- * firewall's store — and `bin/firewall-block --show --json` printed them back.
+ * firewall's store — and `bin/firewall block --show --json` printed them back.
  *
  * Three things made that worse than it first reads. The block list is the
  * artifact operators *share* — pasted into a ticket, read over a call, and with
@@ -186,7 +186,7 @@ final class RecordedRequest
     /**
      * Whether this policy keeps everything, as the firewall used to.
      *
-     * `firewall-doctor` asks, so an operator who has opted back in is told they
+     * `firewall doctor` asks, so an operator who has opted back in is told they
      * have rather than left to infer it from an absence.
      *
      * @return bool

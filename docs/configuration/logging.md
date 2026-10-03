@@ -273,12 +273,12 @@ firewall.log-handler.WARNING: Firewall log retention is behind: rows older than 
 lowering `retention_days`, or turning pruning back on. The request path then only has to
 keep up with what is new.
 
-**Scheduled, deterministic.** `bin/firewall-log-prune` does the same delete when you say
+**Scheduled, deterministic.** `bin/firewall log-prune` does the same delete when you say
 so, batch after batch until nothing is left, and reports how many rows went:
 
 ```bash
-vendor/bin/firewall-log-prune config/firewall.yml --dry-run
-vendor/bin/firewall-log-prune config/firewall.yml
+vendor/bin/firewall log-prune config/firewall.yml --dry-run
+vendor/bin/firewall log-prune config/firewall.yml
 ```
 
 | Option | What it does |
@@ -291,7 +291,7 @@ Set `prune_probability: 0` to leave pruning entirely to the script — nothing t
 the table on the request path. On cron:
 
 ```cron
-30 4 * * * cd /srv/app && vendor/bin/firewall-log-prune config/firewall.yml --quiet
+30 4 * * * cd /srv/app && vendor/bin/firewall log-prune config/firewall.yml --quiet
 ```
 
 ### What this costs on the request path
@@ -325,10 +325,10 @@ The firewall notices and says so, once per worker:
 
 ```
 firewall.WARNING: Database table is behind the schema this release declares
-  {"table":"firewall_log","missing":["column severity_hint"],"remedy":"Run bin/firewall-migrate ..."}
+  {"table":"firewall_log","missing":["column severity_hint"],"remedy":"Run bin/firewall migrate ..."}
 ```
 
-[`bin/firewall-migrate`](../how-to/schema-migrations.md) adds what is missing. It only ever
+[`bin/firewall migrate`](../how-to/schema-migrations.md) adds what is missing. It only ever
 adds — nothing is dropped, renamed or rewritten — so no run of it can lose a row.
 
 The check behind that warning introspects the table, which costs more than it sounds, so it

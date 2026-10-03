@@ -89,7 +89,7 @@ abstract class AbstractStorageBase implements StorageInterface
      * Serialize relevant Symfony Request data.
      *
      * Filtered on the way *in*, which is the only place it can be. Redacting in
-     * `bin/firewall-block`'s output would leave the credential in the store,
+     * `bin/firewall block`'s output would leave the credential in the store,
      * where `SharedStorage` replicates it across the fleet and a database backup
      * keeps it for as long as backups are kept.
      *

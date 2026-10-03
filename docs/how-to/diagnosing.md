@@ -1,10 +1,10 @@
 # Diagnosing an Installation
 
-`bin/firewall-doctor` runs against the environment it is in and reports what is wrong with
+`bin/firewall doctor` runs against the environment it is in and reports what is wrong with
 it.
 
 ```bash
-vendor/bin/firewall-doctor firewall.yml
+vendor/bin/firewall doctor firewall.yml
 ```
 
 ```
@@ -85,7 +85,7 @@ Two consequences worth knowing:
   class that owns it and there is no way to ask without building it.
 
 Whether a rule can *ever* match is a static question, and belongs to
-[`firewall-check --lint`](checking-requests.md#linting-a-config).
+[`firewall check --lint`](checking-requests.md#linting-a-config).
 
 ## What it checks
 
@@ -130,13 +130,13 @@ nothing is asserted either way.
 ## In a deploy pipeline
 
 ```bash
-vendor/bin/firewall-doctor firewall.yml --quiet || exit 1
+vendor/bin/firewall doctor firewall.yml --quiet || exit 1
 ```
 
 Or, to act on the detail:
 
 ```bash
-vendor/bin/firewall-doctor firewall.yml --json > diagnosis.json
+vendor/bin/firewall doctor firewall.yml --json > diagnosis.json
 ```
 
 Errors are written to stderr and everything else to stdout, so a CI log shows the failures

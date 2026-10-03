@@ -203,7 +203,7 @@ class DatabaseHandler extends AbstractProcessingHandler
      *     Ignored when `retention_days` is `0`.
      *   - `prune_batch_size`: rows that delete removes per statement. Defaults
      *     to `1000`. `prune()` with no limit, which is what
-     *     `bin/firewall-log-prune` calls, runs until done.
+     *     `bin/firewall log-prune` calls, runs until done.
      *   - `prune_max_batches`: batches a winning flush may delete at most.
      *     Defaults to `10`. A flush runs as many as it takes to cover what it
      *     wrote, up to this.
@@ -432,7 +432,7 @@ class DatabaseHandler extends AbstractProcessingHandler
      *
      * A log table that only grows is a support ticket six months out, and
      * nothing in a library can promise an operator has a cron. So the delete
-     * runs from here on a probability, and `bin/firewall-log-prune` runs it
+     * runs from here on a probability, and `bin/firewall log-prune` runs it
      * deterministically for deployments that would rather schedule it —
      * set `prune_probability: 0` to leave pruning entirely to the script.
      *
@@ -451,7 +451,7 @@ class DatabaseHandler extends AbstractProcessingHandler
      *
      * @return int|null
      *   Number of rows deleted, 0 when retention is off, or NULL when the
-     *   delete could not run — a distinction `bin/firewall-log-prune` reports
+     *   delete could not run — a distinction `bin/firewall log-prune` reports
      *   as a failure rather than as a quiet success.
      */
     public function prune(?int $maxBatches = null): ?int
@@ -607,7 +607,7 @@ class DatabaseHandler extends AbstractProcessingHandler
      * Warnings as well as errors (#464). At `Error` only, the two warnings this
      * handler has -- the table is behind the declared schema, and retention is
      * behind the rows -- went nowhere, though each is the only way an operator
-     * learns to run `bin/firewall-migrate` or `bin/firewall-log-prune`. Both
+     * learns to run `bin/firewall migrate` or `bin/firewall log-prune`. Both
      * are once per process, so neither can flood the log.
      */
     protected function getLogger(): Logger
@@ -857,7 +857,7 @@ class DatabaseHandler extends AbstractProcessingHandler
                 'retention_days' => $this->retentionDays,
                 'prune_batch_size' => $this->pruneBatchSize,
                 'prune_max_batches' => $this->pruneMaxBatches,
-                'hint' => 'Run bin/firewall-log-prune to clear the backlog, or raise prune_max_batches or prune_probability.',
+                'hint' => 'Run bin/firewall log-prune to clear the backlog, or raise prune_max_batches or prune_probability.',
             ]);
         }
     }

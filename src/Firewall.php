@@ -1188,7 +1188,7 @@ final class Firewall
      *
      * A value this does not understand falls back to `pathinfo`, the behaviour of every
      * release before the key existed, and says so -- the same way an unknown `mode` falls
-     * back to `block` -- rather than refusing to start. `firewall-doctor` reports it as an
+     * back to `block` -- rather than refusing to start. `firewall doctor` reports it as an
      * error, which is where a deploy gate finds it.
      *
      * @param array<string, mixed> $config
@@ -1224,10 +1224,10 @@ final class Firewall
      * `global.lockdown_allow` only. Deliberately not the allow bucket -- see the call site.
      *
      * Entries are addresses, CIDR blocks or `start-end` ranges -- the notations `IpAddress`
-     * accepts. An entry that is none of those matches nobody; `firewall-doctor` names it.
+     * accepts. An entry that is none of those matches nobody; `firewall doctor` names it.
      *
      * An unset or empty list serves nobody, which is what "deny by default" means and is the
-     * honest reading of a mode called lockdown. `firewall-doctor` reports the empty case
+     * honest reading of a mode called lockdown. `firewall doctor` reports the empty case
      * before you are relying on it, because the alternative is finding out by locking
      * yourself out.
      *
@@ -1739,7 +1739,7 @@ final class Firewall
      * All six, not the three this returned until 2.29.0. `mark`, `record` and
      * `redirect` arrived in 2.26.0 and the health reporting never learned about
      * them, so a `response: record` honeypot whose backend was unreachable was
-     * **not running** while `firewall-doctor` said every configured rule was
+     * **not running** while `firewall doctor` said every configured rule was
      * (#353). That is #260's failure reopened for the buckets added since.
      *
      * The last three are typed nullable, so they are narrowed here rather than

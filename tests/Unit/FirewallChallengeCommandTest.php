@@ -4,17 +4,21 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit;
 
+use Kanopi\Firewall\Tests\Console\RunsFirewallCommands;
+
 use Kanopi\Firewall\Challenge\TokenManager;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * `bin/firewall-challenge` (#368).
+ * `bin/firewall challenge` (#368).
  *
  * A subprocess, like the other command tests: the exit codes are the contract,
  * and so is the stdout/stderr split that keeps `--json` parseable.
  */
 final class FirewallChallengeCommandTest extends AbstractTestCase
 {
+    use RunsFirewallCommands;
+
     private const EXIT_OK = 0;
     private const EXIT_UNANSWERABLE = 1;
     private const EXIT_USAGE = 2;
@@ -51,7 +55,7 @@ final class FirewallChallengeCommandTest extends AbstractTestCase
     }
 
     /**
-     * The backend is named for the same reason `bin/firewall-block` names it:
+     * The backend is named for the same reason `bin/firewall block` names it:
      * a revocation is only worth anything against the store the site reads.
      */
     public function testTheBackendIsAlwaysNamed(): void
@@ -194,6 +198,107 @@ final class FirewallChallengeCommandTest extends AbstractTestCase
         $this->assertStringContainsString('secret is empty', $result['stderr']);
     }
 
+    /**
+     * A config like config(), with these lines in place of its storage.
+     *
+     * @param array<int, string> $lines
+     */
+    private function configWith(array $lines): string
+    {
+        $path = $this->dir . '/config-' . uniqid('', true) . '.yml';
+        file_put_contents($path, implode("\n", [
+            'challenge:',
+            '  provider: math',
+            '  secret: ' . self::SECRET,
+            '  ttl: 900',
+            '  revocable: true',
+            ...$lines,
+            '',
+        ]));
+
+        return $path;
+    }
+
+    /**
+     * A pass this configuration signed that carries no nonce.
+     */
+    private function mintWithoutNonce(): string
+    {
+        $encode = static fn(string $data): string => rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+        $payload = $encode((string) json_encode(['ip' => '10.0.0.50', 'iat' => time(), 'exp' => time() + 900, 'aud' => 'math']));
+
+        return $payload . '.' . $encode(hash_hmac('sha256', $payload, self::SECRET, true));
+    }
+
+    /**
+     * A pass issued before challenge.passes_valid_from is already refused, and inspecting
+     * it says so.
+     */
+    public function testInspectingAPassFromBeforeTheCutoffSaysItIsRefused(): void
+    {
+        $path = $this->configWith([
+            '  passes_valid_from: ' . (time() + 3600),
+            'storage:',
+            "  type: '" . \Kanopi\Firewall\Storage\FileStorage::class . "'",
+            "  config: { storage_file: '" . $this->dir . "/blocked.data' }",
+        ]);
+
+        $result = $this->runChallenge([$path, '--inspect=' . $this->mint()]);
+
+        $this->assertStringContainsString('Already refused: challenge.passes_valid_from is', $result['stdout']);
+    }
+
+    /**
+     * A signed pass with no nonce has nothing to revoke by.
+     */
+    public function testRevokingAPassWithNoNonceIsUnanswerable(): void
+    {
+        $result = $this->runChallenge([$this->config(), '--revoke=' . $this->mintWithoutNonce()]);
+
+        $this->assertSame(1, $result['code']);
+        $this->assertStringContainsString('carries no nonce', $result['stderr']);
+    }
+
+    /**
+     * A store that dies with the process is named as one, because a revocation written
+     * to it is forgotten.
+     */
+    public function testAStoreThatDoesNotLastIsWarnedAbout(): void
+    {
+        $path = $this->configWith(['storage:', "  type: '" . \Kanopi\Firewall\Storage\InMemoryStorage::class . "'"]);
+
+        $result = $this->runChallenge([$path, '--inspect=' . $this->mint()]);
+
+        $this->assertStringContainsString('does not outlive the process', $result['stdout']);
+    }
+
+    /**
+     * Storage naming a connection that is not declared is the configuration's problem.
+     */
+    public function testAnUndeclaredConnectionIsAUsageError(): void
+    {
+        $path = $this->configWith([
+            'storage:',
+            "  type: '" . \Kanopi\Firewall\Storage\DatabaseStorage::class . "'",
+            "  config: { connection: '%connection(nope)%' }",
+        ]);
+
+        $result = $this->runChallenge([$path, '--inspect=' . $this->mint()]);
+
+        $this->assertSame(2, $result['code']);
+        $this->assertStringContainsString('nope', $result['stderr']);
+    }
+
+    public function testAnIncludeThatCannotBeLoadedIsAUsageError(): void
+    {
+        $path = $this->configWith(['configs:', '  - ' . $this->dir . '/missing.yml']);
+
+        $result = $this->runChallenge([$path, '--inspect=' . $this->mint()]);
+
+        $this->assertSame(2, $result['code']);
+        $this->assertStringContainsString('Could not load', $result['stderr']);
+    }
+
     private function nonceOf(string $token): string
     {
         $claims = (new TokenManager(self::SECRET, 'math', 'math'))->inspect($token);
@@ -236,20 +341,6 @@ final class FirewallChallengeCommandTest extends AbstractTestCase
      */
     private function runChallenge(array $args): array
     {
-        $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall-challenge'],
-            $args
-        );
-        $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $process = proc_open($command, $descriptors, $pipes);
-
-        $this->assertIsResource($process, 'Could not start bin/firewall-challenge');
-
-        $stdout = (string) stream_get_contents($pipes[1]);
-        $stderr = (string) stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-
-        return ['stdout' => $stdout, 'stderr' => $stderr, 'code' => proc_close($process)];
+        return $this->runFirewall('challenge', $args);
     }
 }

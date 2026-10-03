@@ -129,7 +129,7 @@ class RateKeyDoesNotBanBystandersTest extends AbstractTestCase
      * like it adds it.
      *
      * Pinned as a test because it is the behaviour somebody will reason their way to the
-     * wrong answer about, and `firewall-check --lint` now warns about the configuration
+     * wrong answer about, and `firewall check --lint` now warns about the configuration
      * that produces it.
      */
     public function testAnAccountKeyDoesNotLimitOneAddressAcrossManyAccounts(): void

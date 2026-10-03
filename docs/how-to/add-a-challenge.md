@@ -90,7 +90,7 @@ plugins:
 ## 3. Check it before you enforce it
 
 ```console
-$ firewall-check config/firewall.yml --ip=203.0.113.5 --url=/ --explain
+$ firewall check config/firewall.yml --ip=203.0.113.5 --url=/ --explain
 ```
 
 A `CHALLENGED` verdict names the rule that asked for it. This runs against a throwaway

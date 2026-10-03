@@ -133,7 +133,7 @@ final class ConfiguredListeners
     }
 
     /**
-     * What is registered, for `firewall-doctor`.
+     * What is registered, for `firewall doctor`.
      *
      * @return array<int, string>
      *   One line per listener.

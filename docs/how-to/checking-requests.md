@@ -1,11 +1,11 @@
 # Checking a Request
 
-`bin/firewall-check` answers one question from the terminal: **would this request be blocked, and by what?**
+`bin/firewall check` answers one question from the terminal: **would this request be blocked, and by what?**
 
 It runs the real evaluation path against a config you name, without needing a running site and without touching your production data.
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/
+vendor/bin/firewall check --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/
 ```
 
 ```
@@ -26,7 +26,7 @@ BLOCKED  GET /wp-admin/
 | `--url=URL` | Path with optional query string. Default `/` |
 | `--method=VERB` | HTTP method. Default `GET`, or `POST` when `--body` is given |
 | `--header=NAME:VAL` | Request header. **Repeatable** |
-| `--body=STRING` | Request body |
+| `--body=STRING` | Request body. A form body, meaning a POST, PUT, PATCH or DELETE with no `Content-Type` or `application/x-www-form-urlencoded`, is parsed into post fields as the application would read it, so `post.*` rules match it. Any other body, such as JSON, is passed as it is |
 | `--script-name=FILE` | The PHP file the web server runs for this URL. Set it to check a file served directly, as WordPress serves `/wp-login.php`. See [Path Source](../configuration/global.md#path-source) |
 | `--explain` | Show every plugin that evaluated, plus the ones that never ran |
 | `--json` | Machine-readable output |
@@ -47,7 +47,7 @@ Designed to compose in scripts and CI, so the verdict *is* the exit status:
 | `70` | internal error |
 
 ```bash
-if vendor/bin/firewall-check --config=firewall.yml --url=/wp-admin/ >/dev/null; then
+if vendor/bin/firewall check --config=firewall.yml --url=/wp-admin/ >/dev/null; then
   echo "Not blocked — the WordPress preset is not doing its job."
   exit 1
 fi
@@ -58,7 +58,7 @@ fi
 `--explain` lists every plugin that ran, with its result and timing, and then the plugins that never ran because something earlier matched. That second list is usually the answer to *"why wasn't this caught?"*:
 
 ```console
-$ vendor/bin/firewall-check --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/ --explain
+$ vendor/bin/firewall check --config=firewall.yml --ip=203.0.113.5 --url=/wp-admin/ --explain
 
 BLOCKED  GET /wp-admin/
   client            203.0.113.5
@@ -82,7 +82,7 @@ The timings are real and occasionally revealing — `matomo/device-detector` is 
 `--lint` asks a different question: not *what happens to this request*, but **what is wrong with these rules**. It takes no `--url`, `--ip` or `--header`, and the answer does not depend on the machine it runs on.
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --lint
+vendor/bin/firewall check --config=firewall.yml --lint
 ```
 
 ```
@@ -115,7 +115,7 @@ It does not decide whether one rule's matches are a subset of another's. *"This 
 
 It also says nothing about whether the environment works, and **touches nothing while finding out**: no rule is constructed, so no storage backend is built, no table created and no rule source fetched. Linting a production config from a laptop is safe.
 
-Whether the database answers, whether the GeoIP file is there, whether a rule can be *constructed* — that is [`firewall-doctor`](diagnosing.md), which does build every rule, and needs the real environment to answer.
+Whether the database answers, whether the GeoIP file is there, whether a rule can be *constructed* — that is [`firewall doctor`](diagnosing.md), which does build every rule, and needs the real environment to answer.
 
 ## Safety
 
@@ -126,7 +126,7 @@ So by default the durable blocklist is *not* consulted and *not* written. The ou
 `--live-storage` restores the configured backend when you genuinely need the repeat-offender state considered — for instance to confirm an address is currently banned rather than merely matching a rule. It prints a warning to stderr, and a blocked verdict **will** be recorded:
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --ip=203.0.113.5 --live-storage
+vendor/bin/firewall check --config=firewall.yml --ip=203.0.113.5 --live-storage
 ```
 
 If that records a block you did not want, clearing it means removing the entry from your [storage backend](../configuration/storage.md) directly — which is the reason the throwaway is the default.
@@ -136,13 +136,13 @@ If that records a block you did not want, clearing it means removing the entry f
 `--json` writes a single object to stdout; warnings go to stderr, so the output stays parseable even with `--live-storage`.
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --ip=203.0.113.5 --json | jq -r .plugin
+vendor/bin/firewall check --config=firewall.yml --ip=203.0.113.5 --json | jq -r .plugin
 ```
 
 The tool redirects its own diagnostics to stderr so stdout carries nothing but the JSON document. One case is outside its control: PHP's CLI SAPI prints **startup** warnings to stdout before any script runs, so a duplicate `extension=` line in your `php.ini` would land ahead of the JSON and break the pipe. If you hit that, run it as:
 
 ```bash
-php -d display_errors=stderr vendor/bin/firewall-check --config=firewall.yml --json
+php -d display_errors=stderr vendor/bin/firewall check --config=firewall.yml --json
 ```
 
 ```json

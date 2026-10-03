@@ -43,7 +43,7 @@ foreach ($firewall->getDegradedBackends() as $backend) {
 }
 ```
 
-`firewall-doctor` reports it:
+`firewall doctor` reports it:
 
 ```
   ✗ The logger is running without its store
@@ -94,7 +94,7 @@ Two things about the call:
 
 An empty array means every configured rule is constructed and active. It says nothing about rules you disabled with `enable: false` or left out of the config — those never enter the registry, and are not failures.
 
-The bucket is one of the six `response:` values, reported in the order `evaluate()` consults them. Before 2.29.0 only `allow`, `challenge` and `block` were reported: `mark`, `record` and `redirect` arrived in 2.26.0 and this method never learned about them, so a `response: record` honeypot whose backend was unreachable was not running while `firewall-doctor` said every configured rule was. If you match on the bucket value, three more are now possible.
+The bucket is one of the six `response:` values, reported in the order `evaluate()` consults them. Before 2.29.0 only `allow`, `challenge` and `block` were reported: `mark`, `record` and `redirect` arrived in 2.26.0 and this method never learned about them, so a `response: record` honeypot whose backend was unreachable was not running while `firewall doctor` said every configured rule was. If you match on the bucket value, three more are now possible.
 
 ## Checking that a backend can reach its server
 

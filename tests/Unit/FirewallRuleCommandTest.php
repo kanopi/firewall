@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit;
 
+use Kanopi\Firewall\Tests\Console\RunsFirewallCommands;
+
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
- * `bin/firewall-rule` (#290).
+ * `bin/firewall rule` (#290).
  *
  * Driven as a real subprocess, like the other command tests: the exit code is
  * part of the contract, and so is the stdout/stderr split that keeps `--json`
@@ -20,6 +22,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
  */
 final class FirewallRuleCommandTest extends AbstractTestCase
 {
+    use RunsFirewallCommands;
+
     private const EXIT_OK = 0;
     private const EXIT_REFUSED = 1;
     private const EXIT_USAGE = 2;
@@ -92,21 +96,7 @@ final class FirewallRuleCommandTest extends AbstractTestCase
      */
     private function runRule(array $args): array
     {
-        $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', dirname(__DIR__, 2) . '/bin/firewall-rule'],
-            $args,
-        );
-
-        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-
-        $this->assertIsResource($process, 'Could not start bin/firewall-rule');
-
-        $stdout = (string) stream_get_contents($pipes[1]);
-        $stderr = (string) stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-
-        return ['stdout' => $stdout, 'stderr' => $stderr, 'code' => proc_close($process)];
+        return $this->runFirewall('rule', $args);
     }
 
     // -----------------------------------------------------------------------
@@ -293,7 +283,7 @@ final class FirewallRuleCommandTest extends AbstractTestCase
             'add with nothing to match' => [['add', '--name=x'], 'needs at least one --rule='],
             'an unknown response' => [['add', '--ip=1.1.1.1', '--response=maybe'], 'Unknown --response'],
             'an unknown plugin' => [['add', '--rule=x', '--plugin=banana'], 'Unknown --plugin'],
-            'an unknown option' => [['list', '--wat'], 'Unknown option'],
+            'an unknown option' => [['list', '--wat'], 'The "--wat" option does not exist'],
             // The first bare word is the rule name, so this consumed the
             // config and would otherwise report "no managed rule is named
             // firewall.yml" -- true, and no help at all.
@@ -331,7 +321,7 @@ final class FirewallRuleCommandTest extends AbstractTestCase
             $result = $this->runRule($args);
 
             $this->assertSame(self::EXIT_OK, $result['code']);
-            $this->assertStringContainsString('firewall-rule ACTION', $result['stdout']);
+            $this->assertStringContainsString('firewall rule ACTION', $result['stdout']);
         }
 
         // --help after an action, which is where somebody who has started
@@ -415,7 +405,7 @@ final class FirewallRuleCommandTest extends AbstractTestCase
         $this->assertStringContainsString('did not load cleanly', $result['stderr']);
         $this->assertStringContainsString('missing.yml', $result['stderr']);
         $this->assertStringContainsString('empties the whole document', $result['stderr']);
-        $this->assertStringContainsString('firewall-rule init', $result['stderr']);
+        $this->assertStringContainsString('firewall rule init', $result['stderr']);
     }
 
     public function testAnEmptyConfigListsNothing(): void
@@ -460,5 +450,46 @@ final class FirewallRuleCommandTest extends AbstractTestCase
 
         $this->assertSame(self::EXIT_OK, $result['code'], $result['stderr']);
         $this->assertSame($elsewhere, json_decode($result['stdout'], true)['managed_file']);
+    }
+
+    /**
+     * A managed file that cannot be written is refused, by path, wherever it is written.
+     */
+    public function testAManagedFileThatCannotBeCreatedIsRefused(): void
+    {
+        $config = $this->dir . '/firewall.yml';
+        file_put_contents($config, self::HANDWRITTEN . "\n");
+        $nowhere = '--managed=/nonexistent-' . uniqid() . '/managed.yml';
+
+        $init = $this->runRule(['init', $config, $nowhere]);
+        $add = $this->runRule(['add', $config, $nowhere, '--ip=1.1.1.1', '--name=x']);
+
+        $this->assertSame(self::EXIT_REFUSED, $init['code']);
+        $this->assertStringContainsString('Could not write', $init['stderr']);
+        $this->assertSame(self::EXIT_REFUSED, $add['code']);
+        $this->assertStringContainsString('Could not write', $add['stderr']);
+    }
+
+    /**
+     * The same when the file exists and has been made read-only.
+     */
+    public function testAReadOnlyManagedFileIsRefused(): void
+    {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            $this->markTestSkipped('root writes to a read-only file regardless.');
+        }
+
+        $config = $this->project();
+        $this->runRule(['add', $config, '--ip=1.1.1.1', '--name=temporary']);
+        chmod($this->dir . '/firewall-managed.yml', 0444);
+
+        try {
+            $result = $this->runRule(['disable', 'temporary', $config]);
+        } finally {
+            chmod($this->dir . '/firewall-managed.yml', 0644);
+        }
+
+        $this->assertSame(self::EXIT_REFUSED, $result['code']);
+        $this->assertStringContainsString('Could not write', $result['stderr']);
     }
 }

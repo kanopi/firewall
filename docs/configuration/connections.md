@@ -72,7 +72,7 @@ shares the client a storage already uses:
 
 | | |
 |---|---|
-| A name that is not declared | `ConfigurationException` from `Firewall::create()`, listing the names that are. `firewall-check --lint` reports it without connecting anything |
+| A name that is not declared | `ConfigurationException` from `Firewall::create()`, listing the names that are. `firewall check --lint` reports it without connecting anything |
 | A declaration that describes nothing — no DSN, no driver, an unknown driver | `ConfigurationException` at startup |
 | A Memcached or Redis server that is down, or a missing `ext-memcached` / `ext-redis` | **Not** a startup failure. Recorded in `Firewall::getDegradedBackends()` as `named connection`, and whatever uses it degrades in its own terms, as it would with its own connection |
 | A database that is down | The connection is lazy, so nothing happens until it is used — then exactly what happens with a `connection:` written out in full |
@@ -81,7 +81,7 @@ A Redis connection that cannot connect is handed over **unconnected** rather tha
 Given nothing, `RedisStorage` would fall back to its own defaults — a server on `localhost` —
 and could quietly talk to the wrong place.
 
-`firewall-doctor` reports each declared connection, answering or not, with its user and
+`firewall doctor` reports each declared connection, answering or not, with its user and
 password left out.
 
 ## How far a name reaches

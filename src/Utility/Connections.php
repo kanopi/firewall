@@ -277,7 +277,7 @@ final class Connections
     }
 
     /**
-     * Can the connection a name declares reach its server? For `firewall-doctor`.
+     * Can the connection a name declares reach its server? For `firewall doctor`.
      *
      * @return string|null
      *   Why it cannot, or null when it answered.

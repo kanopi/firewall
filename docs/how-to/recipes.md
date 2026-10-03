@@ -11,7 +11,7 @@ configuration and a link to the reference behind it.
 | [Let Googlebot in safely](#let-googlebot-in-safely) | User Agent + reverse-DNS verification |
 | [Rate limit an API by key](#rate-limit-an-api-by-key) | Rate Limit |
 | [Run in observe mode for a week](#run-in-observe-mode-for-a-week) | Mode |
-| [Find out why a request was blocked](#find-out-why-a-request-was-blocked) | `firewall-check` |
+| [Find out why a request was blocked](#find-out-why-a-request-was-blocked) | `firewall check` |
 | [Put the site behind a challenge during an incident](#put-the-site-behind-a-challenge-during-an-incident) | Challenge |
 
 ---
@@ -34,7 +34,7 @@ plugins:
 ```
 
 Needs a MaxMind database on disk — [Set Up GeoIP](geoip-setup.md). Without one the rule
-cannot match, and `firewall-doctor` reports it rather than failing silently.
+cannot match, and `firewall doctor` reports it rather than failing silently.
 
 !!! tip "Allowlist your own people first"
 
@@ -142,7 +142,7 @@ plugins:
 Verify each path does what you think before relying on it:
 
 ```console
-$ firewall-check --config=firewall.yml --ip=203.0.113.9 --url=/.ssh/id_rsa --explain
+$ firewall check --config=firewall.yml --ip=203.0.113.9 --url=/.ssh/id_rsa --explain
 RECORDED  GET /.ssh/id_rsa
   recorded by       honeypot
   effect            served now, refused from the next request onward
@@ -196,7 +196,7 @@ fails at the first step.
 
     `verify: reverse_dns` is not `verify: reverse-dns`, and `verify` with no
     `verify_suffixes` accepts any domain. Either mistake leaves you with the open door you
-    were trying to close. `firewall-check --lint` reports it.
+    were trying to close. `firewall check --lint` reports it.
 
 [User Agent](../plugins/user-agent.md)
 
@@ -240,7 +240,7 @@ A composed key is stored hashed, so a token named in a `key:` never reaches the 
 
     Keep an address-keyed rule for the same path too. An account key gives every account its
     own budget, so one address working through a username list is never limited by it —
-    the two catch opposite attacks. `firewall-check --lint` warns if you have only one.
+    the two catch opposite attacks. `firewall check --lint` warns if you have only one.
 
 If you need something the field vocabulary cannot express, `buildRateKey()` is still
 `protected` — one method on a subclass:
@@ -300,7 +300,7 @@ $ grep 'enforced":false' /var/log/firewall/firewall.log | wc -l
 ## Find out why a request was blocked
 
 ```console
-$ firewall-check --config=firewall.yml --ip=203.0.113.9 --url=/checkout --explain
+$ firewall check --config=firewall.yml --ip=203.0.113.9 --url=/checkout --explain
 ```
 
 Names the rule, shows every rule evaluated in order, and lists the ones configured but never
@@ -344,9 +344,9 @@ ALLOWED     GET /      client 198.51.100.7   allowed by    office
 **Add and remove it without editing YAML**, which is the point during an incident:
 
 ```console
-$ firewall-rule add firewall.yml --ip=0.0.0.0/0 --ip=::/0 \
+$ firewall rule add firewall.yml --ip=0.0.0.0/0 --ip=::/0 \
     --response=challenge --weight=500 --name=incident-challenge
-$ firewall-rule remove incident-challenge firewall.yml
+$ firewall rule remove incident-challenge firewall.yml
 ```
 
 !!! warning "Challenging is not blocking, and that is deliberate"

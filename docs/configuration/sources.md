@@ -644,7 +644,7 @@ and a source that fails wholesale is what [`on_error`](#failure-policy) is for.
 
 !!! note "Why a source and not a local rule"
 
-    `firewall-check --lint` already refuses these values when **you** write them in `config:`.
+    `firewall check --lint` already refuses these values when **you** write them in `config:`.
     It cannot see them in a source, because linting deliberately does not fetch — so a feed is
     the one route by which such an entry reaches a block decision without anybody having typed
     it. The realistic cause is not an attack: a parsing bug that emits an empty line as a
@@ -682,7 +682,7 @@ sources:
 
 Both keys are **opt-in and stay that way.** Most published lists in this ecosystem ship no
 sidecar at all, so a source that declares neither keeps working exactly as before.
-`firewall-doctor` reports how many of your remote sources are in that position, in one line,
+`firewall doctor` reports how many of your remote sources are in that position, in one line,
 rather than failing them.
 
 !!! warning "The `body_hash` in the cache is not this"
@@ -853,7 +853,7 @@ after the same URL at once. Refresh out of band instead:
 
 ```bash
 # At deploy time, or on a cron
-vendor/bin/firewall-sources config/firewall.yml
+vendor/bin/firewall sources config/firewall.yml
 ```
 
 ```
@@ -954,7 +954,7 @@ prefer `where` to cut a document down to the part you actually need.
 headers. `header_row` is the CSV/TSV option for whether the first row names the columns.
 They sit at different levels for exactly that reason.
 
-**A sync job needs the credentials too.** `bin/firewall-sources` is a separate process
+**A sync job needs the credentials too.** `bin/firewall sources` is a separate process
 from your application, so a token in your web server's environment is not automatically
 present in cron. See [Syncing Rule Sources](../how-to/syncing-sources.md#credentials).
 

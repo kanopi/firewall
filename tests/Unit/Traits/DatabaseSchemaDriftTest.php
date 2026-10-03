@@ -316,7 +316,7 @@ class DatabaseSchemaDriftTest extends AbstractTestCase
      *
      * The escape hatch `prune_probability: 0` already provides for pruning:
      * an operator who gates schema changes on deploy runs
-     * `bin/firewall-migrate --dry-run` there and wants nothing on the request
+     * `bin/firewall migrate --dry-run` there and wants nothing on the request
      * path at all.
      */
     public function testProbabilityZeroDisablesTheCheckButNotTheMigration(): void

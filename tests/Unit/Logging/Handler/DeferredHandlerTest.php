@@ -67,7 +67,7 @@ class DeferredHandlerTest extends AbstractTestCase
 
     /**
      * `fastcgi_finish_request()` does not exist under CLI, where
-     * `bin/firewall-check` and `firewall-doctor` run. Dropping the records
+     * `bin/firewall check` and `firewall doctor` run. Dropping the records
      * there would make a command-line run silently log nothing.
      */
     public function testWithNothingToReleaseTheRecordsStillGetThrough(): void
