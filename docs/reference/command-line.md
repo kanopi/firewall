@@ -24,6 +24,32 @@ vendor/bin/firewall help rule                # the same as `firewall rule --help
 
 `--help` after any command lists its arguments and exit codes. An unknown command exits `2`.
 
+The command line is built on [Symfony Console](https://symfony.com/doc/current/components/console.html),
+so every command also takes Console's own options:
+
+| Option | What it does |
+|---|---|
+| `-h`, `--help` | The command's arguments, options and exit codes |
+| `-n`, `--no-interaction` | Ask nothing. `firewall init` takes its defaults |
+| `--ansi`, `--no-ansi` | Force colour on or off |
+| `-v`, `-vv`, `-vvv` | More output, where a command has more to say |
+| `-V`, `--version` | The installed version |
+
+Console's own `--quiet` is not one of them. `doctor`, `migrate`, `sources` and `log-prune`
+each have a `--quiet` of their own, meaning "only warnings and failures", and that's the one
+that applies.
+
+**Shell completion.** `firewall completion` prints a completion script for bash, zsh or
+fish. For bash:
+
+```bash
+vendor/bin/firewall completion bash | sudo tee /etc/bash_completion.d/firewall
+```
+
+**Exit codes are each command's own.** An option a command doesn't have, or one missing its
+value, exits with that command's usage code: `2` for most, and `64` for `firewall check`,
+where `1` means "would be blocked".
+
 ## The old script names
 
 Before 2.38.0 each command was its own script: `firewall-check`, `firewall-doctor`,
@@ -31,6 +57,11 @@ Before 2.38.0 each command was its own script: `firewall-check`, `firewall-docto
 `firewall-migrate` and `firewall-log-prune`. **They still work, and are deprecated.** Each
 one runs exactly what its subcommand runs, with the same arguments, output and exit code, so
 nothing that calls one breaks. They will be removed in **3.0**.
+
+Since 2.38.0 the commands are stricter about their arguments. An option a command doesn't
+have used to be ignored by `check` and `init`, so a typo like `--cofig=` did nothing. It's
+now an error, with the command's usage exit code. `check --ip 1.2.3.4`, with a space instead
+of `=`, now works as it reads, where before it silently stopped reading the options.
 
 Run at a terminal, an old name prints one line to stderr saying what to use instead. Run
 from cron, CI or a deploy hook, it says nothing, because cron emails whatever a job writes

@@ -23,4 +23,9 @@ if (stream_isatty(STDERR)) {
     fwrite(STDERR, "firewall-challenge is deprecated and will be removed in 3.0. Use `firewall challenge` instead.\n");
 }
 
-require __DIR__ . '/commands/challenge.php';
+$argv = [$argv[0], 'challenge', ...array_slice($argv, 1)];
+$argc = count($argv);
+$_SERVER['argv'] = $argv;
+$_SERVER['argc'] = $argc;
+
+require __DIR__ . '/run.php';

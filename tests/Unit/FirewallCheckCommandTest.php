@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit;
 
+use Kanopi\Firewall\Tests\Console\RunsFirewallCommands;
+
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
@@ -16,6 +18,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
  */
 final class FirewallCheckCommandTest extends AbstractTestCase
 {
+    use RunsFirewallCommands;
+
     private const EXIT_ALLOWED = 0;
     private const EXIT_BLOCKED = 1;
     private const EXIT_CHALLENGED = 2;
@@ -181,13 +185,171 @@ final class FirewallCheckCommandTest extends AbstractTestCase
     }
 
     /**
-     * `firewall check`, as a command line.
-     *
-     * @return array<int, string>
+     * A configuration the firewall cannot be built from is an internal error, 70.
      */
-    private function script(): array
+    public function testAConfigurationThatCannotBeBuiltExitsSeventy(): void
     {
-        return [dirname(__DIR__, 2) . '/bin/firewall', 'check'];
+        $config = $this->writeConfig(<<<'YAML'
+        plugins:
+          - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+            response: challenge
+            config: ["path:/gated"]
+        YAML);
+
+        $result = $this->runCheck(['--config=' . $config]);
+
+        $this->assertSame(70, $result['code']);
+        $this->assertStringContainsString('could not build the firewall', $result['stderr']);
+    }
+
+    /**
+     * Evaluation that throws -- a block list gone away mid-request -- is 70 too, not a
+     * verdict.
+     */
+    public function testAnEvaluationThatThrowsExitsSeventy(): void
+    {
+        $config = $this->writeConfig(<<<'YAML'
+        storage:
+          type: "Kanopi\\Firewall\\Tests\\Storage\\ThrowingStorage"
+        plugins: []
+        YAML);
+
+        $result = $this->runCheck(['--config=' . $config, '--live-storage']);
+
+        $this->assertSame(70, $result['code']);
+        $this->assertStringContainsString('evaluation threw unexpectedly', $result['stderr']);
+        $this->assertStringContainsString('the block list went away', $result['stderr']);
+    }
+
+    /**
+     * A record rule serves the request and bans the client from the next one, and the
+     * check says both.
+     */
+    public function testARecordedRequestIsReportedAsRecorded(): void
+    {
+        $config = $this->writeConfig(<<<'YAML'
+        plugins:
+          - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+            response: record
+            metadata: { name: honeypot }
+            config: ["path:/wp-config.bak"]
+        YAML);
+
+        $result = $this->runCheck(['--config=' . $config, '--url=/wp-config.bak']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code']);
+        $this->assertStringContainsString('RECORDED', $result['stdout']);
+        $this->assertStringContainsString('honeypot', $result['stdout']);
+        $this->assertStringContainsString('served now, refused from the next request onward', $result['stdout']);
+    }
+
+    public function testAMarkIsReported(): void
+    {
+        $config = $this->writeConfig(<<<'YAML'
+        plugins:
+          - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+            response: mark
+            metadata: { name: suspicious, mark_as: suspicious-path }
+            config: ["path:/odd"]
+        YAML);
+
+        $result = $this->runCheck(['--config=' . $config, '--url=/odd']);
+
+        $this->assertStringContainsString('marked            suspicious-path', $result['stdout']);
+    }
+
+    public function testExplainWithNothingToEvaluate(): void
+    {
+        $config = $this->writeConfig("plugins: []\n");
+
+        $result = $this->runCheck(['--config=' . $config, '--explain']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code']);
+        $this->assertStringContainsString('(none — no plugins were reached)', $result['stdout']);
+    }
+
+    /**
+     * A `plugins:` that is not a list still gets a verdict; --explain simply has no
+     * inventory to show.
+     */
+    public function testExplainSurvivesAMalformedPluginList(): void
+    {
+        $config = $this->writeConfig("plugins: 5\n");
+
+        $result = $this->runCheck(['--config=' . $config, '--explain']);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code']);
+        $this->assertStringContainsString('ALLOWED', $result['stdout']);
+    }
+
+    /**
+     * No panic file, no panic switch line.
+     */
+    public function testNoPanicFileSaysNothingAboutOne(): void
+    {
+        $result = $this->runCheck(['--config=' . $this->writeConfig("plugins: []\n")]);
+
+        $this->assertStringNotContainsString('panic switch', $result['stdout']);
+    }
+
+    /**
+     * A form body is post fields, as the application reads it, so a `post.*` rule
+     * matches it. A JSON body is not a form.
+     */
+    public function testAFormBodyReachesPostRules(): void
+    {
+        $config = $this->writeConfig(<<<'YAML'
+        plugins:
+          - plugin: "Kanopi\\Firewall\\Plugins\\Url"
+            response: block
+            config: ["post.comment@contains:viagra"]
+        YAML);
+
+        $this->assertSame(self::EXIT_BLOCKED, $this->runCheck(['--config=' . $config, '--body=comment=buy+viagra'])['code']);
+        $this->assertSame(self::EXIT_BLOCKED, $this->runCheck([
+            '--config=' . $config,
+            '--body=comment=buy+viagra',
+            '--header=Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
+        ])['code']);
+        $this->assertSame(self::EXIT_ALLOWED, $this->runCheck([
+            '--config=' . $config,
+            '--body={"comment":"viagra"}',
+            '--header=Content-Type: application/json',
+        ])['code']);
+        $this->assertSame(self::EXIT_ALLOWED, $this->runCheck([
+            '--config=' . $config,
+            '--method=GET',
+            '--body=comment=buy+viagra',
+        ])['code'], 'A GET body is not a form');
+    }
+
+    /**
+     * A correct answer posted to the challenge path is accepted, which is "allowed".
+     */
+    public function testASolvedChallengeIsAllowed(): void
+    {
+        $secret = 'check-command-challenge-secret';
+        $config = $this->writeConfig(<<<YAML
+        challenge:
+          provider: math
+          secret: {$secret}
+        plugins:
+          - plugin: "Kanopi\\\\Firewall\\\\Plugins\\\\Url"
+            response: challenge
+            config: ["path:/gated"]
+        YAML);
+
+        $data = '7|' . (time() + 300);
+        $state = $data . '.' . (new \Kanopi\Firewall\Challenge\TokenManager($secret))->sign($data);
+
+        $result = $this->runCheck([
+            '--config=' . $config,
+            '--url=/_firewall/challenge',
+            '--body=' . http_build_query(['challenge_state' => $state, 'challenge_answer' => '7', 'redirect_to' => '/gated']),
+        ]);
+
+        $this->assertSame(self::EXIT_ALLOWED, $result['code'], $result['stdout'] . $result['stderr']);
+        $this->assertStringContainsString('a challenge solution was accepted', $result['stdout']);
     }
 
     private function writeConfig(string $yaml): string
@@ -208,27 +370,7 @@ final class FirewallCheckCommandTest extends AbstractTestCase
      */
     private function runCheck(array $args): array
     {
-        // -d display_errors=stderr isolates the subprocess from the host's
-        // own PHP startup diagnostics, which the CLI SAPI otherwise prints to
-        // STDOUT. CI installs pdo_mysql/mysqli/pdo_pgsql over an image that
-        // already has them, so every run emits 'Module "..." is already
-        // loaded' — which would land ahead of the JSON document and make these
-        // assertions measure the environment rather than the tool.
-        $command = array_merge(
-            [PHP_BINARY, '-d', 'display_errors=stderr', ...$this->script()],
-            $args,
-        );
-        $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $process = proc_open($command, $descriptors, $pipes);
-
-        $this->assertIsResource($process, 'Could not start bin/firewall check');
-
-        $stdout = (string) stream_get_contents($pipes[1]);
-        $stderr = (string) stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-
-        return ['stdout' => $stdout, 'stderr' => $stderr, 'code' => proc_close($process)];
+        return $this->runFirewall('check', $args);
     }
 
     /**
@@ -926,6 +1068,6 @@ final class FirewallCheckCommandTest extends AbstractTestCase
         $this->assertSame(self::EXIT_ALLOWED, $result['code']);
         $this->assertStringContainsString('--config', $result['stdout']);
         $this->assertStringContainsString('--explain', $result['stdout']);
-        $this->assertStringContainsString('EXIT CODES', $result['stdout']);
+        $this->assertStringContainsString('Exit codes:', $result['stdout']);
     }
 }

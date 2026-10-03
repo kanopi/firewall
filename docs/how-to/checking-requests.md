@@ -26,7 +26,7 @@ BLOCKED  GET /wp-admin/
 | `--url=URL` | Path with optional query string. Default `/` |
 | `--method=VERB` | HTTP method. Default `GET`, or `POST` when `--body` is given |
 | `--header=NAME:VAL` | Request header. **Repeatable** |
-| `--body=STRING` | Request body |
+| `--body=STRING` | Request body. A form body, meaning a POST, PUT, PATCH or DELETE with no `Content-Type` or `application/x-www-form-urlencoded`, is parsed into post fields as the application would read it, so `post.*` rules match it. Any other body, such as JSON, is passed as it is |
 | `--script-name=FILE` | The PHP file the web server runs for this URL. Set it to check a file served directly, as WordPress serves `/wp-login.php`. See [Path Source](../configuration/global.md#path-source) |
 | `--explain` | Show every plugin that evaluated, plus the ones that never ran |
 | `--json` | Machine-readable output |

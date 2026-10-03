@@ -23,4 +23,9 @@ if (stream_isatty(STDERR)) {
     fwrite(STDERR, "firewall-rule is deprecated and will be removed in 3.0. Use `firewall rule` instead.\n");
 }
 
-require __DIR__ . '/commands/rule.php';
+$argv = [$argv[0], 'rule', ...array_slice($argv, 1)];
+$argc = count($argv);
+$_SERVER['argv'] = $argv;
+$_SERVER['argc'] = $argc;
+
+require __DIR__ . '/run.php';

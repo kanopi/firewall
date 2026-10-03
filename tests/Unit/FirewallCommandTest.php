@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit;
 
+use Kanopi\Firewall\Console\Application;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
@@ -58,7 +59,7 @@ final class FirewallCommandTest extends AbstractTestCase
     }
 
     /**
-     * With nothing after it, or `help`, it lists every command.
+     * With nothing after it, or `list`, it lists every command.
      *
      * @return array<string, array{array<int, string>}>
      */
@@ -66,9 +67,6 @@ final class FirewallCommandTest extends AbstractTestCase
     {
         return [
             'nothing' => [[]],
-            'help' => [['help']],
-            '--help' => [['--help']],
-            '-h' => [['-h']],
             'list' => [['list']],
         ];
     }
@@ -90,16 +88,13 @@ final class FirewallCommandTest extends AbstractTestCase
     }
 
     /**
-     * Every command it lists has a file, and every command file is listed.
+     * The application registers exactly these commands, besides Console's own.
      */
-    public function testTheListAndTheCommandFilesAgree(): void
+    public function testTheApplicationRegistersEveryCommand(): void
     {
-        $files = array_map(
-            static fn(string $path): string => basename($path, '.php'),
-            glob(dirname(__DIR__, 2) . '/bin/commands/*.php') ?: []
-        );
+        $names = array_keys((new Application())->all());
 
-        $this->assertEqualsCanonicalizing([...self::COMMANDS, 'bootstrap'], $files);
+        $this->assertEqualsCanonicalizing([...self::COMMANDS, 'help', 'list', 'completion', '_complete'], $names);
     }
 
     public function testAnUnknownCommandExitsTwo(): void
@@ -108,7 +103,7 @@ final class FirewallCommandTest extends AbstractTestCase
 
         $this->assertSame(2, $result['code']);
         $this->assertSame('', $result['stdout']);
-        $this->assertStringContainsString('Unknown command "nope"', $result['stderr']);
+        $this->assertStringContainsString('Command "nope" is not defined.', $result['stderr']);
     }
 
     /**
