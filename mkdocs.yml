@@ -240,6 +240,7 @@ nav:
       - Conditional Logic: configuration/conditional-logic.md
       - Time Windows: configuration/time-windows.md
       - Rule Sources: configuration/sources.md
+      - Reverse DNS: configuration/reverse-dns.md
       - Logging: configuration/logging.md
       - Runtime Overrides: configuration/overrides.md
   - Plugins:

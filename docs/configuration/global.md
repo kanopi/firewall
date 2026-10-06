@@ -14,6 +14,7 @@ global:
   require_config: false
   # panic_file: /var/run/firewall/panic   # no default — see Panic Switch below
   # stale_source_error_after: 604800      # off by default — see Stale Rule Sources
+  # reverse_dns: { provider: cloudflare } # PHP's own lookups by default — see Reverse DNS
   blocking_escalation:
     - window: 300
       offense: 0
@@ -524,6 +525,23 @@ for a gate, believing you have one, and not having one is the outcome worth avoi
 
 Only affects the diagnostic. Nothing about how a source is fetched, cached or applied at
 request time changes.
+
+## Reverse DNS
+
+`reverse_dns` chooses who makes the DNS lookups behind
+[`verify: reverse-dns`](../plugins/user-agent.md#verifying-the-crawler-is-who-it-says).
+Unset, it's PHP's own lookups, as it always was. Naming a provider sends the lookups to
+that provider, a third party, with a time limit on each:
+
+```yaml
+global:
+  reverse_dns:
+    provider: cloudflare
+    timeout_ms: 300
+```
+
+Read [Reverse DNS](reverse-dns.md) before setting it: it covers the built-in providers,
+what each one receives and says it logs, defining your own, and writing a resolver class.
 
 ## Status Code
 

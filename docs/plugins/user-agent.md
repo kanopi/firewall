@@ -188,6 +188,13 @@ Google, Bing and Apple all document:
 Step 3 is the one that matters. Anyone can point reverse DNS for an address they control
 at `crawl-1-2-3-4.googlebot.com`; only Google can make that name resolve back.
 
+The lookups are PHP's own by default. A site can send them to a DNS-over-HTTPS
+**provider** instead, such as Cloudflare's or Google's, whose lookups have a time limit.
+That's set once in `global.reverse_dns`, and a rule can pick a different provider with
+`verify_provider`. A provider is a third party that receives the reverse-DNS names of
+visitors' addresses, so read [Reverse DNS](../configuration/reverse-dns.md) before choosing
+one.
+
 ### Anything less than a confirmed round trip is no match
 
 No PTR record, a hostname outside the list, a forward lookup that does not come back, DNS
@@ -240,13 +247,17 @@ Five things keep that off the request path:
 | `verify_ttl` | `3600` | Seconds an acceptance stays good |
 | `verify_negative_ttl` | `86400` | Seconds a refusal stays good |
 | `verify_offline` | the constant | `false` to verify even with `KANOPI_FIREWALL_SOURCES_OFFLINE` set; `true` to keep it off — see [below](#offline-switches-it-off-unless-the-rule-says-otherwise) |
-| `verify_slow_threshold_ms` | `250` | A lookup slower than this trips the breaker |
+| `verify_slow_threshold_ms` | `250`, or twice the timeout plus 50 with a provider | A lookup slower than this trips the breaker |
+| `verify_provider` | `global.reverse_dns.provider` | Which provider makes this rule's lookups — see [Reverse DNS](../configuration/reverse-dns.md) |
+| `verify_timeout_ms` | `global.reverse_dns.timeout_ms` | The limit on each lookup, with a DNS-over-HTTPS provider |
 | `verify_claim_wait_ms` | `0` | Wait this long for another worker's verdict instead of refusing — see [below](#waiting-for-the-other-workers-verdict) |
 | `verify_cache` | filesystem | A pool class, a `memcached://` or `redis://` DSN, or an injected pool — the same shapes as [`cache`](#using-a-different-backend). Falls back to the file cache under `KANOPI_FIREWALL_CACHE_DIR` if it cannot be built |
 
 ### Run a local caching resolver
 
-Not a suggestion — a prerequisite. The 112 ms cold figure drops to ~2 ms once the host's
+Not a suggestion — a prerequisite, with PHP's own lookups. (With a
+[provider](../configuration/reverse-dns.md#a-provider), each lookup has a time limit
+instead, and the host's resolver is never asked.) The 112 ms cold figure drops to ~2 ms once the host's
 resolver has the answer, so `systemd-resolved`, `dnsmasq` or `unbound` on the host is what
 makes this affordable at all. Without one, every cache expiry is 112 ms of blocked worker.
 

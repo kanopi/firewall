@@ -20,6 +20,7 @@ use Kanopi\Firewall\Tarpit\TarpitGate;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Kanopi\Firewall\Utility\RuleDiagnostics;
+use Kanopi\Firewall\Utility\ReverseDns\ReverseDnsSettings;
 
 /**
  * Read a configuration and report what it says that it does not mean.
@@ -107,6 +108,12 @@ class ConfigLinter
         // Before the rules, and whether or not there are any: a lockdown page
         // is served with no rules at all (#452).
         foreach ($this->checkRefusalPages($config, $plugins) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        // Before the rules too: the firewall refuses to start with a reverse DNS setting
+        // it cannot use, whatever the rules are (#473).
+        foreach ($this->checkReverseDns($config, $plugins) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -1017,6 +1024,36 @@ class ConfigLinter
                 'plugins/challenges.md#wording-language-and-styling'
             ),
             ChallengePage::problems($challenge['page'] ?? null)
+        );
+    }
+
+    /**
+     * `global.reverse_dns` settings the firewall would refuse to start with (#473).
+     *
+     * The same check `Firewall::create()` makes, from the same place, so the two cannot
+     * disagree: a provider name that does not exist, `provider` and `resolver` both set, a
+     * resolver class that cannot be loaded, an endpoint template that cannot make both
+     * lookups.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration.
+     * @param array<int, array<string, mixed>> $plugins
+     *   The declared rules, for their `verify_provider`.
+     *
+     * @return array<int, Diagnosis>
+     *   Findings.
+     */
+    private function checkReverseDns(array $config, array $plugins): array
+    {
+        $global = is_array($config['global'] ?? null) ? $config['global'] : [];
+
+        return array_map(
+            static fn(string $problem): Diagnosis => Diagnosis::error(
+                'global.reverse_dns cannot be used: ' . $problem,
+                'The firewall refuses to start with it.',
+                'configuration/reverse-dns.md'
+            ),
+            ReverseDnsSettings::problems($global, $plugins)
         );
     }
 

@@ -12,6 +12,9 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Utility;
 
 use Kanopi\Firewall\Logging\LoggingTrait;
+use Kanopi\Firewall\Utility\ReverseDns\LookupResult;
+use Kanopi\Firewall\Utility\ReverseDns\ReverseDnsResolverInterface;
+use Kanopi\Firewall\Utility\ReverseDns\SystemResolver;
 use Psr\Cache\CacheItemInterface;
 use Psr\Cache\CacheItemPoolInterface;
 
@@ -28,6 +31,12 @@ use Psr\Cache\CacheItemPoolInterface;
  * hostname and confirm it comes back to the address you started with. The forward
  * confirmation is what makes it worth doing -- anyone can point reverse DNS for their own
  * address at `crawl-1-2-3-4.googlebot.com`, and only Google can make that name resolve back.
+ *
+ * The lookups themselves are a resolver's (#473): PHP's own by default, or DNS over HTTPS
+ * through a provider, or a site's own class. Everything that keeps the answer safe stays
+ * here for all of them -- caching, the in-flight claim, the breaker, the domain check, the
+ * forward confirmation, and validating what a resolver returns -- so no resolver can widen
+ * an allow rule past what DNS confirms.
  */
 class ReverseDnsVerifier
 {
@@ -57,6 +66,15 @@ class ReverseDnsVerifier
      *   How long a worker that could not claim the lookup will wait for the
      *   holder's verdict before giving up. `0` refuses immediately, which is
      *   what every release before 2.23.0 did.
+     * @param ReverseDnsResolverInterface|null $resolver
+     *   Who makes the lookups. NULL uses this class's own `reverseLookup()` and
+     *   `forwardLookup()` -- PHP's functions, as `SystemResolver` does -- so a subclass
+     *   that overrides them keeps working.
+     * @param int $unknownTtl
+     *   How long a lookup that could not say either way is remembered, as a refusal. Short
+     *   on purpose: one network blip must not refuse the real crawler for a day, as
+     *   `negativeTtl` would. Not zero, because a client whose own DNS answers SERVFAIL
+     *   could otherwise make every one of its requests pay for a lookup.
      */
     public function __construct(
         protected ?CacheItemPoolInterface $cache = null,
@@ -65,9 +83,16 @@ class ReverseDnsVerifier
         protected bool $offline = false,
         protected float $slowThresholdMs = 250.0,
         protected int $breakerCooldown = 300,
-        protected int $claimWaitMs = 0
+        protected int $claimWaitMs = 0,
+        protected ?ReverseDnsResolverInterface $resolver = null,
+        protected int $unknownTtl = 60
     ) {
     }
+
+    /**
+     * Most PTR hostnames considered for one address. More is not a crawler.
+     */
+    private const MAX_HOSTNAMES = 10;
 
     /**
      * Whether the address reverse-resolves into one of the given domains.
@@ -159,24 +184,36 @@ class ReverseDnsVerifier
             // typically 5s per nameserver with two attempts. One worker eating
             // that is survivable; every worker eating it is an outage. Trip
             // the breaker so the rest skip DNS until the resolver recovers.
+            //
+            // The same backstop for every resolver: one that bounds its own
+            // lookups should never get here, and one that does not is caught.
             $this->tripBreaker();
             $this->getLogger()->warning('Reverse DNS lookup was slow - skipping verification for a while', [
                 'ip' => $ip,
                 'elapsed_ms' => round($elapsedMs, 2),
                 'threshold_ms' => $this->slowThresholdMs,
                 'cooldown_seconds' => $this->breakerCooldown,
-                'detail' => 'Run a local caching resolver (systemd-resolved, dnsmasq, unbound) '
-                    . 'on the host. Verification is unaffordable without one.',
+                'resolver' => ($this->resolver ?? new SystemResolver())::class,
+                'detail' => !$this->resolver instanceof \Kanopi\Firewall\Utility\ReverseDns\ReverseDnsResolverInterface || $this->resolver instanceof SystemResolver
+                    ? 'Run a local caching resolver (systemd-resolved, dnsmasq, unbound) on the host, '
+                        . 'or verify through a DNS-over-HTTPS provider, whose lookups have a time limit. '
+                        . 'See docs/configuration/reverse-dns.md.'
+                    : 'The resolver took longer than verify_slow_threshold_ms. Check that it bounds '
+                        . 'its lookups, and that its timeout fits under the threshold.',
             ]);
         }
 
         if ($item instanceof CacheItemInterface && $this->cache instanceof CacheItemPoolInterface) {
-            $item->set($verdict);
-            $item->expiresAfter($verdict ? $this->ttl : $this->negativeTtl);
+            $item->set($verdict === true);
+            $item->expiresAfter(match ($verdict) {
+                true => $this->ttl,
+                false => $this->negativeTtl,
+                null => $this->unknownTtl,
+            });
             $this->cache->save($item);
         }
 
-        return $verdict;
+        return $verdict === true;
     }
 
     /**
@@ -346,44 +383,193 @@ class ReverseDnsVerifier
     /**
      * Do the two lookups.
      *
+     * Every PTR hostname is considered, not just the first: an address can have several,
+     * and it is verified when any one of them is in the accepted domains and resolves back
+     * to it.
+     *
      * @param string $ip
      *   The client address.
      * @param list<string> $suffixes
      *   Domains to accept.
      *
-     * @return bool
-     *   Whether the round trip confirmed.
+     * @return bool|null
+     *   Whether the round trip confirmed, or NULL when a lookup could not say either way --
+     *   which is remembered for `unknownTtl` rather than `negativeTtl`.
      */
-    protected function resolve(string $ip, array $suffixes): bool
+    protected function resolve(string $ip, array $suffixes): ?bool
     {
-        $host = $this->reverseLookup($ip);
+        $packed = @inet_pton($ip);
 
-        // gethostbyaddr() hands back the address unchanged when there is no PTR
-        // record, and false on failure. Neither is a hostname.
-        if ($host === false || $host === $ip) {
-            $this->getLogger()->debug('Reverse DNS returned no hostname', ['ip' => $ip]);
+        if ($packed === false) {
             return false;
         }
 
-        $host = rtrim(strtolower($host), '.');
+        $lookupResult = $this->reverseResult($ip);
 
-        if (!$this->matchesSuffix($host, $suffixes)) {
-            $this->getLogger()->debug('Reverse DNS hostname is outside the accepted domains', [
+        if ($lookupResult->isUnknown()) {
+            $this->getLogger()->debug('Reverse DNS lookup could not say either way', [
                 'ip' => $ip,
-                'hostname' => $host,
+                'reason' => $lookupResult->reason,
             ]);
+
+            return null;
+        }
+
+        if (!$lookupResult->isAnswer()) {
+            $this->getLogger()->debug('Reverse DNS returned no hostname', ['ip' => $ip]);
+
             return false;
         }
 
-        if (!$this->forwardConfirms($host, $ip)) {
+        $type = strlen($packed) === 16 ? ReverseDnsResolverInterface::TYPE_AAAA : ReverseDnsResolverInterface::TYPE_A;
+        $unknown = false;
+
+        foreach (array_slice($lookupResult->values, 0, self::MAX_HOSTNAMES) as $value) {
+            $host = rtrim(strtolower($value), '.');
+
+            // The owner of the client's address block writes its PTR records, so what
+            // comes back is checked before it is used for anything -- including being
+            // built into a resolver's URL for the forward lookup.
+            if (!$this->isHostname($host)) {
+                $this->getLogger()->debug('Reverse DNS returned something that is not a hostname', [
+                    'ip' => $ip,
+                    'hostname' => substr($value, 0, 255),
+                ]);
+                continue;
+            }
+
+            if (!$this->matchesSuffix($host, $suffixes)) {
+                $this->getLogger()->debug('Reverse DNS hostname is outside the accepted domains', [
+                    'ip' => $ip,
+                    'hostname' => $host,
+                ]);
+                continue;
+            }
+
+            $confirmed = $this->confirms($host, $ip, $packed, $type);
+
+            if ($confirmed === true) {
+                return true;
+            }
+
+            if ($confirmed === null) {
+                $unknown = true;
+                continue;
+            }
+
             $this->getLogger()->debug('Reverse DNS hostname did not forward-confirm', [
                 'ip' => $ip,
                 'hostname' => $host,
             ]);
-            return false;
         }
 
-        return true;
+        return $unknown ? null : false;
+    }
+
+    /**
+     * The reverse lookup, through the resolver or this class's own seam.
+     *
+     * @param string $ip
+     *   A valid client address.
+     */
+    private function reverseResult(string $ip): LookupResult
+    {
+        if (!$this->resolver instanceof ReverseDnsResolverInterface) {
+            $host = $this->reverseLookup($ip);
+
+            // gethostbyaddr() hands back the address unchanged when there is no PTR
+            // record, and false on failure. Neither is a hostname.
+            return $host === false || $host === $ip ? LookupResult::none() : LookupResult::answer([$host]);
+        }
+
+        return $this->ask(fn(ReverseDnsResolverInterface $reverseDnsResolver): LookupResult => $reverseDnsResolver->reverse($ip));
+    }
+
+    /**
+     * Whether a hostname resolves back to the client address.
+     *
+     * @param string $host
+     *   A validated hostname inside the accepted domains.
+     * @param string $ip
+     *   The client address.
+     * @param string $packed
+     *   The client address, packed.
+     * @param string $type
+     *   The record type for the client's address family.
+     *
+     * @return bool|null
+     *   Whether it confirmed, or NULL when the lookup could not say.
+     */
+    private function confirms(string $host, string $ip, string $packed, string $type): ?bool
+    {
+        if (!$this->resolver instanceof ReverseDnsResolverInterface) {
+            return $this->forwardConfirms($host, $packed);
+        }
+
+        $lookupResult = $this->ask(fn(ReverseDnsResolverInterface $reverseDnsResolver): LookupResult => $reverseDnsResolver->forward($host, $type));
+
+        if ($lookupResult->isUnknown()) {
+            $this->getLogger()->debug('Forward DNS lookup could not say either way', [
+                'ip' => $ip,
+                'hostname' => $host,
+                'reason' => $lookupResult->reason,
+            ]);
+
+            return null;
+        }
+
+        foreach ($lookupResult->values as $address) {
+            if (@inet_pton($address) === $packed) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Call the resolver, treating anything it throws as an unknown result.
+     *
+     * A resolver is host code, or an HTTP call, and both fail. Neither failure is a reason
+     * to widen an allow rule or to fail a request, so it is reported and refused -- the
+     * same isolation a decision listener gets.
+     *
+     * @param \Closure(ReverseDnsResolverInterface): LookupResult $lookup
+     *   The call to make.
+     */
+    private function ask(\Closure $lookup): LookupResult
+    {
+        /** @var ReverseDnsResolverInterface $resolver */
+        $resolver = $this->resolver;
+
+        try {
+            return $lookup($resolver);
+        } catch (\Throwable $throwable) {
+            DegradedBackends::record('reverse DNS', $resolver::class, $throwable->getMessage());
+
+            $this->getLogger()->warning('Reverse DNS resolver threw, so the client was not verified', [
+                'resolver' => $resolver::class,
+                'error' => $throwable->getMessage(),
+            ]);
+
+            return LookupResult::unknown('the resolver threw: ' . $throwable->getMessage());
+        }
+    }
+
+    /**
+     * Whether a PTR answer is a hostname that can safely be looked up.
+     *
+     * Letters, digits and hyphens in dot-separated labels of at most 63 characters, at
+     * most 253 in all. Anything else -- `&`, `/`, `?`, `#`, spaces -- is refused before it
+     * goes anywhere near a resolver's URL.
+     *
+     * @param string $host
+     *   Lower-cased, without a trailing dot.
+     */
+    private function isHostname(string $host): bool
+    {
+        return strlen($host) <= 253
+            && preg_match('/^[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})*$/', $host) === 1;
     }
 
     /**
@@ -458,24 +644,21 @@ class ReverseDnsVerifier
     }
 
     /**
-     * Whether the hostname resolves back to the address it came from.
+     * Whether the hostname resolves back to the address it came from, through this
+     * class's own `forwardLookup()`.
      *
      * @param string $host
      *   The hostname from the PTR record.
-     * @param string $ip
-     *   The address to confirm.
+     * @param string $expected
+     *   The address to confirm, packed. Packed by the caller, which has already refused
+     *   an address that does not pack -- so a forward record that does not pack either
+     *   can never compare equal to it.
      *
      * @return bool
      *   Whether a forward record matches.
      */
-    protected function forwardConfirms(string $host, string $ip): bool
+    private function forwardConfirms(string $host, string $expected): bool
     {
-        $expected = @inet_pton($ip);
-
-        if ($expected === false) {
-            return false;
-        }
-
         $records = $this->forwardLookup($host);
 
         if (!is_array($records)) {
