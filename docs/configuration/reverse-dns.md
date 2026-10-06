@@ -294,13 +294,21 @@ correctly.
 
 ## Other public resolvers
 
-Tested on 2026-10-05, and not built in:
+Tested on 2026-10-05 and 2026-10-06, and not built in. A provider is built in only when the
+operator documents its JSON API and its terms clearly allow automated lookups from a web
+server without an account.
 
 | Resolver | Result |
 |---|---|
-| NextDNS, AdGuard (its unfiltered host), DNS.SB | Answer JSON correctly, but none of the three documents its JSON API. Being evaluated as built-ins. Until then, any of them can be [defined as your own provider](#defining-your-own-provider) |
+| DNS.SB | Answers JSON correctly, but doesn't document its JSON API. Its [terms](https://dns.sb/tos/) make the service free for "personal and non-commercial use", and say "commercial use requires prior authorization", including integrating it into products |
+| AdGuard (its unfiltered host) | Answers JSON correctly, but doesn't document its JSON API. Its [EULA](https://adguard-dns.io/eula.html) allows the public servers without an account, but forbids using "automated agents… to generate automated searches, requests", which arguably covers a web server's lookups |
+| NextDNS | Answers JSON correctly, but doesn't document its JSON API. Its [terms](https://nextdns.io/terms) are written for subscribers, and don't say whether use without an account is allowed |
 | Quad9 | Answers only the standard binary format. Its JSON service [was retired on 5 May 2025](https://quad9.net/news/blog/quad9-json-based-dns-service-retires-5-may-2025/) |
 | OpenDNS, Control D | Answer only the standard binary format |
+
+Any of the JSON ones can still be [defined as your own provider](#defining-your-own-provider).
+Check the operator's terms for your own use first: that's your agreement with them, and the
+library doesn't make it for you.
 
 `DnsOverHttpResolver` reads JSON. Resolvers that only speak the standard binary format
 (RFC 8484) need support that isn't written yet.
