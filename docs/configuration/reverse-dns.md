@@ -167,6 +167,79 @@ your privacy notice covers sending this to them. To send nothing to a third part
 own lookups (with a local caching resolver on the host), or
 [define a provider](#defining-your-own-provider) that points at a resolver you run.
 
+## What a provider costs
+
+Measured on 2026-10-07 with `tests/Performance/bin/doh-bench.sh` (#480). Each case is the
+same 25-process probe #245 used for PHP's own lookups: 25 workers verifying one uncached
+address at the same instant, through a real `DnsOverHttpResolver`. Each figure is the range
+over three runs. The degraded cases run against a local server whose delay can be set, so
+they don't depend on how a public provider behaves that day.
+
+### One verification
+
+A verification is two requests: the reverse lookup, then the forward one.
+
+| | Cloudflare | Google |
+|---|---|---|
+| First verification in a process (TLS handshake included) | 86–93 ms | 66–71 ms |
+| Every verification after that (connection reused) | 24–29 ms | 19–40 ms |
+| **Cached verdict** | **0.02 ms** | **0.02 ms** |
+
+For comparison, #245 measured ~112 ms for a cold round trip with PHP's own lookups, and
+~2 ms once the host's resolver has the answer. A PHP-FPM worker keeps its connection to the
+provider between requests, so it pays for the TLS handshake once, not once per lookup.
+
+### The time limit holds
+
+With `timeout_ms: 300`:
+
+| Provider | Slowest request | Verified |
+|---|---|---|
+| Never answers | 306–308 ms | 0 of 25 |
+| Answers in 400 ms | 306–307 ms | 0 of 25 |
+| Answers SERVFAIL | 17–22 ms | 0 of 25 |
+| Answers in 140 ms | 302–308 ms | 2–4 of 25 |
+| Answers in 50 ms | 121–124 ms | 9–11 of 25 |
+
+A provider that stops answering costs the first worker `timeout_ms`, not the
+operating system's resolver's 5–10 seconds. Everyone else gets a refusal in under a
+millisecond (p50 under 0.9 ms in every case).
+
+**The limit covers the whole request, connecting and the TLS handshake included.** A
+provider that answers in 290 ms usually fails against a 300 ms limit (0–1 of 25 verified),
+because the handshake pushes the first request over it. Set `timeout_ms` well above the
+provider's usual latency, not just above it.
+
+**The worst case is one limit per request**, and a verification makes at most three: the
+reverse lookup and two forward ones. With the default limit that's 900 ms, over the 650 ms
+breaker threshold, so a provider slow enough to cause it trips the breaker. One run saw
+602 ms, with two requests each just under the limit.
+
+### Concurrency, and waiting for the verdict
+
+As #245 found with PHP's lookups, one worker makes the lookups and the others are refused
+straight away. 25 workers on one address cost 2–8 requests (one to four verifications),
+not 50. That refusal is what leaves 9–18 of 25 unverified even with a fast provider.
+
+`verify_claim_wait_ms` fixes that, as it does for PHP's lookups, **but the wait has to
+cover both requests**, not one:
+
+| Provider answers in | `verify_claim_wait_ms` | Verified | Median request |
+|---|---|---|---|
+| 50 ms | `0` | 9–11 of 25 | 0.7 ms |
+| 50 ms | `100` | 16–18 of 25 | 94–101 ms |
+| 50 ms | `200` | **25 of 25** | 93–113 ms |
+| 140 ms | `400` | **25 of 25** | 267–281 ms |
+
+A rule of thumb: set the wait to a little over twice the provider's latency, plus the
+handshake.
+
+### Invented PTR records
+
+An address whose PTR records list 15 invented `crawl-*.googlebot.com` names costs three
+requests per verification: the reverse lookup and the two forward lookups the cap allows,
+not 16. The slowest request was 16–34 ms, and nothing verified.
+
 ## Built-in providers
 
 | Provider | Operator | Jurisdiction | Logs kept, per the operator | Terms | Privacy |
