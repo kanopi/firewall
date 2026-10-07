@@ -26,10 +26,16 @@ can make that name resolve back.
 
 Whatever makes the lookups, the firewall itself always:
 
-- caches verdicts, so an address is looked up once per `verify_ttl`, not once per request
+- caches verdicts, so an address is looked up once per `verify_ttl`, not once per request.
+  Verdicts belong to the resolver or provider that reached them, so switching starts afresh:
+  a refusal from a lookup PHP couldn't finish isn't carried over to a provider
 - collapses concurrent lookups for one address into one
 - opens a circuit breaker after a slow lookup, so a struggling resolver cannot hold every
-  worker
+  worker. Each resolver or provider has its own breaker, so a slow one doesn't switch off
+  rules that use another
+- makes at most two forward lookups per address. The owner of an address writes its PTR
+  records, so it could list any number of invented `googlebot.com` names. Without a cap,
+  each would cost a lookup, and together they could trip the breaker for everyone
 - checks each hostname is a hostname (letters, digits, hyphens and dots) before using it
 - matches domains on a label boundary, so `evilgooglebot.com` never passes for
   `googlebot.com`

@@ -331,6 +331,49 @@ final class ReverseDnsSettings
     }
 
     /**
+     * Which resolver a rule's cached verdicts belong to.
+     *
+     * Verdicts are cached per resolver, so switching resolver starts afresh. Without it, a
+     * site that moves to a provider *because* PHP's lookups were failing would keep
+     * refusing every crawler those failures refused -- remembered as "no record" for
+     * `verify_negative_ttl`, a day by default.
+     *
+     * Empty for PHP's own lookups, whether by default or named, so the verdicts every
+     * earlier release cached stay valid.
+     *
+     * @param array<string, mixed> $metadata
+     *   The rule's metadata.
+     *
+     * @return string
+     *   The scope: a provider's name, or a resolver class and its options.
+     */
+    public function scopeFor(array $metadata): string
+    {
+        try {
+            $choice = $this->choiceFor($metadata);
+        } catch (ConfigurationException) {
+            // Verifies nobody, and caches only briefly; kept apart all the same.
+            return 'unusable';
+        }
+
+        if ($choice === null) {
+            return '';
+        }
+
+        [$class, $options, $provider] = $choice;
+
+        if ($provider !== null) {
+            return 'provider:' . $provider;
+        }
+
+        if ($class === SystemResolver::class && $options === []) {
+            return '';
+        }
+
+        return 'resolver:' . $class . ':' . md5(serialize($options));
+    }
+
+    /**
      * The breaker's threshold for a rule, when it does not set its own.
      *
      * Two DNS-over-HTTPS lookups of `timeout_ms` each can take twice that and still have

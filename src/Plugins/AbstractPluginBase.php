@@ -149,7 +149,11 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
                 // cold-cache collision, and which of those matters more is the
                 // operator's call rather than ours (#261).
                 is_numeric($claimWait) ? max(0, (int) $claimWait) : 0,
-                $resolver
+                $resolver,
+                60,
+                // Verdicts and the breaker per resolver, so a switch starts afresh and one
+                // slow resolver does not switch off rules that use another (#473).
+                $reverseDnsSettings->scopeFor($this->metadata)
             );
         }
 

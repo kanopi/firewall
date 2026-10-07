@@ -93,6 +93,23 @@ class ReverseDnsSettingsTest extends TestCase
         $this->assertSame(700, $ruleResolver->timeoutMs());
     }
 
+    public function testVerdictsAreScopedToTheResolver(): void
+    {
+        $this->assertSame('', ReverseDnsSettings::current()->scopeFor([]));
+        $this->assertSame('', $this->settings(['resolver' => SystemResolver::class])->scopeFor([]));
+        $this->assertSame('provider:cloudflare', $this->settings(['provider' => 'cloudflare'])->scopeFor([]));
+        $this->assertSame('provider:google', $this->settings(['provider' => 'cloudflare'])->scopeFor(['verify_provider' => 'google']));
+        $this->assertSame('unusable', $this->settings([])->scopeFor(['verify_provider' => 'nowhere']));
+
+        $one = $this->settings(['resolver' => ScriptedResolver::class, 'resolver_options' => ['a' => 1]])->scopeFor([]);
+        $two = $this->settings(['resolver' => ScriptedResolver::class, 'resolver_options' => ['a' => 2]])->scopeFor([]);
+        $this->assertStringStartsWith('resolver:' . ScriptedResolver::class . ':', $one);
+        $this->assertNotSame($one, $two);
+
+        $systemWithOptions = $this->settings(['resolver' => SystemResolver::class, 'resolver_options' => ['x' => 1]])->scopeFor([]);
+        $this->assertStringStartsWith('resolver:' . SystemResolver::class . ':', $systemWithOptions);
+    }
+
     public function testTheBreakerThresholdFollowsTheTimeout(): void
     {
         $settings = $this->settings(['provider' => 'cloudflare', 'timeout_ms' => 400]);

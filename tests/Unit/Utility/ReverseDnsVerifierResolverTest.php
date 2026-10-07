@@ -94,18 +94,113 @@ class ReverseDnsVerifierResolverTest extends AbstractTestCase
         $this->assertSame(['reverse 203.0.113.9'], ScriptedResolver::$asked);
     }
 
-    public function testNoMoreThanTenHostnamesAreTried(): void
+    public function testNoMoreThanTwoForwardLookupsAreMade(): void
     {
         $hosts = [];
 
         for ($i = 0; $i < 15; $i++) {
-            $hosts[] = 'h' . $i . '.googlebot.com';
+            $hosts[] = 'crawl-' . $i . '.googlebot.com';
         }
 
+        // The attack: the client's owner writes its PTR records, and lists invented names.
         ScriptedResolver::$reverse['203.0.113.9'] = LookupResult::answer($hosts);
 
         $this->assertFalse($this->verifier()->verify('203.0.113.9', ['.googlebot.com']));
-        $this->assertCount(11, ScriptedResolver::$asked);
+        $this->assertSame(
+            ['reverse 203.0.113.9', 'forward crawl-0.googlebot.com A', 'forward crawl-1.googlebot.com A'],
+            ScriptedResolver::$asked
+        );
+    }
+
+    public function testAThirdCrawlerHostnameIsNotChecked(): void
+    {
+        ScriptedResolver::$reverse['66.249.66.1'] = LookupResult::answer(['a.googlebot.com', 'b.googlebot.com', 'crawl.googlebot.com']);
+        ScriptedResolver::$forward['crawl.googlebot.com A'] = LookupResult::answer(['66.249.66.1']);
+
+        $this->assertFalse($this->verifier()->verify('66.249.66.1', ['.googlebot.com']));
+    }
+
+    public function testHostnamesOutsideTheDomainsDoNotUseUpTheForwardLookups(): void
+    {
+        ScriptedResolver::$reverse['66.249.66.1'] = LookupResult::answer([
+            'one.example.net',
+            'two.example.net',
+            'three.example.net',
+            'crawl.googlebot.com',
+        ]);
+        ScriptedResolver::$forward['crawl.googlebot.com A'] = LookupResult::answer(['66.249.66.1']);
+
+        $this->assertTrue($this->verifier()->verify('66.249.66.1', ['.googlebot.com']));
+    }
+
+    public function testNoMoreThanTenHostnamesAreRead(): void
+    {
+        $hosts = [];
+
+        for ($i = 0; $i < 10; $i++) {
+            $hosts[] = 'h' . $i . '.example.net';
+        }
+
+        $hosts[] = 'crawl.googlebot.com';
+        ScriptedResolver::$reverse['66.249.66.1'] = LookupResult::answer($hosts);
+        ScriptedResolver::$forward['crawl.googlebot.com A'] = LookupResult::answer(['66.249.66.1']);
+
+        $this->assertFalse($this->verifier()->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame(['reverse 66.249.66.1'], ScriptedResolver::$asked);
+    }
+
+    public function testVerdictsBelongToTheResolverThatReachedThem(): void
+    {
+        $cache = new ArrayAdapter();
+        ScriptedResolver::$reverse['66.249.66.1'] = LookupResult::answer(['crawl.googlebot.com']);
+        ScriptedResolver::$forward['crawl.googlebot.com A'] = LookupResult::answer(['66.249.66.1']);
+
+        // PHP's own lookups refused it -- say they timed out, which they report as no record.
+        $refusing = new ReverseDnsVerifier($cache, 3600, 86400, false, 250.0, 300, 0, new ScriptedResolver(), 60, '');
+        $cache->save($cache->getItem('rdns_' . hash('sha256', '66.249.66.1|.googlebot.com'))->set(false));
+        $this->assertFalse($refusing->verify('66.249.66.1', ['.googlebot.com']));
+
+        // After a switch to a provider, that refusal is not inherited.
+        $switched = new ReverseDnsVerifier($cache, 3600, 86400, false, 250.0, 300, 0, new ScriptedResolver(), 60, 'provider:cloudflare');
+        $this->assertTrue($switched->verify('66.249.66.1', ['.googlebot.com']));
+    }
+
+    public function testABreakerBelongsToTheResolverThatTrippedIt(): void
+    {
+        $cache = new ArrayAdapter();
+        $cache->save($cache->getItem('rdns_breaker')->set(true));
+        ScriptedResolver::$reverse['66.249.66.1'] = LookupResult::answer(['crawl.googlebot.com']);
+        ScriptedResolver::$forward['crawl.googlebot.com A'] = LookupResult::answer(['66.249.66.1']);
+
+        $system = new ReverseDnsVerifier($cache, 3600, 86400, false, 250.0, 300, 0, new ScriptedResolver(), 60, '');
+        $this->assertFalse($system->verify('66.249.66.1', ['.googlebot.com']));
+        $this->assertSame([], ScriptedResolver::$asked);
+
+        $provider = new ReverseDnsVerifier($cache, 3600, 86400, false, 250.0, 300, 0, new ScriptedResolver(), 60, 'provider:google');
+        $this->assertTrue($provider->verify('66.249.66.1', ['.googlebot.com']));
+    }
+
+    public function testAProvidersSlowLookupTripsOnlyItsOwnBreaker(): void
+    {
+        $cache = new ArrayAdapter();
+        $slow = new class implements ReverseDnsResolverInterface {
+            public function reverse(string $ip): LookupResult
+            {
+                usleep(5000);
+
+                return LookupResult::none();
+            }
+
+            public function forward(string $hostname, string $type): LookupResult
+            {
+                return LookupResult::none();
+            }
+        };
+
+        (new ReverseDnsVerifier($cache, 3600, 86400, false, 1.0, 300, 0, $slow, 60, 'provider:google'))->verify('66.249.66.1', ['.googlebot.com']);
+
+        $this->assertTrue($cache->getItem('rdns_breaker_' . hash('sha256', 'provider:google'))->isHit());
+        $this->assertFalse($cache->getItem('rdns_breaker')->isHit());
     }
 
     public function testAMalformedAddressIsNeverLookedUp(): void

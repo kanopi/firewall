@@ -75,6 +75,12 @@ class ReverseDnsVerifier
      *   on purpose: one network blip must not refuse the real crawler for a day, as
      *   `negativeTtl` would. Not zero, because a client whose own DNS answers SERVFAIL
      *   could otherwise make every one of its requests pay for a lookup.
+     * @param string $scope
+     *   Which resolver the verdicts and the breaker belong to. Empty for PHP's own
+     *   lookups, which keeps the keys every release before this one wrote. A verdict
+     *   one resolver reached -- a day-long refusal from a lookup PHP could not finish,
+     *   say -- must not outlive a switch to another, and one slow resolver must not
+     *   switch verification off for rules that use a different one.
      */
     public function __construct(
         protected ?CacheItemPoolInterface $cache = null,
@@ -85,7 +91,8 @@ class ReverseDnsVerifier
         protected int $breakerCooldown = 300,
         protected int $claimWaitMs = 0,
         protected ?ReverseDnsResolverInterface $resolver = null,
-        protected int $unknownTtl = 60
+        protected int $unknownTtl = 60,
+        protected string $scope = ''
     ) {
     }
 
@@ -93,6 +100,18 @@ class ReverseDnsVerifier
      * Most PTR hostnames considered for one address. More is not a crawler.
      */
     private const MAX_HOSTNAMES = 10;
+
+    /**
+     * Most forward lookups one verification makes.
+     *
+     * Each hostname inside the accepted domains costs a forward lookup, and the owner of
+     * the client's address writes its PTR records -- so without a cap, ten invented
+     * `crawl-*.googlebot.com` names are ten lookups for one request. None of them would
+     * confirm, but together they outlast the breaker's threshold, and a tripped breaker
+     * switches verification off for everybody. `gethostbyaddr()` only ever returned one
+     * name; two leaves room for a crawler with a second PTR record.
+     */
+    private const MAX_FORWARD_LOOKUPS = 2;
 
     /**
      * Whether the address reverse-resolves into one of the given domains.
@@ -114,7 +133,7 @@ class ReverseDnsVerifier
             return false;
         }
 
-        $key = 'rdns_' . hash('sha256', $ip . '|' . implode(',', $suffixes));
+        $key = 'rdns_' . hash('sha256', ($this->scope === '' ? '' : $this->scope . '|') . $ip . '|' . implode(',', $suffixes));
         $item = null;
 
         if ($this->cache instanceof CacheItemPoolInterface) {
@@ -229,10 +248,18 @@ class ReverseDnsVerifier
         }
 
         try {
-            return $this->cache->getItem('rdns_breaker')->isHit();
+            return $this->cache->getItem($this->breakerKey())->isHit();
         } catch (\Psr\Cache\InvalidArgumentException) {
             return false;
         }
+    }
+
+    /**
+     * The breaker's cache key, scoped like the verdicts.
+     */
+    private function breakerKey(): string
+    {
+        return $this->scope === '' ? 'rdns_breaker' : 'rdns_breaker_' . hash('sha256', $this->scope);
     }
 
     /**
@@ -245,7 +272,7 @@ class ReverseDnsVerifier
         }
 
         try {
-            $item = $this->cache->getItem('rdns_breaker');
+            $item = $this->cache->getItem($this->breakerKey());
             $item->set(true);
             $item->expiresAfter($this->breakerCooldown);
             $this->cache->save($item);
@@ -423,6 +450,7 @@ class ReverseDnsVerifier
 
         $type = strlen($packed) === 16 ? ReverseDnsResolverInterface::TYPE_AAAA : ReverseDnsResolverInterface::TYPE_A;
         $unknown = false;
+        $forwardLookups = 0;
 
         foreach (array_slice($lookupResult->values, 0, self::MAX_HOSTNAMES) as $value) {
             $host = rtrim(strtolower($value), '.');
@@ -446,6 +474,15 @@ class ReverseDnsVerifier
                 continue;
             }
 
+            if ($forwardLookups >= self::MAX_FORWARD_LOOKUPS) {
+                $this->getLogger()->debug('Reverse DNS returned more crawler hostnames than are checked', [
+                    'ip' => $ip,
+                    'checked' => self::MAX_FORWARD_LOOKUPS,
+                ]);
+                break;
+            }
+
+            $forwardLookups++;
             $confirmed = $this->confirms($host, $ip, $packed, $type);
 
             if ($confirmed === true) {

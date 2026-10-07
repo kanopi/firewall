@@ -68,6 +68,7 @@ final class VerifyResolverTest extends TestCase
 
         $this->assertNull($this->property($verifier, 'resolver'));
         $this->assertSame(250.0, $this->property($verifier, 'slowThresholdMs'));
+        $this->assertSame('', $this->property($verifier, 'scope'));
     }
 
     public function testTheConfiguredProviderMakesTheLookups(): void
@@ -93,6 +94,7 @@ final class VerifyResolverTest extends TestCase
         $verifier = $this->verifier($this->plugin());
         $this->assertInstanceOf(DnsOverHttpResolver::class, $this->property($verifier, 'resolver'));
         $this->assertSame(850.0, $this->property($verifier, 'slowThresholdMs'));
+        $this->assertSame('provider:cloudflare', $this->property($verifier, 'scope'));
 
         $this->assertSame(1000.0, $this->property($this->verifier($this->plugin(['verify_slow_threshold_ms' => 1000])), 'slowThresholdMs'));
     }
