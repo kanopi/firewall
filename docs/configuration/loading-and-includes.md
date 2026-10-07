@@ -14,6 +14,12 @@ The firewall supports **modular configuration** via a top‑level `configs:` key
   - **Environment-driven** using `%env(...)%` (must resolve to a string path)
 - **Merge semantics**:
   - Objects (associative arrays) are merged **deeply**; later files override earlier keys
+  - **An included file overrides the file that includes it.** Includes are merged over the
+    including file's own settings, so where both set the same key, the include wins —
+    whether the include is listed before or after the setting in the file. To override
+    something an include sets, put your value in a file listed *after* it in `configs:`.
+    A file you share for others to include should therefore only add entries under names
+    of its own, never set a value the including file is likely to set
   - Lists (numeric arrays) are **replaced as a whole** by later files — with one
     exception: a root-level `plugins:` list **appends**, so several included files can
     each contribute plugin entries

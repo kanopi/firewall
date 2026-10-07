@@ -60,6 +60,7 @@ Nothing here explains anything; that is deliberate.
 | `path_source` | string | `pathinfo` | `pathinfo` (relative to the front controller) or `script_name` (the file the server ran). WordPress needs `script_name`; front-controller apps keep the default | [Path Source](../configuration/global.md#path-source) |
 | `base_path` | string | *unset* | Where the application is installed, for `script_name` in a subdirectory | [Path Source](../configuration/global.md#path-source) |
 | `stale_source_error_after` | int | `0` *(off)* | Seconds before an unrefreshed source is an error | [Stale Rule Sources](../configuration/global.md#stale-rule-sources) |
+| `reverse_dns` | map | *unset* | Who makes reverse-DNS verification's lookups: `provider`, `providers`, `resolver`, `resolver_options`, `timeout_ms`. Unset is PHP's own lookups | [Reverse DNS](../configuration/reverse-dns.md) |
 
 ## `storage:`
 
@@ -143,7 +144,8 @@ Rate-limit counters are stored separately, under the RateLimit plugin's own meta
 Identity-verifying plugins (User Agent, and any implementing
 `IdentityVerificationInterface`) add `verify`, `verify_cache`, `verify_ttl`,
 `verify_negative_ttl`, `verify_suffixes`, `verify_claim_wait_ms`,
-`verify_slow_threshold_ms` and `verify_offline` — see [User Agent](../plugins/user-agent.md).
+`verify_slow_threshold_ms`, `verify_offline`, `verify_provider` and `verify_timeout_ms` —
+see [User Agent](../plugins/user-agent.md) and [Reverse DNS](../configuration/reverse-dns.md).
 
 Every `sources:` option is its own table in [Rule Sources](../configuration/sources.md#every-option), including `allow_catch_all`, which decides whether a source may contribute an entry matching every address, `max_size` / `max_entries`, which bound how much a refresh may bring in, and `checksum` / `signature`, which decide whether the fetched bytes are [checked against what the publisher asserted](../configuration/sources.md#verifying-what-you-fetched).
 

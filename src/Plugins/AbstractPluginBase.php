@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Plugins;
 
 use Kanopi\Firewall\Challenge\ChallengeProviderAwareInterface;
+use Kanopi\Firewall\Exception\ConfigurationException;
 use Kanopi\Firewall\Logging\LoggingTrait;
 use Kanopi\Firewall\Source\SourceAuth;
 use Kanopi\Firewall\Source\SourceManager;
@@ -21,6 +22,9 @@ use Kanopi\Firewall\Utility\RuleDiagnostics;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\Path;
 use Kanopi\Firewall\Utility\ReverseDnsVerifier;
+use Kanopi\Firewall\Utility\ReverseDns\ReverseDnsResolverInterface;
+use Kanopi\Firewall\Utility\ReverseDns\ReverseDnsSettings;
+use Kanopi\Firewall\Utility\ReverseDns\UnusableResolver;
 use Kanopi\Firewall\Cache\CachePoolException;
 use Kanopi\Firewall\Cache\CachePoolFactory;
 use Psr\Cache\CacheItemPoolInterface;
@@ -119,8 +123,14 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
         if (!$this->reverseDnsVerifier instanceof ReverseDnsVerifier) {
             $ttl = $this->metadata['verify_ttl'] ?? 3600;
             $negativeTtl = $this->metadata['verify_negative_ttl'] ?? 86400;
-            $threshold = $this->metadata['verify_slow_threshold_ms'] ?? 250;
             $claimWait = $this->metadata['verify_claim_wait_ms'] ?? 0;
+
+            // `global.reverse_dns`, which `Firewall::create()` validated (#473). NULL
+            // when nothing is configured, so the verifier makes PHP's own lookups, as
+            // every release before this one did.
+            $reverseDnsSettings = ReverseDnsSettings::current();
+            $resolver = $this->reverseDnsResolver($reverseDnsSettings);
+            $threshold = $this->metadata['verify_slow_threshold_ms'] ?? $reverseDnsSettings->slowThresholdFor($this->metadata);
 
             $this->reverseDnsVerifier = new ReverseDnsVerifier(
                 $this->identityCachePool(),
@@ -138,11 +148,43 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
                 // Off unless asked for. It trades latency for a verdict on a
                 // cold-cache collision, and which of those matters more is the
                 // operator's call rather than ours (#261).
-                is_numeric($claimWait) ? max(0, (int) $claimWait) : 0
+                is_numeric($claimWait) ? max(0, (int) $claimWait) : 0,
+                $resolver,
+                60,
+                // Verdicts and the breaker per resolver, so a switch starts afresh and one
+                // slow resolver does not switch off rules that use another (#473).
+                $reverseDnsSettings->scopeFor($this->metadata)
             );
         }
 
         return $this->reverseDnsVerifier;
+    }
+
+    /**
+     * The resolver this rule's verification uses, or NULL for PHP's own lookups.
+     *
+     * A provider or resolver that cannot be built has already stopped the firewall
+     * starting. Reaching here with one means the rule was built some other way -- a test,
+     * or a host constructing plugins itself -- and the answer is the one an unusable
+     * verification always gets: no verdict, so the allow rule does not match. A resolver
+     * that silently fell back to PHP's lookups would send nothing where the site asked,
+     * and mean the site was not told.
+     *
+     * @param ReverseDnsSettings $reverseDnsSettings
+     *   The settings.
+     */
+    private function reverseDnsResolver(ReverseDnsSettings $reverseDnsSettings): ?ReverseDnsResolverInterface
+    {
+        try {
+            return $reverseDnsSettings->resolverFor($this->metadata);
+        } catch (ConfigurationException $configurationException) {
+            $this->getLogger()->error('Reverse DNS resolver could not be built - the rule will not match', [
+                'plugin' => $this->getName(),
+                'error' => $configurationException->getMessage(),
+            ]);
+
+            return new UnusableResolver($configurationException->getMessage());
+        }
     }
 
     /**

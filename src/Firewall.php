@@ -54,6 +54,7 @@ use Kanopi\Firewall\Utility\TrustedProxies;
 use Kanopi\Firewall\Utility\NoStore;
 use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\RequestPath;
+use Kanopi\Firewall\Utility\ReverseDns\ReverseDnsSettings;
 use Kanopi\Firewall\Utility\Schedule;
 use Kanopi\Firewall\Utility\PluginConfigNormalizer;
 use Psr\EventDispatcher\EventDispatcherInterface;
@@ -388,6 +389,12 @@ final class Firewall
         // Before the first request, so a typo in a page or CSS that would
         // break out of its style block is found at deploy (#452).
         self::checkRefusalPages($config['global'], $declaredPlugins);
+
+        // Here, so a provider name that does not exist or a resolver that cannot be
+        // built stops the firewall starting rather than quietly leaving crawler rules
+        // unverified. Rules are built lazily and read these settings when they verify
+        // (#473).
+        ReverseDnsSettings::configure($config['global'], $declaredPlugins);
 
         // Partition plugins by response type and sort by weight.
         $partitioned = PluginConfigNormalizer::partitionAndSort($declaredPlugins);

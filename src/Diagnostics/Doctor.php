@@ -28,6 +28,8 @@ use Kanopi\Firewall\Utility\PanicSwitch;
 use Kanopi\Firewall\Utility\RequestPath;
 use Kanopi\Firewall\Utility\TrustedProxies;
 use Symfony\Component\HttpFoundation\Request;
+use Kanopi\Firewall\Utility\ReverseDns\ReverseDnsSettings;
+use Kanopi\Firewall\Utility\ReverseDns\SystemResolver;
 
 /**
  * Look at a real environment and say what is wrong with it.
@@ -99,6 +101,10 @@ class Doctor
         }
 
         foreach ($this->checkOfflineVerification($config) as $diagnosi) {
+            $findings[] = $diagnosi;
+        }
+
+        foreach ($this->checkReverseDns($config) as $diagnosi) {
             $findings[] = $diagnosi;
         }
 
@@ -936,6 +942,98 @@ class Doctor
                 . 'says otherwise, so this rule verifies nobody new. Set metadata.verify_offline: false '
                 . 'to verify while rule sources stay offline, or true to keep it off deliberately.',
                 'plugins/user-agent.md#offline-switches-it-off-unless-the-rule-says-otherwise'
+            );
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Where each verifying rule's reverse DNS lookups go (#473).
+     *
+     * A provider is a third party that receives the reverse-DNS names of visitors'
+     * addresses once a site names it, so the report says which one each rule uses -- and
+     * which host it sends to -- without anybody reading the YAML.
+     *
+     * Warns when a DNS-over-HTTPS endpoint names a host and no `address` is pinned: curl
+     * then looks the host up through the operating system's resolver first, which has no
+     * time limit, and the stall the resolver exists to remove comes back.
+     *
+     * @param array<string, mixed> $config
+     *   The loaded configuration.
+     *
+     * @return array<int, Diagnosis>
+     *   Errors for settings the firewall would refuse, else one finding per verifying rule.
+     */
+    private function checkReverseDns(array $config): array
+    {
+        $global = is_array($config['global'] ?? null) ? $config['global'] : [];
+        $plugins = is_array($config['plugins'] ?? null) ? $config['plugins'] : [];
+        $problems = ReverseDnsSettings::problems($global, $plugins);
+
+        if ($problems !== []) {
+            return array_map(
+                static fn(string $problem): Diagnosis => Diagnosis::error(
+                    'global.reverse_dns cannot be used: ' . $problem,
+                    'The firewall refuses to start with it.',
+                    'configuration/reverse-dns.md'
+                ),
+                $problems
+            );
+        }
+
+        $reverseDnsSettings = ReverseDnsSettings::fromGlobal($global);
+        $findings = [];
+
+        foreach ($plugins as $plugin) {
+            $metadata = is_array($plugin) && is_array($plugin['metadata'] ?? null) ? $plugin['metadata'] : [];
+
+            if (($metadata['verify'] ?? null) === null) {
+                continue;
+            }
+
+            $where = $reverseDnsSettings->describeFor($metadata);
+            $rule = $this->ruleName($plugin);
+
+            if ($where['provider'] === null && $where['resolver'] === SystemResolver::class) {
+                $findings[] = Diagnosis::ok(
+                    sprintf("Rule %s verifies with PHP's own lookups", $rule),
+                    "SystemResolver, through the operating system's resolver. Its lookups have no time limit; "
+                    . "a DNS-over-HTTPS provider's do."
+                );
+                continue;
+            }
+
+            $via = $where['provider'] !== null
+                ? sprintf('provider %s', $where['provider'])
+                : sprintf('resolver %s', $where['resolver']);
+
+            if ($where['endpoint'] === null) {
+                $findings[] = Diagnosis::ok(sprintf('Rule %s verifies through %s', $rule, $via), $where['resolver']);
+                continue;
+            }
+
+            if ($where['address'] === null && filter_var($where['endpoint'], FILTER_VALIDATE_IP) === false) {
+                $findings[] = Diagnosis::warning(
+                    sprintf('Rule %s verifies through %s, whose host is looked up without a time limit', $rule, $via),
+                    sprintf(
+                        'Lookups go to %s, and no address is pinned, so curl first resolves %s through the '
+                        . "operating system's resolver. Set the provider's address option to the IP to connect to.",
+                        $where['endpoint'],
+                        $where['endpoint']
+                    ),
+                    'configuration/reverse-dns.md'
+                );
+                continue;
+            }
+
+            $findings[] = Diagnosis::ok(
+                sprintf('Rule %s verifies through %s', $rule, $via),
+                sprintf(
+                    "Visitors' reverse-DNS names are sent to %s%s.",
+                    $where['endpoint'],
+                    $where['address'] !== null ? ', connecting to ' . $where['address'] : ''
+                )
             );
         }
 
