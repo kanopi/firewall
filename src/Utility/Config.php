@@ -21,6 +21,13 @@ use Symfony\Component\PropertyAccess\PropertyAccessorInterface;
 class Config
 {
     /**
+     * The format of a cached entry. Raised whenever what a load produces changes for the
+     * same files, so an entry written by an earlier release is reparsed rather than served.
+     * 2: separate sources replace lists rather than appending them (#481).
+     */
+    private const CACHE_FORMAT = 2;
+
+    /**
      * The accessor overrides are written through, built once per process.
      */
     private static ?PropertyAccessorInterface $propertyAccessor = null;
@@ -112,7 +119,7 @@ class Config
 
                 // Merge current config into merged config
                 /** @var array<string, mixed> $config */
-                $merged = NestedArray::mergeDeepArray([$merged, $config]);
+                $merged = self::mergeConfig($merged, $config);
             }
 
             $mayHoldReferences = ConfigReference::containsReference($merged);
@@ -205,6 +212,69 @@ class Config
     {
         return self::$propertyAccessor ??= PropertyAccess::createPropertyAccessorBuilder()
             ->getPropertyAccessor();
+    }
+
+    /**
+     * Merge one configuration source over the ones before it.
+     *
+     * The sources `load()` is given -- the configs passed to `Firewall::create()` -- now
+     * combine lists the way `configs:` includes do (#481): **a later list replaces an
+     * earlier one**, and `[]` clears it. They used to be merged by
+     * `NestedArray::mergeDeepArray()`, which appends lists at every depth, so a second
+     * config could not replace `trusted_proxies` (both lists were trusted) or clear
+     * `lockdown_allow` (the first list stayed in force).
+     *
+     * Two lists still append, as they do for includes:
+     *
+     * - **Root `plugins:`**, so several sources can each contribute rules.
+     * - **A legacy rule's `config:`** (`block:` or `bypass:`, keyed by class), so a second
+     *   source can add entries to the first's rule.
+     *
+     * Everything else is as before: maps merge key by key and a later value wins, and a
+     * source that is a list rather than a map is appended whole. That
+     * includes a legacy rule's `priority` and `enable`. Includes treat those differently
+     * (`ConfigLoader::mergePluginConfig()` keeps the first `priority` and ignores a later
+     * `enable: false`), and adopting that here would leave a second source unable to switch
+     * a rule off, so only lists change.
+     *
+     * @param array<array-key, mixed> $base
+     *   The sources merged so far.
+     * @param array<array-key, mixed> $over
+     *   The next source.
+     * @param list<array-key> $path
+     *   Where in the configuration this is.
+     *
+     * @return array<array-key, mixed>
+     *   The merge.
+     */
+    private static function mergeConfig(array $base, array $over, array $path = []): array
+    {
+        // A source that is itself a list, rather than a configuration map, is appended as
+        // it always was. No configuration has that shape; nothing is gained by changing it.
+        if ($path === [] && array_is_list($base) && array_is_list($over)) {
+            return array_merge($base, $over);
+        }
+
+        foreach ($over as $key => $value) {
+            $here = [...$path, $key];
+
+            if (!is_array($value) || !is_array($base[$key] ?? null)) {
+                $base[$key] = $value;
+                continue;
+            }
+
+            if (array_is_list($base[$key]) && array_is_list($value)) {
+                $appends = $here === ['plugins']
+                    || (count($here) === 3 && in_array($here[0], ['block', 'bypass'], true) && $here[2] === 'config');
+
+                $base[$key] = $appends ? array_merge($base[$key], $value) : $value;
+                continue;
+            }
+
+            $base[$key] = self::mergeConfig($base[$key], $value, $here);
+        }
+
+        return $base;
     }
 
     /**
@@ -423,7 +493,7 @@ class Config
      *   anything else: a non-array config would load as no rules at all, and an
      *   empty file list would skip every fingerprint check.
      *
-     * @phpstan-assert-if-true array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed} $payload
+     * @phpstan-assert-if-true array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed, format?: mixed} $payload
      */
     private static function isConfigCachePayload(mixed $payload): bool
     {
@@ -440,7 +510,7 @@ class Config
      * The same for a file and a pooled entry, so neither can serve a merge the
      * other would have rejected.
      *
-     * @param array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed} $payload
+     * @param array{config: array<string, mixed>, files: array<mixed>, env: mixed, references?: mixed, format?: mixed} $payload
      *   A payload `isConfigCachePayload()` accepted.
      *
      * @return array{config: array<string, mixed>, references: bool}|null
@@ -449,6 +519,12 @@ class Config
      */
     private static function validConfigCache(array $payload): ?array
     {
+        // An entry merged by an earlier release's rules is stale whatever its files say.
+        // Absent before #481, which is the first change to how a load is merged.
+        if (($payload['format'] ?? 1) !== self::CACHE_FORMAT) {
+            return null;
+        }
+
         if ($payload['env'] !== self::environmentFingerprint()) {
             return null;
         }
@@ -514,6 +590,7 @@ class Config
         }
 
         $payload = [
+            'format' => self::CACHE_FORMAT,
             'config' => $merged,
             'files' => $files,
             'env' => self::environmentFingerprint(),

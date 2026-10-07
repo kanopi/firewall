@@ -28,6 +28,14 @@ The firewall supports **modular configuration** via a top‑level `configs:` key
     was ignored, and the earlier list stayed in force.) Over a map, `[]` changes nothing:
     YAML can't tell `[]` from `{}`, and an empty map adds no keys. An empty root-level
     `plugins:` appends nothing
+- **Separate configs merge the same way.** Several configs passed to
+  `Firewall::create([$base, $site])` combine like includes, with each later one over the
+  ones before it: maps merge, a list replaces a list, `[]` clears one, root `plugins:`
+  appends, and a legacy rule's `config:` appends. Two things differ from includes: a later
+  config's `priority` and `enable: false` on a legacy rule win, so a later config can still
+  switch a rule off. (Until #481 was fixed, separate configs appended every list, so a
+  second config added to `trusted_proxies` rather than replacing it, and couldn't clear
+  `lockdown_allow`.)
 - Safety: circular includes are prevented and excessive include depth is rejected.
 
 **Remote Configuration Files**
@@ -153,6 +161,10 @@ change a variable a configuration reads and its entry is discarded. Values that 
 one request are left out of that fingerprint, or no web request would ever hit the cache:
 headers (`HTTP_*`), `REQUEST_*`, `REMOTE_*`, `QUERY_STRING`, `SERVER_NAME`, `SERVER_PORT`,
 `SERVER_PROTOCOL`, `HTTPS`, `SSL_*`, `GEOIP_*` and the like.
+
+An entry is also discarded when a release changes how a load is merged, so after the
+upgrade that fixed #481 every configuration is parsed once more, rather than being served
+as the previous merge left it.
 
 Three things are never cached:
 
