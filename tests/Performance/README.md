@@ -247,6 +247,25 @@ to gate CI on and cheap enough to run on every PR.
 
 ---
 
+## Reverse DNS probes
+
+k6 measures throughput. It can't answer the questions reverse-DNS verification raises, which
+need many processes on one uncached address at the same instant, and a count of how many
+actually looked anything up.
+
+- **`bin/reverse-dns-probe.php [workers] [latency-ms]`** (#245): PHP's own lookups, stubbed
+  at a fixed delay. Measures the in-flight claim, the breaker and `verify_claim_wait_ms`.
+- **`bin/doh-bench.sh [workers] [--public]`** (#480): the same probe through a real
+  `DnsOverHttpResolver`, so curl's time limits are part of what's measured. Each degraded
+  case runs against `bin/fake-doh-server.py` on 127.0.0.1, over TLS with a throwaway
+  certificate: a provider answering after a set delay, never, with SERVFAIL, or with
+  invented PTR records. `--public` adds Cloudflare and Google, and a connection-reuse
+  measurement, which depend on this machine's network. Needs `php` with curl, `python3`
+  and `openssl`.
+
+Results are in [Reverse DNS: What a provider costs](../../docs/configuration/reverse-dns.md#what-a-provider-costs)
+and [User Agent: the cost, and what bounds it](../../docs/plugins/user-agent.md#the-cost-and-what-bounds-it).
+
 ## Debugging a scenario by hand
 
 ```bash

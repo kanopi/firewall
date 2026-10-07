@@ -228,6 +228,12 @@ accept `evilgooglebot.com`, which anyone can register. Writing the leading dot
 For scale, the firewall's entire evaluation is 3.5–5 ms. A cold verification is ~25× the
 cost of everything else it does.
 
+Those figures are for PHP's own lookups. Through a DNS-over-HTTPS
+[provider](../configuration/reverse-dns.md#what-a-provider-costs), a verification costs
+19–40 ms once the connection is open (66–93 ms for the first, which includes the TLS
+handshake). More to the point, **a provider that stops answering costs `timeout_ms` (about
+300 ms), not the operating system's resolver's 5–10 seconds.**
+
 Five things keep that off the request path:
 
 1. **It only runs after the rule has already matched.** A request matching nothing never
