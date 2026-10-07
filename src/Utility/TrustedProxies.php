@@ -186,7 +186,7 @@ final class TrustedProxies
     }
 
     /**
-     * What is trusted, for `firewall-doctor`.
+     * What is trusted, for `firewall doctor`.
      */
     public function describe(): string
     {

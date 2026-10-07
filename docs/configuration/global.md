@@ -76,7 +76,7 @@ warning the first time. The host knows its infrastructure; use one source or the
 - a header name that is not a forwarding header. A header silently not trusted is a quiet
   version of the same problem.
 
-`require_trusted_proxies: true` is satisfied by either source. And `firewall-doctor` can
+`require_trusted_proxies: true` is satisfied by either source. And `firewall doctor` can
 check this form from a terminal, which the bootstrap form it cannot: it reports the proxies
 and headers in force, or why they were refused.
 
@@ -274,7 +274,7 @@ firewall.WARNING: Firewall panic switch is ACTIVE
   {"panic_file":"/var/run/firewall/panic","configured_mode":"block","effective_mode":"log", …}
 ```
 
-`bin/firewall-doctor` reports it as a warning, and `bin/firewall-check` prints it alongside
+`bin/firewall doctor` reports it as a warning, and `bin/firewall check` prints it alongside
 the verdict — the check suppresses the switch while evaluating, so it still tells you which
 rule matches, and then says out loud that the live site is not behaving that way.
 
@@ -327,7 +327,7 @@ global:
 
 An entry that is not an address, a CIDR block or a `start-end` range (a hostname, a
 typo, a range whose bounds are backwards or from different families) matches nobody.
-The firewall does not guess what was meant. `firewall-doctor` names every such entry,
+The firewall does not guess what was meant. `firewall doctor` names every such entry,
 and reports it as an error when the lockdown is already on:
 
 ```console
@@ -377,7 +377,7 @@ Lockdown adds a refusal; it never removes one.
 !!! warning "An empty allowlist locks you out too"
 
     `lockdown_allow` with nothing in it refuses every visitor, which is what deny-by-default
-    means. `firewall-doctor` reports an empty list as a warning before you rely on it, and as
+    means. `firewall doctor` reports an empty list as a warning before you rely on it, and as
     an error once lockdown is on.
 
 ## Path Source
@@ -488,15 +488,15 @@ boundary rather than from the root:
 ### Checking it
 
 ```console
-$ vendor/bin/firewall-check --config=firewall.yml --url=/wp-login.php --script-name=/wp-login.php
+$ vendor/bin/firewall check --config=firewall.yml --url=/wp-login.php --script-name=/wp-login.php
 ```
 
-`--script-name` makes the check a direct-file request. Without it, the check matches the path as typed, which is not what the site sees under `pathinfo`. The tool warns about this when `--url` names a `.php` file. `firewall-doctor` reports which source is in use, and reports an unknown `path_source` or an unusable `base_path` as an error. At runtime, the firewall falls back to `pathinfo` with a warning.
+`--script-name` makes the check a direct-file request. Without it, the check matches the path as typed, which is not what the site sees under `pathinfo`. The tool warns about this when `--url` names a `.php` file. `firewall doctor` reports which source is in use, and reports an unknown `path_source` or an unusable `base_path` as an error. At runtime, the firewall falls back to `pathinfo` with a warning.
 
 ## Stale Rule Sources
 
 `stale_source_error_after` is how long a [rule source](sources.md) may go unrefreshed before
-[`firewall-doctor`](../how-to/diagnosing.md#making-a-stale-rule-source-fail-the-deploy)
+[`firewall doctor`](../how-to/diagnosing.md#making-a-stale-rule-source-fail-the-deploy)
 reports it as an **error** rather than a warning — which is the difference between a green
 deploy and a red one.
 
@@ -513,7 +513,7 @@ global:
 | Value | |
 |---|---|
 | unset, or `0` | Never escalate. A stale source is a warning, as it has always been |
-| seconds | Past that age, a stale source becomes an error and `firewall-doctor` exits `1` |
+| seconds | Past that age, a stale source becomes an error and `firewall doctor` exits `1` |
 
 The bound is absolute rather than a multiple of each source's `ttl`, because a multiple gets
 the short ones wrong in the dangerous direction: ten times a 60-second `ttl` is ten minutes,

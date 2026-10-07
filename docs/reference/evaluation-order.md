@@ -69,7 +69,7 @@ Configured but not reached:
 ```
 
 So if an allow rule appears not to be winning, it almost certainly **did not match** — check
-the CIDR, and check that the client IP is what you think it is. `firewall-check --explain`
+the CIDR, and check that the client IP is what you think it is. `firewall check --explain`
 prints which rules were evaluated and which were never reached.
 
 ### `response: allow` also beats the durable block list
@@ -161,7 +161,7 @@ still runs. That is almost always the better tool than putting the whole site in
 ## Seeing it for a real request
 
 ```console
-$ firewall-check --config=firewall.yml --ip=203.0.113.9 --url=/checkout --explain
+$ firewall check --config=firewall.yml --ip=203.0.113.9 --url=/checkout --explain
 ```
 
 It prints the buckets in the order above, which rule matched, and which rules were

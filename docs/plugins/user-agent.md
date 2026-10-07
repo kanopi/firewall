@@ -385,7 +385,7 @@ means the rule verifies **nobody new**.
     Plugin verify is switched off by KANOPI_FIREWALL_SOURCES_OFFLINE - the rule will not verify anyone new
     ```
 
-    `firewall-doctor` reports it too. Set `verify_offline: false` to verify, or
+    `firewall doctor` reports it too. Set `verify_offline: false` to verify, or
     `verify_offline: true` to keep it off deliberately — either one stops the warning.
 
 !!! warning "A mistyped `verify` does not match"

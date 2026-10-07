@@ -387,7 +387,7 @@ abstract class AbstractPluginBase implements PluginInterface, ObserveModeInterfa
      * `KANOPI_FIREWALL_SOURCES_OFFLINE`, which is what it always did, so no host changes
      * behaviour on upgrade (#391).
      *
-     * Static and public so that `firewall-doctor` answers the question from the same
+     * Static and public so that `firewall doctor` answers the question from the same
      * place the rule does, rather than from a copy of this logic.
      *
      * @param array<string, mixed> $metadata

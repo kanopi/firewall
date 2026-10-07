@@ -10,12 +10,12 @@ hand; the log table's own documentation said that a new column meant dropping th
 recreating it, *"which loses history but breaks nothing"* — for a table whose entire purpose
 is holding history.
 
-`bin/firewall-migrate` is that instruction, executable.
+`bin/firewall migrate` is that instruction, executable.
 
 ## Running it
 
 ```bash
-bin/firewall-migrate firewall.yml --dry-run
+bin/firewall migrate firewall.yml --dry-run
 ```
 
 ```
@@ -28,7 +28,7 @@ bin/firewall-migrate firewall.yml --dry-run
 ```
 
 ```bash
-bin/firewall-migrate firewall.yml
+bin/firewall migrate firewall.yml
 ```
 
 It takes the same configuration files the firewall does, and covers every database-backed
@@ -91,7 +91,7 @@ You do not have to remember to check. When a table is behind, the firewall says 
 firewall.WARNING: Database table is behind the schema this release declares
   {"table":"firewall_rate_limit_storage",
    "missing":["index firewall_rate_limit_storage_rule_window_idx"],
-   "remedy":"Run bin/firewall-migrate to add them, or bin/firewall-migrate --dry-run to see the statements first."}
+   "remedy":"Run bin/firewall migrate to add them, or bin/firewall migrate --dry-run to see the statements first."}
 ```
 
 `warning`, not `error`: everything the table is asked to do today, it still does. A missing
@@ -131,7 +131,7 @@ Accepted by `DatabaseStorage`, `DatabaseRateLimitStorage` and `DatabaseHandler`,
 deliberately the same shape as the handler's existing `prune_probability`: the same problem —
 periodic maintenance that must not live on the request path — with the same escape hatch.
 
-**`0` does not disable migration**, only the warning. `bin/firewall-migrate --dry-run` answers
+**`0` does not disable migration**, only the warning. `bin/firewall migrate --dry-run` answers
 the question deterministically and exits `3` when something is pending, which is the better
 place for it if you gate schema changes on deploy.
 

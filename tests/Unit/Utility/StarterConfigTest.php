@@ -9,7 +9,7 @@ use Kanopi\Firewall\Utility\Config;
 use Kanopi\Firewall\Utility\StarterConfig;
 
 /**
- * The starting configuration `bin/firewall-init` writes (#210).
+ * The starting configuration `bin/firewall init` writes (#210).
  *
  * The test that matters is the last one: every combination it can produce must
  * actually load. A generator whose output does not parse is worse than no
@@ -181,7 +181,7 @@ class StarterConfigTest extends AbstractTestCase
      * Each storage choice writes its own backend, and resolves without env vars.
      *
      * The defaults are placeholders so the file loads before anything is
-     * configured — `bin/firewall-doctor` reporting an unreachable database is a
+     * configured — `bin/firewall doctor` reporting an unreachable database is a
      * better first failure than a config that will not parse.
      */
     public function testEachStorageBackendResolvesWithoutEnvironmentVariables(): void
@@ -207,7 +207,7 @@ class StarterConfigTest extends AbstractTestCase
      * The file backend defaults somewhere that exists.
      *
      * It pointed at /tmp/firewall/, a directory nothing creates, so a freshly
-     * generated config failed `firewall-doctor` on its first run.
+     * generated config failed `firewall doctor` on its first run.
      */
     public function testTheDefaultStoragePathIsInADirectoryThatExists(): void
     {

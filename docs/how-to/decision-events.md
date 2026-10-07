@@ -56,7 +56,7 @@ dispatcher would be given, and receiving the same events. `events:` takes short 
 - **Isolated from each other.** One that throws is logged at `error`, recorded in
   `Firewall::getDegradedBackends()` as `decision listener`, and the next one still runs. The
   verdict is untouched, as for a PHP listener.
-- `firewall-doctor` lists what is registered.
+- `firewall doctor` lists what is registered.
 
 The [StatsD exporter](metrics.md#from-yaml) is one of these, under `metrics.statsd`.
 

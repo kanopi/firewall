@@ -23,7 +23,7 @@ namespace Kanopi\Firewall\Diagnostics;
  * - `error` -- a rule that was configured is not running, or the firewall would refuse to
  *   start. Something an operator asked for is not happening.
  *
- * `bin/firewall-doctor` exits non-zero on `error` only, so it can gate a deploy without a
+ * `bin/firewall doctor` exits non-zero on `error` only, so it can gate a deploy without a
  * stale database blocking one.
  */
 final class Diagnosis

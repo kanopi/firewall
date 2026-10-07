@@ -218,7 +218,7 @@ same as a Redis without persistence, and nothing in this backend can change that
 
 #### Keeping the block list searchable
 
-Memcached cannot list its own keys, and `firewall-block --find`, `--list` and `--lift` with a
+Memcached cannot list its own keys, and `firewall block --find`, `--list` and `--lift` with a
 range all need to. So this backend keeps an index of what it has written, split across 64
 shards by a hash of the key, and answers range searches from it.
 
@@ -240,8 +240,8 @@ An index shard can be evicted like any other item. When one is, the blocks it li
 still enforced, but a range search no longer finds them. The backend notices the next time
 that shard is written or read, records the loss, and then **says so**:
 
-- `firewall-block` prints a warning with its results, and adds it to the `--json` output.
-- `firewall-doctor` reports *Block list searches may be incomplete*.
+- `firewall block` prints a warning with its results, and adds it to the `--json` output.
+- `firewall doctor` reports *Block list searches may be incomplete*.
 - `BlockList::backend()` returns it as `gap`, and the storage itself answers
   `enumerationGap()`, from `Kanopi\Firewall\Storage\BestEffortEnumerationInterface`.
 
@@ -348,7 +348,7 @@ whole fleet.
 
 ### Checking it
 
-`firewall-doctor` says whether the list is shared, and checks the local copy is writable —
+`firewall doctor` says whether the list is shared, and checks the local copy is writable —
 which matters more than it looks, because the local copy is the entire reason the
 arrangement exists:
 
@@ -364,7 +364,7 @@ reading logs — see [Error Handling](../reference/error-handling.md#checking-th
 
 ## What a block record keeps
 
-When a rule blocks or records a client, the firewall writes down what the request looked like, so `bin/firewall-block --show` can later answer *why is this address blocked and what did they do*.
+When a rule blocks or records a client, the firewall writes down what the request looked like, so `bin/firewall block --show` can later answer *why is this address blocked and what did they do*.
 
 Until 2.31.0 that meant **everything**: the visitor's whole cookie jar and header set, verbatim. A blocked visitor's session cookie, their `Authorization` header and their challenge pass were persisted into the block list — and printed back by `--show --json`.
 
@@ -415,12 +415,12 @@ The `query` default is the one to think about for your own site. It is kept beca
 
 **It does not touch records already written.** Redaction happens on the way *in* — the only place it can, since redacting in `--show`'s output would leave the credential in the store, where a shared list replicates it and a database backup keeps it. Records written before the upgrade still hold what they held.
 
-`firewall-doctor` counts them, so you know whether there is anything to act on:
+`firewall doctor` counts them, so you know whether there is anything to act on:
 
 ```
   ! 412 existing block records still hold cookies or headers
       Written before the allowlist existed, and unaffected by it — redaction happens
-      on write. They expire with their bans; `bin/firewall-block --lift` clears them
+      on write. They expire with their bans; `bin/firewall block --lift` clears them
       sooner, at the cost of un-blocking whoever is in them.
 ```
 
@@ -435,14 +435,14 @@ The `query` default is the one to think about for your own site. It is kept beca
     Both questions have a command, and reaching for PHP is no longer the first step:
 
     ```bash
-    vendor/bin/firewall-block firewall.yml --list
-    vendor/bin/firewall-block firewall.yml --find=203.0.113.0/24
-    vendor/bin/firewall-block firewall.yml --show=203.0.113.5      # with offence history
-    vendor/bin/firewall-block firewall.yml --lift=203.0.113.5 --dry-run
-    vendor/bin/firewall-block firewall.yml --lift=203.0.113.5
+    vendor/bin/firewall block firewall.yml --list
+    vendor/bin/firewall block firewall.yml --find=203.0.113.0/24
+    vendor/bin/firewall block firewall.yml --show=203.0.113.5      # with offence history
+    vendor/bin/firewall block firewall.yml --lift=203.0.113.5 --dry-run
+    vendor/bin/firewall block firewall.yml --lift=203.0.113.5
     ```
 
-    It reads and writes the **real** block list, unlike `firewall-check`, which swaps in a
+    It reads and writes the **real** block list, unlike `firewall check`, which swaps in a
     throwaway so that checking a request cannot ban anyone. The backend is named in the
     output for that reason, and a store that cannot outlive the process says so — otherwise
     "nothing blocked" reads as *your customer is fine* when it means *I looked somewhere

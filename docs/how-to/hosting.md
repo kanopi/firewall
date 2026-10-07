@@ -45,7 +45,7 @@ Visit it from your phone on mobile data — a network whose address you can reco
 is definitely not your office.
 
 - **`REMOTE_ADDR` is your phone's address and there are no forwarding headers** — nothing is in
-  front. Set `behind_proxy: false` and you are done. (`firewall-doctor` still reports this as
+  front. Set `behind_proxy: false` and you are done. (`firewall doctor` still reports this as
   unverified: `setTrustedProxies()` is called by your application's bootstrap, which a
   command-line process never runs, so it says so rather than implying it checked.)
 - **`REMOTE_ADDR` is an internal or unfamiliar address, and a forwarding header holds your
@@ -56,7 +56,7 @@ is definitely not your office.
 ### 2. Ask the firewall what it can see
 
 ```bash
-vendor/bin/firewall-doctor firewall.yml
+vendor/bin/firewall doctor firewall.yml
 ```
 
 It reports whether storage is writable, whether the database is reachable, whether trusted
@@ -66,7 +66,7 @@ proxies are configured, and what it cannot verify from a command line. See
 ### 3. Confirm a real request resolves to the right address
 
 ```bash
-vendor/bin/firewall-check --config=firewall.yml --ip=203.0.113.5 --url=/ --explain
+vendor/bin/firewall check --config=firewall.yml --ip=203.0.113.5 --url=/ --explain
 ```
 
 That evaluates a synthetic request; the address you pass is the address the rules see. Once
@@ -233,7 +233,7 @@ their own documentation and your own environment can tell you:
 4. **Backends** — if Redis or Memcache is already provisioned, point the rate limiter at it
    rather than the filesystem. See [Storage](../configuration/storage.md).
 
-`vendor/bin/firewall-doctor firewall.yml` will tell you whether the answers you chose
+`vendor/bin/firewall doctor firewall.yml` will tell you whether the answers you chose
 actually work on that host, which is the part that matters.
 
 !!! tip "Recipes are welcome"

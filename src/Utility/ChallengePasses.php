@@ -38,7 +38,7 @@ use Kanopi\Firewall\Storage\StorageInterface;
  *
  * ## It is only useful against the real store
  *
- * Like `BlockList`, and unlike `bin/firewall-check`. Pointed at a throwaway store a
+ * Like `BlockList`, and unlike `bin/firewall check`. Pointed at a throwaway store a
  * revocation is written, reported, and forgotten when the process ends — truthfully and
  * uselessly — so the backend is named in the output and a store that cannot outlive the
  * process says so.

@@ -667,7 +667,7 @@ class Doctor
             $findings[] = Diagnosis::warning(
                 sprintf('Table for %s is behind the declared schema', $label),
                 sprintf(
-                    'Missing %s. Run bin/firewall-migrate to add them.',
+                    'Missing %s. Run bin/firewall migrate to add them.',
                     implode(', ', array_map(
                         static fn(array $c): string => $c['kind'] . ' ' . $c['name'],
                         $pending
@@ -762,7 +762,7 @@ class Doctor
         return Diagnosis::warning(
             'Block list searches may be incomplete',
             ucfirst($gap) . '. Blocks are still enforced, and a single address is still found; '
-            . '`firewall-block --find` and `--list` may miss some.',
+            . '`firewall block --find` and `--list` may miss some.',
             'configuration/storage.md#the-index-is-best-effort'
         );
     }
@@ -855,7 +855,7 @@ class Doctor
             $findings[] = Diagnosis::warning(
                 sprintf('%d existing block record%s still hold%s cookies or headers', $held, $held === 1 ? '' : 's', $held === 1 ? 's' : ''),
                 'Written before the allowlist existed, and unaffected by it — redaction happens on '
-                . 'write. They expire with their bans; `bin/firewall-block --lift` clears them sooner, '
+                . 'write. They expire with their bans; `bin/firewall block --lift` clears them sooner, '
                 . 'at the cost of un-blocking whoever is in them.',
                 'configuration/storage.md#what-a-block-record-keeps'
             );
@@ -1269,7 +1269,7 @@ class Doctor
                 if ($meta === []) {
                     $findings[] = Diagnosis::warning(
                         'Rule source has never been fetched',
-                        $url . ' — run bin/firewall-sources, or the first request that needs it fetches it inline.',
+                        $url . ' — run bin/firewall sources, or the first request that needs it fetches it inline.',
                         'how-to/syncing-sources.md'
                     );
 

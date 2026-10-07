@@ -299,7 +299,7 @@ final class ScheduleTest extends TestCase
     /**
      * The description is the schedule in the operator's own words.
      *
-     * It is what `firewall-doctor` prints next to a sleeping rule, so it has to be
+     * It is what `firewall doctor` prints next to a sleeping rule, so it has to be
      * recognisable as the thing they wrote, and it names the timezone even when they
      * wrote only a timezone.
      */
@@ -397,7 +397,7 @@ final class ScheduleTest extends TestCase
     /**
      * A schedule with no timezone still says which zone it was read in.
      *
-     * `firewall-doctor` prints this next to a sleeping rule, so the operator who never
+     * `firewall doctor` prints this next to a sleeping rule, so the operator who never
      * wrote a zone finds out which one they got from the report rather than from a
      * support ticket.
      */

@@ -90,8 +90,8 @@ class Reputation extends AbstractPluginBase
         parent::__construct($metadata, $config);
 
         // Eagerly, so that a provider that refuses to build is a rule that did
-        // not start -- reported by getFailedRules(), firewall-doctor and
-        // firewall-check -- rather than an exception out of evaluate() on every
+        // not start -- reported by getFailedRules(), firewall doctor and
+        // firewall check -- rather than an exception out of evaluate() on every
         // request.
         $this->provider();
     }
@@ -507,7 +507,7 @@ class Reputation extends AbstractPluginBase
      *
      * Built in the constructor, not on first use. `LazyObjectRegistry` catches
      * a rule whose construction throws and reports it through
-     * `Firewall::getFailedRules()`, `firewall-doctor` and `firewall-check` --
+     * `Firewall::getFailedRules()`, `firewall doctor` and `firewall check` --
      * and that only happens for work done *in* the constructor. Building it
      * lazily meant a `provider:` naming no class threw
      * `ConfigurationException` out of `evaluate()` instead, which for a host is

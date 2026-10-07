@@ -47,7 +47,7 @@ for longer than a first-time one without any rule changing. →
 
 ### Managed file
 
-The separate YAML file `firewall-rule` owns and rewrites in full. It exists so the command
+The separate YAML file `firewall rule` owns and rewrites in full. It exists so the command
 never has to edit the configuration you wrote, which parsing and re-dumping would strip every
 comment out of. → [Manage Rules](../how-to/managing-rules.md)
 

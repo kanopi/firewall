@@ -28,7 +28,7 @@
 #
 #   1. Allowlist your own scanners. A security audit you commissioned will walk
 #      straight into this and be banned mid-run.
-#   2. Check nothing on your site links these. `firewall-check --explain` on each
+#   2. Check nothing on your site links these. `firewall check --explain` on each
 #      path should report RECORDED, not BLOCKED.
 #   3. Keep them out of your sitemap.
 #

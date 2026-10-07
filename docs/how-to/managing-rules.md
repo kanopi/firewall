@@ -1,13 +1,13 @@
 # Managing Rules from the Command Line
 
-`bin/firewall-rule` adds, removes and disables rules without opening a YAML file.
+`bin/firewall rule` adds, removes and disables rules without opening a YAML file.
 
 ```console
-$ firewall-rule init firewall.yml          # once
-$ firewall-rule add firewall.yml --ip=203.0.113.0/24 --name=scraper-farm
-$ firewall-rule list firewall.yml
-$ firewall-rule disable firewall.yml scraper-farm
-$ firewall-rule remove firewall.yml scraper-farm
+$ firewall rule init firewall.yml          # once
+$ firewall rule add firewall.yml --ip=203.0.113.0/24 --name=scraper-farm
+$ firewall rule list firewall.yml
+$ firewall rule disable firewall.yml scraper-farm
+$ firewall rule remove firewall.yml scraper-farm
 ```
 
 ## It does not edit your configuration, and that is the point
@@ -31,12 +31,12 @@ plugins:
   - plugin: A
 ```
 
-[`firewall-init`](../getting-started/quick-start.md) generates a heavily commented config
+[`firewall init`](../getting-started/quick-start.md) generates a heavily commented config
 precisely so you read it and edit it. A command whose first `add` silently deleted all of
 that would have taken something away, and you would not find out until you next opened the
 file.
 
-So `firewall-rule` owns a **separate file**, rewrites only that one, and includes it beside
+So `firewall rule` owns a **separate file**, rewrites only that one, and includes it beside
 yours:
 
 ```yaml title="firewall.yml — yours, never modified"
@@ -58,7 +58,7 @@ yours, each keeping its own `config:`.
 Nothing merges into an existing rule. Declaring the same rule twice gives you two rules, not
 one modified one — so:
 
-| | Rules `firewall-rule` wrote | Rules you wrote |
+| | Rules `firewall rule` wrote | Rules you wrote |
 |---|---|---|
 | `list` | ✅ | ✅ |
 | `add` | ✅ | — |
@@ -79,7 +79,7 @@ reason there are two files. Edit it where it is declared, or set
 Run `init` **before** adding the `configs:` line, and in that order:
 
 ```console
-$ firewall-rule init firewall.yml
+$ firewall rule init firewall.yml
 Created firewall-managed.yml
 
 Include it from your configuration, now that the file exists:
@@ -102,9 +102,9 @@ matters during an incident.
 ## Adding rules
 
 ```console
-$ firewall-rule add firewall.yml --ip=198.51.100.0/24 --response=allow --name=office --weight=-100
-$ firewall-rule add firewall.yml --path=/xmlrpc.php --name=no-xmlrpc
-$ firewall-rule add firewall.yml --plugin=agent --rule="contains:sqlmap" --name=sqlmap
+$ firewall rule add firewall.yml --ip=198.51.100.0/24 --response=allow --name=office --weight=-100
+$ firewall rule add firewall.yml --path=/xmlrpc.php --name=no-xmlrpc
+$ firewall rule add firewall.yml --plugin=agent --rule="contains:sqlmap" --name=sqlmap
 ```
 
 | Option | |
@@ -127,7 +127,7 @@ again to remove.
 ## Listing
 
 ```console
-$ firewall-rule list firewall.yml
+$ firewall rule list firewall.yml
 yours     block   on    0      xmlrpc   (declared in your own configuration)
 managed   allow   on    -100   office
 
@@ -141,7 +141,7 @@ removed, and the refusal would arrive after you had decided it was gone.
 ## Disabling rather than removing
 
 ```console
-$ firewall-rule disable firewall.yml office
+$ firewall rule disable firewall.yml office
 ```
 
 The definition stays in the file with `enable: false`. An incident is not the moment to
@@ -165,7 +165,7 @@ reconstruct a rule from memory, and the next person can read what it was.
 
 ## Related
 
-- [Seeing and lifting blocks](diagnosing.md) — `bin/firewall-block` manages the
+- [Seeing and lifting blocks](diagnosing.md) — `bin/firewall block` manages the
   *runtime* block list, which is a different question from the rules in a config
 - [Loading & Includes](../configuration/loading-and-includes.md) — the merge semantics this
   relies on

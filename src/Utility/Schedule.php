@@ -62,7 +62,7 @@ namespace Kanopi\Firewall\Utility;
  *
  * Every parse failure here throws, which `LazyObjectRegistry` catches and turns into a
  * failed rule: not running, and named as not running by `Firewall::getFailedRules()`,
- * `firewall-doctor` and `firewall-check` (#247, #260). The two alternatives are both
+ * `firewall doctor` and `firewall check` (#247, #260). The two alternatives are both
  * inventions -- treating a broken schedule as *always on* silently over-blocks, treating it
  * as *always off* silently stops protecting -- and inventing an answer to a misconfiguration
  * is how `file:` came to be written under `FileStorage` in five places (#189). `--lint`

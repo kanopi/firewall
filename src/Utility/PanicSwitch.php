@@ -44,8 +44,8 @@ use Kanopi\Firewall\FirewallMode;
  *
  * The realistic failure is not the switch being flipped. It is somebody flipping it during
  * an incident and nobody noticing three weeks later. So an active panic switch logs at
- * `warning` on every request it affects, and both `bin/firewall-check` and
- * `bin/firewall-doctor` report it.
+ * `warning` on every request it affects, and both `bin/firewall check` and
+ * `bin/firewall doctor` report it.
  */
 class PanicSwitch
 {

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Tests\Unit;
 
+use Kanopi\Firewall\Tests\Console\RunsFirewallCommands;
+
 /**
- * `bin/firewall-doctor` (#211).
+ * `bin/firewall doctor` (#211).
  *
  * Driven as a real subprocess, for the same reasons `FirewallCheckCommandTest`
  * is: the exit code is the contract that lets this gate a deploy, and the
@@ -14,6 +16,8 @@ namespace Kanopi\Firewall\Tests\Unit;
  */
 final class FirewallDoctorCommandTest extends AbstractTestCase
 {
+    use RunsFirewallCommands;
+
     private const EXIT_OK = 0;
     private const EXIT_ERRORS = 1;
     private const EXIT_USAGE = 2;
@@ -45,11 +49,6 @@ final class FirewallDoctorCommandTest extends AbstractTestCase
         parent::tearDown();
     }
 
-    private function script(): string
-    {
-        return dirname(__DIR__, 2) . '/bin/firewall-doctor';
-    }
-
     private function writeConfig(string $yaml): string
     {
         $path = $this->dir . '/config-' . uniqid('', true) . '.yml';
@@ -66,22 +65,7 @@ final class FirewallDoctorCommandTest extends AbstractTestCase
      */
     private function runDoctor(array $args): array
     {
-        // display_errors=stderr for the reason FirewallCheckCommandTest gives:
-        // CI installs extensions over an image that has them, so every run
-        // prints 'Module "..." is already loaded' — which would land ahead of
-        // the JSON and make these assertions measure the environment.
-        $command = array_merge([PHP_BINARY, '-d', 'display_errors=stderr', $this->script()], $args);
-        $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $process = proc_open($command, $descriptors, $pipes);
-
-        $this->assertIsResource($process, 'Could not start bin/firewall-doctor');
-
-        $stdout = (string) stream_get_contents($pipes[1]);
-        $stderr = (string) stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-
-        return ['stdout' => $stdout, 'stderr' => $stderr, 'code' => proc_close($process)];
+        return $this->runFirewall('doctor', $args);
     }
 
     private function workingConfig(): string
@@ -182,6 +166,7 @@ final class FirewallDoctorCommandTest extends AbstractTestCase
         $result = $this->runDoctor(['--help']);
 
         $this->assertSame(self::EXIT_OK, $result['code']);
-        $this->assertStringContainsString('firewall-doctor', $result['stdout']);
+        $this->assertStringContainsString('Usage:', $result['stdout']);
+        $this->assertStringContainsString('Exit codes:', $result['stdout']);
     }
 }

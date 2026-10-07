@@ -39,7 +39,7 @@ use Kanopi\Firewall\Exception\SourceException;
  *
  * Nothing here is required. Most published lists in this ecosystem ship no
  * sidecar at all, so a source that declares none keeps working unchanged;
- * `firewall-doctor` says how many are in that position rather than this
+ * `firewall doctor` says how many are in that position rather than this
  * failing them.
  */
 final class SourceVerification

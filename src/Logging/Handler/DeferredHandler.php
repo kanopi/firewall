@@ -109,7 +109,7 @@ final class DeferredHandler extends BufferHandler
      *
      * A seam, and one of the few places a seam earns itself twice over:
      * `fastcgi_finish_request()` does not exist under CLI — where
-     * `bin/firewall-check` and `firewall-doctor` run — and cannot be provoked
+     * `bin/firewall check` and `firewall doctor` run — and cannot be provoked
      * into failing from a test on a SAPI that has it.
      *
      * Calling it when the host framework already has is harmless: Symfony's

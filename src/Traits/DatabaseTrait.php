@@ -276,7 +276,7 @@ trait DatabaseTrait
      * This is `DatabaseHandler`'s `prune_probability` exactly: the same
      * problem, periodic maintenance that cannot live on the request path, with
      * the same escape hatch. `schema_check_probability: 0` switches it off and
-     * leaves the question to `bin/firewall-migrate --dry-run`, which answers
+     * leaves the question to `bin/firewall migrate --dry-run`, which answers
      * it deterministically and exits 3 when something is pending.
      */
     protected float $schemaCheckProbability = 0.01;
@@ -423,7 +423,7 @@ trait DatabaseTrait
      * The additive schema changes this consumer's tables are missing.
      *
      * The public counterpart of the startup warning, and what
-     * `bin/firewall-migrate --dry-run` reports. Answers for every table the
+     * `bin/firewall migrate --dry-run` reports. Answers for every table the
      * class declares, so `DatabaseStorage` covers both of its.
      *
      * Introspects, and changes nothing.
@@ -456,7 +456,7 @@ trait DatabaseTrait
      *
      * Not called from anywhere in the request path. An `ALTER TABLE` takes a
      * lock, and a firewall that decides to take one under load is not
-     * something to switch on by default -- `bin/firewall-migrate` is when an
+     * something to switch on by default -- `bin/firewall migrate` is when an
      * operator says so.
      *
      * @return array<int, array{table: string, kind: string, name: string, sql: array<int, string>, safe: bool, reason: string, applied: bool}>
@@ -495,7 +495,7 @@ trait DatabaseTrait
      *
      * Reports; does not migrate. An `ALTER TABLE` on a large `firewall_log`
      * takes a lock, and a firewall that decides to take one on a cold cache
-     * under load is not something to switch on by default. `bin/firewall-migrate`
+     * under load is not something to switch on by default. `bin/firewall migrate`
      * applies these, and this is what tells an operator to run it.
      *
      * @param Table $table
@@ -558,7 +558,7 @@ trait DatabaseTrait
                 static fn(array $change): string => $change['kind'] . ' ' . $change['name'],
                 $pending
             ),
-            'remedy' => 'Run bin/firewall-migrate to add them, or bin/firewall-migrate --dry-run to see the statements first.',
+            'remedy' => 'Run bin/firewall migrate to add them, or bin/firewall migrate --dry-run to see the statements first.',
         ]);
     }
 

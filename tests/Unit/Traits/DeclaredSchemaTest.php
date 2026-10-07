@@ -14,7 +14,7 @@ use Kanopi\Firewall\Tests\Unit\AbstractTestCase;
 /**
  * The schema this package declares must be one it can migrate to (#278).
  *
- * #217 added `bin/firewall-migrate`, which refuses a column declared `NOT NULL`
+ * #217 added `bin/firewall migrate`, which refuses a column declared `NOT NULL`
  * with no default -- SQLite and PostgreSQL both reject adding one to a table
  * that has rows, and MySQL invents a value. That refusal is right.
  *
@@ -114,7 +114,7 @@ class DeclaredSchemaTest extends AbstractTestCase
         $this->assertSame(
             [],
             $refusable,
-            "These columns are NOT NULL with no default, so bin/firewall-migrate would refuse to\n"
+            "These columns are NOT NULL with no default, so bin/firewall migrate would refuse to\n"
             . "add them to an existing table. Give each one a `'default' => …`:\n  "
             . implode("\n  ", $refusable)
         );

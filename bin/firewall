@@ -1,0 +1,23 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Firewall package.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+/*
+ * The firewall's command line: one command, a subcommand per job (#289).
+ *
+ *   vendor/bin/firewall                   list the commands
+ *   vendor/bin/firewall doctor config.yml
+ *   vendor/bin/firewall help check        a command's arguments and exit codes
+ *
+ * The commands are Kanopi\Firewall\Console\Command\*.
+ */
+
+require __DIR__ . '/run.php';
