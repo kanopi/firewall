@@ -600,14 +600,9 @@ final class ConfigLoader
 
             if (\is_array($v) && \is_array($base[$k])) {
                 // Special handling for 'plugins' array at root level: append entries
-                if ($k === 'plugins' && $path === []) {
-                    $baseIsList = $base[$k] === [] || \array_keys($base[$k]) === \range(0, \count($base[$k]) - 1);
-                    $overIsList = $v === [] || \array_keys($v) === \range(0, \count($v) - 1);
-
-                    if ($baseIsList && $overIsList) {
-                        $base[$k] = array_merge($base[$k], $v);
-                        continue;
-                    }
+                if ($k === 'plugins' && $path === [] && (\array_is_list($base[$k]) && \array_is_list($v))) {
+                    $base[$k] = array_merge($base[$k], $v);
+                    continue;
                 }
 
                 // Detect plugin configuration: path is [block|bypass][PluginClassName]
@@ -639,11 +634,7 @@ final class ConfigLoader
                     // Both enabled: merge with special rules
                     $base[$k] = self::mergePluginConfig($base[$k], $v);
                 } else {
-                    $baseIsList = \array_keys($base[$k]) === \range(0, \count($base[$k]) - 1);
-                    $overIsList = \array_keys($v) === \range(0, \count($v) - 1);
-                    $base[$k] = ($baseIsList && $overIsList)
-                        ? $v
-                        : self::mergeConfigs($base[$k], $v, $currentPath);
+                    $base[$k] = self::mergeArrays($base[$k], $v, $currentPath);
                 }
             } else {
                 $base[$k] = $v;
@@ -682,10 +673,41 @@ final class ConfigLoader
             }
 
             // Normal merge for other keys
-            $base[$k] = is_array($v) && isset($base[$k]) && is_array($base[$k]) ? self::mergeConfigs($base[$k], $v) : $v;
+            $base[$k] = is_array($v) && isset($base[$k]) && is_array($base[$k]) ? self::mergeArrays($base[$k], $v) : $v;
         }
 
         return $base;
+    }
+
+    /**
+     * Merge two arrays found at the same key: a list replaces a list, maps merge.
+     *
+     * `array_is_list()`, because the hand-written check before it compared keys with
+     * `range(0, count - 1)` -- which for an empty array is `[0, -1]`, not `[]`. So `[]` was
+     * never a list, an included `[]` was merged as an empty map, and it could not clear
+     * anything: an override emptying `lockdown_allow` left every earlier address in place
+     * (#474). Inside a legacy plugin entry it was worse: lists were not checked at all and
+     * merged position by position, so `[b]` over `[a, c]` was `[b, c]`.
+     *
+     * `[]` over a non-empty map still merges as an empty map and changes nothing. YAML
+     * cannot tell `[]` from `{}`, and leaving a map alone is what someone writing either
+     * most likely meant.
+     *
+     * @param array<mixed> $base
+     *   The earlier value.
+     * @param array<mixed> $over
+     *   The later value.
+     * @param array<int, int|string> $path
+     *   Where it is, for detecting plugin configs.
+     *
+     * @return array<mixed>
+     *   The merged value.
+     */
+    private static function mergeArrays(array $base, array $over, array $path = []): array
+    {
+        return \array_is_list($base) && \array_is_list($over)
+            ? $over
+            : self::mergeConfigs($base, $over, $path);
     }
 
     /**

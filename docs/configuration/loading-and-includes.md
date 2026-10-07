@@ -23,6 +23,11 @@ The firewall supports **modular configuration** via a top‑level `configs:` key
   - Lists (numeric arrays) are **replaced as a whole** by later files — with one
     exception: a root-level `plugins:` list **appends**, so several included files can
     each contribute plugin entries
+  - **An empty list clears one.** `lockdown_allow: []` in an included file replaces the
+    list it overrides with nothing, as any other list would. (Until #474 was fixed, an empty list
+    was ignored, and the earlier list stayed in force.) Over a map, `[]` changes nothing:
+    YAML can't tell `[]` from `{}`, and an empty map adds no keys. An empty root-level
+    `plugins:` appends nothing
 - Safety: circular includes are prevented and excessive include depth is rejected.
 
 **Remote Configuration Files**
