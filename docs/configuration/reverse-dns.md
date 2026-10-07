@@ -250,6 +250,14 @@ not 16. The slowest request was 16–34 ms, and nothing verified.
 What each operator says about logging is quoted from its own policy, on the date given. It is
 the operator's statement, not something the library verifies.
 
+**Every built-in provider is checked weekly.** A scheduled CI job runs
+`tests/Live/check-reverse-dns-providers.php`, which uses each provider exactly as a site
+would, pinned address included. It runs a reverse lookup of a Googlebot address, the forward
+lookup, a name with no record, and a full verification. If one fails, it opens an issue, so a
+provider that changes or retires its API (as Quad9 retired its JSON service) is noticed by
+the project before sites are affected. You can run the same check yourself, to test a
+provider from your own network.
+
 ### `cloudflare`
 
 #### Operator and jurisdiction

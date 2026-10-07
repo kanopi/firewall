@@ -328,6 +328,72 @@ jobs:
             # the nightly benchmark, which does have them.
             php tests/Performance/bin/validate-scenarios.php --skip-geoip
 
+  # Checks every built-in reverse DNS provider still answers correctly (#477). Weekly
+  # only: it calls public services this project doesn't control, so it can't gate a PR,
+  # and a provider changing its API isn't caused by anyone's push.
+  #
+  # On failure it opens an issue, or comments on the one already open, so a provider
+  # that stops answering is found here rather than by sites whose verified crawler
+  # rules quietly stop matching. Run by hand with
+  # `php tests/Live/check-reverse-dns-providers.php`.
+  reverse-dns-providers:
+    docker:
+      - image: cimg/php:8.2
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+    resource_class: small
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - composer-cache-{{ checksum "composer.json" }}
+            - composer-cache-
+      - run:
+          name: Install dependencies
+          command: composer install --no-interaction --optimize-autoloader
+      - run:
+          name: Check every built-in reverse DNS provider
+          command: |
+            mkdir -p /tmp/provider-check
+            php tests/Live/check-reverse-dns-providers.php \
+              --markdown=/tmp/provider-check/report.md \
+              --junit=/tmp/provider-check/junit.xml
+      - store_test_results:
+          path: /tmp/provider-check
+      - store_artifacts:
+          path: /tmp/provider-check
+          destination: provider-check
+      - ci-tools/install-github-cli
+      - run:
+          name: Open or update an issue
+          when: on_fail
+          command: |
+            TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+            if [[ -z "${TOKEN}" ]]; then
+              echo "Neither GITHUB_TOKEN nor GH_TOKEN is set, so no issue was opened."
+              echo "The failures are in this job's test results and artifacts."
+              exit 0
+            fi
+            if [[ ! -f /tmp/provider-check/report.md ]]; then
+              echo "The check produced no report; see the step above."
+              exit 0
+            fi
+            export GH_TOKEN="${TOKEN}"
+            REPO="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+            TITLE="Weekly reverse DNS provider check failed"
+            printf '\n[CircleCI job](%s)\n' "${CIRCLE_BUILD_URL}" >> /tmp/provider-check/report.md
+            # One issue for an ongoing failure, not one a week.
+            EXISTING="$(gh issue list -R "${REPO}" --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')"
+            if [[ -n "${EXISTING}" ]]; then
+              gh issue comment "${EXISTING}" -R "${REPO}" --body-file /tmp/provider-check/report.md \
+                || echo "Could not comment on #${EXISTING}; the token may lack issues: write."
+            else
+              gh issue create -R "${REPO}" --title "${TITLE}" --label bug --label plugin \
+                --body-file /tmp/provider-check/report.md \
+                || echo "Could not open an issue; the token may lack issues: write."
+            fi
+
   # The performance benchmark. Nightly and on-demand only — see the workflows
   # section for why it is not on every PR.
   #
@@ -661,4 +727,19 @@ workflows:
     jobs:
       - performance-test:
           name: "performance"
+          context: kanopi-code
+
+  # Weekly, on 2.x: see the reverse-dns-providers job. Monday 06:00 UTC, an hour before
+  # the nightly benchmark, so a failure is waiting at the start of the week.
+  weekly-reverse-dns-providers:
+    triggers:
+      - schedule:
+          cron: "0 6 * * 1"
+          filters:
+            branches:
+              only:
+                - 2.x
+    jobs:
+      - reverse-dns-providers:
+          name: "reverse DNS providers"
           context: kanopi-code
